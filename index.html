@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Globe Civ</title>
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+    <div id="hud" class="hidden">
+      <div id="topbar">
+        <span id="civ"></span>
+        <span id="turn"></span>
+        <span id="gold"></span>
+        <span class="spacer"></span>
+        <span id="hint"></span>
+        <button data-act="endTurn" class="primary">End turn <kbd>Enter</kbd></button>
+      </div>
+      <div id="log"></div>
+      <div id="selection" class="panel hidden"></div>
+      <div id="tileinfo" class="panel hidden"></div>
+      <details id="help" class="panel">
+        <summary>Controls</summary>
+        <div>Drag: rotate globe · Wheel: zoom</div>
+        <div>Left-click: select (click again to cycle)</div>
+        <div>Right-click: move / attack</div>
+        <div><kbd>B</kbd> found city · <kbd>F</kbd> fortify · <kbd>Space</kbd> skip</div>
+        <div><kbd>N</kbd>/<kbd>Tab</kbd> next unit · <kbd>C</kbd> center · <kbd>Enter</kbd> end turn</div>
+      </details>
+    </div>
+    <div id="start"></div>
+    <div id="overlay" class="hidden"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,197 @@
+import * as THREE from 'three';
+import type { BiomeKey, ReliefKey, FeatureKey } from './terrain.ts';
+import type { MapData } from './mapgen.ts';
+
+// How terrain looks. Each layer has a Record keyed by its full key union, so
+// adding a biome, relief or feature without a look is a compile error.
+
+// Procedural surface detail painted by the terrain shader (all 0..1).
+export interface Detail {
+  grain: number;  // fine speckle + medium patchiness
+  patch: number;  // blotches of patchColor (water pools, coral, kelp)
+  strata: number; // horizontal rock bands
+  dunes: number;  // wind ripples
+  bump: number;   // strength of the bumpy normal (kills the "plastic" look)
+}
+
+export interface BiomeLook {
+  color: number;
+  detail: Detail;
+  wet: number; // 1 = water surface
+}
+
+const d = (grain: number, patch: number, strata: number, dunes: number, bump: number): Detail => ({ grain, patch, strata, dunes, bump });
+
+export const BIOME_LOOK: Record<BiomeKey, BiomeLook> = {
+  ocean:               { color: 0x1a4f7c, detail: d(0.15, 0, 0, 0, 0), wet: 1 },
+  shallowSea:          { color: 0x3388a3, detail: d(0.15, 0, 0, 0, 0), wet: 1 },
+  lake:                { color: 0x2f7fa3, detail: d(0.15, 0, 0, 0, 0), wet: 1 },
+  seaIce:              { color: 0xc4d9e6, detail: d(0.5, 0, 0, 0, 0.5), wet: 0.2 },
+  iceSheet:            { color: 0xeef3f7, detail: d(0.35, 0, 0, 0.2, 0.5), wet: 0 },
+  tundra:              { color: 0x8c9378, detail: d(0.9, 0, 0, 0, 0.6), wet: 0 },
+  taiga:               { color: 0x4d6147, detail: d(0.7, 0, 0, 0, 0.6), wet: 0 },
+  coldDesert:          { color: 0xb1a487, detail: d(1, 0, 0.15, 0, 0.9), wet: 0 },
+  steppe:              { color: 0xb0a566, detail: d(0.8, 0, 0, 0, 0.5), wet: 0 },
+  prairie:             { color: 0x709e49, detail: d(0.7, 0, 0, 0, 0.5), wet: 0 },
+  temperateForest:     { color: 0x4f7a3a, detail: d(0.7, 0, 0, 0, 0.6), wet: 0 },
+  temperateRainforest: { color: 0x355c3e, detail: d(0.7, 0, 0, 0, 0.6), wet: 0 },
+  mediterranean:       { color: 0xa69b5d, detail: d(0.9, 0, 0, 0, 0.6), wet: 0 },
+  hotDesert:           { color: 0xddc189, detail: d(0.5, 0, 0, 1, 0.7), wet: 0 },
+  savanna:             { color: 0xc0a35a, detail: d(0.85, 0, 0, 0, 0.5), wet: 0 },
+  monsoonForest:       { color: 0x6b8a3b, detail: d(0.7, 0, 0, 0, 0.6), wet: 0 },
+  jungle:              { color: 0x2f6a2f, detail: d(0.6, 0, 0, 0, 0.6), wet: 0 },
+};
+
+export interface ReliefLook {
+  height: number;   // plateau height above sea level (globe radius = 1)
+  plateau: number;  // 0 = peaked like a cone, ~0.5 = flat top with soft edges
+  roughness: number; // amplitude of noise displacement in the geometry
+  rock: number;     // how much bare rock color shows over the biome
+  strata: number;
+  bump: number;
+}
+
+export const RELIEF_LOOK: Record<ReliefKey, ReliefLook> = {
+  flat:      { height: 0.007, plateau: 0.55, roughness: 0.0016, rock: 0,    strata: 0,    bump: 0 },
+  hills:     { height: 0.019, plateau: 0.12, roughness: 0.006,  rock: 0.3,  strata: 0.15, bump: 0.3 },
+  mountains: { height: 0.04,  plateau: 0,    roughness: 0.02,   rock: 0.7,  strata: 0.5,  bump: 0.6 },
+};
+export const ROCK = new THREE.Color(0x78726a);
+
+export interface FeatureLook {
+  color: number | null; // painted over the biome color
+  colorMix: number;
+  patch: number;
+  patchColor: number;
+  heightDelta: number;  // added to the plateau height
+  plateau: number | null;
+  strata: number;
+  wet: number;
+}
+
+export const FEATURE_LOOK: Record<FeatureKey, FeatureLook> = {
+  marsh:      { color: 0x6f8a55, colorMix: 0.55, patch: 0.75, patchColor: 0x3d6f78, heightDelta: -0.003, plateau: null, strata: 0, wet: 0.25 },
+  swamp:      { color: 0x46603f, colorMix: 0.5,  patch: 0.6,  patchColor: 0x2c4a44, heightDelta: -0.003, plateau: null, strata: 0, wet: 0.2 },
+  mangrove:   { color: 0x3f6a50, colorMix: 0.4,  patch: 0.7,  patchColor: 0x2f7a82, heightDelta: -0.004, plateau: null, strata: 0, wet: 0.25 },
+  floodplain: { color: 0x7fa046, colorMix: 0.55, patch: 0.25, patchColor: 0x5d8a3a, heightDelta: -0.002, plateau: 0.7, strata: 0, wet: 0 },
+  oasis:      { color: 0x8aa04e, colorMix: 0.45, patch: 0.4,  patchColor: 0x2f86a8, heightDelta: 0,      plateau: null, strata: 0, wet: 0 },
+  volcano:    { color: 0x4a423c, colorMix: 0.7,  patch: 0,    patchColor: 0x000000, heightDelta: 0.012,  plateau: null, strata: 0.3, wet: 0 },
+  // Glaciers keep the mountain's colors; the renderer caps only the peak with ice.
+  glacier:    { color: null,     colorMix: 0,    patch: 0,    patchColor: 0x000000, heightDelta: 0.004,  plateau: null, strata: 0, wet: 0 },
+  reef:       { color: 0x3fbcc0, colorMix: 0.55, patch: 0.45, patchColor: 0xb59a8a, heightDelta: 0,      plateau: null, strata: 0, wet: 0 },
+  kelp:       { color: 0x24646f, colorMix: 0.45, patch: 0.5,  patchColor: 0x2f5a3a, heightDelta: 0,      plateau: null, strata: 0, wet: 0 },
+};
+
+// Water surfaces sit at sea level regardless of relief.
+const WATER_HEIGHT: Partial<Record<BiomeKey, number>> = { ocean: -0.004, shallowSea: 0, lake: 0, seaIce: 0.003 };
+
+// ---------- props (instanced 3D decorations) ----------
+
+export type PropKind = 'conifer' | 'tallConifer' | 'broadleaf' | 'jungleTree' | 'acacia' | 'shrub' | 'palm' | 'reeds' | 'mangroveTree';
+
+export interface PropSpec {
+  kind: PropKind;
+  count: number;  // per flat tile; hills get ~2/3
+  spread: number; // 0..1, how close to the tile edge props may go
+}
+
+const p = (kind: PropKind, count: number, spread = 0.82): PropSpec => ({ kind, count, spread });
+
+export const BIOME_PROPS: Record<BiomeKey, PropSpec[]> = {
+  ocean: [], shallowSea: [], lake: [], seaIce: [], iceSheet: [],
+  tundra: [p('shrub', 3, 0.75)],
+  taiga: [p('conifer', 11)],
+  coldDesert: [p('shrub', 3, 0.75)],
+  steppe: [p('shrub', 3, 0.75)],
+  prairie: [p('broadleaf', 2, 0.7), p('shrub', 2, 0.7)],
+  temperateForest: [p('broadleaf', 10)],
+  temperateRainforest: [p('tallConifer', 13)],
+  mediterranean: [p('shrub', 8), p('broadleaf', 2, 0.7)],
+  hotDesert: [],
+  savanna: [p('acacia', 4, 0.78), p('shrub', 3, 0.75)],
+  monsoonForest: [p('broadleaf', 9), p('palm', 1, 0.6)],
+  jungle: [p('jungleTree', 14), p('palm', 2, 0.7)],
+};
+
+// null = keep the biome's props.
+export const FEATURE_PROPS: Record<FeatureKey, PropSpec[] | null> = {
+  marsh: [p('reeds', 9)],
+  swamp: [p('broadleaf', 6), p('reeds', 4)],
+  mangrove: [p('mangroveTree', 10)],
+  floodplain: [p('reeds', 2, 0.6), p('broadleaf', 1, 0.6)],
+  oasis: [p('palm', 6, 0.45)],
+  volcano: [],
+  glacier: [],
+  reef: [],
+  kelp: [],
+};
+
+export const SNOW = new THREE.Color(0xf4f7fa);
+
+// ---------- per-tile resolved look ----------
+
+export interface TileLook {
+  color: THREE.Color;
+  patchColor: THREE.Color;
+  height: number;
+  plateau: number;
+  roughness: number;
+  wet: number;
+  detail: Detail;
+  props: PropSpec[];
+  propScale: number; // hills: fewer props
+}
+
+export function tileLook(map: MapData, t: number): TileLook {
+  const biome = map.biome[t], relief = map.relief[t], feature = map.feature[t];
+  const B = BIOME_LOOK[biome];
+  const R = RELIEF_LOOK[relief];
+  const F = feature ? FEATURE_LOOK[feature] : null;
+  const e = map.elevation[t];
+  const water = WATER_HEIGHT[biome];
+
+  const color = new THREE.Color(B.color);
+  if (biome === 'ocean') color.lerp(new THREE.Color(0x0f3357), Math.min(1, -e * 1.6)); // darker with depth
+  if (water === undefined) color.lerp(ROCK, R.rock);
+  if (F?.color != null) color.lerp(new THREE.Color(F.color), F.colorMix);
+  // Tiny per-tile jitter so large regions are not perfectly uniform.
+  const j = Math.sin(t * 12.9898) * 43758.5453;
+  color.multiplyScalar(0.96 + 0.08 * (j - Math.floor(j)));
+
+  let height: number, plateau: number, roughness: number;
+  if (water !== undefined) {
+    height = water - (biome === 'ocean' ? 0.006 * Math.min(1, -e * 2) : 0);
+    plateau = 0.6;
+    roughness = biome === 'seaIce' ? 0.0016 : 0.0003;
+  } else {
+    height = R.height;
+    if (relief === 'mountains') height += 0.03 * Math.max(0, e - 0.6);
+    if (relief === 'hills') height += 0.008 * e;
+    if (biome === 'iceSheet') height += 0.004;
+    plateau = R.plateau;
+    roughness = R.roughness;
+  }
+  if (F) {
+    height += F.heightDelta;
+    if (F.plateau !== null) plateau = F.plateau;
+  }
+
+  const detail: Detail = {
+    grain: B.detail.grain,
+    patch: F?.patch ?? B.detail.patch,
+    strata: Math.max(B.detail.strata, water === undefined ? R.strata : 0, F?.strata ?? 0),
+    dunes: relief === 'flat' && !F ? B.detail.dunes : B.detail.dunes * 0.3,
+    bump: Math.min(1, B.detail.bump + (water === undefined ? R.bump : 0)),
+  };
+
+  const props = relief === 'mountains' ? [] : (feature ? FEATURE_PROPS[feature] : null) ?? BIOME_PROPS[biome];
+  return {
+    color,
+    patchColor: new THREE.Color(F?.patchColor ?? 0),
+    height, plateau, roughness,
+    wet: Math.max(B.wet, F?.wet ?? 0),
+    detail,
+    props,
+    propScale: relief === 'hills' ? 0.65 : 1,
+  };
+}
