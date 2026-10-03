@@ -103,10 +103,10 @@ export function generateMap(globe: Globe, seed: number, size: MapSizeKey): MapDa
     // Domain-warped noise: warping the lookup position bends features into
     // curling, irregular shapes instead of round cells.
     const c = tiles[t].center;
-    const wx = detailNoise.fbm(c.x * 1.6 + 3.1, c.y * 1.6, c.z * 1.6, 3);
-    const wy = detailNoise.fbm(c.x * 1.6, c.y * 1.6 + 7.7, c.z * 1.6, 3);
-    const wz = detailNoise.fbm(c.x * 1.6, c.y * 1.6, c.z * 1.6 + 1.9, 3);
-    return 0.5 + shapeNoise.fbm((c.x + 0.7 * wx) * 2.6 + o[0], (c.y + 0.7 * wy) * 2.6 + o[1], (c.z + 0.7 * wz) * 2.6 + o[2], 5);
+    const wx = detailNoise.fbm(c.x * 1.6 + 3.1, c.y * 1.6, c.z * 1.6, 2);
+    const wy = detailNoise.fbm(c.x * 1.6, c.y * 1.6 + 7.7, c.z * 1.6, 2);
+    const wz = detailNoise.fbm(c.x * 1.6, c.y * 1.6, c.z * 1.6 + 1.9, 2);
+    return 0.5 + shapeNoise.fbm((c.x + 0.7 * wx) * 2.6 + o[0], (c.y + 0.7 * wy) * 2.6 + o[1], (c.z + 0.7 * wz) * 2.6 + o[2], 4);
   }, (t) => {
     const c = tiles[t].center;
     return 0.5 + coastNoiseGen.fbm(c.x * 6 + o[2], c.y * 6 + o[0], c.z * 6 + o[1], 3) * 1.4;
@@ -168,9 +168,10 @@ export function generateMap(globe: Globe, seed: number, size: MapSizeKey): MapDa
       let cur = t, shadow = 1, windward = false;
       if (dir.lengthSq() > 0) {
         for (let step = 0; step < 6; step++) {
+          // The most upwind neighbor maximizes (nb - cur)·dir, i.e. nb·dir.
           let best = -1, bestDot = -Infinity;
           for (const nb of tiles[cur].neighbors) {
-            const d = new THREE.Vector3().subVectors(tiles[nb].center, tiles[cur].center).dot(dir);
+            const d = tiles[nb].center.dot(dir);
             if (d > bestDot) { bestDot = d; best = nb; }
           }
           cur = best;
@@ -396,11 +397,17 @@ function buildLand(globe: Globe, limits: MapLimits, rand: Rng, roughness: (t: nu
   const counts: number[] = new Array<number>(K + 1).fill(0);
   const POLAR = K;
   // A tile may join landmass `id` only if no other landmass is within the gap.
-  const freeFor = (t: number, id: number) => {
-    if (owner[t] !== -1) return false;
-    for (const x of ball(globe, t, LANDMASS_GAP).tiles) if (owner[x] !== -1 && owner[x] !== id) return false;
-    return true;
+  // `zone[x]` records which landmass has land within the gap of x (-1 none,
+  // -2 several), so the check is one lookup instead of a neighborhood scan.
+  const zone = new Int16Array(N).fill(-1);
+  const markZone = (t: number, id: number) => {
+    for (const x of ball(globe, t, LANDMASS_GAP).tiles) zone[x] = zone[x] === -1 || zone[x] === id ? id : -2;
   };
+  const rebuildZone = () => {
+    zone.fill(-1);
+    for (let t = 0; t < N; t++) if (owner[t] !== -1) markZone(t, owner[t]);
+  };
+  const freeFor = (t: number, id: number) => owner[t] === -1 && (zone[t] === -1 || zone[t] === id);
   const landCount = () => counts.reduce((a, b) => a + b, 0);
 
   const grow = (seeds: readonly number[], ids: readonly number[], caps: ReadonlyMap<number, number>, stopAt: number) => {
@@ -413,6 +420,7 @@ function buildLand(globe: Globe, limits: MapLimits, rand: Rng, roughness: (t: nu
       if (owner[t] === -1) {
         if (counts[id] >= (caps.get(id) ?? 0) || !freeFor(t, id)) continue;
         owner[t] = id;
+        markZone(t, id);
         counts[id]++;
         landNow++;
       } else if (owner[t] !== id) continue;
@@ -436,11 +444,12 @@ function buildLand(globe: Globe, limits: MapLimits, rand: Rng, roughness: (t: nu
   for (let pass = 0; pass < 2; pass++) {
     const coastal = tiles.filter((t) => owner[t.id] >= 0 && owner[t.id] < K && t.neighbors.some((nb) => owner[nb] === -1)).map((t) => t.id);
     for (const t of coastal) if (coast[t] > 0.7) { counts[owner[t]]--; owner[t] = -1; }
+    rebuildZone();
     const shore = tiles.filter((t) => owner[t.id] === -1 && t.neighbors.some((nb) => owner[nb] >= 0 && owner[nb] < K)).map((t) => t.id);
     for (const t of shore) {
       if (coast[t] >= 0.25) continue;
       const id = owner[tiles[t].neighbors.find((nb) => owner[nb] >= 0 && owner[nb] < K)!];
-      if (freeFor(t, id)) { owner[t] = id; counts[id]++; }
+      if (freeFor(t, id)) { owner[t] = id; markZone(t, id); counts[id]++; }
     }
   }
   // Bays can cut off scraps; keep each continent as its largest connected piece.
@@ -448,6 +457,7 @@ function buildLand(globe: Globe, limits: MapLimits, rand: Rng, roughness: (t: nu
     const parts = components(globe, (t) => owner[t] === id);
     for (const scrap of parts.slice(1)) for (const t of scrap) { owner[t] = -1; counts[id]--; }
   }
+  rebuildZone();
   if (ids.some((i) => counts[i] < minContinent)) return null;
 
   if (polar) {
@@ -463,7 +473,7 @@ function buildLand(globe: Globe, limits: MapLimits, rand: Rng, roughness: (t: nu
   for (let tries = 0; tries < 800 && placed < islandCount; tries++) {
     const s = Math.floor(rand() * N);
     if (lats[s] > 65 || owner[s] !== -1) continue;
-    if (ball(globe, s, LANDMASS_GAP).tiles.some((t) => owner[t] !== -1)) continue;
+    if (zone[s] !== -1) continue;
     const id = counts.length;
     counts.push(0);
     grow([s], [id], new Map([[id, 1 + Math.floor(rand() * islandSize)]]), Infinity);
