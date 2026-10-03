@@ -8,7 +8,7 @@ import type { MapData } from './mapgen.ts';
 import { BIOMES, FEATURES, RELIEFS, featureAllowed, type BiomeKey, type FeatureKey } from './terrain.ts';
 import {
   DESERT_BIOMES, FOREST_BIOMES, FORBIDDEN_NEIGHBORS, TROPICAL_BIOMES, TROPICAL_FEATURES, ball, components, geography,
-  hasWaterNear, inRange, isNavigable, isWaterKey, isWorldOcean, latDeg, roomToGrow, shelfLinkedGroups, startQuality,
+  continentDeepGap, hasWaterNear, inRange, isNavigable, isWaterKey, isWorldOcean, latDeg, roomToGrow, shelfLinkedGroups, startQuality,
   type MapLimits, type Range,
 } from './mapRules.ts';
 
@@ -21,7 +21,7 @@ export interface WorldView {
 }
 
 export type CheckId =
-  | 'G1' | 'G2' | 'G3' | 'G4' | 'G5' | 'G6' | 'G7'
+  | 'G1' | 'G2' | 'G3' | 'G4' | 'G5' | 'G6' | 'G7' | 'G8'
   | 'C1' | 'C2' | 'C3' | 'C4' | 'C5' | 'C6' | 'C7'
   | 'R1' | 'R2'
   | 'F1' | 'F2' | 'F3' | 'F4' | 'F5' | 'F6' | 'F7'
@@ -75,7 +75,7 @@ function clusterCheck(w: WorldView, f: FeatureKey, systems: Range, isWarmEnough:
 export const CHECKS: Record<CheckId, Guarantee> = {
   // ----- geography -----
   G1: {
-    title: 'Between 2 and 5 continents',
+    title: 'A few continents',
     rule: (l) => `${fmtRange(l.continents)} continents: landmasses covering ≥ ${pct(l.continentMinTileShare)} of all tiles and under ${pct(l.continentMaxIceShare)} ice sheet`,
     check: (w) => expectRange('continents', geography(w.globe, w.map, w.limits).continents.length, w.limits.continents),
   },
@@ -131,6 +131,15 @@ export const CHECKS: Record<CheckId, Guarantee> = {
       return linked.length ? `continents linked by shallow water (${linked.length} group${linked.length > 1 ? 's' : ''})` : null;
     },
   },
+  G8: {
+    title: 'Wide deep ocean between continents',
+    rule: (l) => `Every route between two continents crosses at least ${l.continentDeepGap} deep-ocean (or sea-ice) tiles`,
+    check: (w) => {
+      const gap = continentDeepGap(w.globe, w.map, w.limits);
+      return gap >= w.limits.continentDeepGap ? null : `only ${gap} deep-ocean tiles between two continents`;
+    },
+  },
+
   // ----- climate -----
   C1: {
     title: 'Solid polar caps',

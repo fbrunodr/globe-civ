@@ -271,8 +271,16 @@ export function generateMap(globe: Globe, seed: number, size: MapSizeKey): MapDa
     }
   }
   const shelf = (t: number) => { const c = tiles[t].center; return 0.5 + shelfNoise.fbm(c.x * 5 + o[0], c.y * 5 + o[2], c.z * 5 + o[1], 3); };
-  const outerShelf = tiles.map((t) => t.id).filter((t) => biome[t] === 'ocean' && shelf(t) > 0.52 &&
-    tiles[t].neighbors.some((nb) => biome[nb] === 'shallowSea'));
+  // The outer shelf only forms where no other landmass is within 6 tiles, so
+  // shelves never eat into the deep ocean between landmasses (G8).
+  const massOf = new Int32Array(N).fill(-1);
+  components(globe, (t) => isLandBiome(biome[t])).forEach((m, i) => { for (const t of m) massOf[t] = i; });
+  const outerShelf = tiles.map((t) => t.id).filter((t) => {
+    if (biome[t] !== 'ocean' || shelf(t) <= 0.52 || !tiles[t].neighbors.some((nb) => biome[nb] === 'shallowSea')) return false;
+    const masses = new Set<number>();
+    for (const x of ball(globe, t, 6).tiles) if (massOf[x] >= 0) masses.add(massOf[x]);
+    return masses.size <= 1;
+  });
   for (const t of outerShelf) biome[t] = 'shallowSea';
   // G7: early boats follow shallow water, so no continent may be reachable
   // from another without crossing deep ocean. Outer shelf linking two
@@ -337,9 +345,11 @@ export function generateMap(globe: Globe, seed: number, size: MapSizeKey): MapDa
 
 // ---------- land ----------
 
-// Landmasses never come closer than this: at least 4 water tiles between any
-// two, so their shallow shelves can always be kept apart by deep ocean (G7).
+// Any two landmasses keep at least this many tiles between them (4 water
+// tiles), so their shallow shelves can always be kept apart (G7).
 const LANDMASS_GAP = 4;
+// Continents keep even more room: shallow coast + 4 deep tiles + shallow coast (G8).
+const CONTINENT_GAP = 6;
 
 // Returns 1 for land, 0 for water. Continents grow from separate seeds,
 // cheapest-first through a high-contrast noise cost field (which makes
@@ -359,7 +369,10 @@ function buildLand(globe: Globe, limits: MapLimits, rand: Rng, roughness: (t: nu
   const coast = Float32Array.from(tiles, (t) => coastNoise(t.id));
 
   // How many continents, and how big each one is.
-  const K = [2, 3, 3, 4, 4, 5][Math.floor(rand() * 6)];
+  // Uniform over the allowed continent counts, weighted away from the extremes.
+  const counts0 = Array.from({ length: limits.continents.max - limits.continents.min + 1 }, (_, i) => limits.continents.min + i);
+  const weighted = counts0.flatMap((k) => (k === limits.continents.min || k === limits.continents.max ? [k] : [k, k]));
+  const K = weighted[Math.floor(rand() * weighted.length)];
   const polar = rand() < 0.5;
   const islandBudget = Math.round(landTarget * 0.04);
   const polarBudget = polar ? Math.round(landTarget * 0.035) : 0;
@@ -399,15 +412,20 @@ function buildLand(globe: Globe, limits: MapLimits, rand: Rng, roughness: (t: nu
   // A tile may join landmass `id` only if no other landmass is within the gap.
   // `zone[x]` records which landmass has land within the gap of x (-1 none,
   // -2 several), so the check is one lookup instead of a neighborhood scan.
+  // `contZone` does the same for continents only, over the wider continent gap.
   const zone = new Int16Array(N).fill(-1);
+  const contZone = new Int16Array(N).fill(-1);
+  const mark = (arr: Int16Array, t: number, id: number, radius: number) => {
+    for (const x of ball(globe, t, radius).tiles) arr[x] = arr[x] === -1 || arr[x] === id ? id : -2;
+  };
   const markZone = (t: number, id: number) => {
-    for (const x of ball(globe, t, LANDMASS_GAP).tiles) zone[x] = zone[x] === -1 || zone[x] === id ? id : -2;
+    mark(zone, t, id, LANDMASS_GAP);
+    if (id < K) mark(contZone, t, id, CONTINENT_GAP);
   };
-  const rebuildZone = () => {
-    zone.fill(-1);
-    for (let t = 0; t < N; t++) if (owner[t] !== -1) markZone(t, owner[t]);
-  };
-  const freeFor = (t: number, id: number) => owner[t] === -1 && (zone[t] === -1 || zone[t] === id);
+  // Zones are never rebuilt when land is removed (bays, scraps): a stale
+  // entry only keeps *other* landmasses farther away, which is always safe.
+  const freeFor = (t: number, id: number) => owner[t] === -1 && (zone[t] === -1 || zone[t] === id) &&
+    (id >= K || contZone[t] === -1 || contZone[t] === id);
   const landCount = () => counts.reduce((a, b) => a + b, 0);
 
   const grow = (seeds: readonly number[], ids: readonly number[], caps: ReadonlyMap<number, number>, stopAt: number) => {
@@ -444,7 +462,6 @@ function buildLand(globe: Globe, limits: MapLimits, rand: Rng, roughness: (t: nu
   for (let pass = 0; pass < 2; pass++) {
     const coastal = tiles.filter((t) => owner[t.id] >= 0 && owner[t.id] < K && t.neighbors.some((nb) => owner[nb] === -1)).map((t) => t.id);
     for (const t of coastal) if (coast[t] > 0.7) { counts[owner[t]]--; owner[t] = -1; }
-    rebuildZone();
     const shore = tiles.filter((t) => owner[t.id] === -1 && t.neighbors.some((nb) => owner[nb] >= 0 && owner[nb] < K)).map((t) => t.id);
     for (const t of shore) {
       if (coast[t] >= 0.25) continue;
@@ -457,7 +474,6 @@ function buildLand(globe: Globe, limits: MapLimits, rand: Rng, roughness: (t: nu
     const parts = components(globe, (t) => owner[t] === id);
     for (const scrap of parts.slice(1)) for (const t of scrap) { owner[t] = -1; counts[id]--; }
   }
-  rebuildZone();
   if (ids.some((i) => counts[i] < minContinent)) return null;
 
   if (polar) {

@@ -22,6 +22,7 @@ export interface MapLimits {
   readonly continentMinTileShare: number;  // a continent covers at least this share of all tiles
   readonly continentMaxIceShare: number;   // ...and is less than this share ice sheet
   readonly largestContinentMaxLandShare: number; // G3
+  readonly continentDeepGap: number;       // G8: deep-ocean tiles on any route between continents
   readonly landShare: Range;               // G4
   readonly islands: Range;                 // G5
   readonly lakes: Range;                   // G6
@@ -64,10 +65,10 @@ export interface MapLimits {
 }
 
 const BASE = {
-  continents: r(2, 5),
   continentMinTileShare: 0.025,
   continentMaxIceShare: 0.5,
   largestContinentMaxLandShare: 0.6,
+  continentDeepGap: 4,
   landShare: r(0.35, 0.4),
   islands: r(3),
   polarIceMinShareAbove78: 0.95,
@@ -96,17 +97,17 @@ const BASE = {
 
 export const MAP_LIMITS: Record<MapSizeKey, MapLimits> = {
   small: {
-    ...BASE, lakes: r(5, 30), lakeMaxTiles: 7, biomesPresentMin: 12,
+    ...BASE, continents: r(2, 5), lakes: r(5, 30), lakeMaxTiles: 7, biomesPresentMin: 12,
     volcanoes: r(2, 4), reefSystems: r(2, 4), kelpSystems: r(2, 4), oases: r(2, 8),
     marsh: r(1, 40), swamp: r(1, 60), floodplain: r(3, 60), startSpacing: 10,
   },
   medium: {
-    ...BASE, lakes: r(8, 45), lakeMaxTiles: 11, biomesPresentMin: 13,
+    ...BASE, continents: r(3, 5), lakes: r(8, 45), lakeMaxTiles: 11, biomesPresentMin: 13,
     volcanoes: r(2, 5), reefSystems: r(3, 5), kelpSystems: r(3, 5), oases: r(3, 10),
     marsh: r(2, 60), swamp: r(2, 90), floodplain: r(5, 90), startSpacing: 11,
   },
   large: {
-    ...BASE, lakes: r(10, 55), lakeMaxTiles: 14, biomesPresentMin: 13,
+    ...BASE, continents: r(3, 5), lakes: r(10, 55), lakeMaxTiles: 14, biomesPresentMin: 13,
     volcanoes: r(3, 6), reefSystems: r(4, 6), kelpSystems: r(4, 6), oases: r(4, 12),
     marsh: r(3, 80), swamp: r(3, 120), floodplain: r(6, 120), startSpacing: 12,
   },
@@ -247,6 +248,40 @@ export function shelfLinkedGroups(globe: Globe, map: Biomes, limits: MapLimits):
   geo.continents.forEach((c, i) => { for (const t of c) continentOf[t] = i; });
   const groups = components(globe, (t) => isLandTile(map, t) || map.biome[t] === 'shallowSea');
   return groups.filter((g) => new Set(g.map((t) => continentOf[t]).filter((c) => c >= 0)).size > 1);
+}
+
+// G8: the fewest deep-ocean tiles any route between two different continents
+// must cross (land, shallow sea and lakes are free; deep ocean and sea ice
+// count one each). Infinity when there are fewer than two continents.
+export function continentDeepGap(globe: Globe, map: Biomes, limits: MapLimits): number {
+  const geo = geography(globe, map, limits);
+  if (geo.continents.length < 2) return Infinity;
+  const N = globe.tiles.length;
+  const continentOf = new Int32Array(N).fill(-1);
+  geo.continents.forEach((c, i) => { for (const t of c) continentOf[t] = i; });
+  const costOf = (t: number) => (map.biome[t] === 'ocean' || map.biome[t] === 'seaIce' ? 1 : 0);
+  let best = Infinity;
+  // 0-1 BFS from each continent; the closest other continent gives the gap.
+  for (let c = 0; c < geo.continents.length; c++) {
+    const dist = new Int32Array(N).fill(-1);
+    const deque: number[] = [...geo.continents[c]];
+    for (const t of deque) dist[t] = 0;
+    let head = 0;
+    const front: number[] = [];
+    while (front.length || head < deque.length) {
+      const t = front.length ? front.pop()! : deque[head++];
+      const d = dist[t];
+      if (d >= best) continue;
+      if (continentOf[t] >= 0 && continentOf[t] !== c) { best = Math.min(best, d); continue; }
+      for (const nb of globe.tiles[t].neighbors) {
+        const nd = d + costOf(nb);
+        if (dist[nb] !== -1 && dist[nb] <= nd) continue;
+        dist[nb] = nd;
+        if (nd === d) front.push(nb); else deque.push(nb);
+      }
+    }
+  }
+  return best;
 }
 
 // ---------- start evaluation (shared by start placement and S-checks) ----------
