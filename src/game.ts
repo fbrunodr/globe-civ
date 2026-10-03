@@ -1,13 +1,14 @@
 import type { Globe, Tile } from './goldberg.ts';
 import type { MapData } from './mapgen.ts';
 import { generateWorld, type World } from './world.ts';
+import { tileYieldOf } from './mapRules.ts';
 import { mulberry32, type Rng } from './rng.ts';
 import {
   unitDef, buildDef, isUnitKey, UNITS, BUILDINGS, CIVS, growthCost, territoryRadius,
   type UnitKey, type BuildingKey, type BuildKey, type MapSizeKey,
 } from './rules.ts';
 import {
-  isWaterBiome, terrainYield, terrainMoveCost, terrainDefense,
+  isWaterBiome, terrainMoveCost, terrainDefense,
   type BiomeKey, type ReliefKey, type FeatureKey, type TileTerrain, type Yields,
 } from './terrain.ts';
 import { aiTurn } from './ai.ts';
@@ -134,7 +135,7 @@ export class Game {
 
   isWater(t: number): boolean { return isWaterBiome(this.biome[t]); }
 
-  tileYield(t: number): Yield { return terrainYield(this.terrainAt(t)); }
+  tileYield(t: number): Yield { return tileYieldOf(this.map, t); }
 
   moveCost(t: number): number { return terrainMoveCost(this.terrainAt(t)); }
 

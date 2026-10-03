@@ -6,7 +6,8 @@ import { SNOW, tileLook, type TileLook, type PropKind } from './look.ts';
 import { buildTerrainMesh, type TerrainMesh } from './terrainMesh.ts';
 import { makeTerrainMaterial, type TerrainMaterial } from './terrainMaterial.ts';
 import { buildPropGeometry, PROP_KINDS } from './props.ts';
-import { mulberry32 } from './rng.ts';
+import { mulberry32, makePerlin } from './rng.ts';
+import { borderBetween } from './rivers.ts';
 
 const FOG = new THREE.Color(0x0b0e15);
 
@@ -32,6 +33,9 @@ export class GlobeRenderer {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.PerspectiveCamera;
+  private readonly sun: THREE.DirectionalLight;
+  private readonly lastView = { pos: new THREE.Vector3(), quat: new THREE.Quaternion() };
+  private shadowsDirty = true;
   private readonly controls: OrbitControls;
   private readonly raycaster = new THREE.Raycaster();
   private readonly scale: number; // world size of one tile relative to REF_EDGE
@@ -44,6 +48,8 @@ export class GlobeRenderer {
   private readonly playerColors: THREE.Color[];
   private readonly vertSnow: Float32Array;
   private readonly vertTint: Float32Array;
+  private readonly vertAO: Float32Array;
+  private readonly propNoise = makePerlin(mulberry32(0x7ee5));
   private prevExplored: Uint8Array;
   private prevVisible: Uint8Array;
   private prevOwner: Int32Array;
@@ -54,6 +60,7 @@ export class GlobeRenderer {
   private readonly citiesGroup = new THREE.Group();
   private readonly overlayGroup = new THREE.Group();
   private borders: THREE.Mesh | null = null;
+  private riverMesh: THREE.Mesh | null = null;
   private readonly textures = new Map<string, THREE.CanvasTexture>();
   private readonly cityBase: THREE.CylinderGeometry;
   private readonly cityBlock: THREE.BoxGeometry;
@@ -68,19 +75,30 @@ export class GlobeRenderer {
     this.scale = game.globe.avgEdgeAngle / REF_EDGE;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
+    // Neutral tone mapping keeps the pastel palette saturated (ACES washes it out).
+    this.renderer.toneMapping = THREE.NeutralToneMapping;
+    this.renderer.toneMappingExposure = 1.0;
     this.scene.background = new THREE.Color(0x04050a);
 
     this.camera = new THREE.PerspectiveCamera(40, 1, 0.005, 200);
     this.camera.position.set(0, 0, 3.4);
     this.scene.add(this.camera);
-    // The sun rides with the camera (from the upper left) so the visible side
-    // is always lit; the hemisphere light fills shadows with sky/ground tones.
-    const sun = new THREE.DirectionalLight(0xfff1dc, 2.4);
-    sun.position.set(-1.2, 1.4, 1.6);
-    this.camera.add(sun);
-    this.scene.add(new THREE.HemisphereLight(0xd6e4ff, 0x3a3428, 0.9));
+    // The sun keeps a fixed angle to the camera (from the upper left) so the
+    // visible side is always lit; it is repositioned every frame (see
+    // updateSun) so its shadow map only covers what is on screen. The
+    // hemisphere light fills shadows with a cool sky tone.
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // Shadows re-render only when the view or the world changes (laptops).
+    this.renderer.shadowMap.autoUpdate = false;
+    this.sun = new THREE.DirectionalLight(0xffefd2, 2.3);
+    this.sun.castShadow = true;
+    this.sun.shadow.mapSize.set(2048, 2048);
+    this.sun.shadow.bias = -0.0004;
+    this.sun.shadow.normalBias = 0.003;
+    this.sun.shadow.radius = 3;
+    this.scene.add(this.sun, this.sun.target);
+    this.scene.add(new THREE.HemisphereLight(0xcfe3ff, 0x6b5a3e, 1.05));
 
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.enableDamping = true;
@@ -107,6 +125,7 @@ export class GlobeRenderer {
         { name: 'detail', itemSize: 4, perTile: perTile(4, (l) => [l.detail.grain, l.detail.patch, l.detail.strata, l.detail.dunes]) },
         { name: 'bump', itemSize: 1, perTile: perTile(1, (l) => [l.detail.bump]) },
         { name: 'patchColor', itemSize: 3, perTile: perTile(3, (l) => [l.patchColor.r, l.patchColor.g, l.patchColor.b]) },
+        { name: 'coast', itemSize: 2, perTile: perTile(2, (l) => [l.beach, l.shallow]) },
       ],
     };
     this.terrain = buildTerrainMesh(g.globe, field, SUBDIV, g.seed);
@@ -126,7 +145,7 @@ export class GlobeRenderer {
     }
     for (let t = 0; t < N; t++) {
       if (g.relief[t] !== 'mountains') continue;
-      const capFrom = g.feature[t] === 'glacier' ? 0.55 : g.map.temperature[t] < 3 ? 0.75 : null;
+      const capFrom = g.feature[t] === 'glacier' ? 0.68 : g.map.temperature[t] < 3 ? 0.85 : null;
       if (capFrom === null) continue;
       const verts = this.terrain.tileVerts[t];
       let lo = Infinity, hi = -Infinity;
@@ -137,8 +156,18 @@ export class GlobeRenderer {
       }
     }
 
+    this.vertAO = bakeOcclusion(this.terrain);
+    // Forest floors sit in the canopy's shade.
+    for (let t = 0; t < N; t++) {
+      const trees = L[t].props.reduce((a, p) => a + (p.count >= 6 ? p.count : 0), 0);
+      if (trees === 0) continue;
+      for (const v of this.terrain.tileVerts[t]) this.vertAO[v] *= 0.86;
+    }
+
     this.terrainMat = makeTerrainMaterial();
     this.globeMesh = new THREE.Mesh(this.terrain.geometry, this.terrainMat.material);
+    this.globeMesh.castShadow = true;
+    this.globeMesh.receiveShadow = true;
     this.scene.add(this.globeMesh);
     this.prevExplored = new Uint8Array(N).fill(255);
     this.prevVisible = new Uint8Array(N).fill(255);
@@ -151,8 +180,9 @@ export class GlobeRenderer {
     for (const l of L) for (const spec of l.props) capacity.set(spec.kind, (capacity.get(spec.kind) ?? 0) + Math.ceil(spec.count * l.propScale));
     const propMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, flatShading: true });
     for (const kind of PROP_KINDS) {
-      const mesh = new THREE.InstancedMesh(buildPropGeometry(kind, s * 1.35), propMat, Math.max(1, capacity.get(kind) ?? 0));
+      const mesh = new THREE.InstancedMesh(buildPropGeometry(kind, s * 1.5), propMat, Math.max(1, capacity.get(kind) ?? 0));
       mesh.count = 0;
+      mesh.castShadow = true;
       this.props.set(kind, mesh);
       this.scene.add(mesh);
     }
@@ -187,10 +217,12 @@ export class GlobeRenderer {
 
   // Redraw everything that depends on game state.
   syncWorld(sel: Selection): void {
+    this.shadowsDirty = true;
     const changed = this.changedTiles();
     if (changed.length) {
       this.updateColors(changed);
       this.updateProps();
+      this.updateRivers();
       this.updateBorders();
     }
     this.updateCities();
@@ -306,7 +338,7 @@ export class GlobeRenderer {
         if (!g.explored[t]) hidden++;
         n++;
       }
-      const shade = (1 + 0.07 * this.vertTint[v]) / n;
+      const shade = ((1 + 0.07 * this.vertTint[v]) * this.vertAO[v]) / n;
       arr[v * 3] = acc.r * shade; arr[v * 3 + 1] = acc.g * shade; arr[v * 3 + 2] = acc.b * shade;
       fogArr[v] = hidden / n;
     }
@@ -329,15 +361,23 @@ export class GlobeRenderer {
       for (const spec of look.props) {
         const mesh = this.props.get(spec.kind)!;
         const n = Math.ceil(spec.count * look.propScale);
-        for (let j = 0; j < n; j++) {
+        // Forests clump: oversample positions and keep those where a smooth
+        // density field is high, so groves and clearings form; trees in the
+        // densest spots grow largest. Sparse props stay evenly spread.
+        const clumps = spec.count >= 6;
+        let placed = 0;
+        for (let j = 0; j < (clumps ? n * 3 : n) && placed < n; j++) {
           const i = Math.floor(rand() * k);
           let wa = rand(), wb = rand();
           if (wa + wb > 1) { wa = 1 - wa; wb = 1 - wb; }
           wa *= spec.spread; wb *= spec.spread;
           const p = this.terrain.samplePoint(t, i, wa, wb);
+          const density = clumps ? 0.5 + this.propNoise.fbm(p.x * 38, p.y * 38, p.z * 38, 2) * 1.6 : 1;
+          if (clumps && density < 0.42 + 0.2 * rand()) continue;
+          placed++;
           q.setFromUnitVectors(UP, p.clone().normalize());
           q.multiply(new THREE.Quaternion().setFromAxisAngle(UP, rand() * Math.PI * 2));
-          const size = 0.75 + 0.55 * rand();
+          const size = (0.75 + 0.55 * rand()) * (clumps ? 0.8 + 0.4 * Math.min(1, density) : 1);
           m.compose(p, q, sc.set(size, size * (0.9 + 0.3 * rand()), size));
           color.setScalar((0.82 + 0.36 * rand()) * dim);
           const idx = counts.get(spec.kind) ?? 0;
@@ -389,6 +429,73 @@ export class GlobeRenderer {
       const a0 = pt(f0, outer), b0 = pt(f1, outer), a1 = pt(f0, inner), b1 = pt(f1, inner);
       for (const v of [a0, b0, b1, a0, b1, a1]) out.push(v.x, v.y, v.z);
     }
+  }
+
+  // Rivers: a ribbon along each river's tile edges, following the terrain and
+  // widening downstream with the water it carries. Hidden under fog of war.
+  private updateRivers(): void {
+    const g = this.game;
+    const s = this.scale;
+    const maxFlow = Math.max(1, ...g.map.rivers.flatMap((r) => r.flow));
+    const pos: number[] = [], col: number[] = [], idx: number[] = [];
+    const river = new THREE.Color(0x4fb2cc);
+    const up = new THREE.Vector3(), tan = new THREE.Vector3(), side = new THREE.Vector3();
+    for (const r of g.map.rivers) {
+      // Sample the river's course along the tile borders it follows.
+      const pts: THREE.Vector3[] = [], width: number[] = [], seen: number[] = [];
+      for (let k = 0; k + 1 < r.corners.length; k++) {
+        const pair = borderBetween(g.globe, r.corners[k], r.corners[k + 1]);
+        if (!pair) continue;
+        const [a, b] = pair;
+        const tile = g.tiles[a];
+        const kk = tile.corners.length;
+        let i = tile.corners.findIndex((c, j) => c === r.corners[k] && tile.corners[(j + 1) % kk] === r.corners[k + 1]);
+        const forward = i >= 0;
+        if (!forward) i = tile.corners.findIndex((c, j) => c === r.corners[k + 1] && tile.corners[(j + 1) % kk] === r.corners[k]);
+        if (i < 0) continue;
+        const shown = g.explored[a] || g.explored[b] ? (g.visible[a] || g.visible[b] ? 1 : 0.5) : 0;
+        const w0 = (0.0035 + 0.007 * Math.sqrt(r.flow[k] / maxFlow)) * s;
+        const steps = k + 2 === r.corners.length ? 5 : 4;
+        for (let st = 0; st < steps; st++) {
+          const f = st / 4;
+          const ff = forward ? f : 1 - f;
+          const p = this.terrain.samplePoint(a, i, 1 - ff, ff);
+          pts.push(p.multiplyScalar(1 + 0.0012 / p.length()));
+          width.push(w0);
+          seen.push(shown);
+        }
+      }
+      // Ribbon with joints averaged between neighboring segments.
+      const base = pos.length / 3;
+      for (let j = 0; j < pts.length; j++) {
+        const p = pts[j];
+        tan.subVectors(pts[Math.min(pts.length - 1, j + 1)], pts[Math.max(0, j - 1)]).normalize();
+        up.copy(p).normalize();
+        side.crossVectors(up, tan).normalize().multiplyScalar(width[j] / 2);
+        pos.push(p.x + side.x, p.y + side.y, p.z + side.z, p.x - side.x, p.y - side.y, p.z - side.z);
+        const c = river.clone().multiplyScalar(seen[j] === 0.5 ? 0.55 : 1);
+        for (let v = 0; v < 2; v++) col.push(c.r, c.g, c.b);
+        if (j > 0 && seen[j] > 0 && seen[j - 1] > 0) {
+          const q = base + 2 * j;
+          idx.push(q - 2, q - 1, q, q - 1, q + 1, q);
+        }
+      }
+    }
+    if (this.riverMesh) {
+      this.scene.remove(this.riverMesh);
+      this.riverMesh.geometry.dispose();
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    this.riverMesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+      vertexColors: true, roughness: 0.45, side: THREE.DoubleSide,
+      polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3,
+    }));
+    this.riverMesh.receiveShadow = true;
+    this.scene.add(this.riverMesh);
   }
 
   // Colored bands along the inside edge of each empire's territory.
@@ -495,6 +602,7 @@ export class GlobeRenderer {
       group.position.copy(this.surface(city.tile));
       group.quaternion.setFromUnitVectors(UP, tile.center);
       const base = new THREE.Mesh(this.cityBase, new THREE.MeshStandardMaterial({ color, roughness: 0.7 }));
+      base.castShadow = true;
       base.position.y = 0.002 * s;
       group.add(base);
       const blockMat = new THREE.MeshStandardMaterial({ color: 0xe9e4d8, roughness: 0.8 });
@@ -502,6 +610,7 @@ export class GlobeRenderer {
       for (let i = 0; i < blocks; i++) {
         const a = (i / blocks) * Math.PI * 2;
         const b = new THREE.Mesh(this.cityBlock, blockMat);
+        b.castShadow = true;
         const hgt = 0.7 + 0.6 * fract(Math.sin((city.id * 7 + i) * 12.9898) * 43758.5453);
         b.scale.set(1, hgt, 1);
         b.position.set(Math.cos(a) * 0.013 * s, (0.005 + 0.008 * hgt) * s, Math.sin(a) * 0.013 * s);
@@ -536,6 +645,30 @@ export class GlobeRenderer {
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 
+  // Places the sun at a fixed angle to the view and fits its shadow camera to
+  // the visible patch of globe: tight when zoomed in (crisp shadows), the
+  // whole hemisphere when zoomed out.
+  private updateSun(): void {
+    const cam = this.camera;
+    const moved = cam.position.distanceToSquared(this.lastView.pos) > 1e-10 || cam.quaternion.angleTo(this.lastView.quat) > 1e-5;
+    if (!moved && !this.shadowsDirty) return;
+    this.lastView.pos.copy(cam.position);
+    this.lastView.quat.copy(cam.quaternion);
+    this.shadowsDirty = false;
+    const focus = cam.position.clone().normalize();
+    const dir = new THREE.Vector3(-1.0, 1.4, 2.3).normalize().applyQuaternion(cam.quaternion);
+    this.sun.position.copy(focus).addScaledVector(dir, 3);
+    this.sun.target.position.copy(focus);
+    this.sun.target.updateMatrixWorld();
+    const dist = cam.position.length();
+    const half = Math.min(1.15, Math.max(0.12, (dist - 1) * Math.tan(THREE.MathUtils.degToRad(cam.fov / 2)) * Math.max(1, cam.aspect) * 1.3));
+    const sc = this.sun.shadow.camera;
+    sc.left = -half; sc.right = half; sc.top = half; sc.bottom = -half;
+    sc.near = 1; sc.far = 5;
+    sc.updateProjectionMatrix();
+    this.renderer.shadowMap.needsUpdate = true;
+  }
+
   private pick(x: number, y: number): number {
     const ndc = new THREE.Vector2((x / innerWidth) * 2 - 1, -(y / innerHeight) * 2 + 1);
     this.raycaster.setFromCamera(ndc, this.camera);
@@ -555,6 +688,7 @@ export class GlobeRenderer {
       if (cur.angleTo(this.focusDir) < 0.003) this.focusDir = null;
     }
     this.controls.update();
+    this.updateSun();
     this.terrainMat.setTime(performance.now() / 1000);
 
     if (this.pointer.dirty) {
@@ -567,6 +701,40 @@ export class GlobeRenderer {
     }
     this.renderer.render(this.scene, this.camera);
   }
+}
+
+// Ambient occlusion from the terrain's shape: each vertex is compared with a
+// blurred copy of the height field, so valleys and hollows darken and ridges
+// catch a little extra light. Baked once; costs nothing per frame.
+function bakeOcclusion(terrain: TerrainMesh): Float32Array {
+  const R = terrain.vertRadius;
+  const V = R.length;
+  const index = terrain.geometry.getIndex()!.array;
+  // Vertex adjacency (compressed rows) from the triangle list.
+  const deg = new Uint32Array(V + 1);
+  for (let i = 0; i < index.length; i += 3) for (let k = 0; k < 3; k++) deg[index[i + k] + 1] += 2;
+  for (let v = 0; v < V; v++) deg[v + 1] += deg[v];
+  const adj = new Uint32Array(deg[V]);
+  const fill = deg.slice(0, V);
+  for (let i = 0; i < index.length; i += 3) {
+    const a = index[i], b = index[i + 1], c = index[i + 2];
+    adj[fill[a]++] = b; adj[fill[a]++] = c;
+    adj[fill[b]++] = a; adj[fill[b]++] = c;
+    adj[fill[c]++] = a; adj[fill[c]++] = b;
+  }
+  let smooth = Float32Array.from(R);
+  for (let iter = 0; iter < 4; iter++) {
+    const next = new Float32Array(V);
+    for (let v = 0; v < V; v++) {
+      let sum = 0;
+      for (let j = deg[v]; j < deg[v + 1]; j++) sum += smooth[adj[j]];
+      next[v] = sum / Math.max(1, deg[v + 1] - deg[v]);
+    }
+    smooth = next;
+  }
+  const ao = new Float32Array(V);
+  for (let v = 0; v < V; v++) ao[v] = 1 - Math.min(0.4, Math.max(-0.1, (smooth[v] - R[v]) * 110));
+  return ao;
 }
 
 function smoothstep(a: number, b: number, x: number): number {

@@ -6,6 +6,7 @@
 import type { Globe } from './goldberg.ts';
 import type { MapData } from './mapgen.ts';
 import { BIOMES, FEATURES, RELIEFS, featureAllowed, type BiomeKey, type FeatureKey } from './terrain.ts';
+import { borderBetween } from './rivers.ts';
 import {
   DESERT_BIOMES, FOREST_BIOMES, FORBIDDEN_NEIGHBORS, TROPICAL_BIOMES, TROPICAL_FEATURES, ball, components, geography,
   continentDeepGap, hasWaterNear, inRange, isNavigable, isWaterKey, isWorldOcean, latDeg, roomToGrow, shelfLinkedGroups, startQuality,
@@ -25,6 +26,7 @@ export type CheckId =
   | 'C1' | 'C2' | 'C3' | 'C4' | 'C5' | 'C6' | 'C7'
   | 'R1' | 'R2'
   | 'F1' | 'F2' | 'F3' | 'F4' | 'F5' | 'F6' | 'F7'
+  | 'V1' | 'V2' | 'V3' | 'V4' | 'V5' | 'V6'
   | 'S1' | 'S2' | 'S3' | 'S4' | 'S5'
   | 'I2';
 
@@ -36,6 +38,9 @@ export interface Guarantee {
   rule: (limits: MapLimits) => string;
   check: (w: WorldView) => string | null;
 }
+
+const touchesWater = (w: WorldView, corner: number) => w.globe.tris[corner].some((t) => isWaterKey(w.map.biome[t]));
+const mainRivers = (w: WorldView) => w.map.rivers.filter((r) => !r.tributary);
 
 const fmtRange = (rg: Range) => (rg.max === Infinity ? `≥ ${rg.min}` : `${rg.min}–${rg.max}`);
 const pct = (x: number) => `${(100 * x).toFixed(1)}%`;
@@ -303,6 +308,68 @@ export const CHECKS: Record<CheckId, Guarantee> = {
       ?? expectRange('swamp tiles', featureTiles(w, 'swamp').length, w.limits.swamp)
       ?? expectRange('floodplain tiles', featureTiles(w, 'floodplain').length, w.limits.floodplain),
   },
+  // ----- rivers -----
+  V1: {
+    title: 'Rivers in range',
+    rule: (l) => `${fmtRange(l.rivers)} rivers reach the sea or a lake (tributaries not counted)`,
+    check: (w) => expectRange('rivers', mainRivers(w).length, w.limits.rivers),
+  },
+  V2: {
+    title: 'Every river ends in water',
+    rule: () => 'Each river runs along connected tile edges without revisiting a corner, and ends where it meets the sea, a lake or a larger river',
+    check: (w) => {
+      const trunk = new Set<number>();
+      for (const r of w.map.rivers) for (const c of r.corners.slice(0, -1)) trunk.add(c);
+      for (const [i, r] of w.map.rivers.entries()) {
+        if (new Set(r.corners).size !== r.corners.length) return `river ${i} visits a corner twice`;
+        for (let k = 0; k + 1 < r.corners.length; k++) {
+          if (!borderBetween(w.globe, r.corners[k], r.corners[k + 1])) return `river ${i} jumps between corners that do not touch`;
+        }
+        const end = r.corners[r.corners.length - 1];
+        if (r.tributary ? !trunk.has(end) : !touchesWater(w, end)) return `river ${i} ends on dry land`;
+      }
+      return null;
+    },
+  },
+  V3: {
+    title: 'Rivers stay inland',
+    rule: () => 'No river runs along a coast or a lakeshore: both tiles beside every river edge are land',
+    check: (w) => {
+      for (const [i, r] of w.map.rivers.entries()) {
+        for (let k = 0; k + 1 < r.corners.length; k++) {
+          const pair = borderBetween(w.globe, r.corners[k], r.corners[k + 1]);
+          if (pair && pair.some((t) => isWaterKey(w.map.biome[t]))) return `river ${i} runs along water`;
+        }
+      }
+      return null;
+    },
+  },
+  V4: {
+    title: 'Rivers flow downhill',
+    rule: () => 'Every river starts higher than where it ends',
+    check: (w) => {
+      const e = w.map.cornerElevation;
+      const bad = w.map.rivers.findIndex((r) => e[r.corners[0]] <= e[r.corners[r.corners.length - 1]]);
+      return bad < 0 ? null : `river ${bad} ends higher than it starts`;
+    },
+  },
+  V5: {
+    title: 'Some long rivers',
+    rule: (l) => `At least ${l.longRivers} rivers run ${l.longRiverEdges}+ tile edges to the sea or a lake`,
+    check: (w) => {
+      const long = mainRivers(w).filter((r) => r.corners.length - 1 >= w.limits.longRiverEdges).length;
+      return long >= w.limits.longRivers ? null : `only ${long} long rivers`;
+    },
+  },
+  V6: {
+    title: 'Floodplains follow rivers',
+    rule: () => 'Every floodplain borders a river',
+    check: (w) => {
+      const t = featureTiles(w, 'floodplain').find((x) => !w.map.riverTile[x]);
+      return t === undefined ? null : `floodplain at tile ${t} has no river`;
+    },
+  },
+
   // ----- starts -----
   S1: {
     title: 'Every civ starts on a continent',
@@ -342,7 +409,7 @@ export const CHECKS: Record<CheckId, Guarantee> = {
   },
   S5: {
     title: 'Water nearby',
-    rule: (l) => `Coast or lake within ${l.startWaterRadius} tiles of every start`,
+    rule: (l) => `Coast, lake or river within ${l.startWaterRadius} tiles of every start`,
     check: (w) => {
       const s = w.starts.find((t) => !hasWaterNear(w.globe, w.map, t, w.limits.startWaterRadius));
       return s === undefined ? null : `start at tile ${s} has no water within ${w.limits.startWaterRadius} tiles`;

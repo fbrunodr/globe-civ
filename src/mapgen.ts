@@ -3,6 +3,7 @@ import { mulberry32, makePerlin, type Noise3, type Rng } from './rng.ts';
 import type { Globe } from './goldberg.ts';
 import type { MapSizeKey } from './rules.ts';
 import { featureAllowed, type BiomeKey, type ReliefKey, type FeatureKey } from './terrain.ts';
+import { RIVER_DEFAULTS, borderBetween, generateRivers, type River } from './rivers.ts';
 import {
   MAP_LIMITS, FORBIDDEN_NEIGHBORS, ball, bfs, components, latDeg, isNavigable, isWorldOcean, isWaterKey, shelfLinkedGroups,
   type MapLimits, type Range,
@@ -16,7 +17,10 @@ export interface MapData {
   elevation: Float32Array;
   temperature: Float32Array; // mean annual °C at the tile's altitude
   rainfall: Float32Array;    // mm / year
-  flow: Float32Array;        // rain drained through the tile; rivers will use this
+  flow: Float32Array;        // rain drained through the tile (tile-level drainage)
+  rivers: River[];           // along tile edges, source to mouth (see rivers.ts)
+  riverTile: Uint8Array;     // 1 = the tile borders a river
+  cornerElevation: Float32Array;
 }
 
 // Share of all tiles that is land (G4 allows 35–40%).
@@ -297,7 +301,30 @@ export function generateMap(globe: Globe, seed: number, size: MapSizeKey): MapDa
   ensureBiomes(globe, biome, relief, feature, limits, biomeTemp, rainfall, lat, rand);
   repairNeighbors(globe, biome);
 
-  // ---------- 8. features ----------
+  // ---------- 8. rivers ----------
+  // Lower the water threshold step by step until the map has its required
+  // rivers and long rivers (V1, V5).
+  const longEnough = (r: River) => !r.tributary && r.corners.length - 1 >= limits.longRiverEdges;
+  let network = generateRivers(globe, biome, elevation, rainfall);
+  for (const q of [0.92, 0.91, 0.9, 0.88, 0.86, 0.84]) {
+    const mains = network.rivers.filter((r) => !r.tributary).length;
+    if (mains >= limits.rivers.min && network.rivers.filter(longEnough).length >= limits.longRivers) break;
+    network = generateRivers(globe, biome, elevation, rainfall, { ...RIVER_DEFAULTS, flowQuantile: q });
+  }
+  const { rivers, cornerElevation } = network;
+  const riverTile = new Uint8Array(N);
+  const riverFlowAt = new Float32Array(N);
+  for (const r of rivers) {
+    for (let i = 0; i + 1 < r.corners.length; i++) {
+      const pair = borderBetween(globe, r.corners[i], r.corners[i + 1]);
+      if (!pair) continue;
+      for (const t of pair) { riverTile[t] = 1; riverFlowAt[t] = Math.max(riverFlowAt[t], r.flow[i]); }
+    }
+  }
+  const riverFlows = [...riverFlowAt].filter((f) => f > 0).sort((a, b) => a - b);
+  const bigRiver = riverFlows[Math.floor(riverFlows.length * 0.4)] ?? Infinity;
+
+  // ---------- 9. features ----------
   const touchesSea = (t: number) => tiles[t].neighbors.some((nb) => isNavigable(biome[nb]));
   const touchesWater = (t: number) => tiles[t].neighbors.some((nb) => isWaterKey(biome[nb]));
   const allowed = (f: FeatureKey, t: number) =>
@@ -315,8 +342,8 @@ export function generateMap(globe: Globe, seed: number, size: MapSizeKey): MapDa
     .sort((a, b) => (coastDist[a] <= 3 ? 0 : 1) - (coastDist[b] <= 3 ? 0 : 1));
   if (!pickSpaced(globe, volcanoSites, randInt(rand, limits.volcanoes), limits.volcanoSpacing, (t) => { feature[t] = 'volcano'; })) return null;
 
-  // Wetlands and floodplains on flat land.
-  const riverFlow = quantile(byHeight.map((t) => flow[t]), 0.93);
+  // Floodplains and riverside wetlands follow the bigger rivers; coastal
+  // marshes and swamps form in wet lowlands by the water.
   const FORESTED: ReadonlySet<BiomeKey> = new Set(['temperateForest', 'temperateRainforest', 'monsoonForest', 'jungle']);
   for (let t = 0; t < N; t++) {
     if (!isLandBiome(biome[t]) || relief[t] !== 'flat' || feature[t]) continue;
@@ -324,7 +351,7 @@ export function generateMap(globe: Globe, seed: number, size: MapSizeKey): MapDa
     const wetland = (): FeatureKey | null =>
       FORESTED.has(biome[t]) && seaLevelTemp[t] > 10 && allowed('swamp', t) ? 'swamp' : allowed('marsh', t) ? 'marsh' : null;
     if (allowed('mangrove', t) && rainfall[t] > 1100 && r < 0.45) feature[t] = 'mangrove';
-    else if (flow[t] >= riverFlow && temperature[t] > 2 && elevation[t] < midland) {
+    else if (riverTile[t] && riverFlowAt[t] >= bigRiver && temperature[t] > 2 && elevation[t] < midland && r < 0.7) {
       feature[t] = rainfall[t] > 1400 && FORESTED.has(biome[t]) ? wetland() : allowed('floodplain', t) ? 'floodplain' : null;
     } else if (elevation[t] < lowland && temperature[t] > 0 && rainfall[t] > 700 && touchesWater(t) && r < 0.3) {
       feature[t] = wetland();
@@ -340,7 +367,7 @@ export function generateMap(globe: Globe, seed: number, size: MapSizeKey): MapDa
   if (!growClusters(globe, rand, (t) => shallowFree(t) && seaLevelTemp[t] > 21, randInt(rand, limits.reefSystems), limits.clusterTiles, (t) => { feature[t] = 'reef'; })) return null;
   if (!growClusters(globe, rand, (t) => shallowFree(t) && seaLevelTemp[t] > 4 && seaLevelTemp[t] < 16, randInt(rand, limits.kelpSystems), limits.clusterTiles, (t) => { feature[t] = 'kelp'; })) return null;
 
-  return { biome, relief, feature, elevation, temperature, rainfall, flow };
+  return { biome, relief, feature, elevation, temperature, rainfall, flow, rivers, riverTile, cornerElevation };
 }
 
 // ---------- land ----------

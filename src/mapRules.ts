@@ -5,7 +5,7 @@
 import type { Globe } from './goldberg.ts';
 import type { MapData } from './mapgen.ts';
 import type { MapSizeKey } from './rules.ts';
-import { terrainYield, type BiomeKey, type FeatureKey } from './terrain.ts';
+import { RIVER_GOLD, terrainYield, type BiomeKey, type FeatureKey, type Yields } from './terrain.ts';
 
 // ---------- limits ----------
 
@@ -56,6 +56,10 @@ export interface MapLimits {
   readonly marsh: Range;                      // F7
   readonly swamp: Range;
   readonly floodplain: Range;
+  // Rivers
+  readonly rivers: Range;                     // V1: rivers reaching the sea or a lake (tributaries not counted)
+  readonly longRiverEdges: number;            // V5: a long river has at least this many edges
+  readonly longRivers: number;                // V5: at least this many long rivers
   // Starts
   readonly startSpacing: number;              // S2
   readonly startQualityMaxRatio: number;      // S3
@@ -89,6 +93,7 @@ const BASE = {
   oasisSpacing: 4,
   glacierMaxTemp: -4,
   glacierMaxMountainShare: 0.5,
+  longRiverEdges: 8,
   startQualityMaxRatio: 1.35,
   startRoomRadius: 8,
   startRoomSites: 3,
@@ -99,17 +104,17 @@ export const MAP_LIMITS: Record<MapSizeKey, MapLimits> = {
   small: {
     ...BASE, continents: r(2, 5), lakes: r(5, 30), lakeMaxTiles: 7, biomesPresentMin: 12,
     volcanoes: r(2, 4), reefSystems: r(2, 4), kelpSystems: r(2, 4), oases: r(2, 8),
-    marsh: r(1, 40), swamp: r(1, 60), floodplain: r(3, 60), startSpacing: 10,
+    marsh: r(1, 40), swamp: r(1, 60), floodplain: r(2, 60), startSpacing: 10, rivers: r(5, 30), longRivers: 1,
   },
   medium: {
     ...BASE, continents: r(3, 5), lakes: r(8, 45), lakeMaxTiles: 11, biomesPresentMin: 13,
     volcanoes: r(2, 5), reefSystems: r(3, 5), kelpSystems: r(3, 5), oases: r(3, 10),
-    marsh: r(2, 60), swamp: r(2, 90), floodplain: r(5, 90), startSpacing: 11,
+    marsh: r(2, 60), swamp: r(2, 90), floodplain: r(3, 90), startSpacing: 11, rivers: r(8, 45), longRivers: 2,
   },
   large: {
     ...BASE, continents: r(3, 5), lakes: r(10, 55), lakeMaxTiles: 14, biomesPresentMin: 13,
     volcanoes: r(3, 6), reefSystems: r(4, 6), kelpSystems: r(4, 6), oases: r(4, 12),
-    marsh: r(3, 80), swamp: r(3, 120), floodplain: r(6, 120), startSpacing: 12,
+    marsh: r(3, 80), swamp: r(3, 120), floodplain: r(4, 120), startSpacing: 12, rivers: r(12, 60), longRivers: 3,
   },
 };
 
@@ -286,11 +291,17 @@ export function continentDeepGap(globe: Globe, map: Biomes, limits: MapLimits): 
 
 // ---------- start evaluation (shared by start placement and S-checks) ----------
 
+// What a tile yields, rivers included. The game and start placement share it.
+export function tileYieldOf(map: Pick<MapData, 'biome' | 'relief' | 'feature' | 'riverTile'>, t: number): Yields {
+  const y = terrainYield({ biome: map.biome[t], relief: map.relief[t], feature: map.feature[t] });
+  return map.riverTile[t] ? { ...y, gold: y.gold + RIVER_GOLD } : y;
+}
+
 // Yield value of the 19 tiles (radius 2) around a start.
 export function startQuality(globe: Globe, map: MapData, t: number): number {
   let q = 0;
   for (const x of tilesWithin(globe, t, 2)) {
-    const y = terrainYield({ biome: map.biome[x], relief: map.relief[x], feature: map.feature[x] });
+    const y = tileYieldOf(map, x);
     q += y.food * 1.5 + y.prod + y.gold * 0.5;
   }
   return q;
@@ -317,6 +328,7 @@ export function roomToGrow(globe: Globe, map: MapData, start: number, radius: nu
   return sites;
 }
 
+// Coast, lake or river within `radius` tiles.
 export function hasWaterNear(globe: Globe, map: MapData, t: number, radius: number): boolean {
-  return tilesWithin(globe, t, radius).some((x) => isNavigable(map.biome[x]) || map.biome[x] === 'lake');
+  return tilesWithin(globe, t, radius).some((x) => isNavigable(map.biome[x]) || map.biome[x] === 'lake' || map.riverTile[x] === 1);
 }

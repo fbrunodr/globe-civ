@@ -11,8 +11,9 @@ npm install
 npm run dev        # http://localhost:5173
 npm run typecheck  # strict TypeScript, no emit
 npm test           # unit tests + every map guarantee on 1,000 maps per size (~20 s)
-npm run mapcheck -- --maps 100000   # deep check on random seeds, all CPU cores
+npm run mapcheck    # deep check: 30,000 random maps per size, all CPU cores
 npm run guarantees                  # print every map guarantee with its limits
+npm run shots -- <dir> --sheet      # render fixed reference scenes for before/after review
 npm run build
 ```
 
@@ -45,6 +46,7 @@ URL params: `?seed=123`, `?size=small|medium|large`, `?reveal` (debug: show the 
 | `src/mapgen.ts`          | Continents, elevation, climate (°C, mm rain, wind, rain shadow), drainage, biomes, features |
 | `src/mapRules.ts`        | Map definitions (continent, world ocean, ...) and limits per size  |
 | `src/mapChecks.ts`       | One pure check per map guarantee                                    |
+| `src/rivers.ts`          | Rivers along tile edges: priority-flood drainage over tile corners  |
 | `src/starts.ts`          | Fair start placement                                                |
 | `src/world.ts`           | Map + starts + validation, with deterministic retries               |
 | `src/terrain.ts`         | Terrain gameplay: biome × relief × feature, yields, movement, defense |

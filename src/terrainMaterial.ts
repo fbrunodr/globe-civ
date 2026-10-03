@@ -9,6 +9,7 @@ import * as THREE from 'three';
 //   detail      (grain, patch, strata, dunes) -> procedural surface painting
 //   bump        strength of the procedural bump
 //   patchColor  color of the blotches drawn by detail.y (pools, coral, kelp)
+//   coast       (beach, shallow): sandy shores, and caustics in clear shallows
 //
 // Patterns are 3D value noise sampled at the object-space position, so they
 // wrap the sphere without seams, and fade out with distance to avoid shimmer.
@@ -70,6 +71,9 @@ export function makeTerrainMaterial(): TerrainMaterial {
         attribute vec4 detail;
         attribute float bump;
         attribute vec3 patchColor;
+        attribute vec2 coast;
+        varying vec2 vCoast;
+        varying vec3 vObjNormal;
         varying float vRing;
         varying float vWet;
         varying float vFog;
@@ -79,7 +83,7 @@ export function makeTerrainMaterial(): TerrainMaterial {
         varying vec3 vObjPos;`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
         vRing = ring; vWet = wet; vFog = unexplored; vDetail = detail; vBump = bump;
-        vPatchColor = patchColor; vObjPos = position;`);
+        vPatchColor = patchColor; vObjPos = position; vCoast = coast; vObjNormal = normal;`);
 
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
@@ -91,6 +95,8 @@ export function makeTerrainMaterial(): TerrainMaterial {
         varying float vBump;
         varying vec3 vPatchColor;
         varying vec3 vObjPos;
+        varying vec2 vCoast;
+        varying vec3 vObjNormal;
         float tLod;
         float gridLine;
         float waterMask;
@@ -120,11 +126,38 @@ export function makeTerrainMaterial(): TerrainMaterial {
           diffuseColor.rgb = mix(diffuseColor.rgb, vPatchColor, pm);
           waterMask = max(vWet, pm * 0.6);
 
+          float land = 1.0 - smoothstep(0.45, 0.55, vWet);
+
+          // Cliffs and bare rock wherever land is steep (coastal hills, mountain flanks).
+          float steep = 1.0 - dot(normalize(vObjNormal), normalize(P));
+          float rock = smoothstep(0.035, 0.08, steep) * land;
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.36, 0.33, 0.29) * (0.9 + 0.2 * patchy), rock * 0.75);
+
+          // Beaches: a sand strip on the land side of sandy coasts, edge wobbling with noise.
+          float sandEdge = 0.2 + 0.12 * tFbm(P * 120.0 + 9.0, 2);
+          float sand = smoothstep(sandEdge, sandEdge + 0.08, vWet) * (1.0 - smoothstep(0.48, 0.52, vWet)) * smoothstep(0.75, 0.95, vCoast.x);
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.86, 0.71, 0.40) * (0.95 + 0.1 * grain), sand * (1.0 - rock));
+
+          // Caustics: a faint moving web of light in clear shallow water.
+          float web = 1.0 - abs(tFbm(P * 170.0 + vec3(uTime * 0.05, uTime * 0.03, 0.0), 2) * 2.0 - 1.0);
+          float caustic = smoothstep(0.93, 0.99, web) * smoothstep(0.75, 1.0, vWet) * vCoast.y * tFade(170.0);
+          diffuseColor.rgb += vec3(0.04, 0.06, 0.055) * caustic;
+
+          // Shore: water just off a coast turns a lighter turquoise, with a
+          // broken, slowly drifting line of foam along the land.
+          float shore = smoothstep(0.97, 0.6, vWet) * step(0.5, vWet);
+          diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 1.25 + vec3(0.03, 0.08, 0.08), shore * 0.6);
+          // Foam: a soft band hugging the shore whose width wobbles with noise.
+          float foamNoise = tFbm(P * 150.0 + vec3(uTime * 0.03, 0.0, -uTime * 0.02), 3);
+          float foamEdge = 0.6 + 0.22 * foamNoise;
+          float foamBand = smoothstep(foamEdge, foamEdge - 0.1, vWet) * smoothstep(0.5, 0.53, vWet);
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.95, 0.98, 1.0), foamBand * tFade(150.0) * 0.7);
+
           // Hex grid: a thin anti-aliased line where ring reaches 1.
           float fw = fwidth(vRing);
           gridLine = 1.0 - smoothstep(0.0, fw * 1.5, 1.0 - vRing);
           gridLine *= 1.0 - smoothstep(0.08, 0.25, fw);
-          diffuseColor.rgb *= 1.0 - 0.25 * gridLine;
+          diffuseColor.rgb *= 1.0 - 0.18 * gridLine;
         }`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
         roughnessFactor = mix(1.0, 0.6, waterMask);`)

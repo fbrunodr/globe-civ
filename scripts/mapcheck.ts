@@ -2,8 +2,8 @@
 // core and verifies every guarantee. Failing seeds are added to
 // test/regressions.json so the quick tier (npm test) re-checks them forever.
 //
-//   npm run mapcheck -- --maps 100000            (per map size)
-//   npm run mapcheck -- --maps 20000 --sizes large --workers 4
+//   npm run mapcheck                             (30,000 maps per size: <0.01% failure rate at 95% confidence)
+//   npm run mapcheck -- --maps 100000 --sizes large --workers 8
 
 import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 import { availableParallelism } from 'node:os';
@@ -49,7 +49,7 @@ if (!isMainThread) {
 } else {
   const args = process.argv.slice(2);
   const arg = (name: string, def: string) => { const i = args.indexOf(`--${name}`); return i >= 0 ? args[i + 1] : def; };
-  const maps = Number(arg('maps', '10000'));
+  const maps = Number(arg('maps', '30000'));
   const sizes = arg('sizes', Object.keys(MAP_SIZES).join(',')).split(',') as MapSizeKey[];
   const workers = Number(arg('workers', String(Math.max(1, availableParallelism() - 1))));
 

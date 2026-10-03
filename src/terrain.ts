@@ -102,6 +102,9 @@ export function terrainYield(t: TileTerrain): Yields {
   return y(b.food + r.bonus.food, b.prod + r.bonus.prod, b.gold + r.bonus.gold);
 }
 
+// A tile beside a river gets fresh water and trade: +1 gold.
+export const RIVER_GOLD = 1;
+
 export function terrainMoveCost(t: TileTerrain): number {
   return Math.max(BIOMES[t.biome].move, RELIEFS[t.relief].move, t.feature ? FEATURES[t.feature].move : 1);
 }
