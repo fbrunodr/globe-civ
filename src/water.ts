@@ -1,0 +1,142 @@
+import * as THREE from 'three';
+import { NOISE_GLSL, noiseTexture } from './terrainMaterial.ts';
+
+// The water surface: a translucent sheet at the water level over the carved
+// ground (the trick of old console games: a see-through, gently moving
+// layer over a visible bed). Everything comes from the water's depth, which
+// each vertex carries (water level minus ground height; linear across a
+// triangle, like both surfaces):
+//   - color: light and clear in the shallows, the body's deep color further out;
+//   - transparency: the bed shows through shallow water and fades with depth;
+//   - foam: a line where the water meets the ground, plus bands rolling in
+//     toward the shore;
+//   - ripples and the sun's glints, rivers' ripples drifting downstream;
+//   - the sky's reflection at grazing angles (Fresnel).
+//
+// Per-vertex attributes:
+//   depth       water level minus ground height
+//   tint        deep color (rgb) and murk (a: 1 = clear sea, higher = murkier)
+//   flow        downstream direction × speed (rivers), else 0
+//   ring        hex grid line, as on the ground
+//   unexplored  fog of war: the water is hidden
+//   dim         seen before but not in sight now: grayed like the ground
+
+export interface WaterMaterial {
+  material: THREE.MeshStandardMaterial;
+  setTime(seconds: number): void;
+}
+
+export const SKY_COLOR = new THREE.Color(0.62, 0.76, 0.92);
+
+export function makeWaterMaterial(): WaterMaterial {
+  const mat = new THREE.MeshStandardMaterial({ roughness: 0.1, metalness: 0, transparent: true, depthWrite: false });
+  const uTime = { value: 0 };
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms['uTime'] = uTime;
+    shader.uniforms['uNoise'] = { value: noiseTexture() };
+    shader.uniforms['uSky'] = { value: SKY_COLOR };
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>
+        attribute float depth;
+        attribute vec4 tint;
+        attribute vec3 flow;
+        attribute float ring;
+        attribute float unexplored;
+        attribute float dim;
+        varying float vDepth;
+        varying vec4 vTint;
+        varying vec3 vFlow;
+        varying float vRing;
+        varying float vFog;
+        varying float vDim;
+        varying vec3 vObjPos;`)
+      // The surface is level: its normal points straight up, away from the center.
+      .replace('#include <beginnormal_vertex>', 'vec3 objectNormal = normalize(position);')
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        vDepth = depth; vTint = tint; vFlow = flow; vRing = ring; vFog = unexplored; vDim = dim;
+        vObjPos = position;`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+        uniform float uTime;
+        uniform highp sampler3D uNoise;
+        uniform vec3 uSky;
+        varying float vDepth;
+        varying vec4 vTint;
+        varying vec3 vFlow;
+        varying float vRing;
+        varying float vFog;
+        varying float vDim;
+        varying vec3 vObjPos;
+        float tLod;
+        float foam;
+        ${NOISE_GLSL}`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        {
+          // Under the ground (past the waterline): the ground hides it anyway.
+          if (vDepth < 0.0) discard;
+          vec3 P = vObjPos;
+          tLod = length(fwidth(P));
+          float d = vDepth;
+          float murk = vTint.a;
+          vec3 deep = vTint.rgb;
+          // Open water (murk ~1) rolls waves onto its shores; rivers and pools
+          // are calmer.
+          float open = clamp(1.6 / murk - 0.3, 0.0, 1.0);
+          vec3 shallow = mix(deep, vec3(0.16, 0.7, 0.72), 0.9 * clamp(1.3 / murk, 0.0, 1.0));
+          float k = d * murk;
+          vec3 col = mix(shallow, deep, 1.0 - exp(-k / 0.004));
+          float alpha = mix(0.3, 0.97, 1.0 - exp(-k / 0.0025));
+
+          // Rivers: ripples drifting downstream (two phases, so the pattern
+          // never stretches).
+          float streak = 0.0;
+          float speed = length(vFlow);
+          if (speed > 0.02) {
+            float ph = uTime * 0.22;
+            float t0 = fract(ph), t1 = fract(ph + 0.5);
+            float n0 = tNoise((P - vFlow * t0 * 0.0022) * 1500.0);
+            float n1 = tNoise((P - vFlow * t1 * 0.0022) * 1500.0 + 17.0);
+            float n = mix(n0, n1, abs(2.0 * t0 - 1.0));
+            streak = smoothstep(0.6, 0.82, n) * min(1.0, speed) * tFade(1500.0);
+          }
+
+          // Foam: a line at the waterline and bands rolling in toward it.
+          float shoreW = 0.00045;
+          float zone = 1.0 - smoothstep(0.0, shoreW, d);
+          float line = 1.0 - smoothstep(0.0, 0.00006, d);
+          float waves = sin(d / shoreW * 9.0 - uTime * 1.3 + tNoise(P * 300.0) * 6.0);
+          float broken = 0.45 + 0.55 * tNoise(P * 900.0 + vec3(uTime * 0.08, 0.0, -uTime * 0.06));
+          foam = max(line * mix(0.35, 0.85, open), zone * smoothstep(0.55, 0.95, waves) * broken * 0.65 * open * tFade(300.0));
+          foam = max(foam, streak * 0.3);
+          col = mix(col, vec3(0.93, 0.97, 1.0), foam);
+          alpha = max(alpha, foam);
+
+          // Hex grid, drawn on the surface where the ground's would be hidden.
+          float fw = fwidth(vRing);
+          float grid = (1.0 - smoothstep(0.0, fw * 1.5, 1.0 - vRing)) * (1.0 - smoothstep(0.05, 0.16, fw));
+          col *= 1.0 - 0.15 * grid;
+
+          // Remembered but not in sight: grayed and darker, like the ground.
+          col = mix(col, vec3(dot(col, vec3(0.333))), 0.5 * vDim) * (1.0 - 0.38 * vDim);
+          diffuseColor = vec4(col, alpha);
+        }`)
+      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+        roughnessFactor = mix(0.16, 0.6, foam);`)
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+        {
+          // Ripples: two layers of drifting noise.
+          vec3 P = vObjPos;
+          float h = 0.00002 * (tNoise(P * 650.0 + vec3(uTime * 0.05, uTime * 0.03, -uTime * 0.04)) - 0.5) * tFade(650.0)
+                  + 0.00001 * (tNoise(P * 1600.0 - vec3(uTime * 0.09, -uTime * 0.05, uTime * 0.07)) - 0.5) * tFade(1600.0);
+          normal = tPerturb(-vViewPosition, normal, h);
+        }`)
+      .replace('#include <opaque_fragment>', `{
+          // The sky's reflection, strong at grazing angles.
+          float fres = pow(1.0 - clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0), 5.0) * (1.0 - foam);
+          outgoingLight = mix(outgoingLight, uSky * 0.9, fres * 0.5);
+          diffuseColor.a = max(diffuseColor.a, fres * 0.85) * (1.0 - vFog);
+        }
+        #include <opaque_fragment>`);
+  };
+  return { material: mat, setTime: (s) => { uTime.value = s; } };
+}

@@ -8,12 +8,12 @@ import { mulberry32 } from './rng.ts';
 // Materials come from the terrain painting (paint.ts): each pixel mixes the
 // rows of up to four tiles from the tile table. Tile table rows (TILE_ROWS
 // texels each):
-//   0 color.rgb, wet        (wet: 1 on water -> glossy, animated ripples)
+//   0 color.rgb, wet        (water tiles: the bed's color; wet: 1 on open water)
 //   1 detail                (grain, patch, strata, dunes) -> procedural surface painting
-//   2 patchColor.rgb, bump  (blotches drawn by detail.y: pools, coral, kelp)
+//   2 patchColor.rgb, bump  (blotches drawn by detail.y: coral, kelp, tussocks, moss)
 //   3 rock.rgb, amount      (the biome's bare rock, shown where the ground is steep)
 //   4 snow.rgb, beach       (snow as this tile shows it; sandy shores)
-//   5 shallow, group, depth (clear shallows; tiles of one group look alike; water depth 0..1)
+//   5 -, group              (tiles of one group look alike)
 // Fan table rows (FAN_ROWS texels):
 //   0 ids (t, A, B, C)
 //   1 rounding of edges i-1, i, i+1 and A|B
@@ -26,6 +26,9 @@ import { mulberry32 } from './rng.ts';
 //   unexplored  1 under fog of war -> flat dark fog, no lighting
 //   shade       baked ambient occlusion and tint
 //   snow        snow cover on peaks
+//   depth       water level minus ground height (> 0 under water; the water
+//               surface itself is its own mesh, see water.ts)
+//   bank        1 beside a river, fading away from it
 //   pc0, pc1    warped distances to the fan's 5 boundaries (fanCoords in
 //               paint.ts) and the fan id
 //
@@ -37,7 +40,8 @@ export const TILE_ROWS = 6;
 export const FAN_ROWS = 5;
 const NOISE_SIZE = 64;
 
-const NOISE = /* glsl */ `
+// Noise and bump helpers, shared with the water shader (needs uNoise and tLod).
+export const NOISE_GLSL = /* glsl */ `
 float tNoise(vec3 x) { return texture(uNoise, x * ${(1 / NOISE_SIZE).toFixed(8)}).r; }
 float tFbm(vec3 p, int octaves) {
   float s = 0.0, a = 0.5;
@@ -50,6 +54,21 @@ float tFbm(vec3 p, int octaves) {
   return s / (1.0 - 2.0 * a); // normalized to [0, 1]
 }
 
+// 1 when a pattern of this frequency is well resolved on screen, 0 when it would alias.
+float tFade(float freq) { return 1.0 - smoothstep(0.35, 0.9, tLod * freq); }
+
+// Bump mapping (Mikkelsen 2010) with unnormalized screen derivatives, so the
+// height h is in world units and bump strength does not change with zoom.
+vec3 tPerturb(vec3 surfPos, vec3 n, float h) {
+  vec3 sx = dFdx(surfPos), sy = dFdy(surfPos);
+  vec3 r1 = cross(sy, n), r2 = cross(n, sx);
+  float det = dot(sx, r1);
+  vec3 grad = sign(det) * (dFdx(h) * r1 + dFdy(h) * r2);
+  return normalize(abs(det) * n - grad);
+}
+`;
+
+const PAINT_GLSL = /* glsl */ `
 // ---- painting (mirror of paintAt in paint.ts, plus a GPU-only fine wiggle) ----
 vec4 tileRow(int t, int k) { int i = t * ${TILE_ROWS} + k; return texelFetch(uTileTex, ivec2(i % ${TEX_W}, i / ${TEX_W}), 0); }
 vec4 fanRow(int f, int k) { int i = f * ${FAN_ROWS} + k; return texelFetch(uFanTex, ivec2(i % ${TEX_W}, i / ${TEX_W}), 0); }
@@ -84,19 +103,6 @@ vec4 paintWeights(int fan, vec3 P, vec4 ids, out vec3 sEdge, out vec4 soft) {
   vec4 q = w / max(S, vec4(1e-9)) * S2 * S2 * S2;
   return q / dot(q, vec4(1.0));
 }
-
-// 1 when a pattern of this frequency is well resolved on screen, 0 when it would alias.
-float tFade(float freq) { return 1.0 - smoothstep(0.35, 0.9, tLod * freq); }
-
-// Bump mapping (Mikkelsen 2010) with unnormalized screen derivatives, so the
-// height h is in world units and bump strength does not change with zoom.
-vec3 tPerturb(vec3 surfPos, vec3 n, float h) {
-  vec3 sx = dFdx(surfPos), sy = dFdy(surfPos);
-  vec3 r1 = cross(sy, n), r2 = cross(n, sx);
-  float det = dot(sx, r1);
-  vec3 grad = sign(det) * (dFdx(h) * r1 + dFdy(h) * r2);
-  return normalize(abs(det) * n - grad);
-}
 `;
 
 export interface TerrainMaterial {
@@ -124,6 +130,11 @@ export function makeTable(texels: number): THREE.DataTexture {
 }
 
 // Tiling value noise: random values on a 64³ lattice, interpolated by the GPU.
+let noiseTex: THREE.Data3DTexture | null = null;
+export function noiseTexture(): THREE.Data3DTexture {
+  noiseTex ??= makeNoiseTexture();
+  return noiseTex;
+}
 function makeNoiseTexture(): THREE.Data3DTexture {
   const rand = mulberry32(0x5eed);
   const data = new Uint8Array(NOISE_SIZE ** 3);
@@ -142,7 +153,7 @@ function makeNoiseTexture(): THREE.Data3DTexture {
 export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
   const mat = new THREE.MeshStandardMaterial({ roughness: 1, metalness: 0 });
   const uTime = { value: 0 };
-  const noise = makeNoiseTexture();
+  const noise = noiseTexture();
   mat.onBeforeCompile = (shader) => {
     shader.uniforms['uTime'] = uTime;
     shader.uniforms['uTileTex'] = { value: paint.tileTex };
@@ -157,6 +168,8 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
         attribute float unexplored;
         attribute float shade;
         attribute float snow;
+        attribute float depth;
+        attribute float bank;
         attribute vec4 pc0;
         attribute vec2 pc1;
         varying vec4 vPc0;
@@ -166,9 +179,11 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
         varying float vFog;
         varying float vShade;
         varying float vSnow;
+        varying float vDepth;
+        varying float vBank;
         varying vec3 vObjPos;`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
-        vRing = ring; vFog = unexplored; vShade = shade; vSnow = snow;
+        vRing = ring; vFog = unexplored; vShade = shade; vSnow = snow; vDepth = depth; vBank = bank;
         vPc0 = pc0; vPc1 = pc1;
         vObjPos = position; vObjNormal = normal;`);
 
@@ -187,16 +202,19 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
         varying float vFog;
         varying float vShade;
         varying float vSnow;
+        varying float vDepth;
+        varying float vBank;
         varying vec3 vObjPos;
         varying vec3 vObjNormal;
         float tLod;
         float gridLine;
-        float waterMask;
+        float wetGround;
         float duneWave;
         float vWet;
         vec4 vDetail;
         float vBump;
-        ${NOISE}`)
+        ${NOISE_GLSL}
+        ${PAINT_GLSL}`)
       .replace('#include <color_fragment>', `#include <color_fragment>
         {
           vec3 P = vObjPos;
@@ -208,52 +226,45 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
           vec3 sEdge;
           vec4 soft;
           vec4 w = paintWeights(fan, P, ids, sEdge, soft);
-          vec4 m0 = vec4(0.0), m1 = vec4(0.0), m2 = vec4(0.0), m3 = vec4(0.0), m4 = vec4(0.0), m5 = vec4(0.0);
+          vec4 m0 = vec4(0.0), m1 = vec4(0.0), m2 = vec4(0.0), m3 = vec4(0.0), m4 = vec4(0.0);
           for (int k = 0; k < 4; k++) {
             if (w[k] > 0.001) {
               int tt = int(ids[k]);
               m0 += w[k] * tileRow(tt, 0); m1 += w[k] * tileRow(tt, 1); m2 += w[k] * tileRow(tt, 2);
-              m3 += w[k] * tileRow(tt, 3); m4 += w[k] * tileRow(tt, 4); m5 += w[k] * tileRow(tt, 5);
+              m3 += w[k] * tileRow(tt, 3); m4 += w[k] * tileRow(tt, 4);
             }
           }
           float wsum = w.x * step(0.001, w.x) + w.y * step(0.001, w.y) + w.z * step(0.001, w.z) + w.w * step(0.001, w.w);
-          m0 /= wsum; m1 /= wsum; m2 /= wsum; m3 /= wsum; m4 /= wsum; m5 /= wsum;
+          m0 /= wsum; m1 /= wsum; m2 /= wsum; m3 /= wsum; m4 /= wsum;
           vDetail = m1; vBump = m2.a;
           vec4 vRock = m3;
           // Wetness and coast data come from the soft (unsharpened) weights, so
-          // shores keep a gradient for beaches and foam.
+          // shores keep a gradient.
           vWet = 0.0;
-          vec2 vCoast = vec2(0.0);
-          float depth = 0.0;
+          float vBeach = 0.0;
           for (int k = 0; k < 4; k++) {
             if (soft[k] > 0.001) {
               int tt = int(ids[k]);
-              vec4 r5 = tileRow(tt, 5);
               vWet += soft[k] * tileRow(tt, 0).a;
-              vCoast += soft[k] * vec2(tileRow(tt, 4).a, r5.x);
-              depth += soft[k] * r5.z;
+              vBeach += soft[k] * tileRow(tt, 4).a;
             }
           }
           diffuseColor.rgb = mix(m0.rgb, m4.rgb, vSnow) * vShade;
-          // Open water darkens with depth (the surface itself is level).
-          diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.5, 0.62, 0.78), smoothstep(0.2, 1.0, depth) * smoothstep(0.5, 0.9, vWet));
-          float land = 1.0 - smoothstep(0.45, 0.55, vWet);
+          // Water is geometry: vDepth > 0 under the water surface (water.ts
+          // draws the surface), < 0 above it.
+          float under = smoothstep(0.0, 0.00015, vDepth);
+          float dry = 1.0 - under;
+          float above = -vDepth;
 
-          // River banks: a strip of greener, damper ground along the river's curve.
-          float bank = 0.0;
-          vec4 river = fanRow(fan, 2);
-          for (int j = 0; j < 3; j++) {
-            float bw = uR0 * (0.12 + 0.1 * river[j + 1]);
-            bank = max(bank, step(0.001, river[j + 1]) * (1.0 - smoothstep(bw, bw * 2.2, abs(sEdge[j]))));
-          }
-          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.05, 0.2, 0.035) * vShade, bank * 0.75 * land * (1.0 - vSnow));
+          // River banks: greener, damper ground beside the water.
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.05, 0.2, 0.035) * vShade, vBank * 0.55 * dry * (1.0 - vSnow));
 
           // Grain: fine speckle plus medium-scale patchiness.
           float grain = (tFbm(P * 380.0, 2) - 0.5) * tFade(380.0);
           float patchy = tNoise(P * 70.0) - 0.5;
           diffuseColor.rgb *= 1.0 + vDetail.x * (0.4 * grain + 0.3 * patchy);
 
-          // Dunes: warped ripples.
+          // Dunes and sand ripples: warped ripples.
           duneWave = 0.0;
           if (vDetail.w > 0.01) {
             duneWave = sin(dot(P, vec3(0.31, 0.88, 0.36)) * 900.0 + tNoise(P * 40.0) * 10.0) * tFade(900.0);
@@ -266,56 +277,64 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
             diffuseColor.rgb *= 1.0 + vDetail.z * 0.16 * strata;
           }
 
-          // Patches: pools, coral, kelp.
-          float pm = 0.0;
+          // Patches: coral, kelp, tussocks, moss.
           if (vDetail.y > 0.01) {
-            pm = smoothstep(0.5, 0.58, tFbm(P * 140.0 + 3.1, 2)) * clamp(vDetail.y * 1.4, 0.0, 1.0);
+            float pm = smoothstep(0.5, 0.58, tFbm(P * 140.0 + 3.1, 2)) * clamp(vDetail.y * 1.4, 0.0, 1.0);
             diffuseColor.rgb = mix(diffuseColor.rgb, m2.rgb, pm);
           }
-          waterMask = max(vWet, pm * 0.6);
 
           // Rock follows the relief, not the tiles: steep slopes show it where the
           // tile allows (vRock.a), anything high enough shows it on its slopes,
           // and mountain crests are bare whatever their slope.
           float rock = 0.0;
-          if (land > 0.0) {
+          if (dry > 0.0) {
             float steep = 1.0 - dot(normalize(vObjNormal), normalize(P));
             float alt = length(P) - 1.0;
             float allow = max(vRock.a, smoothstep(0.016, 0.026, alt));
             float alpine = smoothstep(0.026, 0.036, alt);
-            rock = max(smoothstep(0.04, 0.09, steep) * allow, alpine) * land * (1.0 - 0.8 * vSnow) * (1.0 - bank);
+            rock = max(smoothstep(0.04, 0.09, steep) * allow, alpine) * dry * (1.0 - 0.8 * vSnow) * (1.0 - vBank);
             diffuseColor.rgb = mix(diffuseColor.rgb, vRock.rgb * (0.88 + 0.24 * patchy), rock * 0.8);
           }
 
-          // Coasts: a sand strip on the land side of sandy shores; on the water
-          // side, lighter turquoise and a broken, slowly drifting line of foam.
-          if (vWet > 0.12 && vWet < 0.995) {
-            float sandEdge = 0.2 + 0.12 * tNoise(P * 120.0 + 9.0);
-            float sand = smoothstep(sandEdge, sandEdge + 0.08, vWet) * (1.0 - smoothstep(0.48, 0.52, vWet)) * smoothstep(0.75, 0.95, vCoast.x);
-            diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.86, 0.71, 0.40) * (0.95 + 0.1 * grain), sand * (1.0 - rock));
-            float shore = smoothstep(0.97, 0.6, vWet) * step(0.5, vWet);
-            diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 1.25 + vec3(0.03, 0.08, 0.08), shore * 0.6);
-            float foamEdge = 0.6 + 0.22 * tFbm(P * 150.0 + vec3(uTime * 0.03, 0.0, -uTime * 0.02), 2);
-            float foamBand = smoothstep(foamEdge, foamEdge - 0.1, vWet) * smoothstep(0.5, 0.53, vWet);
-            diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.95, 0.98, 1.0), foamBand * tFade(150.0) * 0.7);
+          // Shores, at the real waterline: sandy coasts get a beach that runs on
+          // under the water; land that dips under the water turns to silt;
+          // ground just above the water is darker and glossy (wet).
+          wetGround = 0.0;
+          if (above < 0.0015) {
+            // Beaches on sea and lake shores; river banks stay green.
+            if (vBeach > 0.75 && vBank < 0.05 && vWet > 0.0) {
+              float top = 0.00055 + 0.0004 * tNoise(P * 120.0 + 9.0);
+              float sand = (1.0 - smoothstep(top * 0.6, top, above)) * smoothstep(0.75, 0.95, vBeach) * smoothstep(0.0, 0.05, vWet);
+              diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.86, 0.73, 0.45) * (0.95 + 0.1 * grain) * vShade, sand * (1.0 - rock));
+            }
+            float landBed = 1.0 - smoothstep(0.3, 0.8, vWet);
+            diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 0.55 + vec3(0.05, 0.045, 0.03), under * landBed * 0.75);
+            wetGround = (1.0 - smoothstep(0.0, 0.00022, above)) * dry;
+            diffuseColor.rgb *= 1.0 - 0.28 * wetGround;
+          }
+          // Caustics: light focused by the waves, dancing on shallow beds.
+          if (vDepth > 0.0 && vDepth < 0.003) {
+            vec3 q = P * 520.0;
+            float c1 = tNoise(q + vec3(uTime * 0.35, 0.0, uTime * 0.2));
+            float c2 = tNoise(q * 1.31 - vec3(0.0, uTime * 0.3, uTime * 0.25));
+            float caustic = pow(1.0 - abs(c1 - c2), 10.0);
+            diffuseColor.rgb += vec3(0.5, 0.6, 0.55) * caustic * 0.35 * under * (1.0 - smoothstep(0.0006, 0.003, vDepth)) * tFade(520.0);
           }
 
           // Hex grid: a thin anti-aliased line where ring reaches 1.
           float fw = fwidth(vRing);
           gridLine = 1.0 - smoothstep(0.0, fw * 1.5, 1.0 - vRing);
-          gridLine *= 1.0 - smoothstep(0.05, 0.16, fw);
+          gridLine *= (1.0 - smoothstep(0.05, 0.16, fw)) * dry; // the water surface draws its own
           diffuseColor.rgb *= 1.0 - 0.18 * gridLine;
         }`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
-        roughnessFactor = mix(1.0, 0.6, waterMask);`)
+        roughnessFactor = mix(1.0, 0.5, wetGround);`)
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
         {
-          // Bumps on land, slow drifting ripples on water. No branches here:
-          // the bump needs screen derivatives.
+          // Bumps and ripples. No branches here: the bump needs screen derivatives.
           vec3 P = vObjPos;
           float h = vBump * 0.00045 * (tFbm(P * 260.0, 2) - 0.5) * tFade(260.0)
-                  + vDetail.w * 0.00012 * duneWave
-                  + waterMask * 0.00006 * (tNoise(P * 420.0 + vec3(uTime * 0.12, -uTime * 0.08, uTime * 0.05)) - 0.5) * tFade(420.0);
+                  + vDetail.w * 0.00012 * duneWave;
           normal = tPerturb(-vViewPosition, normal, h);
         }`)
       .replace('#include <opaque_fragment>', `{

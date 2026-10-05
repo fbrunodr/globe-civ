@@ -303,16 +303,27 @@ export function paintAt(data: PaintData, fanId: number, s: ArrayLike<number>): P
   const fan = data.fans[fanId];
   const edges: [number, number, number] = [s[0], s[1], s[2]];
   if (s[0] >= fan.round[0] && s[1] >= fan.round[1] && s[2] >= fan.round[2]) return { w: [1, 0, 0, 0], s: edges };
+  return { w: sharpen(softAt(data, fanId, s), fan.ids.map((t) => data.group[t])), s: edges };
+}
+
+// The soft (unsharpened) weights of fan.ids at a point, summing to 1: the
+// shader's wetness and coast data, and the height field, use these.
+export function softAt(data: PaintData, fanId: number, s: ArrayLike<number>): [number, number, number, number] {
+  const fan = data.fans[fanId];
+  if (s[0] >= fan.round[0] && s[1] >= fan.round[1] && s[2] >= fan.round[2]) return [1, 0, 0, 0];
   const sig = (u: number) => smoothstep(-1, 1, u);
   const c0 = sig(-s[0] / fan.round[0]), c1 = sig(-s[1] / fan.round[1]), c2 = sig(-s[2] / fan.round[2]);
   const sL = s[3] / fan.round[3], sR = s[4] / fan.round[4];
-  const w = [
+  const w: [number, number, number, number] = [
     (1 - c0) * (1 - c1) * (1 - c2),
     c0 * sig(-sL),
     c1 * sig(sL) * sig(sR),
     c2 * sig(-sR),
   ];
-  return { w: sharpen(w, fan.ids.map((t) => data.group[t])), s: edges };
+  const total = w[0] + w[1] + w[2] + w[3];
+  if (total < 1e-9) return [1, 0, 0, 0];
+  for (let k = 0; k < 4; k++) w[k] /= total;
+  return w;
 }
 
 // Sums the weights of each group, sharpens the groups against each other and

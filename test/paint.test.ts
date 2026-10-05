@@ -1,4 +1,4 @@
-// Guarantees of the terrain painting (paint.ts), relief (relief.ts) and
+// Guarantees of the terrain painting (paint.ts), land relief (relief.ts) and
 // river curves (riverCurve.ts): how close the drawn world stays to the tiles.
 // P9: the GPU interpolates the warp between vertices; the CPU evaluates it
 // exactly. The difference stays small.
@@ -155,11 +155,11 @@ describe('terrain painting', () => {
             expect(h(b, j, u, u)).toBeGreaterThanOrEqual(0.7 * low);
           }
         }
-        // P8: flat land and water centers sit at their tile's level, up to the noise.
+        // P8: flat land centers sit at their tile's level, up to the noise (the
+        // coast, beds, rivers and pools are cut in later: surface.test.ts).
         for (const tile of globe.tiles) {
           const t = tile.id;
-          if (map.relief[t] !== 'flat' && looks[t].wet < 0.5) continue;
-          if (map.riverTile[t]) continue; // valleys may reach the center of small tiles
+          if (map.relief[t] !== 'flat' || looks[t].water) continue;
           expect(Math.abs(h(t, 0, 0, 0) - looks[t].height)).toBeLessThanOrEqual(looks[t].roughness * 1.2 + 1e-6);
         }
       });

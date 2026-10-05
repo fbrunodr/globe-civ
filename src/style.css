@@ -65,3 +65,13 @@ small { color: var(--muted); font-weight: normal; }
 .card label { display: block; margin-bottom: 16px; color: var(--muted); }
 .card input { font: inherit; background: rgba(255,255,255,0.06); color: var(--text); border: 1px solid var(--border);
   border-radius: 6px; padding: 5px 8px; width: 120px; margin-left: 6px; }
+
+#walkhint {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  font-size: 13px;
+  white-space: nowrap;
+  pointer-events: none;
+}

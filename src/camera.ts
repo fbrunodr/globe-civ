@@ -52,6 +52,8 @@ export class GlobeCamera {
   private readonly keys = new Set<string>();
   private changed = true;
   private ground = GROUND; // eased terrain radius at the look point
+  // Off while another controller (walk mode) drives the camera.
+  enabled = true;
 
   // surface(dir, highest): terrain radius at a direction, or the highest
   // terrain around it (keeps the camera above hills and mountains).
@@ -88,8 +90,18 @@ export class GlobeCamera {
     this.apply();
   }
 
+  // Take over again from another controller: look at dir from dist away,
+  // with forward up the screen.
+  place(dir: THREE.Vector3, forward: THREE.Vector3, dist: number): void {
+    this.jump(dir, dist);
+    for (const v of [this.goal, this.cur]) { v.forward.copy(forward); v.tilt = 0; orthonormalize(v); }
+    this.changed = true;
+    this.apply();
+  }
+
   // Advances the easing; true when the camera moved.
   update(dt: number): boolean {
+    if (!this.enabled) { this.keys.clear(); this.drag = null; return false; }
     const g = this.goal, c = this.cur;
     const key = (k: string) => (this.keys.has(k) ? 1 : 0);
     const rot = key('q') - key('e');
@@ -166,6 +178,7 @@ export class GlobeCamera {
 
   private bind(el: HTMLElement): void {
     el.addEventListener('pointerdown', (e) => {
+      if (!this.enabled) return;
       this.drag = { button: e.shiftKey || e.ctrlKey ? 2 : e.button, x: e.clientX, y: e.clientY };
       el.setPointerCapture(e.pointerId);
     });
@@ -192,6 +205,7 @@ export class GlobeCamera {
     });
     el.addEventListener('wheel', (e) => {
       e.preventDefault();
+      if (!this.enabled) return;
       const g = this.goal;
       const f = Math.exp(Math.max(-1, Math.min(1, e.deltaY * 0.0015)));
       const next = Math.min(MAX_DIST, Math.max(MIN_DIST, g.dist * f));
@@ -206,7 +220,7 @@ export class GlobeCamera {
     addEventListener('keydown', (e) => {
       if (e.target instanceof HTMLInputElement || e.metaKey || e.ctrlKey || e.altKey) return;
       const k = e.key.toLowerCase();
-      if (CAMERA_KEYS.has(k)) {
+      if (this.enabled && CAMERA_KEYS.has(k)) {
         this.keys.add(k);
         if (k.startsWith('arrow')) e.preventDefault(); // no page scrolling
       }

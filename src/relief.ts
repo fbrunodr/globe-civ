@@ -1,6 +1,8 @@
-// The relief layer: one height field over the whole globe.
+// The land relief: one height field over the whole globe, as if it were
+// all land. The coast, sea beds, rivers and pools are cut into it by
+// surface.ts.
 //
-//   height = base + noise + mountain ridges + hill bumps − river valleys
+//   height = base + noise + mountain ridges + hill bumps
 //
 // - Base: each tile's level (sea floor, lowland, hill or mountain foot),
 //   flat in the tile's middle and eased into its neighbors at the edges.
@@ -10,7 +12,8 @@
 //   off with distance from the skeleton, so neighboring mountain tiles merge
 //   into one crest, and the crest always lies on mountain tiles.
 // - Hills get one to three soft bumps inside their core.
-// - Rivers carve a shallow valley along the tile edges they follow.
+// - Water tiles continue the land around them (the mean level of their land
+//   neighbors), so the land does not sag toward the hex edges of the coast.
 //
 // Everything is a pure function of the map and the seed.
 
@@ -19,7 +22,6 @@ import type { Globe } from './goldberg.ts';
 import type { MapData } from './mapgen.ts';
 import type { TileLook } from './look.ts';
 import { makePerlin, mulberry32 } from './rng.ts';
-import { cornerGraph } from './rivers.ts';
 
 export interface Relief {
   // Height above radius 1 of a point in fan i of tile t, at barycentric
@@ -45,6 +47,7 @@ export const CRATER = 0.24;
 export const CRATER_DEPTH = 0.3;
 export const CONE_RADIUS = 1.15; // share of the tile's inner radius
 const HILL_BUMP = 0.005;
+const LOWLAND = 0.005;
 
 const smoothstep = (a: number, b: number, x: number): number => {
   if (a === b) return x < a ? 0 : 1;
@@ -59,7 +62,7 @@ const bump = (q: number) => (q >= 1 ? 0 : (1 - q * q) * (1 - q * q));
 // regions around them instead of following the hex grid.
 export function buildRelief(globe: Globe, map: MapData, looks: readonly TileLook[], seed: number, r0: number,
   warp?: (x: number, y: number, z: number, out: number[]) => number[]): Relief {
-  const { tiles, tris, triCenters } = globe;
+  const { tiles, tris } = globe;
   const N = tiles.length;
   const noise = makePerlin(mulberry32(seed ^ 0x51ed270b));
   const crag = makePerlin(mulberry32(seed ^ 0x2c4a6e1f));
@@ -79,6 +82,13 @@ export function buildRelief(globe: Globe, map: MapData, looks: readonly TileLook
     } else if (map.relief[t] === 'hills' && l.wet < 0.5) {
       base[t] = l.height - HILL_BUMP; plateau[t] = 0.3; amp[t] = 0.0015;
     }
+  }
+  for (let t = 0; t < N; t++) {
+    if (!looks[t].water) continue;
+    const land = tiles[t].neighbors.filter((nb) => !looks[nb].water);
+    base[t] = land.length ? land.reduce((a, nb) => a + base[nb], 0) / land.length : LOWLAND;
+    amp[t] = land.length ? land.reduce((a, nb) => a + amp[nb], 0) / land.length : 0;
+    plateau[t] = 0.6;
   }
 
   // ---- ridge skeleton ----
@@ -170,51 +180,6 @@ export function buildRelief(globe: Globe, map: MapData, looks: readonly TileLook
     return h;
   };
 
-  // ---- river valleys ----
-  const g = cornerGraph(globe);
-  const valleys: { a: THREE.Vector3; b: THREE.Vector3; ca: number; cb: number; depth: number }[] = [];
-  const maxFlow = Math.max(1, ...map.rivers.flatMap((r) => r.flow));
-  for (const r of map.rivers) {
-    for (let k = 0; k + 1 < r.corners.length; k++) {
-      const ca = r.corners[k], cb = r.corners[k + 1];
-      valleys.push({ a: triCenters[ca], b: triCenters[cb], ca, cb, depth: 0.0012 + 0.0016 * Math.sqrt(r.flow[k] / maxFlow) });
-    }
-  }
-  // Valleys that can reach a tile: those with an end on one of its corners
-  // or on a corner next to them.
-  const valleysNear: number[][] = tiles.map(() => []);
-  const byCorner = new Map<number, number[]>();
-  valleys.forEach((v, k) => {
-    for (const id of [v.ca, v.cb]) {
-      const list = byCorner.get(id) ?? [];
-      list.push(k);
-      byCorner.set(id, list);
-    }
-  });
-  for (const tile of tiles) {
-    const set = new Set<number>();
-    for (const c of tile.corners) {
-      for (const k of byCorner.get(c) ?? []) set.add(k);
-      for (let j = 0; j < 3; j++) {
-        const nc = g.neighbors[c * 3 + j];
-        if (nc >= 0) for (const k of byCorner.get(nc) ?? []) set.add(k);
-      }
-    }
-    valleysNear[tile.id] = [...set];
-  }
-  const VW = 0.42 * r0;
-  const valleyAt = (t: number, dir: THREE.Vector3): number => {
-    let carve = 0;
-    for (const k of valleysNear[t]) {
-      const v = valleys[k];
-      seg.subVectors(v.b, v.a);
-      const u = Math.min(1, Math.max(0, tmp.subVectors(dir, v.a).dot(seg) / seg.lengthSq()));
-      const q = tmp.copy(v.a).addScaledVector(seg, u).distanceTo(dir) / VW;
-      carve = Math.max(carve, v.depth * bump(q));
-    }
-    return carve;
-  };
-
   // ---- base field: plateau in the middle, eased to the edges ----
   const cornerVal = (arr: Float32Array, tri: number) => {
     const [a, b, c] = tris[tri];
@@ -263,7 +228,7 @@ export function buildRelief(globe: Globe, map: MapData, looks: readonly TileLook
     heightAt(t, i, wa, wb, dir) {
       const n = 2 * noise.fbm(dir.x * 22 + 5.1, dir.y * 22 - 3.3, dir.z * 22 + 1.7, 5);
       return interiorVal(base, t, i, wa, wb) + interiorVal(amp, t, i, wa, wb) * n
-        + Math.max(ridgeAt(t, dir), coneAt(t, dir)) + bumpAt(t, dir) - valleyAt(t, dir);
+        + Math.max(ridgeAt(t, dir), coneAt(t, dir)) + bumpAt(t, dir);
     },
     peak, base, ridges,
   };

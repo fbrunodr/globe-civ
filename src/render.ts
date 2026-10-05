@@ -3,18 +3,21 @@ import { unitDef } from './rules.ts';
 import { GlobeCamera } from './camera.ts';
 import type { Game, Unit, City } from './game.ts';
 import { SNOW, tileLook, type TileLook, type PropKind } from './look.ts';
-import { buildTerrainMesh, type TerrainMesh } from './terrainMesh.ts';
+import { buildTerrainMesh, locate, type TerrainMesh } from './terrainMesh.ts';
 import { makeTerrainMaterial, makeTable, FAN_ROWS, TILE_ROWS, type TerrainMaterial } from './terrainMaterial.ts';
 import { buildPaintData, fanCoords, fanFrames, paintAt, warpAt, FAN_COORDS, FINE_MAX, FINE_WAVELENGTH, type PaintData, type FanFrame } from './paint.ts';
 import { buildRelief, CONE_RADIUS, CRATER, CRATER_DEPTH, type Relief } from './relief.ts';
-import { riverCurve } from './riverCurve.ts';
+import { buildSurface, meshLevels } from './surface.ts';
+import { makeWaterMaterial, type WaterMaterial } from './water.ts';
+import { WalkCamera, makeSky, HAZE } from './walk.ts';
 import { buildPropGeometry, PROP_KINDS } from './props.ts';
 import { mulberry32, makePerlin } from './rng.ts';
 
 const FOG = new THREE.Color(0x0b0e15);
 
 const UP = new THREE.Vector3(0, 1, 0);
-// Subdivisions per tile fan; higher = smoother relief, more triangles.
+// Subdivisions per tile fan; higher = smoother relief, more triangles. Tiles
+// near water and relief get 2× or 4× this (see the mesh levels below).
 const SUBDIV = 4;
 // Props: size relative to the original models, density multiplier, and the
 // number of chunks they are grouped in for horizon culling.
@@ -34,6 +37,9 @@ interface PlacedProp {
   matrix: THREE.Matrix4;
   shade: number; // brightness variation
 }
+
+// Props that may stand in shallow water (up to this depth).
+const WADING: Partial<Record<PropKind, number>> = { reeds: 0.0007, mangroveTree: 0.0006, broadleaf: 0.00025 };
 
 // Frame rate while nothing moves (water ripples and foam still animate).
 const IDLE_FPS = 15;
@@ -64,12 +70,19 @@ export class GlobeRenderer {
   private needsRender = true;
   private lastRender = 0;
   private readonly cam: GlobeCamera;
+  private readonly walk: WalkCamera;
+  private readonly sky = makeSky();
+  private readonly stars: THREE.PointsMaterial;
+  private readonly sunDir = new THREE.Vector3();
+  private walkHint: HTMLElement | null = null;
   private lastFrame = performance.now();
   private readonly raycaster = new THREE.Raycaster();
   private readonly scale: number; // world size of one tile relative to REF_EDGE
 
   private readonly terrain: TerrainMesh;
   private readonly terrainMat: TerrainMaterial;
+  private readonly waterMat: WaterMaterial;
+  private readonly waterMesh: THREE.Mesh;
   private readonly looks: TileLook[];
   private readonly globeMesh: THREE.Mesh;
   private readonly baseColors: THREE.Color[];
@@ -92,7 +105,6 @@ export class GlobeRenderer {
   private readonly citiesGroup = new THREE.Group();
   private readonly overlayGroup = new THREE.Group();
   private borders: THREE.Mesh | null = null;
-  private riverMesh: THREE.Mesh | null = null;
   private readonly textures = new Map<string, THREE.CanvasTexture>();
   private readonly cityBase: THREE.CylinderGeometry;
   private readonly cityBlock: THREE.BoxGeometry;
@@ -149,6 +161,20 @@ export class GlobeRenderer {
       if (highest) for (const nb of this.game.tiles[near].neighbors) r = Math.max(r, this.terrain.centerRadius[nb]);
       return r;
     }, this.abort.signal);
+    let walkHint = 0;
+    this.walk = new WalkCamera(this.camera, canvas, (dir) => {
+      const at = locate(this.game.globe, dir, walkHint);
+      walkHint = at.t;
+      return this.terrain.at(at.t, at.i, at.wa, at.wb);
+    }, this.abort.signal);
+    addEventListener('keydown', (e) => {
+      if (e.target instanceof HTMLInputElement || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === 'v' || e.key === 'V') this.setWalking(!this.walk.active);
+      else if (e.key === 'Escape' && this.walk.active) this.setWalking(false);
+    }, { signal: this.abort.signal });
+    this.stars = new THREE.PointsMaterial({ color: 0xaab4cc, size: 1.4, sizeAttenuation: false, fog: false, transparent: true });
+    this.scene.add(this.sky.mesh);
+    this.scene.fog = new THREE.FogExp2(HAZE.getHex(), 0);
 
     const g = game;
     const N = g.N;
@@ -159,11 +185,10 @@ export class GlobeRenderer {
     const params = this.paint.params;
     this.relief = buildRelief(g.globe, g.map, L, g.seed, params.r0, (x, y, z, out) => warpAt(params, x, y, z, out));
     const frames = this.frames, fans = this.paint.fans;
-    // Mountains, hills and their neighbors get the fine mesh for smooth relief.
-    const rough = (t: number) => g.relief[t] !== 'flat' && L[t].wet < 0.5;
+    const levels = meshLevels(g.globe, g.map, L);
     this.terrain = buildTerrainMesh(g.globe, {
-      heightAt: this.relief.heightAt,
-      fine: (t) => rough(t) || g.tiles[t].neighbors.some((nb) => g.relief[nb] === 'mountains' && L[nb].wet < 0.5),
+      level: (t) => levels[t] as 1 | 2 | 4,
+      surface: (topo) => buildSurface(g.globe, g.map, L, this.paint, this.relief, g.seed, topo).fields,
       warp: (dir, out) => { warpAt(params, dir.x, dir.y, dir.z, out); },
       fanAttributes: [{
         name: 'pc', itemSize: FAN_COORDS + 1,
@@ -187,9 +212,7 @@ export class GlobeRenderer {
       td.set([l.rockColor.r, l.rockColor.g, l.rockColor.b, l.rock], o + 12);
       td[o + 3] = l.wet;
       td[o + 19] = l.beach;
-      td[o + 20] = l.shallow;
       td[o + 21] = this.paint.group[t];
-      td[o + 22] = l.depth;
     });
     const fanTex = makeTable(this.paint.fans.length * FAN_ROWS);
     const fd = fanTex.image.data as Float32Array;
@@ -242,6 +265,15 @@ export class GlobeRenderer {
     this.globeMesh.castShadow = true;
     this.globeMesh.receiveShadow = true;
     this.scene.add(this.globeMesh);
+    // The water surface, hidden under fog of war like the ground.
+    const W = this.terrain.waterVerts.length;
+    this.terrain.water.setAttribute('unexplored', new THREE.BufferAttribute(new Float32Array(W).fill(1), 1));
+    this.terrain.water.setAttribute('dim', new THREE.BufferAttribute(new Float32Array(W), 1));
+    this.waterMat = makeWaterMaterial();
+    this.waterMesh = new THREE.Mesh(this.terrain.water, this.waterMat.material);
+    this.waterMesh.receiveShadow = true;
+    this.waterMesh.renderOrder = 1;
+    this.scene.add(this.waterMesh);
     this.prevExplored = new Uint8Array(N).fill(255);
     this.prevVisible = new Uint8Array(N).fill(255);
     this.prevOwner = new Int32Array(N).fill(-2);
@@ -308,7 +340,6 @@ export class GlobeRenderer {
     if (changed.length) {
       this.updateColors(changed);
       this.updateProps();
-      this.updateRivers();
       this.updateBorders();
     }
     this.updateCities();
@@ -344,6 +375,33 @@ export class GlobeRenderer {
     }
   }
 
+  // Walk mode on or off: walking starts where the map view looks, facing up
+  // the screen; leaving it puts the map view over where you stood.
+  setWalking(on: boolean): void {
+    if (on === this.walk.active) return;
+    if (on) {
+      const up = this.camera.up.clone();
+      this.walk.enter(this.cam.target, up.addScaledVector(this.cam.target, -up.dot(this.cam.target)));
+      this.camera.near = 0.00008;
+    } else {
+      this.walk.exit();
+      this.cam.place(this.walk.position, this.walk.facing, 0.1);
+      this.camera.near = 0.005;
+    }
+    this.cam.enabled = !on;
+    this.camera.updateProjectionMatrix();
+    this.needsRender = true;
+    this.shadowsDirty = true;
+    if (on && !this.walkHint) {
+      this.walkHint = document.createElement('div');
+      this.walkHint.id = 'walkhint';
+      this.walkHint.className = 'panel';
+      this.walkHint.innerHTML = 'Walk mode · <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> walk · <kbd>Shift</kbd> run · mouse: look (click to capture) · <kbd>V</kbd>/<kbd>Esc</kbd> back to the map';
+      document.body.appendChild(this.walkHint);
+    }
+    this.walkHint?.classList.toggle('hidden', !on);
+  }
+
   // ---------- globe ----------
 
   private surface(t: number, lift = 0): THREE.Vector3 {
@@ -360,7 +418,7 @@ export class GlobeRenderer {
     }
     const sg = new THREE.BufferGeometry();
     sg.setAttribute('position', new THREE.Float32BufferAttribute(stars, 3));
-    this.scene.add(new THREE.Points(sg, new THREE.PointsMaterial({ color: 0xaab4cc, size: 1.4, sizeAttenuation: false })));
+    this.scene.add(new THREE.Points(sg, this.stars));
 
     const atmosphere = new THREE.Mesh(
       new THREE.SphereGeometry(1.1, 64, 64),
@@ -431,6 +489,25 @@ export class GlobeRenderer {
       fogArr[v] = hidden / n;
     }
     fogAttr.needsUpdate = true;
+    // Water: per shared vertex, from the tiles it touches.
+    const owners = this.terrain.topo.owners;
+    const wFog = this.terrain.water.getAttribute('unexplored') as THREE.BufferAttribute;
+    const wDim = this.terrain.water.getAttribute('dim') as THREE.BufferAttribute;
+    const wf = wFog.array as Float32Array, wd = wDim.array as Float32Array;
+    this.terrain.waterVerts.forEach((sv, n) => {
+      let count = 0, hidden = 0, unseen = 0;
+      for (let s = 0; s < 3; s++) {
+        const t = owners[sv * 3 + s];
+        if (t < 0) continue;
+        count++;
+        if (!g.explored[t]) hidden++;
+        else if (!g.visible[t]) unseen++;
+      }
+      wf[n] = hidden / count;
+      wd[n] = unseen / Math.max(1, count - hidden);
+    });
+    wFog.needsUpdate = true;
+    wDim.needsUpdate = true;
   }
 
   // Props (trees, shrubs, reeds, palms...) of one tile, placed once and cached.
@@ -451,7 +528,6 @@ export class GlobeRenderer {
     if (most > 0) {
       const co = new Float32Array(FAN_COORDS);
       const delta = [0, 0, 0];
-      const r0 = this.paint.params.r0;
       const q = new THREE.Quaternion(), sc = new THREE.Vector3();
       const rand = mulberry32(t * 7919 + 1);
       const k = tile.corners.length;
@@ -481,12 +557,13 @@ export class GlobeRenderer {
             // Gentle large-scale variation in density, never clearings.
             const vary = 0.85 + 0.3 * this.propNoise.fbm(p.x * 9, p.y * 9, p.z * 9, 2);
             if (keep >= Math.min(1, (tu / spots) * vary)) continue;
-            // Keep river courses clear.
-            if (fan.river.some((rv, e) => rv > 0 && Math.abs(ps.s[e]) < r0 * (0.14 + 0.1 * rv))) continue;
             let spec = look.props[0];
             let cut = which * tu;
             for (const sp of look.props) { cut -= Math.ceil(sp.count * look.propScale) * PROP_DENSITY; if (cut < 0) { spec = sp; break; } }
             if (!spec) continue;
+            // Out of the water, except what grows in it.
+            const lv = this.terrain.at(t, i, wa, wb);
+            if (lv.water - lv.ground > (WADING[spec.kind] ?? -0.00008)) continue;
             q.setFromUnitVectors(UP, d);
             q.multiply(new THREE.Quaternion().setFromAxisAngle(UP, spin * Math.PI * 2));
             const size = 0.8 + 0.45 * sz;
@@ -573,93 +650,16 @@ export class GlobeRenderer {
   private edgeRibbon(t: number, i: number, outer: number, inner: number, lift: number, out: number[]): void {
     const steps = SUBDIV * 2;
     const pt = (f: number, r: number) => {
-      const p = this.terrain.samplePoint(t, i, (1 - f) * r, f * r);
-      return p.multiplyScalar(1 + lift / p.length());
+      // On the ground, or on the water where it stands above the ground.
+      const wa = (1 - f) * r, wb = f * r;
+      const lv = this.terrain.at(t, i, wa, wb);
+      return this.terrain.samplePoint(t, i, wa, wb).setLength(Math.max(lv.ground, lv.water) + lift);
     };
     for (let s = 0; s < steps; s++) {
       const f0 = s / steps, f1 = (s + 1) / steps;
       const a0 = pt(f0, outer), b0 = pt(f1, outer), a1 = pt(f0, inner), b1 = pt(f1, inner);
       for (const v of [a0, b0, b1, a0, b1, a1]) out.push(v.x, v.y, v.z);
     }
-  }
-
-  // Surface point at direction dir, which lies near edge i of tile t (on
-  // either side of it).
-  private surfaceNear(t: number, i: number, dir: THREE.Vector3): THREE.Vector3 {
-    const g = this.game;
-    const tile = g.tiles[t];
-    const k = tile.corners.length;
-    const solve = (tt: number, ii: number) => {
-      const tl = g.tiles[tt], kk = tl.corners.length;
-      const C = tl.center, A = g.globe.triCenters[tl.corners[ii]], B = g.globe.triCenters[tl.corners[(ii + 1) % kk]];
-      // dir * l = C + wa (A - C) + wb (B - C)
-      const ea = A.clone().sub(C), eb = B.clone().sub(C);
-      const M = new THREE.Matrix3().set(dir.x, -ea.x, -eb.x, dir.y, -ea.y, -eb.y, dir.z, -ea.z, -eb.z).invert();
-      const sol = C.clone().applyMatrix3(M);
-      return { wa: sol.y, wb: sol.z };
-    };
-    let r = solve(t, i);
-    if (r.wa + r.wb <= 1 + 1e-6) return this.terrain.samplePoint(t, i, Math.max(0, r.wa), Math.max(0, r.wb));
-    const nb = tile.neighbors[i];
-    const ntile = g.tiles[nb];
-    const ci = tile.corners[i], cj = tile.corners[(i + 1) % k];
-    const ni = ntile.corners.findIndex((c, j) => c === cj && ntile.corners[(j + 1) % ntile.corners.length] === ci);
-    if (ni < 0) return this.terrain.samplePoint(t, i, 0.5, 0.5);
-    r = solve(nb, ni);
-    return this.terrain.samplePoint(nb, ni, Math.max(0, r.wa), Math.max(0, r.wb));
-  }
-
-  // Rivers: a ribbon along each river's drawn course (riverCurve.ts), resting
-  // in its valley and widening downstream with the water it carries. Hidden
-  // under fog of war.
-  private updateRivers(): void {
-    const g = this.game;
-    const s = this.scale;
-    const maxFlow = Math.max(1, ...g.map.rivers.flatMap((r) => r.flow));
-    const pos: number[] = [], col: number[] = [], idx: number[] = [];
-    const river = new THREE.Color(0x4fb2cc);
-    const up = new THREE.Vector3(), tan = new THREE.Vector3(), side = new THREE.Vector3();
-    for (const r of g.map.rivers) {
-      const curve = riverCurve(g.globe, this.paint, r);
-      const pts = curve.map((c) => {
-        const p = this.surfaceNear(c.tile, c.fan, c.dir);
-        return p.multiplyScalar(1 + 0.0016 / p.length());
-      });
-      const seen = curve.map((c) => {
-        const tl = g.tiles[c.tile], nb = tl.neighbors[c.fan];
-        return g.explored[c.tile] || g.explored[nb] ? (g.visible[c.tile] || g.visible[nb] ? 1 : 0.5) : 0;
-      });
-      const width = curve.map((c) => (0.0035 + 0.007 * Math.sqrt(r.flow[c.edge] / maxFlow)) * s);
-      const base = pos.length / 3;
-      for (let j = 0; j < pts.length; j++) {
-        const p = pts[j];
-        tan.subVectors(pts[Math.min(pts.length - 1, j + 1)], pts[Math.max(0, j - 1)]).normalize();
-        up.copy(p).normalize();
-        side.crossVectors(up, tan).normalize().multiplyScalar(width[j] / 2);
-        pos.push(p.x + side.x, p.y + side.y, p.z + side.z, p.x - side.x, p.y - side.y, p.z - side.z);
-        const c = river.clone().multiplyScalar(seen[j] === 0.5 ? 0.55 : 1);
-        for (let v = 0; v < 2; v++) col.push(c.r, c.g, c.b);
-        if (j > 0 && seen[j] > 0 && seen[j - 1] > 0) {
-          const q = base + 2 * j;
-          idx.push(q - 2, q - 1, q, q - 1, q + 1, q);
-        }
-      }
-    }
-    if (this.riverMesh) {
-      this.scene.remove(this.riverMesh);
-      this.riverMesh.geometry.dispose();
-    }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-    geo.setIndex(idx);
-    geo.computeVertexNormals();
-    this.riverMesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
-      vertexColors: true, roughness: 0.45, side: THREE.DoubleSide,
-      polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3,
-    }));
-    this.riverMesh.receiveShadow = true;
-    this.scene.add(this.riverMesh);
   }
 
   // Colored bands along the inside edge of each empire's territory.
@@ -820,22 +820,34 @@ export class GlobeRenderer {
     this.lastView.quat.copy(cam.quaternion);
     this.shadowsDirty = false;
     // The sun shines from the upper left of the map view, high in the sky,
-    // whatever the camera's tilt.
-    const focus = this.cam.target.clone();
-    const up = cam.up.clone().addScaledVector(focus, -cam.up.dot(focus)).normalize();
+    // whatever the camera's tilt. Walking, it stays put in the sky (north-west).
+    const walking = this.walk.active;
+    const focus = (walking ? this.walk.position : this.cam.target).clone();
+    const up = walking ? northAt(focus) : cam.up.clone().addScaledVector(focus, -cam.up.dot(focus)).normalize();
     const right = up.clone().cross(focus);
     const dir = focus.clone().multiplyScalar(2.3).addScaledVector(up, 1.4).addScaledVector(right, -1.0).normalize();
+    this.sunDir.copy(dir);
     this.sun.position.copy(focus).addScaledVector(dir, 3);
     this.sun.target.position.copy(focus);
     this.sun.target.updateMatrixWorld();
     // Fit the shadow map to the ground in view (more of it when tilted).
     const span = this.cam.distance * Math.tan(THREE.MathUtils.degToRad(cam.fov / 2)) * Math.max(1, cam.aspect) * 1.3;
-    const half = Math.min(1.15, Math.max(0.08, span * (1 + 1.5 * Math.sin(this.cam.tilt))));
+    const half = walking ? 0.05 : Math.min(1.15, Math.max(0.08, span * (1 + 1.5 * Math.sin(this.cam.tilt))));
     const sc = this.sun.shadow.camera;
     sc.left = -half; sc.right = half; sc.top = half; sc.bottom = -half;
     sc.near = 1; sc.far = 5;
     sc.updateProjectionMatrix();
     this.renderer.shadowMap.needsUpdate = true;
+  }
+
+  // Sky and haze come in as the camera nears the ground: black space from
+  // orbit, a blue sky and hazy distance when low over the land or walking.
+  private updateAir(): void {
+    const alt = this.camera.position.length() - 1;
+    const sky = 1 - smoothstep(0.012, 0.12, alt);
+    this.sky.update(this.camera, this.sunDir, sky);
+    this.stars.opacity = 1 - sky;
+    (this.scene.fog as THREE.FogExp2).density = this.walk.active ? 7 : 5 * (1 - smoothstep(0.004, 0.15, alt));
   }
 
   // The tile under a screen point: intersect the view ray with a sphere at
@@ -878,9 +890,9 @@ export class GlobeRenderer {
     const t = performance.now();
     const dt = Math.min(0.1, (t - this.lastFrame) / 1000);
     this.lastFrame = t;
-    if (this.cam.update(dt)) this.needsRender = true;
+    if (this.walk.active ? this.walk.update(dt) : this.cam.update(dt)) this.needsRender = true;
 
-    if (this.pointer.dirty) {
+    if (this.pointer.dirty && !this.walk.active) {
       this.pointer.dirty = false;
       const t = this.pick(this.pointer.x, this.pointer.y);
       if (t !== this.hoverTile) {
@@ -894,8 +906,10 @@ export class GlobeRenderer {
     this.needsRender = false;
     this.lastRender = now;
     this.updateSun();
+    this.updateAir();
     this.cullProps();
     this.terrainMat.setTime(now / 1000);
+    this.waterMat.setTime(now / 1000);
     const t0 = performance.now();
     this.renderer.render(this.scene, this.camera);
     this.countFrame(performance.now() - t0);
@@ -913,6 +927,13 @@ export class GlobeRenderer {
     this.fpsEl.textContent = `${fps.toFixed(0)} fps · ${(this.fpsWork / this.fpsFrames).toFixed(1)} ms`;
     this.fpsFrames = 0; this.fpsWork = 0; this.fpsSince = now;
   }
+}
+
+// The tangent at dir pointing to the north pole (any tangent at the poles).
+function northAt(dir: THREE.Vector3): THREE.Vector3 {
+  const n = new THREE.Vector3(0, 1, 0).addScaledVector(dir, -dir.y);
+  if (n.lengthSq() < 1e-6) n.set(0, 0, -1).addScaledVector(dir, dir.z);
+  return n.normalize();
 }
 
 function smoothstep(a: number, b: number, x: number): number {

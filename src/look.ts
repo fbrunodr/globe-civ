@@ -24,9 +24,10 @@ export interface BiomeLook {
 const d = (grain: number, patch: number, strata: number, dunes: number, bump: number): Detail => ({ grain, patch, strata, dunes, bump });
 
 export const BIOME_LOOK: Record<BiomeKey, BiomeLook> = {
-  ocean:               { color: 0x2a6c9c, rock: 0x7d8a8c, detail: d(0.15, 0, 0, 0, 0), wet: 1 },
-  shallowSea:          { color: 0x52b4c9, rock: 0x8a9690, detail: d(0.15, 0, 0, 0, 0), wet: 1 },
-  lake:                { color: 0x4aa9c6, rock: 0x8a9690, detail: d(0.15, 0, 0, 0, 0), wet: 1 },
+  // Water tiles: the color is the bed's, seen through the water surface.
+  ocean:               { color: 0x6c776f, rock: 0x7d8a8c, detail: d(0.5, 0, 0, 0, 0.3), wet: 1 },
+  shallowSea:          { color: 0xc9b07a, rock: 0x8a9690, detail: d(0.6, 0, 0, 0.6, 0.4), wet: 1 },
+  lake:                { color: 0x8f8a62, rock: 0x8a9690, detail: d(0.6, 0, 0, 0, 0.4), wet: 1 },
   seaIce:              { color: 0xd8e9f1, rock: 0xb9c9d1, detail: d(0.5, 0, 0, 0, 0.5), wet: 0.2 },
   iceSheet:            { color: 0xf3f7fa, rock: 0xa9b8c2, detail: d(0.35, 0, 0, 0.2, 0.5), wet: 0 },
   tundra:              { color: 0xa6ad87, rock: 0x8e8d86, detail: d(0.9, 0, 0, 0, 0.6), wet: 0 },
@@ -72,12 +73,14 @@ export interface FeatureLook {
 }
 
 export const FEATURE_LOOK: Record<FeatureKey, FeatureLook> = {
-  marsh:      { color: 0x86a862, rock: null, colorMix: 0.55, patch: 0.75, patchColor: 0x5a9aa4, heightDelta: -0.003, plateau: null, strata: 0, wet: 0.25 },
-  swamp:      { color: 0x5f8250, rock: null, colorMix: 0.5,  patch: 0.6,  patchColor: 0x4a7a6a, heightDelta: -0.003, plateau: null, strata: 0, wet: 0.2 },
-  mangrove:   { color: 0x4f8460, rock: null, colorMix: 0.4,  patch: 0.7,  patchColor: 0x2f7a82, heightDelta: -0.004, plateau: null, strata: 0, wet: 0.25 },
-  bog:        { color: 0x8f8456, rock: null, colorMix: 0.55, patch: 0.55, patchColor: 0x55574a, heightDelta: -0.003, plateau: null, strata: 0, wet: 0.15 },
+  // Wetland water is real (pools in the height field, see POOL_LOOK); the
+  // patches are tussocks, mud and moss between the pools.
+  marsh:      { color: 0x86a862, rock: null, colorMix: 0.55, patch: 0.5,  patchColor: 0x6d8d45, heightDelta: -0.0005, plateau: null, strata: 0, wet: 0.25 },
+  swamp:      { color: 0x5f8250, rock: null, colorMix: 0.5,  patch: 0.5,  patchColor: 0x4d5f3a, heightDelta: -0.0005, plateau: null, strata: 0, wet: 0.2 },
+  mangrove:   { color: 0x4f8460, rock: null, colorMix: 0.4,  patch: 0.5,  patchColor: 0x6b6247, heightDelta: -0.001, plateau: null, strata: 0, wet: 0.25 },
+  bog:        { color: 0x8f8456, rock: null, colorMix: 0.55, patch: 0.55, patchColor: 0x6e6038, heightDelta: -0.0005, plateau: null, strata: 0, wet: 0.15 },
   floodplain: { color: 0x96bd52, rock: null, colorMix: 0.55, patch: 0.25, patchColor: 0x5d8a3a, heightDelta: -0.002, plateau: 0.7, strata: 0, wet: 0 },
-  oasis:      { color: 0x8aa04e, rock: null, colorMix: 0.45, patch: 0.4,  patchColor: 0x2f86a8, heightDelta: 0,      plateau: null, strata: 0, wet: 0 },
+  oasis:      { color: 0x8aa04e, rock: null, colorMix: 0.45, patch: 0.3,  patchColor: 0x6f8f3e, heightDelta: 0,      plateau: null, strata: 0, wet: 0 },
   volcano:    { color: 0x4a423c, rock: 0x3d3632, colorMix: 0.7,  patch: 0,    patchColor: 0x000000, heightDelta: 0.012,  plateau: null, strata: 0.3, wet: 0 },
   // Glaciers keep the mountain's colors; the renderer caps only the peak with ice.
   glacier:    { color: null,     rock: null, colorMix: 0,    patch: 0,    patchColor: 0x000000, heightDelta: 0.004,  plateau: null, strata: 0, wet: 0 },
@@ -85,9 +88,47 @@ export const FEATURE_LOOK: Record<FeatureKey, FeatureLook> = {
   kelp:       { color: 0x24646f, rock: null, colorMix: 0.45, patch: 0.5,  patchColor: 0x3f8a6a, heightDelta: 0,      plateau: null, strata: 0, wet: 0 },
 };
 
-// Water surfaces sit at sea level regardless of relief: all open water at the
-// same height (depth only changes its color, see TileLook.depth).
-const WATER_HEIGHT: Partial<Record<BiomeKey, number>> = { ocean: 0, shallowSea: 0, lake: 0, seaIce: 0.003 };
+// Open water and sea ice sit at sea level regardless of relief (sea ice a
+// little above it).
+export const SEA_LEVEL = 0;
+const WATER_HEIGHT: Partial<Record<BiomeKey, number>> = { ocean: SEA_LEVEL, shallowSea: SEA_LEVEL, lake: SEA_LEVEL, seaIce: SEA_LEVEL + 0.003 };
+
+// ---------- water ----------
+
+// How a body of water looks: its color where deep (shallows are lighter and
+// clearer, see the water shader) and how murky it is (1 = clear sea; higher
+// = the bed fades out sooner and the color stays darker).
+export interface WaterTint { deep: number; murk: number }
+
+export const SEA_TINT: Record<'ocean' | 'shallowSea' | 'lake', WaterTint> = {
+  ocean:      { deep: 0x0d3a66, murk: 1 },
+  shallowSea: { deep: 0x0f4670, murk: 1 },
+  lake:       { deep: 0x124f5c, murk: 1.3 },
+};
+export const RIVER_TINT: WaterTint = { deep: 0x15505e, murk: 2.2 };
+
+// Bed level of water tiles below sea level (relief.ts / surface.ts). Land
+// tiles count as a shallow bed where the coast blends into the sea.
+const BED: Record<'ocean' | 'shallowSea' | 'lake', number> = { ocean: -0.007, shallowSea: -0.0026, lake: -0.0034 };
+const SHORE_BED = -0.0015;
+
+// Wetlands and oases hold water of their own: pools in the ground at a level
+// just under the tile's ground (sea level on the coast).
+export interface PoolLook {
+  tint: WaterTint;
+  // Share of the ground under water: the pool pattern (noise, -0.6..0.6) is
+  // flooded above this threshold. Oases have one pond in the middle instead.
+  threshold: number;
+  pond: boolean;
+}
+
+export const POOL_LOOK: Partial<Record<FeatureKey, PoolLook>> = {
+  marsh:    { tint: { deep: 0x1d4a44, murk: 2.6 }, threshold: 0.02, pond: false },
+  swamp:    { tint: { deep: 0x1e2e1a, murk: 4 },   threshold: 0.1,  pond: false },
+  mangrove: { tint: { deep: 0x1f4840, murk: 2.4 }, threshold: -0.04, pond: false },
+  bog:      { tint: { deep: 0x1f160b, murk: 7 },   threshold: 0.14, pond: false },
+  oasis:    { tint: { deep: 0x0f5a6a, murk: 1.4 }, threshold: 0,    pond: true },
+};
 
 // ---------- props (instanced 3D decorations) ----------
 
@@ -148,13 +189,17 @@ export interface TileLook {
   props: PropSpec[];
   propScale: number; // hills: fewer props
   beach: number;     // 1 = this tile's shore can be sandy (water tiles defer to the land side)
-  shallow: number;   // 1 = clear shallow water with caustics (land counts as shallow so coasts blend)
-  depth: number;     // 0..1, how deep the water is (darkens it); 0 on land
+  water: boolean;    // open water (ocean, shallow sea, lake): the ground is a bed under the sea surface
+  bed: number;       // bed level under water (land tiles: the shallow bed off their shore)
+  tint: WaterTint | null; // open water's look
+  pool: PoolLook | null;  // wetland pools / oasis pond
 }
 
 // Biomes whose coasts get sandy beaches; cold, forested-to-the-water and
 // wetland coasts stay as they are.
 const SANDY: ReadonlySet<BiomeKey> = new Set(['prairie', 'steppe', 'savanna', 'mediterranean', 'hotDesert', 'coldDesert', 'monsoonForest', 'jungle', 'temperateForest']);
+
+const isOpenWater = (b: BiomeKey): b is 'ocean' | 'shallowSea' | 'lake' => b === 'ocean' || b === 'shallowSea' || b === 'lake';
 
 export function tileLook(map: MapData, t: number): TileLook {
   const biome = map.biome[t], relief = map.relief[t], feature = map.feature[t];
@@ -165,7 +210,6 @@ export function tileLook(map: MapData, t: number): TileLook {
   const water = WATER_HEIGHT[biome];
 
   const color = new THREE.Color(B.color);
-  if (biome === 'ocean') color.lerp(new THREE.Color(0x1a4a78), 0.3); // deeper water darkens further in the shader, by depth
   const rockColor = new THREE.Color(F?.rock ?? B.rock);
   if (water === undefined) color.lerp(rockColor, R.stone);
   if (F?.color != null) color.lerp(new THREE.Color(F.color), F.colorMix);
@@ -208,7 +252,11 @@ export function tileLook(map: MapData, t: number): TileLook {
     props,
     propScale: relief === 'hills' ? 0.65 : 1,
     beach: water !== undefined ? 1 : SANDY.has(biome) && relief === 'flat' && (!feature || feature === 'floodplain' || feature === 'oasis') ? 1 : 0,
-    shallow: biome === 'ocean' || biome === 'seaIce' ? 0 : 1,
-    depth: biome === 'ocean' ? Math.min(1, 0.25 + -e * 1.5) : biome === 'shallowSea' ? 0.08 : 0,
+    water: isOpenWater(biome),
+    bed: !isOpenWater(biome) ? SHORE_BED
+      : biome === 'ocean' ? BED.ocean * (1 + Math.min(1.2, -e * 2))
+      : feature === 'reef' ? -0.0013 : feature === 'kelp' ? -0.0021 : BED[biome],
+    tint: isOpenWater(biome) ? SEA_TINT[biome] : null,
+    pool: feature ? POOL_LOOK[feature] ?? null : null,
   };
 }
