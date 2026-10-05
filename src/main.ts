@@ -41,6 +41,8 @@ function startGame(sizeKey: MapSizeKey, seed: number): void {
   const game = new Game({ size: sizeKey, seed });
   const view = new GlobeRenderer(document.getElementById('c') as HTMLCanvasElement, game);
   const ui = new UI(game, act);
+  view.onTileHover = onHover;
+  view.onTileClick = onClick;
   // Dev-only handle for profiling from the browser console or test scripts.
   if (import.meta.env.DEV) Object.assign(window, { __globe: { game, view } });
   document.getElementById('hud')!.classList.remove('hidden');
@@ -123,13 +125,13 @@ function startGame(sizeKey: MapSizeKey, seed: number): void {
     refresh();
   }
 
-  view.onTileHover = (t) => {
+  function onHover(t: number): void {
     hover = t;
     view.syncOverlay(sel, hover, previewPath());
     ui.render(sel, hover, hint());
-  };
+  }
 
-  view.onTileClick = (t, button) => {
+  function onClick(t: number, button: number): void {
     if (game.over) return;
     if (button === 2) {
       if (sel?.kind === 'unit' && sel.unit.owner === HUMAN && t !== sel.unit.tile) {
@@ -148,7 +150,7 @@ function startGame(sizeKey: MapSizeKey, seed: number): void {
       sel = options.length ? options[(idx + 1) % options.length] : { kind: 'tile', tile: t };
     }
     refresh();
-  };
+  }
 
   addEventListener('keydown', (e) => {
     if (e.target instanceof HTMLInputElement) return;

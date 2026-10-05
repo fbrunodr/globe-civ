@@ -6,7 +6,7 @@ import { SNOW, tileLook, type TileLook, type PropKind } from './look.ts';
 import { buildTerrainMesh, type TerrainMesh } from './terrainMesh.ts';
 import { makeTerrainMaterial, makeTable, FAN_ROWS, TILE_ROWS, type TerrainMaterial } from './terrainMaterial.ts';
 import { buildPaintData, fanCoords, fanFrames, paintAt, warpAt, FAN_COORDS, FINE_MAX, FINE_WAVELENGTH, type PaintData, type FanFrame } from './paint.ts';
-import { buildRelief, type Relief } from './relief.ts';
+import { buildRelief, CONE_RADIUS, CRATER, CRATER_DEPTH, type Relief } from './relief.ts';
 import { riverCurve } from './riverCurve.ts';
 import { buildPropGeometry, PROP_KINDS } from './props.ts';
 import { mulberry32, makePerlin } from './rng.ts';
@@ -18,8 +18,8 @@ const UP = new THREE.Vector3(0, 1, 0);
 const SUBDIV = 4;
 // Props: size relative to the original models, density multiplier, and the
 // number of chunks they are grouped in for horizon culling.
-const PROP_SIZE = 0.5;
-const PROP_DENSITY = 4;
+const PROP_SIZE = 0.425;
+const PROP_DENSITY = 5;
 const PROP_CHUNKS = 16;
 
 interface PropChunk {
@@ -101,6 +101,12 @@ export class GlobeRenderer {
   private downAt: { x: number; y: number } | null = null;
   private hoverTile = -1;
 
+  private readonly abort = new AbortController();
+  private readonly fpsEl: HTMLElement | null = document.getElementById('fps');
+  private fpsFrames = 0;
+  private fpsWork = 0;
+  private fpsSince = performance.now();
+
   constructor(canvas: HTMLCanvasElement, game: Game) {
     this.game = game;
     this.scale = game.globe.avgEdgeAngle / REF_EDGE;
@@ -142,7 +148,7 @@ export class GlobeRenderer {
       let r = this.terrain.centerRadius[near];
       if (highest) for (const nb of this.game.tiles[near].neighbors) r = Math.max(r, this.terrain.centerRadius[nb]);
       return r;
-    });
+    }, this.abort.signal);
 
     const g = game;
     const N = g.N;
@@ -183,6 +189,7 @@ export class GlobeRenderer {
       td[o + 19] = l.beach;
       td[o + 20] = l.shallow;
       td[o + 21] = this.paint.group[t];
+      td[o + 22] = l.depth;
     });
     const fanTex = makeTable(this.paint.fans.length * FAN_ROWS);
     const fd = fanTex.image.data as Float32Array;
@@ -268,12 +275,20 @@ export class GlobeRenderer {
       this.camera.aspect = innerWidth / innerHeight;
       this.camera.updateProjectionMatrix();
     };
-    addEventListener('resize', resize);
+    addEventListener('resize', resize, { signal: this.abort.signal });
     resize();
     this.renderer.setAnimationLoop(() => this.frame());
   }
 
   // ---------- public API ----------
+
+  // Stops drawing and frees the GPU resources.
+  dispose(): void {
+    this.abort.abort();
+    this.renderer.setAnimationLoop(null);
+    this.renderer.dispose();
+    this.renderer.forceContextLoss();
+  }
 
   focusOn(tile: number): void {
     this.cam.focus(this.game.tiles[tile].center);
@@ -535,25 +550,22 @@ export class GlobeRenderer {
     }
   }
 
+  // A glowing lava pool in each explored volcano's crater (the crater itself
+  // is part of the relief).
   private updateCraters(): void {
     const g = this.game;
-    for (const c of this.craters.children) if (c instanceof THREE.Mesh) c.geometry.dispose();
+    for (const c of this.craters.children) if (c instanceof THREE.Mesh) { c.geometry.dispose(); (c.material as THREE.Material).dispose(); }
     this.craters.clear();
-    const s = this.scale;
+    const r0 = this.paint.params.r0;
     for (let t = 0; t < g.N; t++) {
       if (g.feature[t] !== 'volcano' || !g.explored[t]) continue;
-      const group = new THREE.Group();
-      group.position.copy(this.surface(t, -0.004 * s));
-      group.quaternion.setFromUnitVectors(UP, g.tiles[t].center);
-      const rim = new THREE.Mesh(new THREE.CylinderGeometry(0.0042 * s, 0.009 * s, 0.006 * s, 9, 1, true),
-        new THREE.MeshStandardMaterial({ color: 0x2e2824, roughness: 1, side: THREE.DoubleSide }));
-      rim.position.y = 0.003 * s;
-      const lava = new THREE.Mesh(new THREE.CircleGeometry(0.004 * s, 12),
+      // A flat pool filling the bottom third of the crater bowl; the bowl's
+      // walls rise through its rim.
+      const lava = new THREE.Mesh(new THREE.CircleGeometry(0.75 * CRATER * CONE_RADIUS * r0, 20),
         new THREE.MeshBasicMaterial({ color: g.visible[t] ? 0xff6a1a : 0x7a3a1a }));
-      lava.rotation.x = -Math.PI / 2;
-      lava.position.y = 0.0045 * s;
-      group.add(rim, lava);
-      this.craters.add(group);
+      lava.position.copy(this.surface(t, 0.33 * CRATER_DEPTH * this.relief.peak[t]));
+      lava.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), g.tiles[t].center);
+      this.craters.add(lava);
     }
   }
 
@@ -884,7 +896,22 @@ export class GlobeRenderer {
     this.updateSun();
     this.cullProps();
     this.terrainMat.setTime(now / 1000);
+    const t0 = performance.now();
     this.renderer.render(this.scene, this.camera);
+    this.countFrame(performance.now() - t0);
+  }
+
+  // FPS counter: frames drawn per second (frames are only drawn when
+  // something changes, plus the idle tick) and CPU time per frame.
+  private countFrame(ms: number): void {
+    if (!this.fpsEl) return;
+    this.fpsFrames++;
+    this.fpsWork += ms;
+    const now = performance.now();
+    if (now - this.fpsSince < 500) return;
+    const fps = (this.fpsFrames * 1000) / (now - this.fpsSince);
+    this.fpsEl.textContent = `${fps.toFixed(0)} fps · ${(this.fpsWork / this.fpsFrames).toFixed(1)} ms`;
+    this.fpsFrames = 0; this.fpsWork = 0; this.fpsSince = now;
   }
 }
 

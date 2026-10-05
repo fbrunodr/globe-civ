@@ -13,7 +13,7 @@ import { mulberry32 } from './rng.ts';
 //   2 patchColor.rgb, bump  (blotches drawn by detail.y: pools, coral, kelp)
 //   3 rock.rgb, amount      (the biome's bare rock, shown where the ground is steep)
 //   4 snow.rgb, beach       (snow as this tile shows it; sandy shores)
-//   5 shallow, group        (clear shallows; tiles of one group look alike)
+//   5 shallow, group, depth (clear shallows; tiles of one group look alike; water depth 0..1)
 // Fan table rows (FAN_ROWS texels):
 //   0 ids (t, A, B, C)
 //   1 rounding of edges i-1, i, i+1 and A|B
@@ -224,17 +224,19 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
           // shores keep a gradient for beaches and foam.
           vWet = 0.0;
           vec2 vCoast = vec2(0.0);
+          float depth = 0.0;
           for (int k = 0; k < 4; k++) {
             if (soft[k] > 0.001) {
               int tt = int(ids[k]);
+              vec4 r5 = tileRow(tt, 5);
               vWet += soft[k] * tileRow(tt, 0).a;
-              vCoast += soft[k] * vec2(tileRow(tt, 4).a, tileRow(tt, 5).x);
+              vCoast += soft[k] * vec2(tileRow(tt, 4).a, r5.x);
+              depth += soft[k] * r5.z;
             }
           }
           diffuseColor.rgb = mix(m0.rgb, m4.rgb, vSnow) * vShade;
-          // Open water darkens smoothly with depth.
-          float depth = smoothstep(-0.0045, -0.0105, length(P) - 1.0) * smoothstep(0.5, 0.9, vWet);
-          diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.5, 0.62, 0.78), depth);
+          // Open water darkens with depth (the surface itself is level).
+          diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.5, 0.62, 0.78), smoothstep(0.2, 1.0, depth) * smoothstep(0.5, 0.9, vWet));
           float land = 1.0 - smoothstep(0.45, 0.55, vWet);
 
           // River banks: a strip of greener, damper ground along the river's curve.

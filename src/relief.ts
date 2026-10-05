@@ -40,6 +40,10 @@ export interface Ridge {
 // Share of the lower peak a saddle may dip (P7 guarantees at least 70% remains).
 export const MAX_SADDLE_DIP = 0.18;
 const MOUNTAIN_BASE = 0.009;
+// Volcano crater: radius as a share of the cone's radius, depth as a share of its height.
+export const CRATER = 0.24;
+export const CRATER_DEPTH = 0.3;
+export const CONE_RADIUS = 1.15; // share of the tile's inner radius
 const HILL_BUMP = 0.005;
 
 const smoothstep = (a: number, b: number, x: number): number => {
@@ -60,7 +64,9 @@ export function buildRelief(globe: Globe, map: MapData, looks: readonly TileLook
   const noise = makePerlin(mulberry32(seed ^ 0x51ed270b));
   const crag = makePerlin(mulberry32(seed ^ 0x2c4a6e1f));
   const rand = mulberry32(seed ^ 0x1e1ef);
-  const mountain = (t: number) => map.relief[t] === 'mountains' && looks[t].wet < 0.5;
+  // Volcanoes are lone cones with a crater, not part of ranges.
+  const volcano = (t: number) => map.feature[t] === 'volcano';
+  const mountain = (t: number) => map.relief[t] === 'mountains' && looks[t].wet < 0.5 && !volcano(t);
 
   // ---- per-tile base level, plateau and noise amplitude ----
   const base = new Float32Array(N), plateau = new Float32Array(N), amp = new Float32Array(N), peak = new Float32Array(N);
@@ -229,11 +235,35 @@ export function buildRelief(globe: Globe, map: MapData, looks: readonly TileLook
     return lerp(arr[t], b, smoothstep(plateau[t], 1, r));
   };
 
+  // ---- volcanoes: a cone with a crater at the tile center ----
+  const cones: { c: THREE.Vector3; h: number }[][] = tiles.map(() => []);
+  for (let t = 0; t < N; t++) {
+    if (!volcano(t)) continue;
+    const cone = { c: tiles[t].center, h: Math.max(0.02, looks[t].height - MOUNTAIN_BASE) };
+    peak[t] = cone.h;
+    base[t] = MOUNTAIN_BASE; plateau[t] = 0.2; amp[t] = 0.0008;
+    cones[t].push(cone);
+    for (const nb of tiles[t].neighbors) cones[nb].push(cone);
+  }
+  const CONE_R = CONE_RADIUS * r0;
+  const coneAt = (t: number, dir: THREE.Vector3): number => {
+    let best = 0;
+    for (const cone of cones[t]) {
+      const q = cone.c.distanceTo(dir) / CONE_R;
+      if (q >= 1) continue;
+      // Concave flanks rising to a rim, then a bowl down into the crater.
+      const flank = (u: number) => cone.h * Math.pow(1 - smoothstep(0, 1, u), 1.6);
+      const h = q >= CRATER ? flank(q) : flank(CRATER) - CRATER_DEPTH * cone.h * (1 - (q / CRATER) ** 2);
+      best = Math.max(best, h);
+    }
+    return best;
+  };
+
   return {
     heightAt(t, i, wa, wb, dir) {
       const n = 2 * noise.fbm(dir.x * 22 + 5.1, dir.y * 22 - 3.3, dir.z * 22 + 1.7, 5);
       return interiorVal(base, t, i, wa, wb) + interiorVal(amp, t, i, wa, wb) * n
-        + ridgeAt(t, dir) + bumpAt(t, dir) - valleyAt(t, dir);
+        + Math.max(ridgeAt(t, dir), coneAt(t, dir)) + bumpAt(t, dir) - valleyAt(t, dir);
     },
     peak, base, ridges,
   };

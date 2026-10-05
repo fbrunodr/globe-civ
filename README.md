@@ -46,6 +46,9 @@ The renderer draws a frame only when something changes (plus a slow idle tick
 for water), caps the pixel ratio at 1.5, culls props by chunk and thins them
 with camera distance.
 
+The FPS counter (top right) shows frames drawn per second (about 15 while idle, since frames
+are drawn only when something changes) and CPU time per frame.
+
 URL params: `?seed=123`, `?size=small|medium|large`, `?reveal` (debug: show the whole map).
 
 ## Map sizes (matched to Civ VI)

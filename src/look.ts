@@ -85,8 +85,9 @@ export const FEATURE_LOOK: Record<FeatureKey, FeatureLook> = {
   kelp:       { color: 0x24646f, rock: null, colorMix: 0.45, patch: 0.5,  patchColor: 0x3f8a6a, heightDelta: 0,      plateau: null, strata: 0, wet: 0 },
 };
 
-// Water surfaces sit at sea level regardless of relief.
-const WATER_HEIGHT: Partial<Record<BiomeKey, number>> = { ocean: -0.004, shallowSea: 0, lake: 0, seaIce: 0.003 };
+// Water surfaces sit at sea level regardless of relief: all open water at the
+// same height (depth only changes its color, see TileLook.depth).
+const WATER_HEIGHT: Partial<Record<BiomeKey, number>> = { ocean: 0, shallowSea: 0, lake: 0, seaIce: 0.003 };
 
 // ---------- props (instanced 3D decorations) ----------
 
@@ -148,6 +149,7 @@ export interface TileLook {
   propScale: number; // hills: fewer props
   beach: number;     // 1 = this tile's shore can be sandy (water tiles defer to the land side)
   shallow: number;   // 1 = clear shallow water with caustics (land counts as shallow so coasts blend)
+  depth: number;     // 0..1, how deep the water is (darkens it); 0 on land
 }
 
 // Biomes whose coasts get sandy beaches; cold, forested-to-the-water and
@@ -170,9 +172,9 @@ export function tileLook(map: MapData, t: number): TileLook {
 
   let height: number, plateau: number, roughness: number;
   if (water !== undefined) {
-    height = water - (biome === 'ocean' ? 0.006 * Math.min(1, -e * 2) : 0);
-    plateau = biome === 'ocean' ? 0.1 : 0.6; // a smooth sea floor, flat shallows
-    roughness = biome === 'seaIce' ? 0.0016 : 0.0003;
+    height = water;
+    plateau = 0.6;
+    roughness = biome === 'seaIce' ? 0.0016 : 0; // open water is flat
   } else {
     height = R.height;
     if (relief === 'mountains') height += 0.03 * Math.max(0, e - 0.6);
@@ -207,5 +209,6 @@ export function tileLook(map: MapData, t: number): TileLook {
     propScale: relief === 'hills' ? 0.65 : 1,
     beach: water !== undefined ? 1 : SANDY.has(biome) && relief === 'flat' && (!feature || feature === 'floodplain' || feature === 'oasis') ? 1 : 0,
     shallow: biome === 'ocean' || biome === 'seaIce' ? 0 : 1,
+    depth: biome === 'ocean' ? Math.min(1, 0.25 + -e * 1.5) : biome === 'shallowSea' ? 0.08 : 0,
   };
 }

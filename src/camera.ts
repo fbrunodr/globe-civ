@@ -55,8 +55,9 @@ export class GlobeCamera {
 
   // surface(dir, highest): terrain radius at a direction, or the highest
   // terrain around it (keeps the camera above hills and mountains).
+  // signal: aborting it removes the window listeners (keyboard).
   constructor(private readonly camera: THREE.PerspectiveCamera, canvas: HTMLElement,
-    private readonly surface: (dir: THREE.Vector3, highest: boolean) => number) {
+    private readonly surface: (dir: THREE.Vector3, highest: boolean) => number, private readonly signal: AbortSignal) {
     const target = new THREE.Vector3(0, 0, 1);
     this.cur = { target, forward: northAt(target), dist: 2.4, tilt: 0 };
     this.goal = cloneView(this.cur);
@@ -209,9 +210,9 @@ export class GlobeCamera {
         this.keys.add(k);
         if (k.startsWith('arrow')) e.preventDefault(); // no page scrolling
       }
-    });
-    addEventListener('keyup', (e) => this.keys.delete(e.key.toLowerCase()));
-    addEventListener('blur', () => this.keys.clear());
+    }, { signal: this.signal });
+    addEventListener('keyup', (e) => this.keys.delete(e.key.toLowerCase()), { signal: this.signal });
+    addEventListener('blur', () => this.keys.clear(), { signal: this.signal });
   }
 
   // Direction of the ground point under a screen position, if any.
