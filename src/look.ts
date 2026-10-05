@@ -56,7 +56,7 @@ export interface ReliefLook {
 export const RELIEF_LOOK: Record<ReliefKey, ReliefLook> = {
   flat:      { height: 0.007, plateau: 0.55, roughness: 0.0016, rock: 0.35, stone: 0,    strata: 0,    bump: 0 },
   hills:     { height: 0.019, plateau: 0.12, roughness: 0.004,  rock: 0.6,  stone: 0.12, strata: 0.15, bump: 0.3 },
-  mountains: { height: 0.04,  plateau: 0,    roughness: 0.02,   rock: 0.6,  stone: 0.15, strata: 0.5,  bump: 0.6 },
+  mountains: { height: 0.04,  plateau: 0,    roughness: 0.02,   rock: 0.6,  stone: 0,    strata: 0.5,  bump: 0.6 },
 };
 
 export interface FeatureLook {
@@ -163,18 +163,15 @@ export function tileLook(map: MapData, t: number): TileLook {
   const water = WATER_HEIGHT[biome];
 
   const color = new THREE.Color(B.color);
-  if (biome === 'ocean') color.lerp(new THREE.Color(0x1a4a78), Math.min(1, -e * 1.6)); // darker with depth
+  if (biome === 'ocean') color.lerp(new THREE.Color(0x1a4a78), 0.3); // deeper water darkens further in the shader, by depth
   const rockColor = new THREE.Color(F?.rock ?? B.rock);
   if (water === undefined) color.lerp(rockColor, R.stone);
   if (F?.color != null) color.lerp(new THREE.Color(F.color), F.colorMix);
-  // Tiny per-tile jitter so large regions are not perfectly uniform.
-  const j = Math.sin(t * 12.9898) * 43758.5453;
-  color.multiplyScalar(0.96 + 0.08 * (j - Math.floor(j)));
 
   let height: number, plateau: number, roughness: number;
   if (water !== undefined) {
     height = water - (biome === 'ocean' ? 0.006 * Math.min(1, -e * 2) : 0);
-    plateau = 0.6;
+    plateau = biome === 'ocean' ? 0.1 : 0.6; // a smooth sea floor, flat shallows
     roughness = biome === 'seaIce' ? 0.0016 : 0.0003;
   } else {
     height = R.height;

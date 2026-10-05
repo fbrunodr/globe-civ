@@ -5,7 +5,7 @@ import type { Game, Unit, City } from './game.ts';
 import { SNOW, tileLook, type TileLook, type PropKind } from './look.ts';
 import { buildTerrainMesh, type TerrainMesh } from './terrainMesh.ts';
 import { makeTerrainMaterial, makeTable, FAN_ROWS, TILE_ROWS, type TerrainMaterial } from './terrainMaterial.ts';
-import { buildPaintData, fanCoords, fanFrames, paintAt, FAN_COORDS, type PaintData, type FanFrame } from './paint.ts';
+import { buildPaintData, fanCoords, fanFrames, paintAt, warpAt, FAN_COORDS, FINE_MAX, FINE_WAVELENGTH, type PaintData, type FanFrame } from './paint.ts';
 import { buildRelief, type Relief } from './relief.ts';
 import { riverCurve } from './riverCurve.ts';
 import { buildPropGeometry, PROP_KINDS } from './props.ts';
@@ -16,6 +16,27 @@ const FOG = new THREE.Color(0x0b0e15);
 const UP = new THREE.Vector3(0, 1, 0);
 // Subdivisions per tile fan; higher = smoother relief, more triangles.
 const SUBDIV = 4;
+// Props: size relative to the original models, density multiplier, and the
+// number of chunks they are grouped in for horizon culling.
+const PROP_SIZE = 0.5;
+const PROP_DENSITY = 4;
+const PROP_CHUNKS = 16;
+
+interface PropChunk {
+  dir: THREE.Vector3;  // chunk center
+  radius: number;      // angular radius, with a margin for prop size
+  tiles: number[];
+  meshes: Map<PropKind, THREE.InstancedMesh>;
+}
+
+interface PlacedProp {
+  kind: PropKind;
+  matrix: THREE.Matrix4;
+  shade: number; // brightness variation
+}
+
+// Frame rate while nothing moves (water ripples and foam still animate).
+const IDLE_FPS = 15;
 // Reference tile spacing (radians) that unit/city sizes were tuned for.
 const REF_EDGE = 0.07;
 
@@ -38,6 +59,10 @@ export class GlobeRenderer {
   private readonly sun: THREE.DirectionalLight;
   private readonly lastView = { pos: new THREE.Vector3(), quat: new THREE.Quaternion() };
   private shadowsDirty = true;
+  // Frames are drawn only when something changed; otherwise a slow tick keeps
+  // the water moving (IDLE_FPS).
+  private needsRender = true;
+  private lastRender = 0;
   private readonly controls: OrbitControls;
   private readonly raycaster = new THREE.Raycaster();
   private readonly scale: number; // world size of one tile relative to REF_EDGE
@@ -57,7 +82,10 @@ export class GlobeRenderer {
   private prevVisible: Uint8Array;
   private prevOwner: Int32Array;
 
-  private readonly props = new Map<PropKind, THREE.InstancedMesh>();
+  private readonly propMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, flatShading: true });
+  private readonly propGeo = new Map<PropKind, THREE.BufferGeometry>();
+  private readonly chunks: PropChunk[] = [];
+  private readonly propCache = new Map<number, PlacedProp[]>();
   private readonly craters = new THREE.Group();
   private readonly unitsGroup = new THREE.Group();
   private readonly citiesGroup = new THREE.Group();
@@ -77,7 +105,9 @@ export class GlobeRenderer {
     this.game = game;
     this.scale = game.globe.avgEdgeAngle / REF_EDGE;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    // Pixels are the main cost: 1.5 keeps Retina screens sharp at about half
+    // the work of 2.
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
     // Neutral tone mapping keeps the pastel palette saturated (ACES washes it out).
     this.renderer.toneMapping = THREE.NeutralToneMapping;
     this.renderer.toneMappingExposure = 1.0;
@@ -116,18 +146,20 @@ export class GlobeRenderer {
     const L = this.looks;
     this.paint = buildPaintData(g.globe, g.map, g.seed);
     this.frames = fanFrames(g.globe);
-    this.relief = buildRelief(g.globe, g.map, L, g.seed, this.paint.params.r0);
-    const frames = this.frames;
+    const params = this.paint.params;
+    this.relief = buildRelief(g.globe, g.map, L, g.seed, params.r0, (x, y, z, out) => warpAt(params, x, y, z, out));
+    const frames = this.frames, fans = this.paint.fans;
     // Mountains, hills and their neighbors get the fine mesh for smooth relief.
     const rough = (t: number) => g.relief[t] !== 'flat' && L[t].wet < 0.5;
     this.terrain = buildTerrainMesh(g.globe, {
       heightAt: this.relief.heightAt,
       fine: (t) => rough(t) || g.tiles[t].neighbors.some((nb) => g.relief[nb] === 'mountains' && L[nb].wet < 0.5),
+      warp: (dir, out) => { warpAt(params, dir.x, dir.y, dir.z, out); },
       fanAttributes: [{
         name: 'pc', itemSize: FAN_COORDS + 1,
-        views: [{ name: 'pc0', offset: 0, size: 4 }, { name: 'pc1', offset: 4, size: 4 }, { name: 'pc2', offset: 8, size: 4 }, { name: 'pc3', offset: 12, size: 2 }],
-        compute: (fan, _t, _i, dir, out, off) => {
-          fanCoords(frames[fan], dir.x, dir.y, dir.z, out, off);
+        views: [{ name: 'pc0', offset: 0, size: 4 }, { name: 'pc1', offset: 4, size: 2 }],
+        compute: (fan, _t, _i, dir, delta, out, off) => {
+          fanCoords(frames[fan], fans[fan], delta, dir.x, dir.y, dir.z, out, off);
           out[off + FAN_COORDS] = fan;
         },
       }],
@@ -146,17 +178,17 @@ export class GlobeRenderer {
       td[o + 3] = l.wet;
       td[o + 19] = l.beach;
       td[o + 20] = l.shallow;
+      td[o + 21] = this.paint.group[t];
     });
     const fanTex = makeTable(this.paint.fans.length * FAN_ROWS);
     const fd = fanTex.image.data as Float32Array;
     this.paint.fans.forEach((f, i) => {
       const o = i * FAN_ROWS * 4;
       fd.set(f.ids, o);
-      fd.set(f.amp.slice(0, 4), o + 4);
-      fd.set(f.blend.slice(0, 4), o + 8);
-      fd.set(f.seed.slice(0, 4), o + 12);
-      fd.set([f.amp[4], f.blend[4], f.seed[4], 0], o + 16);
-      fd.set([...f.river, 0], o + 20);
+      fd.set(f.round.slice(0, 4), o + 4);
+      fd.set([f.round[4], ...f.river], o + 8);
+      fd.set(f.warp.slice(0, 4), o + 12);
+      fd[o + 16] = f.warp[4];
     });
 
     // Per-vertex shade (baked occlusion and a fine tint) and snow, fixed for
@@ -193,7 +225,7 @@ export class GlobeRenderer {
 
     this.terrainMat = makeTerrainMaterial({
       tileTex: this.tileTex, fanTex,
-      taper: this.paint.params.taper, freq: this.paint.params.freq, r0: this.paint.params.r0,
+      r0: params.r0, fine: FINE_MAX * params.r0, fineFreq: 1 / (FINE_WAVELENGTH * params.r0),
     });
     this.globeMesh = new THREE.Mesh(this.terrain.geometry, this.terrainMat.material);
     this.globeMesh.castShadow = true;
@@ -205,16 +237,20 @@ export class GlobeRenderer {
     this.buildBackdrop();
 
     const s = this.scale;
-    // One instanced mesh per prop kind, sized for the worst case (all explored).
-    const capacity = new Map<PropKind, number>();
-    for (const l of L) for (const spec of l.props) capacity.set(spec.kind, (capacity.get(spec.kind) ?? 0) + Math.ceil(2 * spec.count * l.propScale) + 2);
-    const propMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, flatShading: true });
-    for (const kind of PROP_KINDS) {
-      const mesh = new THREE.InstancedMesh(buildPropGeometry(kind, s * 1.5), propMat, Math.max(1, capacity.get(kind) ?? 0));
-      mesh.count = 0;
-      mesh.castShadow = true;
-      this.props.set(kind, mesh);
-      this.scene.add(mesh);
+    // Props are drawn per chunk of the globe, one instanced mesh per kind, so
+    // chunks behind the horizon or off screen cost nothing.
+    for (const kind of PROP_KINDS) this.propGeo.set(kind, buildPropGeometry(kind, s * 1.5 * PROP_SIZE));
+    const golden = Math.PI * (3 - Math.sqrt(5));
+    for (let k = 0; k < PROP_CHUNKS; k++) {
+      const y = 1 - (2 * (k + 0.5)) / PROP_CHUNKS, rr = Math.sqrt(1 - y * y);
+      this.chunks.push({ dir: new THREE.Vector3(Math.cos(golden * k) * rr, y, Math.sin(golden * k) * rr), radius: 0, tiles: [], meshes: new Map() });
+    }
+    for (const tile of g.tiles) {
+      let best = 0;
+      for (let k = 1; k < PROP_CHUNKS; k++) if (this.chunks[k].dir.dot(tile.center) > this.chunks[best].dir.dot(tile.center)) best = k;
+      const c = this.chunks[best];
+      c.tiles.push(tile.id);
+      c.radius = Math.max(c.radius, c.dir.angleTo(tile.center) + 2 * g.globe.avgEdgeAngle);
     }
     this.scene.add(this.craters);
     this.cityBase = new THREE.CylinderGeometry(0.026 * s, 0.03 * s, 0.006 * s, 6);
@@ -222,7 +258,9 @@ export class GlobeRenderer {
     this.scene.add(this.unitsGroup, this.citiesGroup, this.overlayGroup);
 
     this.bindInput(canvas);
+    this.controls.addEventListener('change', () => { this.needsRender = true; });
     const resize = () => {
+      this.needsRender = true;
       this.renderer.setSize(innerWidth, innerHeight);
       this.camera.aspect = innerWidth / innerHeight;
       this.camera.updateProjectionMatrix();
@@ -248,6 +286,7 @@ export class GlobeRenderer {
   // Redraw everything that depends on game state.
   syncWorld(sel: Selection): void {
     this.shadowsDirty = true;
+    this.needsRender = true;
     const changed = this.changedTiles();
     if (changed.length) {
       this.updateColors(changed);
@@ -261,6 +300,7 @@ export class GlobeRenderer {
 
   // Redraw selection ring, hover ring and path preview.
   syncOverlay(sel: Selection, hover: number, path: number[] | null): void {
+    this.needsRender = true;
     for (const o of this.overlayGroup.children) if (o instanceof THREE.Mesh || o instanceof THREE.Line) o.geometry.dispose();
     this.overlayGroup.clear();
     const selTile = sel?.kind === 'unit' ? sel.unit.tile : sel?.kind === 'city' ? sel.city.tile : sel?.kind === 'tile' ? sel.tile : -1;
@@ -376,77 +416,121 @@ export class GlobeRenderer {
     fogAttr.needsUpdate = true;
   }
 
-  // Instanced props (trees, shrubs, reeds, palms...) on explored tiles, plus
-  // volcano craters. Props follow the painting: candidate spots are spread
-  // over each tile, and each spot takes the props of whichever tile the
-  // painting shows there, so forests feather into their neighbors exactly
-  // where the ground color does. Spots are fixed by the tile id, so props
-  // never move between reloads.
-  private updateProps(): void {
+  // Props (trees, shrubs, reeds, palms...) of one tile, placed once and cached.
+  // Spots come from a jittered triangular lattice in each fan of the tile, so
+  // props keep an even, natural spacing (no clumps). Each spot takes the props
+  // of whichever tile the painting shows there, so forests feather into their
+  // neighbors exactly where the ground color does; sparse props skip spots at
+  // random. Everything is fixed by the tile id, so props never move between
+  // reloads.
+  private placeProps(t: number): PlacedProp[] {
+    const cached = this.propCache.get(t);
+    if (cached) return cached;
     const g = this.game;
-    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), color = new THREE.Color();
-    const counts = new Map<PropKind, number>();
-    const co = new Float32Array(FAN_COORDS);
-    const total = this.looks.map((l) => l.props.reduce((a, p) => a + Math.ceil(p.count * l.propScale), 0));
-    const r0 = this.paint.params.r0;
-    for (let t = 0; t < g.N; t++) {
-      if (!g.explored[t]) continue;
-      const tile = g.tiles[t];
-      const most = Math.max(total[t], ...tile.neighbors.map((nb) => total[nb]));
-      if (most === 0) continue;
+    const out: PlacedProp[] = [];
+    const total = (u: number) => this.looks[u].props.reduce((a, p) => a + Math.ceil(p.count * this.looks[u].propScale), 0) * PROP_DENSITY;
+    const tile = g.tiles[t];
+    const most = Math.max(total(t), ...tile.neighbors.map(total));
+    if (most > 0) {
+      const co = new Float32Array(FAN_COORDS);
+      const delta = [0, 0, 0];
+      const r0 = this.paint.params.r0;
+      const q = new THREE.Quaternion(), sc = new THREE.Vector3();
       const rand = mulberry32(t * 7919 + 1);
       const k = tile.corners.length;
-      const dim = g.visible[t] ? 1 : 0.45;
-      // Candidates: twice the densest tile's count, so forests can thin out into clearings.
-      const C = Math.ceil(most * 2.2);
-      for (let j = 0; j < C; j++) {
-        const i = Math.floor(rand() * k);
-        let wa = rand(), wb = rand();
-        if (wa + wb > 1) { wa = 1 - wa; wb = 1 - wb; }
-        wa *= 0.97; wb *= 0.97;
-        const pick = rand(), keep = rand(), which = rand(), clump = rand();
-        const p = this.terrain.samplePoint(t, i, wa, wb);
-        const d = p.clone().normalize();
-        const fanId = this.paint.fanStart[t] + i;
-        const fan = this.paint.fans[fanId];
-        fanCoords(this.frames[fanId], d.x, d.y, d.z, co);
-        const ps = paintAt(this.paint.params, fan, co, d.x, d.y, d.z);
-        // Which tile's props show here.
-        let u = fan.ids[0], acc = 0;
-        for (let c = 0; c < 4; c++) { acc += ps.w[c]; if (pick < acc) { u = fan.ids[c]; break; } }
-        const look = this.looks[u];
-        if (total[u] === 0) continue;
-        // Keep river courses clear.
-        if (fan.river.some((rv, e) => rv > 0 && Math.abs(ps.s[e]) < r0 * (0.14 + 0.1 * rv))) continue;
-        let spec = look.props[0];
-        let cut = which * total[u];
-        for (const sp of look.props) { cut -= Math.ceil(sp.count * look.propScale); if (cut < 0) { spec = sp; break; } }
-        if (!spec) continue;
-        // Forests clump: a smooth density field makes groves and clearings, and
-        // trees in the densest spots grow largest. Sparse props spread evenly.
-        const clumps = spec.count >= 6;
-        const density = clumps ? 0.5 + this.propNoise.fbm(p.x * 38, p.y * 38, p.z * 38, 2) * 1.6 : 1;
-        if (clumps && density < 0.42 + 0.2 * clump) continue;
-        if (keep >= (clumps ? 2 : 1) * total[u] / C) continue;
-        const mesh = this.props.get(spec.kind)!;
-        const idx = counts.get(spec.kind) ?? 0;
-        if (idx >= mesh.instanceMatrix.count) continue;
-        q.setFromUnitVectors(UP, d);
-        q.multiply(new THREE.Quaternion().setFromAxisAngle(UP, rand() * Math.PI * 2));
-        const size = (0.75 + 0.55 * rand()) * (clumps ? 0.8 + 0.4 * Math.min(1, density) : 1);
-        m.compose(p, q, sc.set(size, size * (0.9 + 0.3 * rand()), size));
-        color.setScalar((0.82 + 0.36 * rand()) * dim);
-        mesh.setMatrixAt(idx, m);
-        mesh.setColorAt(idx, color);
-        counts.set(spec.kind, idx + 1);
+      // Rows of the lattice per fan: enough spots for the densest look nearby.
+      const m = Math.max(1, Math.ceil((Math.sqrt(8 * (most / k) + 1) - 1) / 2));
+      const spots = (k * m * (m + 1)) / 2;
+      for (let i = 0; i < k; i++) {
+        for (let a = 0; a < m; a++) {
+          for (let b = 0; a + b < m; b++) {
+            const pick = rand(), keep = rand(), which = rand(), spin = rand(), sz = rand(), tall = rand(), tint = rand();
+            const ja = (rand() - 0.5) * 0.6, jb = (rand() - 0.5) * 0.6;
+            // Spot (a, b) of the fan's lattice, kept inside the fan.
+            const wa = Math.min(0.98, Math.max(0.02, (a + 1 / 3 + ja) / m));
+            const wb = Math.min(0.98 - wa, Math.max(0.02, (b + 1 / 3 + jb) / m));
+            const p = this.terrain.samplePoint(t, i, wa, wb);
+            const d = p.clone().normalize();
+            const fanId = this.paint.fanStart[t] + i;
+            const fan = this.paint.fans[fanId];
+            fanCoords(this.frames[fanId], fan, warpAt(this.paint.params, d.x, d.y, d.z, delta), d.x, d.y, d.z, co);
+            const ps = paintAt(this.paint, fanId, co);
+            // Which tile's props show here.
+            let u = fan.ids[0], acc = 0;
+            for (let c = 0; c < 4; c++) { acc += ps.w[c]; if (pick < acc) { u = fan.ids[c]; break; } }
+            const look = this.looks[u];
+            const tu = total(u);
+            if (tu === 0) continue;
+            // Gentle large-scale variation in density, never clearings.
+            const vary = 0.85 + 0.3 * this.propNoise.fbm(p.x * 9, p.y * 9, p.z * 9, 2);
+            if (keep >= Math.min(1, (tu / spots) * vary)) continue;
+            // Keep river courses clear.
+            if (fan.river.some((rv, e) => rv > 0 && Math.abs(ps.s[e]) < r0 * (0.14 + 0.1 * rv))) continue;
+            let spec = look.props[0];
+            let cut = which * tu;
+            for (const sp of look.props) { cut -= Math.ceil(sp.count * look.propScale) * PROP_DENSITY; if (cut < 0) { spec = sp; break; } }
+            if (!spec) continue;
+            q.setFromUnitVectors(UP, d);
+            q.multiply(new THREE.Quaternion().setFromAxisAngle(UP, spin * Math.PI * 2));
+            const size = 0.8 + 0.45 * sz;
+            out.push({ kind: spec.kind, matrix: new THREE.Matrix4().compose(p, q, sc.set(size, size * (0.9 + 0.3 * tall), size)), shade: 0.82 + 0.36 * tint });
+          }
+        }
       }
     }
-    for (const [kind, mesh] of this.props) {
-      mesh.count = counts.get(kind) ?? 0;
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    this.propCache.set(t, out);
+    return out;
+  }
+
+  // Rebuilds the instanced props of explored tiles, chunk by chunk.
+  private updateProps(): void {
+    const g = this.game;
+    const color = new THREE.Color();
+    for (const chunk of this.chunks) {
+      const lists = new Map<PropKind, { p: PlacedProp; dim: number }[]>();
+      for (const t of chunk.tiles) {
+        if (!g.explored[t]) continue;
+        const dim = g.visible[t] ? 1 : 0.45;
+        for (const p of this.placeProps(t)) {
+          let l = lists.get(p.kind);
+          if (!l) { l = []; lists.set(p.kind, l); }
+          l.push({ p, dim });
+        }
+      }
+      for (const kind of PROP_KINDS) {
+        const items = lists.get(kind) ?? [];
+        let mesh = chunk.meshes.get(kind);
+        if (!mesh || mesh.instanceMatrix.count < items.length) {
+          if (mesh) { this.scene.remove(mesh); mesh.dispose(); }
+          if (items.length === 0) { chunk.meshes.delete(kind); continue; }
+          mesh = new THREE.InstancedMesh(this.propGeo.get(kind)!, this.propMat, Math.ceil(items.length * 1.3) + 8);
+          mesh.castShadow = true;
+          chunk.meshes.set(kind, mesh);
+          this.scene.add(mesh);
+        }
+        items.forEach(({ p, dim }, i) => {
+          mesh.setMatrixAt(i, p.matrix);
+          mesh.setColorAt(i, color.setScalar(p.shade * dim));
+        });
+        mesh.count = items.length;
+        mesh.instanceMatrix.needsUpdate = true;
+        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+        mesh.computeBoundingSphere();
+      }
     }
     this.updateCraters();
+  }
+
+  // Per frame: hide prop chunks beyond the horizon (they could not be seen).
+  private cullProps(): void {
+    const cam = this.camera.position;
+    const dist = cam.length();
+    const camDir = cam.clone().divideScalar(dist);
+    const horizon = Math.acos(Math.min(1, 1 / dist));
+    for (const chunk of this.chunks) {
+      const seen = camDir.angleTo(chunk.dir) < horizon + chunk.radius;
+      for (const mesh of chunk.meshes.values()) mesh.visible = seen;
+    }
   }
 
   private updateCraters(): void {
@@ -735,11 +819,40 @@ export class GlobeRenderer {
     this.renderer.shadowMap.needsUpdate = true;
   }
 
+  // The tile under a screen point: intersect the view ray with a sphere at
+  // ground level, walk to the nearest tile center, then repeat once at that
+  // tile's own height (hills and mountains stand above the sphere).
   private pick(x: number, y: number): number {
     const ndc = new THREE.Vector2((x / innerWidth) * 2 - 1, -(y / innerHeight) * 2 + 1);
     this.raycaster.setFromCamera(ndc, this.camera);
-    const hit = this.raycaster.intersectObject(this.globeMesh)[0];
-    return hit?.faceIndex != null ? this.terrain.triToTile[hit.faceIndex] : -1;
+    const { origin, direction } = this.raycaster.ray;
+    const hit = (r: number): THREE.Vector3 | null => {
+      const b = origin.dot(direction), c = origin.lengthSq() - r * r;
+      const disc = b * b - c;
+      if (disc < 0) return null;
+      return origin.clone().addScaledVector(direction, -b - Math.sqrt(disc)).normalize();
+    };
+    let p = hit(1.008);
+    if (!p) return -1;
+    let t = this.nearestTile(p, this.hoverTile >= 0 ? this.hoverTile : 0);
+    p = hit(this.terrain.centerRadius[t]);
+    if (p) t = this.nearestTile(p, t);
+    return t;
+  }
+
+  // Greedy walk over neighbors toward the tile whose center is closest to dir.
+  private nearestTile(dir: THREE.Vector3, start: number): number {
+    const tiles = this.game.tiles;
+    let t = start, best = tiles[t].center.dot(dir);
+    for (;;) {
+      let next = -1;
+      for (const nb of tiles[t].neighbors) {
+        const d = tiles[nb].center.dot(dir);
+        if (d > best) { best = d; next = nb; }
+      }
+      if (next < 0) return t;
+      t = next;
+    }
   }
 
   private frame(): void {
@@ -752,10 +865,9 @@ export class GlobeRenderer {
       const next = cur.clone().lerp(this.focusDir, 0.12).normalize();
       this.camera.position.copy(next.multiplyScalar(dist));
       if (cur.angleTo(this.focusDir) < 0.003) this.focusDir = null;
+      this.needsRender = true;
     }
     this.controls.update();
-    this.updateSun();
-    this.terrainMat.setTime(performance.now() / 1000);
 
     if (this.pointer.dirty) {
       this.pointer.dirty = false;
@@ -765,6 +877,14 @@ export class GlobeRenderer {
         this.onTileHover(t);
       }
     }
+
+    const now = performance.now();
+    if (!this.needsRender && now - this.lastRender < 1000 / IDLE_FPS) return;
+    this.needsRender = false;
+    this.lastRender = now;
+    this.updateSun();
+    this.cullProps();
+    this.terrainMat.setTime(now / 1000);
     this.renderer.render(this.scene, this.camera);
   }
 }

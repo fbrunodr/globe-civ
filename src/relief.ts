@@ -51,7 +51,10 @@ const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 // Soft bump: 1 at q = 0, 0 (with zero slope) at q >= 1.
 const bump = (q: number) => (q >= 1 ? 0 : (1 - q * q) * (1 - q * q));
 
-export function buildRelief(globe: Globe, map: MapData, looks: readonly TileLook[], seed: number, r0: number): Relief {
+// warp: the painting's warp field (paint.ts warpAt), so ranges bend with the
+// regions around them instead of following the hex grid.
+export function buildRelief(globe: Globe, map: MapData, looks: readonly TileLook[], seed: number, r0: number,
+  warp?: (x: number, y: number, z: number, out: number[]) => number[]): Relief {
   const { tiles, tris, triCenters } = globe;
   const N = tiles.length;
   const noise = makePerlin(mulberry32(seed ^ 0x51ed270b));
@@ -110,8 +113,16 @@ export function buildRelief(globe: Globe, map: MapData, looks: readonly TileLook
     for (const t of near) ridgesNear[t].push(k);
   });
   const W = 1.25 * r0;
-  const tmp = new THREE.Vector3(), seg = new THREE.Vector3();
-  const ridgeAt = (t: number, dir: THREE.Vector3): number => {
+  const tmp = new THREE.Vector3(), seg = new THREE.Vector3(), wdir = new THREE.Vector3();
+  const delta = [0, 0, 0];
+  const RIDGE_WARP = 0.9;
+  const ridgeAt = (t: number, d: THREE.Vector3): number => {
+    if (ridgesNear[t].length === 0) return 0;
+    let dir = d;
+    if (warp) {
+      warp(d.x, d.y, d.z, delta);
+      dir = wdir.set(d.x + RIDGE_WARP * delta[0], d.y + RIDGE_WARP * delta[1], d.z + RIDGE_WARP * delta[2]).normalize();
+    }
     let best = 0;
     for (const k of ridgesNear[t]) {
       const r = ridges[k];

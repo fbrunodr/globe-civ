@@ -1,13 +1,13 @@
 // The drawn course of a river: it follows the painted border along each
 // tile edge it runs on (so the biome change follows the water), which keeps
-// it within the border's wobble of the real edge, then corner cutting rounds
-// the turns at tile corners.
+// it within the river warp of the real edge, and rounds the turns at tile
+// corners.
 
 import * as THREE from 'three';
 import type { Globe } from './goldberg.ts';
 import type { River } from './rivers.ts';
 import { borderBetween } from './rivers.ts';
-import { fanCoords, fanFrames, warpedDistance, type PaintData } from './paint.ts';
+import { fanFrames, warpAt, type PaintData } from './paint.ts';
 
 export interface RiverPoint {
   dir: THREE.Vector3; // unit direction on the globe
@@ -22,9 +22,7 @@ const SAMPLES = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1];
 
 export function riverCurve(globe: Globe, paint: PaintData, river: River): RiverPoint[] {
   const frames = fanFrames(globe);
-  const co = new Float32Array(13);
-  const T = paint.params.taper;
-  const ss = (x: number) => { const t = Math.min(1, Math.max(0, x / T)); return t * t * (3 - 2 * t); };
+  const delta = [0, 0, 0];
   const n = river.corners.length;
   // Course along each edge: the painted border's zero crossing, sampled.
   const edges: RiverPoint[][] = [];
@@ -45,8 +43,10 @@ export function riverCurve(globe: Globe, paint: PaintData, river: River): RiverP
     for (const f of SAMPLES) {
       if (f < lo - 1e-9 || f > hi + 1e-9) continue;
       const x0 = p0.clone().lerp(p1, f).normalize();
-      fanCoords(fr, x0.x, x0.y, x0.z, co);
-      const s = warpedDistance(paint.params, fan, 1, 0, ss(co[4]) * ss(co[7]), x0.x, x0.y, x0.z);
+      // On the edge the distance is 0, so the warped distance is the warp
+      // term alone; the painted border sits that far across the edge.
+      warpAt(paint.params, x0.x, x0.y, x0.z, delta);
+      const s = fan.warp[1] * (delta[0] * fr.n[3] + delta[1] * fr.n[4] + delta[2] * fr.n[5]);
       const dir = x0.clone().addScaledVector(new THREE.Vector3(fr.n[3], fr.n[4], fr.n[5]), -s).normalize();
       pts.push({ dir, tile: a, fan: i, edge: k });
     }

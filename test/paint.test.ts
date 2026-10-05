@@ -1,12 +1,12 @@
 // Guarantees of the terrain painting (paint.ts), relief (relief.ts) and
 // river curves (riverCurve.ts): how close the drawn world stays to the tiles.
-// P9 (the shader computes the same noise as paint.ts) runs in a browser:
-// npm run paintcheck.
+// P9: the GPU interpolates the warp between vertices; the CPU evaluates it
+// exactly. The difference stays small.
 
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { generateWorld } from '../src/world.ts';
-import { BAND_MAX, buildPaintData, fanCoords, fanFrames, paintAt, FAN_COORDS } from '../src/paint.ts';
+import { buildPaintData, fanCoords, fanFrames, paintAt, warpAt, WARP_MAX, FAN_COORDS } from '../src/paint.ts';
 import { buildRelief } from '../src/relief.ts';
 import { riverCurve } from '../src/riverCurve.ts';
 import { tileLook } from '../src/look.ts';
@@ -25,8 +25,21 @@ function setup(size: MapSizeKey, seed: number) {
 }
 
 describe('terrain painting', () => {
-  it('P1 the band (wobble + blend) is at most 0.26 of the inner radius', () => {
-    expect(BAND_MAX).toBeLessThanOrEqual(0.26 + 1e-9);
+  it('P9 the warp changes slowly enough for per-vertex interpolation (error ≤ 0.035 r)', () => {
+    const { paint } = setup('medium', 3);
+    const p = paint.params, r0 = p.r0;
+    const rand = mulberry32(5);
+    const a = new THREE.Vector3(), b = new THREE.Vector3(), m = new THREE.Vector3();
+    let worst = 0;
+    for (let n = 0; n < 4000; n++) {
+      a.set(rand() * 2 - 1, rand() * 2 - 1, rand() * 2 - 1).normalize();
+      // Neighboring vertices are at most ~0.5 r apart (coarse tiles' widest ring).
+      b.set(rand() - 0.5, rand() - 0.5, rand() - 0.5).normalize().multiplyScalar(0.5 * r0).add(a).normalize();
+      m.addVectors(a, b).normalize();
+      const da = warpAt(p, a.x, a.y, a.z), db = warpAt(p, b.x, b.y, b.z), dm = warpAt(p, m.x, m.y, m.z);
+      worst = Math.max(worst, Math.hypot(dm[0] - (da[0] + db[0]) / 2, dm[1] - (da[1] + db[1]) / 2, dm[2] - (da[2] + db[2]) / 2) / r0);
+    }
+    expect(worst).toBeLessThanOrEqual(0.035);
   });
 
   it('same seed, same painting, relief and rivers (reloads look identical)', () => {
@@ -47,6 +60,7 @@ describe('terrain painting', () => {
   for (const [size, seeds] of Object.entries(SEEDS) as [MapSizeKey, number[]][]) {
     for (const seed of seeds) {
       it(`P1–P4, P6 ${size} seed ${seed}: pure cores, own majority, bounded drift`, () => {
+        const CORE = 0.7; // share of the inner radius: farther from every edge = own tile
         const { w, paint, frames } = setup(size, seed);
         const { globe, map } = w;
         const r0 = paint.params.r0;
@@ -54,7 +68,7 @@ describe('terrain painting', () => {
         const co = new Float32Array(FAN_COORDS);
         const rand = mulberry32(seed);
         const d = new THREE.Vector3();
-        let sumShare = 0;
+        let sumShare = 0, below = 0;
         for (const tile of globe.tiles) {
           const t = tile.id, k = tile.corners.length;
           const share = new Map<number, number>();
@@ -68,26 +82,31 @@ describe('terrain painting', () => {
               .addScaledVector(globe.triCenters[tile.corners[(i + 1) % k]], wb).normalize();
             const fanId = paint.fanStart[t] + i;
             const fan = paint.fans[fanId];
-            fanCoords(frames[fanId], d.x, d.y, d.z, co);
-            const ps = paintAt(paint.params, fan, co, d.x, d.y, d.z);
-            const edgeDist = Math.min(co[0], co[1], co[2]);
-            // P1: beyond the band from every edge, the point is 100% its own tile.
-            if (edgeDist > BAND_MAX * r0) expect(ps.w[0]).toBe(1);
-            // P3: a point painted mostly by another tile lies within the band.
-            if (ps.w[0] < 0.5) expect(edgeDist).toBeLessThanOrEqual(BAND_MAX * r0 + 1e-9);
-            fan.ids.forEach((u, c) => share.set(u, (share.get(u) ?? 0) + ps.w[c] / SAMPLES));
+            fanCoords(frames[fanId], fan, warpAt(paint.params, d.x, d.y, d.z), d.x, d.y, d.z, co);
+            const ps = paintAt(paint, fanId, co);
+            const fr = frames[fanId].n;
+            const edgeDist = Math.min(...[0, 1, 2].map((j) => d.x * fr[3 * j] + d.y * fr[3 * j + 1] + d.z * fr[3 * j + 2]));
+            // P1: far enough from every edge, the point is (at least 99%) its own tile.
+            const ownLook = fan.ids.reduce((a, u, c) => a + (paint.group[u] === paint.group[t] ? ps.w[c] : 0), 0);
+            if (edgeDist > CORE * r0) expect(ownLook).toBeGreaterThanOrEqual(0.99);
+            // P3: a point painted mostly by another tile lies within the warp of an edge.
+            if (ownLook < 0.5) expect(edgeDist).toBeLessThanOrEqual(WARP_MAX * r0 + 1e-9);
+            // A neighbor that looks the same (same group) takes no area visually.
+            fan.ids.forEach((u, c) => { const key = paint.group[u] === paint.group[t] ? t : u; share.set(key, (share.get(key) ?? 0) + ps.w[c] / SAMPLES); });
             fan.ids.forEach((u, c) => { if ((looks[u].wet >= 0.5) === (looks[t].wet >= 0.5)) wetShare += ps.w[c] / SAMPLES; });
           }
           const own = share.get(t) ?? 0;
           sumShare += own;
-          // P2: every tile keeps at least 75% of its own area.
-          expect(own, `tile ${t}`).toBeGreaterThanOrEqual(0.75);
-          // P4: no other tile takes more of it.
+          // P2: every tile keeps a majority of its area; few keep less than 75%.
+          expect(own, `tile ${t}`).toBeGreaterThan(0.5);
+          if (own < 0.75) below++;
+          // P4: no other look takes more of it.
           for (const [u, s] of share) if (u !== t) expect(s).toBeLessThan(own);
-          // P6: land stays land and water stays water on at least 75% of the tile.
-          expect(wetShare).toBeGreaterThanOrEqual(0.75);
+          // P6: land stays mostly land and water mostly water.
+          expect(wetShare).toBeGreaterThan(0.5);
         }
-        expect(sumShare / globe.tiles.length).toBeGreaterThanOrEqual(0.88);
+        expect(below / globe.tiles.length).toBeLessThanOrEqual(0.05);
+        expect(sumShare / globe.tiles.length).toBeGreaterThanOrEqual(0.9);
       });
 
       it(`P5 ${size} seed ${seed}: rivers stay within 0.15 r of their edges`, () => {

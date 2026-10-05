@@ -9,7 +9,8 @@ export interface FanAttribute {
   // Optional: expose the data as several shader attributes (each at most 4
   // wide) sharing one interleaved buffer, instead of one attribute `name`.
   views?: { name: string; offset: number; size: number }[];
-  compute(fan: number, t: number, i: number, dir: THREE.Vector3, out: Float32Array, offset: number): void;
+  // delta: the warp field at the vertex (TerrainSpec.warp), or zeros.
+  compute(fan: number, t: number, i: number, dir: THREE.Vector3, delta: ArrayLike<number>, out: Float32Array, offset: number): void;
 }
 
 export interface TerrainSpec {
@@ -18,6 +19,8 @@ export interface TerrainSpec {
   // get evenly spaced rings, for smooth relief).
   fine(t: number): boolean;
   fanAttributes: FanAttribute[];
+  // A smooth vector field evaluated once per vertex and handed to fan attributes.
+  warp?(dir: THREE.Vector3, out: number[]): void;
 }
 
 export interface TerrainMesh {
@@ -202,13 +205,23 @@ export function buildTerrainMesh(globe: Globe, spec: TerrainSpec, coarse: number
   geometry.setAttribute('ring', new THREE.BufferAttribute(pick(rings, 1), 1));
   const vertDir = pick(dirs, 3);
   const dir = new THREE.Vector3();
+  // Warp field per shared vertex, so every copy of a vertex gets the same value.
+  const sharedWarp = new Float32Array(Vs * 3);
+  if (spec.warp) {
+    const tmp = [0, 0, 0];
+    for (let v = 0; v < Vs; v++) {
+      dir.set(dirs[v * 3], dirs[v * 3 + 1], dirs[v * 3 + 2]);
+      spec.warp(dir, tmp);
+      sharedWarp[v * 3] = tmp[0]; sharedWarp[v * 3 + 1] = tmp[1]; sharedWarp[v * 3 + 2] = tmp[2];
+    }
+  }
   for (const fa of spec.fanAttributes) {
     const data = new Float32Array(V * fa.itemSize);
     for (let v = 0; v < V; v++) {
       const f = vertFan[v];
       const [t, i] = fanOfTile[f];
       dir.set(vertDir[v * 3], vertDir[v * 3 + 1], vertDir[v * 3 + 2]);
-      fa.compute(f, t, i, dir, data, v * fa.itemSize);
+      fa.compute(f, t, i, dir, sharedWarp.subarray(origin[v] * 3, origin[v] * 3 + 3), data, v * fa.itemSize);
     }
     if (fa.views) {
       const buf = new THREE.InterleavedBuffer(data, fa.itemSize);

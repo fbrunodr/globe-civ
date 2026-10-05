@@ -14,7 +14,6 @@ npm test           # unit tests + every map guarantee on 1,000 maps per size (~2
 npm run mapcheck    # deep check: 30,000 random maps per size, all CPU cores
 npm run guarantees                  # print every map guarantee with its limits
 npm run shots -- <dir> --sheet      # render fixed reference scenes for before/after review
-npm run paintcheck                  # the shader paints with the same noise as paint.ts (headless Chrome)
 npm run build
 ```
 
@@ -32,14 +31,20 @@ re-run by `npm test` forever.
 ## Terrain painting
 
 Tiles are the game truth; what is drawn is derived from them (`src/paint.ts`).
-Every tile border becomes a wobbly curve inside a thin band around the real
-edge, so each tile's core is 100% its own terrain and every tile keeps at least
-75% of its area. Relief is one height field (`src/relief.ts`): mountain ranges
-follow a ridge skeleton between adjacent mountain tiles, and rivers carve
-shallow valleys. Rivers are drawn along the painted borders with rounded turns
-(`src/riverCurve.ts`). These promises (P1–P9) are tested in
-`test/paint.test.ts` and `npm run paintcheck`. All of it is a pure function of
-the seed, so reloads look identical.
+One smooth warp field, with a region-scale layer a few tiles across and finer
+layers on top, bends every border, so coastlines and forest edges curve across
+several tiles instead of tracing hexes. Tile weights are blurred and then
+sharpened per material group, which merges same-looking tiles and rounds the
+zigzag of hex outlines. Every tile keeps the majority of its area (P2, P4).
+Relief is one height field (`src/relief.ts`): mountain ranges follow a ridge
+skeleton bent by the same warp, and rivers carve shallow valleys. Rivers are
+drawn along the painted borders with rounded turns (`src/riverCurve.ts`).
+These promises (P1–P9) are tested in `test/paint.test.ts`. All of it is a
+pure function of the seed, so reloads look identical.
+
+The renderer draws a frame only when something changes (plus a slow idle tick
+for water), caps the pixel ratio at 1.5, culls props by chunk and thins them
+with camera distance.
 
 URL params: `?seed=123`, `?size=small|medium|large`, `?reveal` (debug: show the whole map).
 
@@ -67,8 +72,8 @@ URL params: `?seed=123`, `?size=small|medium|large`, `?reveal` (debug: show the 
 | `src/game.ts`            | Game state and rules (no rendering): movement, A*, combat, cities, turns, fog |
 | `src/ai.ts`              | Simple AI opponents                                                 |
 | `src/look.ts`            | How each terrain looks: colors, rock, heights, shader detail, props |
-| `src/paint.ts`           | Terrain painting: wobbly tile borders, pair rules, per-pixel weights |
-| `src/relief.ts`          | Height field: ridges, hill bumps, river valleys                     |
+| `src/paint.ts`           | Terrain painting: warp field, rounding, group sharpening, pair rules |
+| `src/relief.ts`          | Height field: warped ridges, hill bumps, river valleys              |
 | `src/riverCurve.ts`      | Drawn river courses: painted borders plus rounded turns             |
 | `src/terrainMesh.ts`     | Watertight globe mesh (finer on hills and mountains), split per fan |
 | `src/terrainMaterial.ts` | Terrain shader: painting, hex grid, procedural detail, bump, water, fog |
