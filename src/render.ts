@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { unitDef } from './rules.ts';
+import { GlobeCamera } from './camera.ts';
 import type { Game, Unit, City } from './game.ts';
 import { SNOW, tileLook, type TileLook, type PropKind } from './look.ts';
 import { buildTerrainMesh, type TerrainMesh } from './terrainMesh.ts';
@@ -63,7 +63,8 @@ export class GlobeRenderer {
   // the water moving (IDLE_FPS).
   private needsRender = true;
   private lastRender = 0;
-  private readonly controls: OrbitControls;
+  private readonly cam: GlobeCamera;
+  private lastFrame = performance.now();
   private readonly raycaster = new THREE.Raycaster();
   private readonly scale: number; // world size of one tile relative to REF_EDGE
 
@@ -96,7 +97,6 @@ export class GlobeRenderer {
   private readonly cityBase: THREE.CylinderGeometry;
   private readonly cityBlock: THREE.BoxGeometry;
 
-  private focusDir: THREE.Vector3 | null = null;
   private pointer = { x: 0, y: 0, dirty: false };
   private downAt: { x: number; y: number } | null = null;
   private hoverTile = -1;
@@ -133,12 +133,16 @@ export class GlobeRenderer {
     this.scene.add(this.sun, this.sun.target);
     this.scene.add(new THREE.HemisphereLight(0xcfe3ff, 0x6b5a3e, 1.05));
 
-    this.controls = new OrbitControls(this.camera, canvas);
-    this.controls.enableDamping = true;
-    this.controls.dampingFactor = 0.08;
-    this.controls.enablePan = false;
-    this.controls.minDistance = 1.08;
-    this.controls.maxDistance = 5;
+    // Terrain radius at a direction (the tile under it), or the highest tile
+    // center around it (for the camera's clearance).
+    let near = 0;
+    this.cam = new GlobeCamera(this.camera, canvas, (dir, highest) => {
+      if (!this.terrain) return 1.008; // not built yet
+      near = this.nearestTile(dir, near);
+      let r = this.terrain.centerRadius[near];
+      if (highest) for (const nb of this.game.tiles[near].neighbors) r = Math.max(r, this.terrain.centerRadius[nb]);
+      return r;
+    });
 
     const g = game;
     const N = g.N;
@@ -258,7 +262,6 @@ export class GlobeRenderer {
     this.scene.add(this.unitsGroup, this.citiesGroup, this.overlayGroup);
 
     this.bindInput(canvas);
-    this.controls.addEventListener('change', () => { this.needsRender = true; });
     const resize = () => {
       this.needsRender = true;
       this.renderer.setSize(innerWidth, innerHeight);
@@ -273,14 +276,13 @@ export class GlobeRenderer {
   // ---------- public API ----------
 
   focusOn(tile: number): void {
-    this.focusDir = this.game.tiles[tile].center.clone();
+    this.cam.focus(this.game.tiles[tile].center);
   }
 
   // Jump straight to a tile at the given camera distance (debug / screenshots).
   lookAt(tile: number, distance: number): void {
-    this.focusDir = null;
-    this.camera.position.copy(this.game.tiles[tile].center).multiplyScalar(distance);
-    this.controls.update();
+    this.cam.jump(this.game.tiles[tile].center, distance - 1);
+    this.needsRender = true;
   }
 
   // Redraw everything that depends on game state.
@@ -805,13 +807,18 @@ export class GlobeRenderer {
     this.lastView.pos.copy(cam.position);
     this.lastView.quat.copy(cam.quaternion);
     this.shadowsDirty = false;
-    const focus = cam.position.clone().normalize();
-    const dir = new THREE.Vector3(-1.0, 1.4, 2.3).normalize().applyQuaternion(cam.quaternion);
+    // The sun shines from the upper left of the map view, high in the sky,
+    // whatever the camera's tilt.
+    const focus = this.cam.target.clone();
+    const up = cam.up.clone().addScaledVector(focus, -cam.up.dot(focus)).normalize();
+    const right = up.clone().cross(focus);
+    const dir = focus.clone().multiplyScalar(2.3).addScaledVector(up, 1.4).addScaledVector(right, -1.0).normalize();
     this.sun.position.copy(focus).addScaledVector(dir, 3);
     this.sun.target.position.copy(focus);
     this.sun.target.updateMatrixWorld();
-    const dist = cam.position.length();
-    const half = Math.min(1.15, Math.max(0.12, (dist - 1) * Math.tan(THREE.MathUtils.degToRad(cam.fov / 2)) * Math.max(1, cam.aspect) * 1.3));
+    // Fit the shadow map to the ground in view (more of it when tilted).
+    const span = this.cam.distance * Math.tan(THREE.MathUtils.degToRad(cam.fov / 2)) * Math.max(1, cam.aspect) * 1.3;
+    const half = Math.min(1.15, Math.max(0.08, span * (1 + 1.5 * Math.sin(this.cam.tilt))));
     const sc = this.sun.shadow.camera;
     sc.left = -half; sc.right = half; sc.top = half; sc.bottom = -half;
     sc.near = 1; sc.far = 5;
@@ -856,18 +863,10 @@ export class GlobeRenderer {
   }
 
   private frame(): void {
-    const dist = this.camera.position.length();
-    this.controls.rotateSpeed = 0.1 + 0.3 * (dist - 1);
-    this.controls.zoomSpeed = 0.6;
-
-    if (this.focusDir) {
-      const cur = this.camera.position.clone().normalize();
-      const next = cur.clone().lerp(this.focusDir, 0.12).normalize();
-      this.camera.position.copy(next.multiplyScalar(dist));
-      if (cur.angleTo(this.focusDir) < 0.003) this.focusDir = null;
-      this.needsRender = true;
-    }
-    this.controls.update();
+    const t = performance.now();
+    const dt = Math.min(0.1, (t - this.lastFrame) / 1000);
+    this.lastFrame = t;
+    if (this.cam.update(dt)) this.needsRender = true;
 
     if (this.pointer.dirty) {
       this.pointer.dirty = false;

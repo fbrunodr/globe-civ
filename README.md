@@ -78,6 +78,7 @@ URL params: `?seed=123`, `?size=small|medium|large`, `?reveal` (debug: show the 
 | `src/terrainMesh.ts`     | Watertight globe mesh (finer on hills and mountains), split per fan |
 | `src/terrainMaterial.ts` | Terrain shader: painting, hex grid, procedural detail, bump, water, fog |
 | `src/props.ts`           | Low-poly trees, shrubs, palms, reeds                                |
+| `src/camera.ts`          | Globe camera: zoom-dependent tilt, free up close, top-down far away |
 | `src/render.ts`          | Three.js scene, units, cities, borders, picking                     |
 | `src/ui.ts`              | HTML panels and typed player actions                                |
 | `src/main.ts`            | Start screen, input, wiring                                         |
