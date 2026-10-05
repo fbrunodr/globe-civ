@@ -303,9 +303,10 @@ export const CHECKS: Record<CheckId, Guarantee> = {
   },
   F7: {
     title: 'Wetland counts in range',
-    rule: (l) => `Marsh ${fmtRange(l.marsh)}, swamp ${fmtRange(l.swamp)}, floodplain ${fmtRange(l.floodplain)} tiles (provisional until rivers)`,
+    rule: (l) => `Marsh ${fmtRange(l.marsh)}, swamp ${fmtRange(l.swamp)}, peat bog ${fmtRange(l.bog)}, floodplain ${fmtRange(l.floodplain)} tiles`,
     check: (w) => expectRange('marsh tiles', featureTiles(w, 'marsh').length, w.limits.marsh)
       ?? expectRange('swamp tiles', featureTiles(w, 'swamp').length, w.limits.swamp)
+    ?? expectRange('peat bog tiles', featureTiles(w, 'bog').length, w.limits.bog)
       ?? expectRange('floodplain tiles', featureTiles(w, 'floodplain').length, w.limits.floodplain),
   },
   // ----- rivers -----

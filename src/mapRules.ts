@@ -55,6 +55,7 @@ export interface MapLimits {
   readonly glacierMaxMountainShare: number;
   readonly marsh: Range;                      // F7
   readonly swamp: Range;
+  readonly bog: Range;
   readonly floodplain: Range;
   // Rivers
   readonly rivers: Range;                     // V1: rivers reaching the sea or a lake (tributaries not counted)
@@ -104,17 +105,17 @@ export const MAP_LIMITS: Record<MapSizeKey, MapLimits> = {
   small: {
     ...BASE, continents: r(2, 5), lakes: r(5, 30), lakeMaxTiles: 7, biomesPresentMin: 12,
     volcanoes: r(2, 4), reefSystems: r(2, 4), kelpSystems: r(2, 4), oases: r(2, 8),
-    marsh: r(1, 40), swamp: r(1, 60), floodplain: r(2, 60), startSpacing: 10, rivers: r(5, 30), longRivers: 1,
+    marsh: r(1, 40), swamp: r(1, 60), bog: r(2, 65), floodplain: r(2, 60), startSpacing: 10, rivers: r(5, 30), longRivers: 1,
   },
   medium: {
     ...BASE, continents: r(3, 5), lakes: r(8, 45), lakeMaxTiles: 11, biomesPresentMin: 13,
     volcanoes: r(2, 5), reefSystems: r(3, 5), kelpSystems: r(3, 5), oases: r(3, 10),
-    marsh: r(2, 60), swamp: r(2, 90), floodplain: r(3, 90), startSpacing: 11, rivers: r(8, 45), longRivers: 2,
+    marsh: r(1, 60), swamp: r(2, 90), bog: r(3, 95), floodplain: r(3, 90), startSpacing: 11, rivers: r(8, 45), longRivers: 2,
   },
   large: {
     ...BASE, continents: r(3, 5), lakes: r(10, 55), lakeMaxTiles: 14, biomesPresentMin: 13,
     volcanoes: r(3, 6), reefSystems: r(4, 6), kelpSystems: r(4, 6), oases: r(4, 12),
-    marsh: r(3, 80), swamp: r(3, 120), floodplain: r(4, 120), startSpacing: 12, rivers: r(12, 60), longRivers: 3,
+    marsh: r(3, 80), swamp: r(3, 120), bog: r(4, 125), floodplain: r(4, 120), startSpacing: 12, rivers: r(12, 60), longRivers: 3,
   },
 };
 

@@ -12,6 +12,7 @@ const SCENES = [
   { name: 'jungle', q: 'seed=42&size=small&look=jungle&dist=1.35' },
   { name: 'desert', q: 'seed=42&size=small&look=hotDesert&dist=1.35' },
   { name: 'mountains', q: 'seed=3&size=small&look=glacier&dist=1.4' },
+  { name: 'bog', q: 'seed=42&size=small&look=bog&dist=1.35' },
   { name: 'pole', q: 'seed=42&size=small&look=iceSheet&dist=1.6' },
   { name: 'river', q: 'seed=42&size=small&look=floodplain&dist=1.35' },
   { name: 'globe', q: 'seed=42&size=medium&look=prairie&dist=3.2' },

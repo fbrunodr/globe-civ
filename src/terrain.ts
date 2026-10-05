@@ -74,6 +74,7 @@ export const FEATURES = {
   marsh:      { name: 'Marsh',      yields: y(1, 0, 0), onWater: false, move: 3, defense: -0.15 },
   swamp:      { name: 'Swamp',      yields: y(1, 1, 0), onWater: false, move: 3, defense: 0.1 },
   mangrove:   { name: 'Mangroves',  yields: y(1, 1, 1), onWater: false, move: 3, defense: 0.25 },
+  bog:        { name: 'Peat bog',   yields: y(0, 1, 0), onWater: false, move: 3, defense: 0 },
   floodplain: { name: 'Floodplain', yields: y(3, 0, 1), onWater: false, move: 1, defense: 0 },
   oasis:      { name: 'Oasis',      yields: y(3, 0, 1), onWater: false, move: 1, defense: 0 },
   volcano:    { name: 'Volcano',    yields: y(0, 2, 0), onWater: false, move: 3, defense: 0.5 },
@@ -138,6 +139,8 @@ export const FEATURE_RULES: Record<FeatureKey, FeatureRule> = {
   marsh:      { biomes: LAND_NO_ICE.filter((b) => b !== 'hotDesert' && b !== 'coldDesert'), reliefs: ['flat'] },
   swamp:      { biomes: ['temperateForest', 'temperateRainforest', 'monsoonForest', 'jungle'], reliefs: ['flat'] },
   mangrove:   { biomes: ['jungle', 'monsoonForest', 'savanna'], reliefs: ['flat'], seaNeighbor: 'required' },
+  // Peat builds up only where it is cool and wet enough that dead moss never rots.
+  bog:        { biomes: ['tundra', 'taiga', 'temperateForest', 'temperateRainforest', 'prairie'], reliefs: ['flat'] },
   floodplain: { biomes: LAND_NO_ICE, reliefs: ['flat'] },
   oasis:      { biomes: ['hotDesert', 'coldDesert'], reliefs: ['flat'], waterNeighbor: 'forbidden' },
   volcano:    { biomes: ALL_LAND, reliefs: ['mountains'] },

@@ -348,13 +348,21 @@ export function generateMap(globe: Globe, seed: number, size: MapSizeKey): MapDa
   for (let t = 0; t < N; t++) {
     if (!isLandBiome(biome[t]) || relief[t] !== 'flat' || feature[t]) continue;
     const r = rand();
+    // Cool wet ground turns to peat bog, warm forested ground to swamp, the rest to marsh.
     const wetland = (): FeatureKey | null =>
-      FORESTED.has(biome[t]) && seaLevelTemp[t] > 10 && allowed('swamp', t) ? 'swamp' : allowed('marsh', t) ? 'marsh' : null;
+      temperature[t] < 9 && allowed('bog', t) ? 'bog'
+        : FORESTED.has(biome[t]) && seaLevelTemp[t] > 10 && allowed('swamp', t) ? 'swamp'
+        : allowed('marsh', t) ? 'marsh' : null;
     if (allowed('mangrove', t) && rainfall[t] > 1100 && r < 0.45) feature[t] = 'mangrove';
     else if (riverTile[t] && riverFlowAt[t] >= bigRiver && temperature[t] > 2 && elevation[t] < midland && r < 0.7) {
       feature[t] = rainfall[t] > 1400 && FORESTED.has(biome[t]) ? wetland() : allowed('floodplain', t) ? 'floodplain' : null;
     } else if (elevation[t] < lowland && temperature[t] > 0 && rainfall[t] > 700 && touchesWater(t) && r < 0.3) {
       feature[t] = wetland();
+    } else if (temperature[t] > -4 && temperature[t] < 9 && rainfall[t] > 400 && elevation[t] < midland &&
+      (down[t] === -1 || touchesWater(t)) && allowed('bog', t) && r < 0.4) {
+      // Peatland: cool, poorly drained hollows and lakeshores (the West Siberian
+      // Plain, the Hudson Bay Lowlands, Ireland's raised bogs).
+      feature[t] = 'bog';
     }
   }
 
