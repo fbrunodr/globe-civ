@@ -41,6 +41,8 @@ function startGame(sizeKey: MapSizeKey, seed: number): void {
   const game = new Game({ size: sizeKey, seed });
   const view = new GlobeRenderer(document.getElementById('c') as HTMLCanvasElement, game);
   const ui = new UI(game, act);
+  // Dev-only handle for profiling from the browser console or test scripts.
+  if (import.meta.env.DEV) Object.assign(window, { __globe: { game, view } });
   document.getElementById('hud')!.classList.remove('hidden');
 
   let sel: Selection = null;
@@ -160,7 +162,8 @@ function startGame(sizeKey: MapSizeKey, seed: number): void {
     else if (e.key === 'c' && sel && sel.kind !== 'tile') { view.focusOn(sel.kind === 'unit' ? sel.unit.tile : sel.city.tile); }
   });
 
-  // Debug: ?reveal shows the whole map; ?look=<biome or feature> flies to one.
+  // Debug: ?reveal shows the whole map; ?look=<key>[+<key>...] flies to the
+  // first tile matching every key (biome, relief or feature), e.g. hotDesert+hills.
   const debug = new URLSearchParams(location.search);
   if (debug.has('reveal')) game.explored.fill(1);
   const lookFor = debug.get('look');
@@ -169,7 +172,8 @@ function startGame(sizeKey: MapSizeKey, seed: number): void {
   selectNextUnit();
   refresh();
   if (lookFor) {
-    const t = game.tiles.findIndex((_, i) => game.biome[i] === lookFor || game.feature[i] === lookFor);
+    const keys = lookFor.split(/[+ ]/);
+    const t = game.tiles.findIndex((_, i) => keys.every((k) => game.biome[i] === k || game.relief[i] === k || game.feature[i] === k));
     if (t >= 0) {
       game.explored.fill(1);
       for (const x of game.tilesWithin(t, 3)) game.visible[x] = 1;

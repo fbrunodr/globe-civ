@@ -11,6 +11,9 @@ const SCENES = [
   { name: 'forest', q: 'seed=42&size=small&look=temperateForest&dist=1.3' },
   { name: 'jungle', q: 'seed=42&size=small&look=jungle&dist=1.35' },
   { name: 'desert', q: 'seed=42&size=small&look=hotDesert&dist=1.35' },
+  { name: 'desertHills', q: 'seed=1&size=small&look=coldDesert+hills&dist=1.3' },
+  { name: 'steppeRange', q: 'seed=1&size=small&look=steppe+mountains&dist=1.35' },
+  { name: 'range', q: 'seed=7&size=medium&look=temperateForest+mountains&dist=1.4' },
   { name: 'mountains', q: 'seed=3&size=small&look=glacier&dist=1.4' },
   { name: 'bog', q: 'seed=42&size=small&look=bog&dist=1.35' },
   { name: 'pole', q: 'seed=42&size=small&look=iceSheet&dist=1.6' },
@@ -43,7 +46,7 @@ try {
   if (process.argv.includes('--sheet')) {
     const cells = SCENES.map((s) => `<figure><img src="data:image/png;base64,${readFileSync(join(out, `${s.name}.png`)).toString('base64')}"><figcaption>${s.name}</figcaption></figure>`).join('');
     const html = `<style>body{margin:0;background:#111;display:grid;grid-template-columns:repeat(4,550px);gap:4px}figure{margin:0;position:relative;height:300px;overflow:hidden}img{width:550px;margin-top:-26px}figcaption{position:absolute;top:4px;left:4px;background:#000;color:#fff;font:13px sans-serif;padding:2px 6px}</style>${cells}`;
-    await page.setViewportSize({ width: 2212, height: 608 });
+    await page.setViewportSize({ width: 2212, height: 912 });
     await page.setContent(html);
     await page.screenshot({ path: join(out, 'sheet.png') });
   }

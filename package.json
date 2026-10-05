@@ -11,7 +11,8 @@
     "test": "vitest run",
     "mapcheck": "tsx scripts/mapcheck.ts",
     "guarantees": "tsx scripts/guarantees.ts",
-    "shots": "node scripts/shots.mjs"
+    "shots": "node scripts/shots.mjs",
+    "paintcheck": "tsx scripts/paintcheck.ts"
   },
   "dependencies": {
     "three": "^0.186.1"

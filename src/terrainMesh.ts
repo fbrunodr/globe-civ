@@ -1,21 +1,23 @@
 import * as THREE from 'three';
 import type { Globe } from './goldberg.ts';
-import { makePerlin, mulberry32 } from './rng.ts';
 
-// A per-tile value written to every vertex; vertices shared by several tiles
-// get the average, which blends neighbors smoothly at the edges.
-export interface TileAttribute {
+// Extra per-vertex data that depends on the fan a vertex belongs to (e.g.
+// the painting coordinates): fan id = position of (t, i) in tile order.
+export interface FanAttribute {
   name: string;
   itemSize: number;
-  perTile: Float32Array; // length = tiles × itemSize
+  // Optional: expose the data as several shader attributes (each at most 4
+  // wide) sharing one interleaved buffer, instead of one attribute `name`.
+  views?: { name: string; offset: number; size: number }[];
+  compute(fan: number, t: number, i: number, dir: THREE.Vector3, out: Float32Array, offset: number): void;
 }
 
-// Per-tile scalars that shape the surface.
-export interface TerrainField {
-  height: Float32Array;    // plateau height above radius 1
-  amp: Float32Array;       // noise displacement amplitude
-  plateau: Float32Array;   // flat-top fraction of the tile radius (0 = cone)
-  attributes: TileAttribute[];
+export interface TerrainSpec {
+  heightAt(t: number, i: number, wa: number, wb: number, dir: THREE.Vector3): number;
+  // Subdivisions per fan for each tile: `coarse` or 2 × coarse (fine tiles
+  // get evenly spaced rings, for smooth relief).
+  fine(t: number): boolean;
+  fanAttributes: FanAttribute[];
 }
 
 export interface TerrainMesh {
@@ -24,6 +26,7 @@ export interface TerrainMesh {
   vertTiles: Int32Array;      // 3 tile ids per vertex (-1 padded); >1 on shared boundaries
   vertDir: Float32Array;      // unit direction per vertex (xyz)
   vertRadius: Float32Array;   // distance from the globe center per vertex
+  vertAO: Float32Array;       // baked ambient occlusion per vertex
   tileVerts: Int32Array[];    // all vertices that touch a tile
   centerRadius: Float32Array; // surface radius at each tile center
   // Surface point inside tile t, in fan i (between corners i and i+1), at
@@ -31,47 +34,22 @@ export interface TerrainMesh {
   samplePoint(t: number, i: number, wa: number, wb: number): THREE.Vector3;
 }
 
-const smoothstep = (a: number, b: number, x: number): number => {
-  if (a === b) return x < a ? 0 : 1;
-  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
-  return t * t * (3 - 2 * t);
-};
-const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
-// Lattice rings are packed toward the tile edge so color blending between
-// neighbors stays in a thin band and the tile interior keeps its own color.
+// Lattice rings are packed toward the tile edge so the relief can ease into
+// the neighbors in a band while the tile's middle stays calm.
 const warpRing = (r: number) => 1 - Math.pow(1 - r, 1.8);
 
 // Builds the globe surface. Each tile is split into fans (one per corner pair)
-// and each fan into S² small triangles. Vertices on tile boundaries are shared
-// with the neighbors, so the mesh is watertight and normals come out smooth.
+// and each fan into S² small triangles, S = coarse or 2 × coarse. Where a
+// fine tile meets a coarse one, the fine tile's extra edge vertices sit
+// exactly on the coarse edge, so the surface stays watertight.
 //
-// Height inside a tile: the tile's plateau height in the middle, easing out to
-// a boundary height that is the average of the tiles meeting there. Fine noise
-// is added on top, scaled by each tile's roughness.
-export function buildTerrainMesh(globe: Globe, field: TerrainField, S: number, seed: number): TerrainMesh {
+// The surface is first built with vertices shared between fans and tiles, so
+// it is watertight and normals and ambient occlusion come out smooth. Then
+// every fan gets its own copy of its vertices, because the painting needs
+// per-fan data (which neighbors a pixel can be painted by).
+export function buildTerrainMesh(globe: Globe, spec: TerrainSpec, coarse: number): TerrainMesh {
   const { tiles, tris, triCenters } = globe;
-  const noise = makePerlin(mulberry32(seed ^ 0x51ed270b));
-  const detail = (d: THREE.Vector3) => 2 * noise.fbm(d.x * 22 + 5.1, d.y * 22 - 3.3, d.z * 22 + 1.7, 5);
 
-  const cornerVal = (arr: Float32Array, tri: number) => {
-    const [a, b, c] = tris[tri];
-    return (arr[a] + arr[b] + arr[c]) / 3;
-  };
-  // Value on the edge from corner ci (f=0) to corner cj (f=1), shared by tiles t and nb.
-  const boundaryVal = (arr: Float32Array, t: number, nb: number, ci: number, cj: number, f: number) => {
-    const mid = (arr[t] + arr[nb]) / 2;
-    return f < 0.5
-      ? lerp(cornerVal(arr, ci), mid, smoothstep(0, 1, f * 2))
-      : lerp(mid, cornerVal(arr, cj), smoothstep(0, 1, (f - 0.5) * 2));
-  };
-  const interiorVal = (arr: Float32Array, t: number, i: number, wa: number, wb: number) => {
-    const r = wa + wb;
-    if (r < 1e-9) return arr[t];
-    const tile = tiles[t];
-    const k = tile.corners.length;
-    const b = boundaryVal(arr, t, tile.neighbors[i], tile.corners[i], tile.corners[(i + 1) % k], wb / r);
-    return lerp(arr[t], b, smoothstep(field.plateau[t], 1, r));
-  };
   const dirOf = (t: number, i: number, wa: number, wb: number) => {
     const tile = tiles[t];
     const k = tile.corners.length;
@@ -81,16 +59,16 @@ export function buildTerrainMesh(globe: Globe, field: TerrainField, S: number, s
       .addScaledVector(triCenters[tile.corners[(i + 1) % k]], wb)
       .normalize();
   };
-  const radiusAt = (t: number, i: number, wa: number, wb: number, dir: THREE.Vector3) =>
-    1 + interiorVal(field.height, t, i, wa, wb) + interiorVal(field.amp, t, i, wa, wb) * detail(dir);
+  const radiusAt = (t: number, i: number, wa: number, wb: number, dir: THREE.Vector3) => 1 + spec.heightAt(t, i, wa, wb, dir);
 
+  // ---- shared mesh ----
   const positions: number[] = [];
   const dirs: number[] = [];
   const radii: number[] = [];
   const rings: number[] = [];
-  const attrData: number[][] = field.attributes.map(() => []);
   const vTiles: number[] = [];
   const index: number[] = [];
+  const triFan: number[] = [];
   const triToTile: number[] = [];
   const shared = new Map<string, number>();
   const centerRadius = new Float32Array(tiles.length);
@@ -103,13 +81,6 @@ export function buildTerrainMesh(globe: Globe, field: TerrainField, S: number, s
     dirs.push(dir.x, dir.y, dir.z);
     radii.push(r);
     rings.push(ring);
-    field.attributes.forEach((a, ai) => {
-      for (let c = 0; c < a.itemSize; c++) {
-        let sum = 0;
-        for (const o of owners) sum += a.perTile[o * a.itemSize + c];
-        attrData[ai].push(sum / owners.length);
-      }
-    });
     vTiles.push(owners[0] ?? -1, owners[1] ?? -1, owners[2] ?? -1);
     return idx;
   };
@@ -119,16 +90,23 @@ export function buildTerrainMesh(globe: Globe, field: TerrainField, S: number, s
     return v;
   };
 
-  const grid: number[][] = Array.from({ length: S + 1 }, () => new Array<number>(S + 1).fill(-1));
+  const fineOf = tiles.map((t) => spec.fine(t.id));
+  const SF = coarse * 2;
+  const grid: number[][] = Array.from({ length: SF + 1 }, () => new Array<number>(SF + 1).fill(-1));
+  const tJunctions: [number, string, string][] = []; // vertex, coarse neighbors on its edge
+  let fan = 0;
   for (const tile of tiles) {
     const t = tile.id;
     const k = tile.corners.length;
-    for (let i = 0; i < k; i++) {
+    const S = fineOf[t] ? SF : coarse;
+    for (let i = 0; i < k; i++, fan++) {
       const ci = tile.corners[i], cj = tile.corners[(i + 1) % k], nb = tile.neighbors[i];
+      const lo = Math.min(ci, cj), hi = Math.max(ci, cj);
+      const mixed = fineOf[t] !== fineOf[nb];
       for (let a = 0; a <= S; a++) {
         for (let b = 0; a + b <= S; b++) {
           const lin = (a + b) / S;
-          const ring = warpRing(lin);
+          const ring = fineOf[t] ? lin : warpRing(lin);
           const k2 = lin > 0 ? ring / lin : 0;
           const wa = (a / S) * k2, wb = (b / S) * k2;
           let v: number;
@@ -139,9 +117,16 @@ export function buildTerrainMesh(globe: Globe, field: TerrainField, S: number, s
             if (b === 0) v = sharedVertex(`c${ci}`, () => addVertex(t, i, 1, 0, tris[ci], 1));
             else if (a === 0) v = sharedVertex(`c${cj}`, () => addVertex(t, i, 0, 1, tris[cj], 1));
             else {
-              const lo = Math.min(ci, cj), hi = Math.max(ci, cj);
               const step = ci === lo ? b : S - b;
-              v = sharedVertex(`e${lo}_${hi}_${step}`, () => addVertex(t, i, wa, wb, [t, nb], 1));
+              const make = () => addVertex(t, i, wa, wb, [t, nb], 1);
+              if (!mixed) v = sharedVertex(`e${S}_${lo}_${hi}_${step}`, make);
+              else if (S === coarse) v = sharedVertex(`e${coarse}_${lo}_${hi}_${step}`, make);
+              else if (step % 2 === 0) v = sharedVertex(`e${coarse}_${lo}_${hi}_${step / 2}`, make);
+              else {
+                v = sharedVertex(`e${SF}_${lo}_${hi}_${step}`, make);
+                const key = (st: number) => (st === 0 ? `c${lo}` : st === coarse ? `c${hi}` : `e${coarse}_${lo}_${hi}_${st}`);
+                tJunctions.push([v, key((step - 1) / 2), key((step + 1) / 2)]);
+              }
             }
           } else if (b === 0) {
             v = sharedVertex(`s${t}_${ci}_${a}`, () => addVertex(t, i, wa, 0, [t], ring));
@@ -156,28 +141,86 @@ export function buildTerrainMesh(globe: Globe, field: TerrainField, S: number, s
       for (let a = 0; a < S; a++) {
         for (let b = 0; a + b < S; b++) {
           index.push(grid[a][b], grid[a + 1][b], grid[a][b + 1]);
-          triToTile.push(t);
+          triToTile.push(t); triFan.push(fan);
           if (a + b < S - 1) {
             index.push(grid[a + 1][b], grid[a + 1][b + 1], grid[a][b + 1]);
-            triToTile.push(t);
+            triToTile.push(t); triFan.push(fan);
           }
         }
       }
     }
   }
+  // Extra edge vertices of fine tiles sit on the coarse neighbor's edge.
+  for (const [v, ka, kb] of tJunctions) {
+    const a = shared.get(ka)!, b = shared.get(kb)!;
+    let len = 0;
+    for (let c = 0; c < 3; c++) {
+      positions[v * 3 + c] = (positions[a * 3 + c] + positions[b * 3 + c]) / 2;
+      len += positions[v * 3 + c] ** 2;
+    }
+    len = Math.sqrt(len);
+    radii[v] = len;
+    for (let c = 0; c < 3; c++) dirs[v * 3 + c] = positions[v * 3 + c] / len;
+  }
 
-  const V = radii.length;
+  const sharedGeo = new THREE.BufferGeometry();
+  sharedGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  sharedGeo.setIndex(index);
+  sharedGeo.computeVertexNormals();
+  const sharedNormals = sharedGeo.getAttribute('normal').array as Float32Array;
+  const sharedAO = bakeOcclusion(Float32Array.from(radii), index);
+
+  // ---- split per fan ----
+  const fanOfTile: [number, number][] = [];
+  for (const tile of tiles) for (let i = 0; i < tile.corners.length; i++) fanOfTile.push([tile.id, i]);
+  const copyOf = new Map<number, number>(); // fan * Vs + shared vertex -> split vertex
+  const Vs = radii.length;
+  const origin: number[] = [];
+  const splitIndex = new Uint32Array(index.length);
+  for (let tr = 0; tr < triFan.length; tr++) {
+    const f = triFan[tr];
+    for (let c = 0; c < 3; c++) {
+      const sv = index[tr * 3 + c];
+      const key = f * Vs + sv;
+      let v = copyOf.get(key);
+      if (v === undefined) { v = origin.length; origin.push(sv); copyOf.set(key, v); }
+      splitIndex[tr * 3 + c] = v;
+    }
+  }
+  const V = origin.length;
+  const vertFan = new Int32Array(V);
+  for (let tr = 0; tr < triFan.length; tr++) for (let c = 0; c < 3; c++) vertFan[splitIndex[tr * 3 + c]] = triFan[tr];
+
+  const pick = (src: ArrayLike<number>, size: number) => {
+    const out = new Float32Array(V * size);
+    for (let v = 0; v < V; v++) for (let c = 0; c < size; c++) out[v * size + c] = src[origin[v] * size + c];
+    return out;
+  };
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geometry.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(V * 3), 3));
-  geometry.setAttribute('ring', new THREE.Float32BufferAttribute(rings, 1));
-  field.attributes.forEach((a, ai) => geometry.setAttribute(a.name, new THREE.Float32BufferAttribute(attrData[ai], a.itemSize)));
-  geometry.setAttribute('unexplored', new THREE.Float32BufferAttribute(new Float32Array(V).fill(1), 1));
-  geometry.setIndex(index);
-  geometry.computeVertexNormals();
+  geometry.setAttribute('position', new THREE.BufferAttribute(pick(positions, 3), 3));
+  geometry.setAttribute('normal', new THREE.BufferAttribute(pick(sharedNormals, 3), 3));
+  geometry.setAttribute('ring', new THREE.BufferAttribute(pick(rings, 1), 1));
+  const vertDir = pick(dirs, 3);
+  const dir = new THREE.Vector3();
+  for (const fa of spec.fanAttributes) {
+    const data = new Float32Array(V * fa.itemSize);
+    for (let v = 0; v < V; v++) {
+      const f = vertFan[v];
+      const [t, i] = fanOfTile[f];
+      dir.set(vertDir[v * 3], vertDir[v * 3 + 1], vertDir[v * 3 + 2]);
+      fa.compute(f, t, i, dir, data, v * fa.itemSize);
+    }
+    if (fa.views) {
+      const buf = new THREE.InterleavedBuffer(data, fa.itemSize);
+      for (const vw of fa.views) geometry.setAttribute(vw.name, new THREE.InterleavedBufferAttribute(buf, vw.size, vw.offset));
+    } else {
+      geometry.setAttribute(fa.name, new THREE.BufferAttribute(data, fa.itemSize));
+    }
+  }
+  geometry.setIndex(new THREE.BufferAttribute(splitIndex, 1));
   geometry.computeBoundingSphere();
 
-  const vertTiles = Int32Array.from(vTiles);
+  const vertTiles = Int32Array.from(pick(vTiles, 3));
   const lists: number[][] = tiles.map(() => []);
   for (let v = 0; v < V; v++) {
     for (let s = 0; s < 3; s++) {
@@ -190,13 +233,46 @@ export function buildTerrainMesh(globe: Globe, field: TerrainField, S: number, s
     geometry,
     triToTile: Int32Array.from(triToTile),
     vertTiles,
-    vertDir: Float32Array.from(dirs),
-    vertRadius: Float32Array.from(radii),
+    vertDir,
+    vertRadius: pick(radii, 1),
+    vertAO: pick(sharedAO, 1),
     tileVerts: lists.map((l) => Int32Array.from(l)),
     centerRadius,
     samplePoint(t, i, wa, wb) {
-      const dir = dirOf(t, i, wa, wb);
-      return dir.multiplyScalar(radiusAt(t, i, wa, wb, dir));
+      const d = dirOf(t, i, wa, wb);
+      return d.multiplyScalar(radiusAt(t, i, wa, wb, d));
     },
   };
+}
+
+// Ambient occlusion from the terrain's shape: each vertex is compared with a
+// blurred copy of the height field, so valleys and hollows darken and ridges
+// catch a little extra light. Baked once; costs nothing per frame.
+function bakeOcclusion(R: Float32Array, index: readonly number[]): Float32Array {
+  const V = R.length;
+  // Vertex adjacency (compressed rows) from the triangle list.
+  const deg = new Uint32Array(V + 1);
+  for (let i = 0; i < index.length; i += 3) for (let k = 0; k < 3; k++) deg[index[i + k] + 1] += 2;
+  for (let v = 0; v < V; v++) deg[v + 1] += deg[v];
+  const adj = new Uint32Array(deg[V]);
+  const fill = deg.slice(0, V);
+  for (let i = 0; i < index.length; i += 3) {
+    const a = index[i], b = index[i + 1], c = index[i + 2];
+    adj[fill[a]++] = b; adj[fill[a]++] = c;
+    adj[fill[b]++] = a; adj[fill[b]++] = c;
+    adj[fill[c]++] = a; adj[fill[c]++] = b;
+  }
+  let smooth = Float32Array.from(R);
+  for (let iter = 0; iter < 4; iter++) {
+    const next = new Float32Array(V);
+    for (let v = 0; v < V; v++) {
+      let sum = 0;
+      for (let j = deg[v]; j < deg[v + 1]; j++) sum += smooth[adj[j]];
+      next[v] = sum / Math.max(1, deg[v + 1] - deg[v]);
+    }
+    smooth = next;
+  }
+  const ao = new Float32Array(V);
+  for (let v = 0; v < V; v++) ao[v] = 1 - Math.min(0.4, Math.max(-0.1, (smooth[v] - R[v]) * 110));
+  return ao;
 }
