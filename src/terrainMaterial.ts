@@ -301,10 +301,13 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
           // ground just above the water is darker and glossy (wet).
           wetGround = 0.0;
           if (above < 0.0015) {
-            // Beaches on sea and lake shores; river banks stay green.
-            if (vBeach > 0.75 && vBank < 0.05 && vWet > 0.0) {
+            // Beaches on sea and lake shores; river banks above the water stay
+            // green (faded, so a river mouth has no edge; under water the bed
+            // stays sandy).
+            if (vBeach > 0.75 && vWet > 0.0) {
               float top = 0.00055 + 0.0004 * tNoise(P * 120.0 + 9.0);
-              float sand = (1.0 - smoothstep(top * 0.6, top, above)) * smoothstep(0.75, 0.95, vBeach) * smoothstep(0.0, 0.05, vWet);
+              float noBank = mix(1.0 - smoothstep(0.02, 0.4, vBank), 1.0, under);
+              float sand = (1.0 - smoothstep(top * 0.6, top, above)) * smoothstep(0.75, 0.95, vBeach) * smoothstep(0.0, 0.05, vWet) * noBank;
               diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.86, 0.73, 0.45) * (0.95 + 0.1 * grain) * vShade, sand * (1.0 - rock));
             }
             float landBed = 1.0 - smoothstep(0.3, 0.8, vWet);
