@@ -9,7 +9,9 @@ import { buildPaintData, fanCoords, fanFrames, paintAt, warpAt, FAN_COORDS, FINE
 import { buildRelief, CONE_RADIUS, CRATER, CRATER_DEPTH, type Relief } from './relief.ts';
 import { buildSurface, meshLevels } from './surface.ts';
 import { makeWaterMaterial, type WaterMaterial } from './water.ts';
-import { WalkCamera, makeSky, HAZE } from './walk.ts';
+import { WalkCamera } from './walk.ts';
+import { makeSky, makeHalo, installHaze, HAZE, HAZE_DENSITY, AIR } from './sky.ts';
+import { makeWeather, type Weather } from './weather.ts';
 import { buildPropGeometry, PROP_KINDS } from './props.ts';
 import { mulberry32, makePerlin } from './rng.ts';
 
@@ -72,6 +74,8 @@ export class GlobeRenderer {
   private readonly cam: GlobeCamera;
   private readonly walk: WalkCamera;
   private readonly sky = makeSky();
+  private readonly halo = makeHalo();
+  private readonly weather: Weather;
   private readonly stars: THREE.PointsMaterial;
   private readonly sunDir = new THREE.Vector3();
   private walkHint: HTMLElement | null = null;
@@ -174,7 +178,8 @@ export class GlobeRenderer {
     }, { signal: this.abort.signal });
     this.stars = new THREE.PointsMaterial({ color: 0xaab4cc, size: 1.4, sizeAttenuation: false, fog: false, transparent: true });
     this.scene.add(this.sky.mesh);
-    this.scene.fog = new THREE.FogExp2(HAZE.getHex(), 0);
+    installHaze();
+    this.scene.fog = new THREE.FogExp2(HAZE.getHex(), HAZE_DENSITY);
 
     const g = game;
     const N = g.N;
@@ -274,6 +279,8 @@ export class GlobeRenderer {
     this.waterMesh.receiveShadow = true;
     this.waterMesh.renderOrder = 1;
     this.scene.add(this.waterMesh);
+    this.weather = makeWeather(g.globe, g.map.rainfall, params.r0, g.seed);
+    this.scene.add(this.weather.group);
     this.prevExplored = new Uint8Array(N).fill(255);
     this.prevVisible = new Uint8Array(N).fill(255);
     this.prevOwner = new Int32Array(N).fill(-2);
@@ -420,15 +427,7 @@ export class GlobeRenderer {
     sg.setAttribute('position', new THREE.Float32BufferAttribute(stars, 3));
     this.scene.add(new THREE.Points(sg, this.stars));
 
-    const atmosphere = new THREE.Mesh(
-      new THREE.SphereGeometry(1.1, 64, 64),
-      new THREE.ShaderMaterial({
-        side: THREE.BackSide, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-        vertexShader: 'varying vec3 vN; void main(){ vN = normalize(normalMatrix * normal); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-        fragmentShader: 'varying vec3 vN; void main(){ float i = smoothstep(0.0, 0.45, -vN.z); gl_FragColor = vec4(0.3, 0.55, 1.0, 1.0) * i * 0.5; }',
-      }),
-    );
-    this.scene.add(atmosphere);
+    this.scene.add(this.halo.mesh);
   }
 
   // Tiles whose fog or ownership changed since the last sync.
@@ -844,10 +843,10 @@ export class GlobeRenderer {
   // orbit, a blue sky and hazy distance when low over the land or walking.
   private updateAir(): void {
     const alt = this.camera.position.length() - 1;
-    const sky = 1 - smoothstep(0.012, 0.12, alt);
-    this.sky.update(this.camera, this.sunDir, sky);
-    this.stars.opacity = 1 - sky;
-    (this.scene.fog as THREE.FogExp2).density = this.walk.active ? 7 : 5 * (1 - smoothstep(0.004, 0.15, alt));
+    this.sky.update(this.camera, this.sunDir, alt);
+    this.halo.update(this.sunDir, smoothstep(0.1, 0.6, alt / AIR.height));
+    this.stars.opacity = smoothstep(0.02, 0.3, alt / AIR.height);
+
   }
 
   // The tile under a screen point: intersect the view ray with a sphere at
@@ -910,6 +909,11 @@ export class GlobeRenderer {
     this.cullProps();
     this.terrainMat.setTime(now / 1000);
     this.waterMat.setTime(now / 1000);
+    // Clouds show from orbit and overhead when walking, never over the board.
+    const fog = this.scene.fog as THREE.FogExp2;
+    const alt = this.camera.position.length() - 1;
+    this.weather.update(now / 1000, this.sunDir, this.walk.active ? [0, 0] : [0.15, 0.6],
+      this.walk.active ? 1 : smoothstep(0.2, 0.55, alt / AIR.height), { color: fog.color, density: fog.density });
     const t0 = performance.now();
     this.renderer.render(this.scene, this.camera);
     this.countFrame(performance.now() - t0);
