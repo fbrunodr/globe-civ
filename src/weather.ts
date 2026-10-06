@@ -57,12 +57,18 @@ float wCover(vec3 p, out float rain) {
   float k = 1.0 / (2.4 * uR0);
   float n0 = wFbm(wTurn(p, wind * f0) * k + drift + floor(ph) * 37.1);
   float n1 = wFbm(wTurn(p, wind * f1) * k + drift + floor(ph + 0.5) * 37.1 + 19.7);
-  float n = mix(n0, n1, abs(2.0 * f0 - 1.0));
+  float blend = abs(2.0 * f0 - 1.0);
+  float n = mix(n0, n1, blend);
   // Spread evenly over 0..1 (logistic fit of the noise's bell curve).
   float u = 1.0 / (1.0 + exp(-(n - 0.5) / 0.06));
   // Soft edges, thicker toward the middle of each cloud.
   float cover = smoothstep(1.0 - P - 0.04, 1.0 - P + 0.22, u);
-  rain = smoothstep(0.75, 0.95, u - (1.0 - P) + 0.75) * smoothstep(0.35, 0.7, wet) * cover;
+  // Only about half the clouds rain: a second field, drifting with the
+  // clouds (so a raining cloud keeps raining), picks which ones.
+  float g0 = wFbm(wTurn(p, wind * f0) * k * 0.7 + drift + floor(ph) * 37.1 + 53.0);
+  float g1 = wFbm(wTurn(p, wind * f1) * k * 0.7 + drift + floor(ph + 0.5) * 37.1 + 71.0);
+  float rainy = smoothstep(0.48, 0.52, mix(g0, g1, blend));
+  rain = smoothstep(0.75, 0.95, u - (1.0 - P) + 0.75) * smoothstep(0.35, 0.7, wet) * cover * rainy;
   return cover;
 }
 `;
@@ -117,11 +123,12 @@ export function makeWeather(globe: Globe, rainfall: Float32Array, r0: number, se
           if (cover < 0.004) discard;
           float dist = distance(vPos, cameraPosition);
           float fade = uFade.y > 0.0 ? smoothstep(uFade.x, uFade.y, dist) : 1.0;
-          // Lit from above, darker on the night side; gray underneath.
+          // Lit from above, darker on the night side; gray underneath, darker
+          // where thick or raining (only seen from below).
           bool below = length(cameraPosition) < ${(1 + ALT).toFixed(3)};
           float light = 0.45 + 0.6 * smoothstep(-0.25, 0.6, dot(p, uSun));
           vec3 col = below ? mix(vec3(0.93, 0.95, 0.98), vec3(0.5, 0.53, 0.58), max(cover * cover, rain))
-                           : vec3(1.0) * light * mix(1.0, 0.75, rain);
+                           : vec3(1.0) * light; // cloud tops stay white, raining or not
           float hz = 1.0 - exp(-uHazeDensity * airDepth(cameraPosition, vPos));
           col = mix(col, uHaze, hz);
           gl_FragColor = vec4(col, cover * 0.95 * fade * uAmount);
