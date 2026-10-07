@@ -11,7 +11,10 @@
 //   forming pyramids), plus short spurs into neighboring hills. Height falls
 //   off with distance from the skeleton, so neighboring mountain tiles merge
 //   into one crest, and the crest always lies on mountain tiles.
-// - Hills get one to three soft bumps inside their core.
+// - Hills are drawn per cluster of adjacent hill tiles, not per tile: a
+//   low base, with rounded, elongated bumps scattered across the cluster
+//   (around tile centers and across the edges between hill tiles), freely
+//   rotated. Bumps fade out outside hill tiles, so hills stay on hill tiles.
 // - Water tiles continue the land around them (the mean level of their land
 //   neighbors), so the land does not sag toward the hex edges of the coast.
 //
@@ -46,7 +49,11 @@ const MOUNTAIN_BASE = 0.009;
 export const CRATER = 0.24;
 export const CRATER_DEPTH = 0.3;
 export const CONE_RADIUS = 1.15; // share of the tile's inner radius
-const HILL_BUMP = 0.005;
+const HILL_FOOT = 0.007; // level hills rise from (that of flat land)
+// Hills are broad, gentle mounds (room to build on, as in Civ VI): bump
+// height and width relative to the original design.
+const HILL_RISE = 0.75;
+const HILL_WIDTH = 1.35;
 const LOWLAND = 0.005;
 
 const smoothstep = (a: number, b: number, x: number): number => {
@@ -70,6 +77,7 @@ export function buildRelief(globe: Globe, map: MapData, looks: readonly TileLook
   // Volcanoes are lone cones with a crater, not part of ranges.
   const volcano = (t: number) => map.feature[t] === 'volcano';
   const mountain = (t: number) => map.relief[t] === 'mountains' && looks[t].wet < 0.5 && !volcano(t);
+  const hill = (t: number) => map.relief[t] === 'hills' && looks[t].wet < 0.5;
 
   // ---- per-tile base level, plateau and noise amplitude ----
   const base = new Float32Array(N), plateau = new Float32Array(N), amp = new Float32Array(N), peak = new Float32Array(N);
@@ -79,8 +87,9 @@ export function buildRelief(globe: Globe, map: MapData, looks: readonly TileLook
     if (mountain(t)) {
       peak[t] = l.height - MOUNTAIN_BASE;
       base[t] = MOUNTAIN_BASE; plateau[t] = 0.2; amp[t] = 0.0012;
-    } else if (map.relief[t] === 'hills' && l.wet < 0.5) {
-      base[t] = l.height - HILL_BUMP; plateau[t] = 0.3; amp[t] = 0.0015;
+    } else if (hill(t)) {
+      // Most of a hill's height comes from its bumps; the base only lifts a little.
+      base[t] = HILL_FOOT + 0.3 * (l.height - HILL_FOOT); plateau[t] = 0; amp[t] = 0.0015;
     }
   }
   for (let t = 0; t < N; t++) {
@@ -158,25 +167,48 @@ export function buildRelief(globe: Globe, map: MapData, looks: readonly TileLook
     return best * (0.9 + 0.15 * rn);
   };
 
-  // ---- hill bumps ----
-  const bumps: { c: THREE.Vector3; r: number; h: number }[][] = tiles.map(() => []);
-  for (let t = 0; t < N; t++) {
-    if (map.relief[t] !== 'hills' || looks[t].wet >= 0.5) continue;
-    const c = tiles[t].center;
-    const e1 = new THREE.Vector3(c.y, -c.x, 0);
-    if (e1.lengthSq() < 1e-6) e1.set(0, c.z, -c.y);
+  // ---- hills: bumps scattered over each cluster ----
+  interface Bump { c: THREE.Vector3; e1: THREE.Vector3; e2: THREE.Vector3; ra: number; rb: number; h: number }
+  const bumps: Bump[][] = tiles.map(() => []);
+  const isHill = Float32Array.from(tiles, (tl) => (hill(tl.id) ? 1 : 0));
+  const addBump = (at: THREE.Vector3, home: number, h: number, size: number) => {
+    // An ellipse, longer one way, at a random angle.
+    const e1 = new THREE.Vector3(at.y, -at.x, 0);
+    if (e1.lengthSq() < 1e-6) e1.set(0, at.z, -at.y);
     e1.normalize();
-    const e2 = c.clone().cross(e1);
-    const n = 1 + Math.floor(rand() * 3);
-    for (let k = 0; k < n; k++) {
-      const ang = rand() * Math.PI * 2, off = (k === 0 ? 0.15 : 0.35) * r0 * rand();
-      const p = c.clone().addScaledVector(e1, Math.cos(ang) * off).addScaledVector(e2, Math.sin(ang) * off).normalize();
-      bumps[t].push({ c: p, r: (0.5 + 0.12 * rand()) * r0, h: HILL_BUMP * (k === 0 ? 1 : 0.5 + 0.4 * rand()) });
+    const e2 = at.clone().cross(e1);
+    const ang = rand() * Math.PI;
+    const a1 = e1.clone().multiplyScalar(Math.cos(ang)).addScaledVector(e2, Math.sin(ang));
+    const a2 = at.clone().cross(a1);
+    const b: Bump = { c: at, e1: a1, e2: a2, ra: size * (1.15 + 0.5 * rand()) * r0, rb: size * (0.7 + 0.2 * rand()) * r0, h };
+    // Reach: the home tile, its neighbors and theirs.
+    const near = new Set([home]);
+    for (const nb of tiles[home].neighbors) { near.add(nb); for (const nn of tiles[nb].neighbors) near.add(nn); }
+    for (const t of near) bumps[t].push(b);
+  };
+  const jitter = (p: THREE.Vector3, amount: number) =>
+    p.clone().add(new THREE.Vector3(rand() - 0.5, rand() - 0.5, rand() - 0.5).multiplyScalar(2 * amount * r0)).normalize();
+  for (let t = 0; t < N; t++) {
+    if (!hill(t)) continue;
+    const rise = HILL_RISE * (looks[t].height - base[t]);
+    addBump(jitter(tiles[t].center, 0.35), t, rise * (0.85 + 0.25 * rand()), 0.62 * HILL_WIDTH);
+    if (rand() < 0.5) addBump(jitter(tiles[t].center, 0.55), t, rise * (0.5 + 0.3 * rand()), 0.42 * HILL_WIDTH);
+    // Across the edges between hill tiles, so a cluster reads as one landform.
+    for (const nb of tiles[t].neighbors) {
+      if (nb < t || !hill(nb) || rand() > 0.75) continue;
+      const mid = tiles[t].center.clone().add(tiles[nb].center).normalize();
+      addBump(jitter(mid, 0.25), t, 0.5 * (rise + HILL_RISE * (looks[nb].height - base[nb])) * (0.7 + 0.3 * rand()), 0.55 * HILL_WIDTH);
     }
   }
+  const tmpB = new THREE.Vector3();
   const bumpAt = (t: number, dir: THREE.Vector3): number => {
     let h = 0;
-    for (const b of bumps[t]) h = Math.max(h, b.h * bump(b.c.distanceTo(dir) / b.r));
+    for (const b of bumps[t]) {
+      tmpB.subVectors(dir, b.c);
+      const x = tmpB.dot(b.e1) / b.ra, y = tmpB.dot(b.e2) / b.rb;
+      const q = Math.sqrt(x * x + y * y);
+      if (q < 1) h = Math.max(h, b.h * bump(q));
+    }
     return h;
   };
 
@@ -228,7 +260,8 @@ export function buildRelief(globe: Globe, map: MapData, looks: readonly TileLook
     heightAt(t, i, wa, wb, dir) {
       const n = 2 * noise.fbm(dir.x * 22 + 5.1, dir.y * 22 - 3.3, dir.z * 22 + 1.7, 5);
       return interiorVal(base, t, i, wa, wb) + interiorVal(amp, t, i, wa, wb) * n
-        + Math.max(ridgeAt(t, dir), coneAt(t, dir)) + bumpAt(t, dir);
+        + Math.max(ridgeAt(t, dir), coneAt(t, dir))
+        + (bumps[t].length ? bumpAt(t, dir) * smoothstep(0.25, 0.75, interiorVal(isHill, t, i, wa, wb)) : 0);
     },
     peak, base, ridges,
   };

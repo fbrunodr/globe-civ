@@ -19,7 +19,8 @@ import { mulberry32 } from './rng.ts';
 //   1 rounding of edges i-1, i, i+1 and A|B
 //   2 rounding of B|C, river strength of edges i-1, i, i+1
 //   3 warp share of edges i-1, i, i+1 and A|B
-//   4 warp share of B|C
+//   4 warp share of B|C, look similarity B|C and A|C
+//   5 look similarity t|A, t|B, t|C, A|B (1 = same group)
 //
 // Per-vertex attributes:
 //   ring        0 at a tile center, 1 on its edge -> hex grid line
@@ -37,7 +38,7 @@ import { mulberry32 } from './rng.ts';
 
 export const TEX_W = 2048;
 export const TILE_ROWS = 6;
-export const FAN_ROWS = 5;
+export const FAN_ROWS = 6;
 const NOISE_SIZE = 64;
 
 // Noise and bump helpers, shared with the water shader (needs uNoise and tLod).
@@ -94,13 +95,15 @@ vec4 paintWeights(int fan, vec3 P, vec4 ids, out vec3 sEdge, out vec4 soft) {
   if (total < 1e-9) return vec4(1.0, 0.0, 0.0, 0.0);
   w /= total;
   soft = w;
-  // Sharpen groups against each other (sharpen() in paint.ts).
-  vec4 g = vec4(tileRow(int(ids.x), 5).y, tileRow(int(ids.y), 5).y, tileRow(int(ids.z), 5).y, tileRow(int(ids.w), 5).y);
+  // Sharpen unlike looks against each other (sharpen() in paint.ts).
+  vec4 m = fanRow(fan, 5); // t|A, t|B, t|C, A|B; r4.yz = B|C, A|C
   vec4 S = vec4(
-    dot(w, vec4(equal(g, vec4(g.x)))), dot(w, vec4(equal(g, vec4(g.y)))),
-    dot(w, vec4(equal(g, vec4(g.z)))), dot(w, vec4(equal(g, vec4(g.w)))));
+    dot(w, vec4(1.0, m.x, m.y, m.z)),
+    dot(w, vec4(m.x, 1.0, m.w, r4.z)),
+    dot(w, vec4(m.y, m.w, 1.0, r4.y)),
+    dot(w, vec4(m.z, r4.z, r4.y, 1.0)));
   vec4 S2 = S * S;
-  vec4 q = w / max(S, vec4(1e-9)) * S2 * S2 * S2;
+  vec4 q = w * S2 * S2 * S; // w · S^(SHARPEN-1), SHARPEN = 6
   return q / dot(q, vec4(1.0));
 }
 `;
@@ -108,6 +111,7 @@ vec4 paintWeights(int fan, vec3 P, vec4 ids, out vec3 sEdge, out vec4 soft) {
 export interface TerrainMaterial {
   material: THREE.MeshStandardMaterial;
   setTime(seconds: number): void;
+  setGrid(on: boolean): void; // the hex grid lines (fog of war shows them regardless)
 }
 
 export interface PaintUniforms {
@@ -153,6 +157,7 @@ function makeNoiseTexture(): THREE.Data3DTexture {
 export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
   const mat = new THREE.MeshStandardMaterial({ roughness: 1, metalness: 0 });
   const uTime = { value: 0 };
+  const uGrid = { value: 0 };
   const noise = noiseTexture();
   mat.onBeforeCompile = (shader) => {
     shader.uniforms['uTime'] = uTime;
@@ -162,6 +167,7 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
     shader.uniforms['uR0'] = { value: paint.r0 };
     shader.uniforms['uFine'] = { value: paint.fine };
     shader.uniforms['uFineFreq'] = { value: paint.fineFreq };
+    shader.uniforms['uGrid'] = uGrid;
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
         attribute float ring;
@@ -196,6 +202,7 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
         uniform float uR0;
         uniform float uFine;
         uniform float uFineFreq;
+        uniform float uGrid;
         varying vec4 vPc0;
         varying vec2 vPc1;
         varying float vRing;
@@ -328,7 +335,7 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
           float fw = fwidth(vRing);
           gridLine = 1.0 - smoothstep(0.0, fw * 1.5, 1.0 - vRing);
           gridLine *= (1.0 - smoothstep(0.05, 0.16, fw)) * dry; // the water surface draws its own
-          diffuseColor.rgb *= 1.0 - 0.18 * gridLine;
+          diffuseColor.rgb *= 1.0 - 0.18 * gridLine * uGrid;
         }`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
         roughnessFactor = mix(1.0, 0.5, wetGround);`)
@@ -346,5 +353,5 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
         }
         #include <opaque_fragment>`);
   };
-  return { material: mat, setTime: (s) => { uTime.value = s; } };
+  return { material: mat, setTime: (s) => { uTime.value = s; }, setGrid: (on) => { uGrid.value = on ? 1 : 0; } };
 }

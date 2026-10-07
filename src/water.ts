@@ -24,6 +24,7 @@ import { NOISE_GLSL, noiseTexture } from './terrainMaterial.ts';
 export interface WaterMaterial {
   material: THREE.MeshStandardMaterial;
   setTime(seconds: number): void;
+  setGrid(on: boolean): void;
 }
 
 export const SKY_COLOR = new THREE.Color(0.62, 0.76, 0.92);
@@ -31,10 +32,12 @@ export const SKY_COLOR = new THREE.Color(0.62, 0.76, 0.92);
 export function makeWaterMaterial(): WaterMaterial {
   const mat = new THREE.MeshStandardMaterial({ roughness: 0.1, metalness: 0, transparent: true, depthWrite: false });
   const uTime = { value: 0 };
+  const uGrid = { value: 0 };
   mat.onBeforeCompile = (shader) => {
     shader.uniforms['uTime'] = uTime;
     shader.uniforms['uNoise'] = { value: noiseTexture() };
     shader.uniforms['uSky'] = { value: SKY_COLOR };
+    shader.uniforms['uGrid'] = uGrid;
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
         attribute float depth;
@@ -60,6 +63,7 @@ export function makeWaterMaterial(): WaterMaterial {
         uniform float uTime;
         uniform highp sampler3D uNoise;
         uniform vec3 uSky;
+        uniform float uGrid;
         varying float vDepth;
         varying vec4 vTint;
         varying vec3 vFlow;
@@ -114,7 +118,7 @@ export function makeWaterMaterial(): WaterMaterial {
           // Hex grid, drawn on the surface where the ground's would be hidden.
           float fw = fwidth(vRing);
           float grid = (1.0 - smoothstep(0.0, fw * 1.5, 1.0 - vRing)) * (1.0 - smoothstep(0.05, 0.16, fw));
-          col *= 1.0 - 0.15 * grid;
+          col *= 1.0 - 0.15 * grid * uGrid;
 
           // Remembered but not in sight: grayed and darker, like the ground.
           col = mix(col, vec3(dot(col, vec3(0.333))), 0.5 * vDim) * (1.0 - 0.38 * vDim);
@@ -138,5 +142,5 @@ export function makeWaterMaterial(): WaterMaterial {
         }
         #include <opaque_fragment>`);
   };
-  return { material: mat, setTime: (s) => { uTime.value = s; } };
+  return { material: mat, setTime: (s) => { uTime.value = s; }, setGrid: (on) => { uGrid.value = on ? 1 : 0; } };
 }

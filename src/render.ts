@@ -174,6 +174,7 @@ export class GlobeRenderer {
     addEventListener('keydown', (e) => {
       if (e.target instanceof HTMLInputElement || e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key === 'v' || e.key === 'V') this.setWalking(!this.walk.active);
+      else if (e.key === 'h' || e.key === 'H') this.setGrid(!this.grid);
       else if (e.key === 'Escape' && this.walk.active) this.setWalking(false);
     }, { signal: this.abort.signal });
     this.stars = new THREE.PointsMaterial({ color: 0xaab4cc, size: 1.4, sizeAttenuation: false, fog: false, transparent: true });
@@ -227,7 +228,8 @@ export class GlobeRenderer {
       fd.set(f.round.slice(0, 4), o + 4);
       fd.set([f.round[4], ...f.river], o + 8);
       fd.set(f.warp.slice(0, 4), o + 12);
-      fd[o + 16] = f.warp[4];
+      fd.set([f.warp[4], f.sim[4], f.sim[5]], o + 16);
+      fd.set(f.sim.slice(0, 4), o + 20);
     });
 
     // Per-vertex shade (baked occlusion and a fine tint) and snow, fixed for
@@ -380,6 +382,16 @@ export class GlobeRenderer {
         new THREE.PointsMaterial({ color: 0xffe066, size: 7, sizeAttenuation: false }));
       this.overlayGroup.add(line, dots);
     }
+  }
+
+  // Hex grid lines on or off (off by default, as in Civ V; selection and
+  // hover rings always show).
+  private grid = false;
+  setGrid(on: boolean): void {
+    this.grid = on;
+    this.terrainMat.setGrid(on);
+    this.waterMat.setGrid(on);
+    this.needsRender = true;
   }
 
   // Walk mode on or off: walking starts where the map view looks, facing up

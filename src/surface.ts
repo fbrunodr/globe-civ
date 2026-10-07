@@ -33,6 +33,7 @@ import { fanCoords, fanFrames, softAt, FAN_COORDS, type PaintData } from './pain
 import { riverCurve } from './riverCurve.ts';
 import { locate, newSample, type Topology, type SurfaceFields } from './terrainMesh.ts';
 import { makePerlin, mulberry32 } from './rng.ts';
+import { erosionAt, type ErosionParams } from './erosion.ts';
 
 // River courses as drawn: points from source to the end inside the water.
 export interface RiverCourse {
@@ -62,6 +63,10 @@ const POOL_DEPTH = 0.0004;
 const POOL_BANK = 0.0002; // pools sit this far under their tile's ground
 const LAKE_BANK = 0.0006; // lakes sit this far under the lowest land around them
 const COAST_CAP = 3;
+// Erosion on slopes: wavelength of the coarsest gullies (tile radii), octaves,
+// their depth at full slope, the slopes where they start / reach full depth,
+// and the strength on hills (mountains: 1).
+export const EROSION = { wavelength: 0.55, octaves: 3, amplitude: 0.0045, slope: [0.12, 0.7] as [number, number], hills: 0.25 };
 const MARGIN_R = 0.35; // rivers own the water level this far beyond their edge (tile radii) // distances to the shore are tracked up to this many tile radii
 
 const smoothstep = (a: number, b: number, x: number) => {
@@ -69,16 +74,17 @@ const smoothstep = (a: number, b: number, x: number) => {
   return t * t * (3 - 2 * t);
 };
 
-// Mesh level of each tile (terrainMesh.ts): river channels and pools need
-// the finest mesh (4×); coasts, hills, mountains and their neighbors a finer
-// one (2×) for smooth relief and shorelines; the rest is coarse.
+// Mesh level of each tile (terrainMesh.ts): river channels, pools and
+// mountains need the finest mesh (4×); coasts, hills and the neighbors of
+// mountains a finer one (2×) for smooth relief and shorelines; the rest is coarse.
 export function meshLevels(globe: Globe, map: MapData, looks: readonly TileLook[]): Uint8Array {
   const N = globe.tiles.length;
   const rough = (t: number) => map.relief[t] !== 'flat' && !looks[t].water;
   const level = new Uint8Array(N).fill(1);
   for (let t = 0; t < N; t++) {
     if (rough(t) || globe.tiles[t].neighbors.some((nb) => (map.relief[nb] === 'mountains' && !looks[nb].water) || looks[nb].water !== looks[t].water)) level[t] = 2;
-    if (map.riverTile[t] || looks[t].pool) level[t] = 4;
+    // Rivers, pools and mountains (fine gullies) need the finest mesh.
+    if (map.riverTile[t] || looks[t].pool || (map.relief[t] === 'mountains' && !looks[t].water)) level[t] = 4;
   }
   for (const r of map.rivers) if (!r.tributary) for (const t of globe.tris[r.corners[r.corners.length - 1]]) level[t] = 4;
   return level;
@@ -161,6 +167,49 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
       height[v] = wl + b * (1 - Math.exp(-(0.7 * y + 0.5 * y * y)));
     }
   }
+  // ---- erosion: gullies and ridges on slopes (erosion.ts) ----
+  {
+    // The slope at each vertex, from its neighbors (least squares in the tangent plane).
+    const grad = new Float32Array(V * 3);
+    for (let v = 0; v < V; v++) {
+      if (coast[v] < 0) continue;
+      const px = topo.dir[v * 3], py = topo.dir[v * 3 + 1], pz = topo.dir[v * 3 + 2];
+      let gx = 0, gy = 0, gz = 0, n = 0;
+      for (let k = topo.adjStart[v]; k < topo.adjStart[v + 1]; k++) {
+        const u = topo.adj[k];
+        let dx = topo.dir[u * 3] - px, dy = topo.dir[u * 3 + 1] - py, dz = topo.dir[u * 3 + 2] - pz;
+        const along = dx * px + dy * py + dz * pz;
+        dx -= along * px; dy -= along * py; dz -= along * pz;
+        const l2 = dx * dx + dy * dy + dz * dz;
+        if (l2 < 1e-16) continue;
+        const dh = (height[u] - height[v]) / l2;
+        gx += dh * dx; gy += dh * dy; gz += dh * dz; n++;
+      }
+      // Each neighbor gives the slope along its own direction; summed over a
+      // ring of neighbors this is about half the gradient.
+      if (n > 0) { grad[v * 3] = 2 * gx / n; grad[v * 3 + 1] = 2 * gy / n; grad[v * 3 + 2] = 2 * gz / n; }
+    }
+    // Only mountains and hills erode (full on mountains, less on hills),
+    // blurred over the mesh so the strength has no seam at tile edges.
+    let mask = Float32Array.from(topo.tile, (t) =>
+      looks[t].water ? 0 : map.relief[t] === 'mountains' ? 1 : map.relief[t] === 'hills' ? EROSION.hills : 0);
+    for (let it = 0; it < 6; it++) {
+      const next = new Float32Array(V);
+      for (let v = 0; v < V; v++) {
+        let sum = mask[v], n = 1;
+        for (let k = topo.adjStart[v]; k < topo.adjStart[v + 1]; k++) { sum += mask[topo.adj[k]]; n++; }
+        next[v] = sum / n;
+      }
+      mask = next;
+    }
+    const P: ErosionParams = { wavelength: EROSION.wavelength * r0, octaves: EROSION.octaves, amplitude: EROSION.amplitude, slope: EROSION.slope, seed: seed ^ 0x6e70 };
+    for (let v = 0; v < V; v++) {
+      const m = mask[v] * ramp[v];
+      if (coast[v] < 0 || m <= 0.01) continue;
+      height[v] += m * erosionAt(P, topo.dir[v * 3], topo.dir[v * 3 + 1], topo.dir[v * 3 + 2], grad[v * 3], grad[v * 3 + 1], grad[v * 3 + 2]);
+    }
+  }
+
   // Water: open water near its shores (the land stays above it), nothing
   // elsewhere until rivers and pools add theirs.
   const NONE = -1;

@@ -86,9 +86,16 @@ describe('terrain painting', () => {
             const ps = paintAt(paint, fanId, co);
             const fr = frames[fanId].n;
             const edgeDist = Math.min(...[0, 1, 2].map((j) => d.x * fr[3 * j] + d.y * fr[3 * j + 1] + d.z * fr[3 * j + 2]));
-            // P1: far enough from every edge, the point is (at least 99%) its own tile.
+            // P1: far enough from every edge, the point is its own look: at most
+            // 1% of an unlike look, at most 5% of a similar one.
+            // Looks merely similar to t's (soft borders) may reach a little further.
             const ownLook = fan.ids.reduce((a, u, c) => a + (paint.group[u] === paint.group[t] ? ps.w[c] : 0), 0);
-            if (edgeDist > CORE * r0) expect(ownLook).toBeGreaterThanOrEqual(0.99);
+            const likeT = [1, fan.sim[0], fan.sim[1], fan.sim[2]];
+            const unlike = fan.ids.reduce((a, _u, c) => a + (likeT[c] > 0 ? 0 : ps.w[c]), 0);
+            if (edgeDist > CORE * r0) {
+              expect(unlike).toBeLessThanOrEqual(0.01);
+              expect(ownLook).toBeGreaterThanOrEqual(0.95);
+            }
             // P3: a point painted mostly by another tile lies within the warp of an edge.
             if (ownLook < 0.5) expect(edgeDist).toBeLessThanOrEqual(WARP_MAX * r0 + 1e-9);
             // A neighbor that looks the same (same group) takes no area visually.

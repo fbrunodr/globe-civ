@@ -9,7 +9,9 @@
 // 2. Soft weights. Each tile's weight falls off over a rounding width B
 //    around its (warped) edges.
 // 3. Sharpening. Weights of tiles with the same look (same group) are summed
-//    and the groups are sharpened against each other. Same-look tiles merge
+//    and the groups are sharpened against each other. Looks that are merely
+//    similar (steppe and cold desert, two grasslands) count partly as the
+//    same, so their borders stay soft and wide. Same-look tiles merge
 //    without a seam, and a region's zigzag hex outline turns into a rounded
 //    one (blur, then threshold).
 //
@@ -29,6 +31,7 @@
 import type { Globe } from './goldberg.ts';
 import type { MapData } from './mapgen.ts';
 import type { BiomeKey, FeatureKey } from './terrain.ts';
+import { tileLook } from './look.ts';
 
 // ---------- rules ----------
 
@@ -152,6 +155,13 @@ export function warpAt(params: PaintParams, x: number, y: number, z: number, out
   return out;
 }
 
+// Similar looks: land tiles of the same or neighboring classes whose colors
+// are close blend softly instead of meeting at a sharp border.
+const SIMILAR_CLASSES: ReadonlySet<string> = new Set(['arid-arid', 'grass-grass', 'forest-forest', 'arid-grass', 'grass-arid']);
+const SIMILAR_MAX = 0.6;        // the most two different looks count as the same
+const SIMILAR_COLOR = [0.12, 0.4] as const; // color distance: fully similar below, not at all above
+const SIMILAR_ROUND = 0;        // extra rounding width (share of r0) for fully similar looks
+
 const smoothstep = (a: number, b: number, x: number) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
@@ -165,6 +175,9 @@ export interface FanRules {
   warp: number[];  // 5 warp shares
   round: number[]; // 5 rounding widths (radians)
   river: number[]; // 3 (real edges): river strength 0..1, 0 = no river
+  // How alike the looks of each pair of the fan's tiles are (0..1; 1 = same
+  // group): t|A, t|B, t|C, A|B, B|C, A|C.
+  sim: number[];
 }
 
 export interface PaintData {
@@ -212,8 +225,20 @@ export function buildPaintData(globe: Globe, map: MapData, worldSeed: number): P
     if (g === undefined) { g = groupIds.size; groupIds.set(key, g); }
     return g;
   });
-  const rule = (a: number, b: number): PairRule =>
-    edgeRiver.has(edgeKey(N, a, b)) ? RIVER_RULE : pairRule(cls[a], cls[b]);
+  const color = tiles.map((t) => tileLook(map, t.id).color);
+  const sim = (a: number, b: number): number => {
+    if (group[a] === group[b]) return 1;
+    if (!SIMILAR_CLASSES.has(`${cls[a]}-${cls[b]}`) || edgeRiver.has(edgeKey(N, a, b))) return 0;
+    const ca = color[a], cb = color[b];
+    const d = Math.hypot(ca.r - cb.r, ca.g - cb.g, ca.b - cb.b);
+    return SIMILAR_MAX * smoothstep(SIMILAR_COLOR[1], SIMILAR_COLOR[0], d);
+  };
+  const rule = (a: number, b: number): PairRule => {
+    if (edgeRiver.has(edgeKey(N, a, b))) return RIVER_RULE;
+    const r = pairRule(cls[a], cls[b]);
+    const sm = group[a] === group[b] ? 0 : sim(a, b);
+    return sm > 0 ? { warp: r.warp, round: r.round + SIMILAR_ROUND * sm } : r;
+  };
   const fanStart = new Int32Array(N + 1);
   for (let t = 0; t < N; t++) fanStart[t + 1] = fanStart[t] + tiles[t].corners.length;
   const fans: FanRules[] = [];
@@ -227,6 +252,7 @@ export function buildPaintData(globe: Globe, map: MapData, worldSeed: number): P
         warp: rules.map((r) => r.warp),
         round: rules.map((r) => r.round * r0),
         river: [A, B, C].map((nb) => edgeRiver.get(edgeKey(N, t, nb)) ?? 0),
+        sim: [sim(t, A), sim(t, B), sim(t, C), sim(A, B), sim(B, C), sim(A, C)],
       });
     }
   }
@@ -303,7 +329,7 @@ export function paintAt(data: PaintData, fanId: number, s: ArrayLike<number>): P
   const fan = data.fans[fanId];
   const edges: [number, number, number] = [s[0], s[1], s[2]];
   if (s[0] >= fan.round[0] && s[1] >= fan.round[1] && s[2] >= fan.round[2]) return { w: [1, 0, 0, 0], s: edges };
-  return { w: sharpen(softAt(data, fanId, s), fan.ids.map((t) => data.group[t])), s: edges };
+  return { w: sharpen(softAt(data, fanId, s), fan.sim), s: edges };
 }
 
 // The soft (unsharpened) weights of fan.ids at a point, summing to 1: the
@@ -326,17 +352,23 @@ export function softAt(data: PaintData, fanId: number, s: ArrayLike<number>): [n
   return w;
 }
 
-// Sums the weights of each group, sharpens the groups against each other and
-// shares each group's result among its tiles.
-export function sharpen(w: number[], g: number[]): [number, number, number, number] {
+// Sharpens the tiles against each other by how unlike they look: each
+// tile's weight is scaled by S^(SHARPEN-1), where S sums the weights of the
+// tiles that look like it (sim: pairs in FanRules.sim order). With sim 0/1
+// this sums each group's weight and sharpens groups against each other;
+// partly similar looks are sharpened only partly. Mirrored in the shader.
+export function sharpen(w: number[], sim: readonly number[]): [number, number, number, number] {
   const total = w[0] + w[1] + w[2] + w[3];
   if (total < 1e-9) return [1, 0, 0, 0];
-  const S = [0, 0, 0, 0];
-  for (let a = 0; a < 4; a++) for (let b = 0; b < 4; b++) if (g[a] === g[b]) S[a] += w[b] / total;
-  const p = S.map((x) => x ** SHARPEN);
+  const [tA, tB, tC, AB, BC, AC] = sim;
+  const M = [[1, tA, tB, tC], [tA, 1, AB, AC], [tB, AB, 1, BC], [tC, AC, BC, 1]];
+  const q = [0, 0, 0, 0];
   let D = 0;
-  for (let a = 0; a < 4; a++) if (S[a] > 0) D += (w[a] / total / S[a]) * p[a];
-  const out: [number, number, number, number] = [0, 0, 0, 0];
-  for (let a = 0; a < 4; a++) out[a] = S[a] > 0 ? (w[a] / total / S[a]) * p[a] / D : 0;
-  return out;
+  for (let a = 0; a < 4; a++) {
+    let S = 0;
+    for (let b = 0; b < 4; b++) S += M[a][b] * w[b] / total;
+    q[a] = (w[a] / total) * S ** (SHARPEN - 1);
+    D += q[a];
+  }
+  return [q[0] / D, q[1] / D, q[2] / D, q[3] / D];
 }
