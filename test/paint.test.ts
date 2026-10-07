@@ -137,7 +137,7 @@ describe('terrain painting', () => {
         }
       });
 
-      it(`P7–P8 ${size} seed ${seed}: crests hold between mountains; centers sit at their level`, () => {
+      it(`P8 ${size} seed ${seed}: flat land centers sit at their level`, () => {
         const { w, paint } = setup(size, seed);
         const { globe, map } = w;
         const looks = globe.tiles.map((t) => tileLook(map, t.id));
@@ -149,19 +149,6 @@ describe('terrain painting', () => {
             .addScaledVector(globe.triCenters[tile.corners[(i + 1) % k]], wb).normalize();
         };
         const h = (t: number, i: number, wa: number, wb: number) => relief.heightAt(t, i, wa, wb, dir(t, i, wa, wb));
-        // P7: along every ridge link, the crest keeps at least 70% of the lower peak.
-        for (const r of relief.ridges) {
-          const [a, b] = r.tiles;
-          if (b < 0) continue;
-          const i = globe.tiles[a].neighbors.indexOf(b);
-          const j = globe.tiles[b].neighbors.indexOf(a);
-          const low = Math.min(h(a, 0, 0, 0), h(b, 0, 0, 0));
-          for (let s = 0; s <= 10; s++) {
-            const u = s / 20; // center -> edge midpoint, from both sides
-            expect(h(a, i, u, u)).toBeGreaterThanOrEqual(0.7 * low);
-            expect(h(b, j, u, u)).toBeGreaterThanOrEqual(0.7 * low);
-          }
-        }
         // P8: flat land centers sit at their tile's level, up to the noise (the
         // coast, beds, rivers and pools are cut in later: surface.test.ts).
         for (const tile of globe.tiles) {

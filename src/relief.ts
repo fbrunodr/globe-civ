@@ -2,15 +2,13 @@
 // all land. The coast, sea beds, rivers and pools are cut into it by
 // surface.ts.
 //
-//   height = base + noise + mountain ridges + hill bumps
+//   height = base + noise + hill bumps + volcano cones
 //
+// Mountains get only a low base here: their shape is made per connected
+// range in surface.ts (height grows with distance from the range's painted
+// edge), where the mesh is known.
 // - Base: each tile's level (sea floor, lowland, hill or mountain foot),
 //   flat in the tile's middle and eased into its neighbors at the edges.
-// - Mountain ranges are drawn from a ridge skeleton: segments between the
-//   centers of adjacent mountain tiles (pruned so clusters branch instead of
-//   forming pyramids), plus short spurs into neighboring hills. Height falls
-//   off with distance from the skeleton, so neighboring mountain tiles merge
-//   into one crest, and the crest always lies on mountain tiles.
 // - Hills are drawn per cluster of adjacent hill tiles, not per tile: a
 //   low base, with rounded, elongated bumps scattered across the cluster
 //   (around tile centers and across the edges between hill tiles), freely
@@ -30,20 +28,10 @@ export interface Relief {
   // Height above radius 1 of a point in fan i of tile t, at barycentric
   // weights wa (toward corner i) and wb (toward corner i+1); dir is its unit direction.
   heightAt(t: number, i: number, wa: number, wb: number, dir: THREE.Vector3): number;
-  peak: Float32Array; // highest point of each mountain tile's crest (0 elsewhere)
+  peak: Float32Array; // nominal height of each mountain tile above its base (0 elsewhere)
   base: Float32Array; // base level of each tile
-  ridges: readonly Ridge[];
 }
 
-export interface Ridge {
-  a: THREE.Vector3; b: THREE.Vector3; // crest end points (unit vectors)
-  ha: number; hb: number;             // crest height above the base at each end
-  dip: number;                         // saddle depth, as a share of the lower end
-  tiles: [number, number];             // the tiles it joins (b = -1 for a spur)
-}
-
-// Share of the lower peak a saddle may dip (P7 guarantees at least 70% remains).
-export const MAX_SADDLE_DIP = 0.18;
 const MOUNTAIN_BASE = 0.009;
 // Volcano crater: radius as a share of the cone's radius, depth as a share of its height.
 export const CRATER = 0.24;
@@ -65,14 +53,10 @@ const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 // Soft bump: 1 at q = 0, 0 (with zero slope) at q >= 1.
 const bump = (q: number) => (q >= 1 ? 0 : (1 - q * q) * (1 - q * q));
 
-// warp: the painting's warp field (paint.ts warpAt), so ranges bend with the
-// regions around them instead of following the hex grid.
-export function buildRelief(globe: Globe, map: MapData, looks: readonly TileLook[], seed: number, r0: number,
-  warp?: (x: number, y: number, z: number, out: number[]) => number[]): Relief {
+export function buildRelief(globe: Globe, map: MapData, looks: readonly TileLook[], seed: number, r0: number): Relief {
   const { tiles, tris } = globe;
   const N = tiles.length;
   const noise = makePerlin(mulberry32(seed ^ 0x51ed270b));
-  const crag = makePerlin(mulberry32(seed ^ 0x2c4a6e1f));
   const rand = mulberry32(seed ^ 0x1e1ef);
   // Volcanoes are lone cones with a crater, not part of ranges.
   const volcano = (t: number) => map.feature[t] === 'volcano';
@@ -99,73 +83,6 @@ export function buildRelief(globe: Globe, map: MapData, looks: readonly TileLook
     amp[t] = land.length ? land.reduce((a, nb) => a + amp[nb], 0) / land.length : 0;
     plateau[t] = 0.6;
   }
-
-  // ---- ridge skeleton ----
-  const links: [number, number, number][] = [];
-  for (let t = 0; t < N; t++) {
-    if (!mountain(t)) continue;
-    for (const nb of tiles[t].neighbors) if (nb > t && mountain(nb)) links.push([t, nb, Math.min(map.elevation[t], map.elevation[nb])]);
-  }
-  links.sort((x, y) => y[2] - x[2] || x[0] - y[0] || x[1] - y[1]);
-  const kept = new Map<number, Set<number>>();
-  const keptOf = (t: number) => { let s = kept.get(t); if (!s) { s = new Set(); kept.set(t, s); } return s; };
-  const ridges: Ridge[] = [];
-  const dipFor = () => 0.06 + (MAX_SADDLE_DIP - 0.06) * rand();
-  for (const [a, b] of links) {
-    const ka = keptOf(a), kb = keptOf(b);
-    if ([...ka].some((c) => kb.has(c))) continue; // would close a triangle
-    ka.add(b); kb.add(a);
-    ridges.push({ a: tiles[a].center, b: tiles[b].center, ha: peak[a], hb: peak[b], dip: dipFor(), tiles: [a, b] });
-  }
-  for (let t = 0; t < N; t++) {
-    if (!mountain(t)) continue;
-    // Every peak gets a cap, even where no link survived.
-    ridges.push({ a: tiles[t].center, b: tiles[t].center, ha: peak[t], hb: peak[t], dip: 0, tiles: [t, -1] });
-    // Spurs run halfway into the two highest neighboring hills.
-    const hills = tiles[t].neighbors.filter((nb) => map.relief[nb] === 'hills' && looks[nb].wet < 0.5)
-      .sort((x, y) => map.elevation[y] - map.elevation[x] || x - y).slice(0, 2);
-    for (const h of hills) {
-      const end = tiles[t].center.clone().add(tiles[h].center).normalize();
-      ridges.push({ a: tiles[t].center, b: end, ha: peak[t], hb: 0.3 * peak[t], dip: 0, tiles: [t, -1] });
-    }
-  }
-  // Ridges that can reach each tile: those touching it or its neighbors.
-  const ridgesNear: number[][] = tiles.map(() => []);
-  ridges.forEach((r, k) => {
-    const near = new Set<number>();
-    for (const t of r.tiles) if (t >= 0) { near.add(t); for (const nb of tiles[t].neighbors) near.add(nb); }
-    if (r.tiles[1] < 0) for (const nb of tiles[r.tiles[0]].neighbors) for (const nn of tiles[nb].neighbors) near.add(nn);
-    for (const t of near) ridgesNear[t].push(k);
-  });
-  const W = 1.25 * r0;
-  const tmp = new THREE.Vector3(), seg = new THREE.Vector3(), wdir = new THREE.Vector3();
-  const delta = [0, 0, 0];
-  const RIDGE_WARP = 0.9;
-  const ridgeAt = (t: number, d: THREE.Vector3): number => {
-    if (ridgesNear[t].length === 0) return 0;
-    let dir = d;
-    if (warp) {
-      warp(d.x, d.y, d.z, delta);
-      dir = wdir.set(d.x + RIDGE_WARP * delta[0], d.y + RIDGE_WARP * delta[1], d.z + RIDGE_WARP * delta[2]).normalize();
-    }
-    let best = 0;
-    for (const k of ridgesNear[t]) {
-      const r = ridges[k];
-      seg.subVectors(r.b, r.a);
-      const len2 = seg.lengthSq();
-      const u = len2 > 0 ? Math.min(1, Math.max(0, tmp.subVectors(dir, r.a).dot(seg) / len2)) : 0;
-      const dist = tmp.copy(r.a).addScaledVector(seg, u).distanceTo(dir);
-      const q = dist / W;
-      if (q >= 1) continue;
-      const crest = lerp(r.ha, r.hb, u) - r.dip * Math.min(r.ha, r.hb) * Math.sin(Math.PI * u);
-      best = Math.max(best, crest * bump(q));
-    }
-    if (best === 0) return 0;
-    // Crags: ridged noise roughens the range, strongest along the crest.
-    const f = 3.2 / globe.avgEdgeAngle;
-    const rn = 1 - Math.abs(crag.noise(dir.x * f, dir.y * f, dir.z * f) * 2);
-    return best * (0.9 + 0.15 * rn);
-  };
 
   // ---- hills: bumps scattered over each cluster ----
   interface Bump { c: THREE.Vector3; e1: THREE.Vector3; e2: THREE.Vector3; ra: number; rb: number; h: number }
@@ -260,9 +177,9 @@ export function buildRelief(globe: Globe, map: MapData, looks: readonly TileLook
     heightAt(t, i, wa, wb, dir) {
       const n = 2 * noise.fbm(dir.x * 22 + 5.1, dir.y * 22 - 3.3, dir.z * 22 + 1.7, 5);
       return interiorVal(base, t, i, wa, wb) + interiorVal(amp, t, i, wa, wb) * n
-        + Math.max(ridgeAt(t, dir), coneAt(t, dir))
+        + coneAt(t, dir)
         + (bumps[t].length ? bumpAt(t, dir) * smoothstep(0.25, 0.75, interiorVal(isHill, t, i, wa, wb)) : 0);
     },
-    peak, base, ridges,
+    peak, base,
   };
 }

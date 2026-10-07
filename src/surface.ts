@@ -66,6 +66,10 @@ const COAST_CAP = 3;
 // Erosion on slopes: wavelength of the coarsest gullies (tile radii), octaves,
 // their depth at full slope, the slopes where they start / reach full depth,
 // and the strength on hills (mountains: 1).
+// Mountain ranges (tile radii): how far the height field reaches inside, the
+// depth of the foothills, the depth at which a range reaches full height, the
+// crest wavelength; and how much the crests vary the height.
+export const RANGE = { reach: 6, foot: 0.65, full: 1.6, crest: 2.2, texture: 0.5 };
 export const EROSION = { wavelength: 0.55, octaves: 3, amplitude: 0.0045, slope: [0.12, 0.7] as [number, number], hills: 0.25 };
 const MARGIN_R = 0.35; // rivers own the water level this far beyond their edge (tile radii) // distances to the shore are tracked up to this many tile radii
 
@@ -102,6 +106,8 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
   // ---- what the painting puts at each vertex ----
   const wet = new Float32Array(V);     // soft weight of open water (the shore is at 1/2)
   const level0 = new Float32Array(V);  // level of the open water painted here
+  const rocky = new Float32Array(V);   // soft weight of mountain tiles (ranges; the edge is at 1/2)
+  const rockH = new Float32Array(V);   // their nominal height, weighted
   const lake = new Float32Array(V);    // share of that water that is lake
   const bed = new Float32Array(V);     // bed level
   const poolQ = new Float32Array(V);   // soft weight of pool tiles (wetlands, oases)
@@ -110,6 +116,8 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
   const poolPond = new Float32Array(V);
   const poolTint = new Float32Array(V * 4);
   const co = new Float32Array(FAN_COORDS);
+  // Tiles that make up mountain ranges (volcanoes are cones of their own).
+  const inRange = (t: number) => map.relief[t] === 'mountains' && !looks[t].water && map.feature[t] !== 'volcano';
   // Pools sit just under their own ground.
   const poolLevelOf = tiles.map((tile) => (looks[tile.id].pool ? looks[tile.id].height - POOL_BANK : 0));
   const bodyLevel = waterLevels(globe, map, looks, relief);
@@ -126,6 +134,7 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
       if (w[k] <= 0) continue;
       const u = fan.ids[k], l = looks[u];
       if (l.water) { m += w[k]; wl += w[k] * bodyLevel[u]; if (map.biome[u] === 'lake') lk += w[k]; }
+      if (inRange(u)) { rocky[v] += w[k]; rockH[v] += w[k] * relief.peak[u]; }
       b += w[k] * l.bed;
       if (l.pool) {
         q += w[k]; lvl += w[k] * poolLevelOf[u]; thr += w[k] * l.pool.threshold; pond += w[k] * (l.pool.pond ? 1 : 0);
@@ -167,6 +176,55 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
       height[v] = wl + b * (1 - Math.exp(-(0.7 * y + 0.5 * y * y)));
     }
   }
+  // ---- mountain ranges: one landform per connected range ----
+  // Each range's height grows with the distance from its painted edge, so
+  // its highest ground lies deepest inside (whatever the tiles), and ridged
+  // noise breaks that dome into crests, peaks and saddles.
+  {
+    const { dist } = coastDistance(topo, rocky, rocky, RANGE.reach * r0);
+    // Ranges: connected areas inside the painted edge; their depth and height.
+    const comp = new Int32Array(V).fill(-1);
+    const depthMax: number[] = [], heightOf: number[] = [];
+    for (let v0 = 0; v0 < V; v0++) {
+      if (rocky[v0] < 0.5 || comp[v0] >= 0) continue;
+      const id = depthMax.length;
+      let deepest = 0, hs = 0, ws = 0;
+      const stack = [v0];
+      comp[v0] = id;
+      while (stack.length) {
+        const v = stack.pop()!;
+        deepest = Math.max(deepest, -dist[v]);
+        hs += rockH[v]; ws += rocky[v];
+        for (let k = topo.adjStart[v]; k < topo.adjStart[v + 1]; k++) {
+          const u = topo.adj[k];
+          if (comp[u] < 0 && rocky[u] >= 0.5) { comp[u] = id; stack.push(u); }
+        }
+      }
+      depthMax.push(deepest);
+      heightOf.push(ws > 0 ? hs / ws : 0);
+    }
+    const fr = 1 / (RANGE.crest * r0);
+    for (let v = 0; v < V; v++) {
+      const c = comp[v];
+      if (c < 0) continue;
+      dirOf(v, d);
+      // Depth inside the range, as a share of how deep the range gets
+      // (capped, so wide ranges have broad high interiors with room for
+      // crests, not one cone).
+      const deep = -dist[v], full = Math.min(depthMax[c], RANGE.full * r0);
+      // Gentle at the foot (zero slope at the painted edge), rising inward,
+      // so a range's highest ground lies deepest inside.
+      const dome = smoothstep(0, Math.max(full, RANGE.foot * r0), deep);
+      // Bigger ranges stand a little taller.
+      const size = 1 + 0.3 * smoothstep(0.8 * r0, 2.5 * r0, depthMax[c]);
+      // Ridged noise: sharp crests and peaks, saddles and cols between.
+      const crest = Math.max(0, 1 - Math.abs(noise.fbm(d.x * fr + 11.3, d.y * fr - 4.2, d.z * fr + 7.7, 2) * 2));
+      // Crests shape the interior; near the edge the rise itself dominates.
+      const tex = RANGE.texture * smoothstep(0.2 * r0, Math.max(full, RANGE.foot * r0), deep);
+      height[v] += heightOf[c] * size * dome * (1 - tex + 1.3 * tex * crest) * ramp[v];
+    }
+  }
+
   // ---- erosion: gullies and ridges on slopes (erosion.ts) ----
   {
     // The slope at each vertex, from its neighbors (least squares in the tangent plane).
@@ -356,7 +414,8 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
         const x = dist - w;
         profile = lv + Math.min(K_BANK * x, BANK_H + K_VALLEY * x);
         const g = course.ground[j] + (course.ground[j + 1] - course.ground[j]) * u;
-        const keep = smoothstep(g, g + 0.002, profile);
+        // Valleys stay narrow: none beyond half a tile radius from the river.
+        const keep = Math.max(smoothstep(g, g + 0.002, profile), smoothstep(0.25 * r0, 0.5 * r0, x));
         if (keep >= 1) continue;
         if (keep > 0) profile = Math.max(profile, height[v]) * keep + profile * (1 - keep);
       }

@@ -189,7 +189,7 @@ export class GlobeRenderer {
     this.paint = buildPaintData(g.globe, g.map, g.seed);
     this.frames = fanFrames(g.globe);
     const params = this.paint.params;
-    this.relief = buildRelief(g.globe, g.map, L, g.seed, params.r0, (x, y, z, out) => warpAt(params, x, y, z, out));
+    this.relief = buildRelief(g.globe, g.map, L, g.seed, params.r0);
     const frames = this.frames, fans = this.paint.fans;
     const levels = meshLevels(g.globe, g.map, L);
     this.terrain = buildTerrainMesh(g.globe, {
