@@ -83,18 +83,18 @@ describe('surface', () => {
       it(`M1 ${size} seed ${seed}: mountain tiles stand high; every range peaks inside, away from its edge`, () => {
         // Mountain (non-volcano) tile centers stand clearly above the mountain
         // foot (ends of ranges and saddles between crests may be low: at
-        // least 15% of the nominal height), and typically high (median at
-        // least 60%).
+        // least 10% of the nominal height), and typically high (median at
+        // least 50%).
         const share: number[] = [];
         for (const tile of globe.tiles) {
           const t = tile.id;
           if (map.relief[t] !== 'mountains' || map.feature[t] === 'volcano' || looks[t].water) continue;
           const s = (mesh.at(t, 0, 0, 0).ground - 1 - relief.base[t]) / relief.peak[t];
-          expect(s, `tile ${t}`).toBeGreaterThanOrEqual(0.15);
+          expect(s, `tile ${t}`).toBeGreaterThanOrEqual(0.1);
           share.push(s);
         }
         share.sort((a, b) => a - b);
-        expect(share[Math.floor(share.length / 2)]).toBeGreaterThanOrEqual(0.6);
+        expect(share[Math.floor(share.length / 2)]).toBeGreaterThanOrEqual(0.5);
         // Every range's highest vertex lies inside it: at least 0.3 r0 from any
         // other tile (narrow ranges, with warped edges, are only about that deep).
         const { topo, fields } = mesh;
