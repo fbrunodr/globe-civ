@@ -130,47 +130,8 @@ export const POOL_LOOK: Partial<Record<FeatureKey, PoolLook>> = {
   oasis:    { tint: { deep: 0x0f5a6a, murk: 1.4 }, threshold: 0,    pond: true },
 };
 
-// ---------- props (instanced 3D decorations) ----------
-
-export type PropKind = 'conifer' | 'tallConifer' | 'broadleaf' | 'jungleTree' | 'acacia' | 'shrub' | 'palm' | 'reeds' | 'mangroveTree';
-
-export interface PropSpec {
-  kind: PropKind;
-  count: number;  // per flat tile; hills get ~2/3
-  spread: number; // 0..1, how close to the tile edge props may go
-}
-
-const p = (kind: PropKind, count: number, spread = 0.82): PropSpec => ({ kind, count, spread });
-
-export const BIOME_PROPS: Record<BiomeKey, PropSpec[]> = {
-  ocean: [], shallowSea: [], lake: [], seaIce: [], iceSheet: [],
-  tundra: [p('shrub', 3, 0.75)],
-  taiga: [p('conifer', 11)],
-  coldDesert: [p('shrub', 3, 0.75)],
-  steppe: [p('shrub', 3, 0.75)],
-  prairie: [p('broadleaf', 2, 0.7), p('shrub', 2, 0.7)],
-  temperateForest: [p('broadleaf', 10)],
-  temperateRainforest: [p('tallConifer', 13)],
-  mediterranean: [p('shrub', 8), p('broadleaf', 2, 0.7)],
-  hotDesert: [],
-  savanna: [p('acacia', 4, 0.78), p('shrub', 3, 0.75)],
-  monsoonForest: [p('broadleaf', 9), p('palm', 1, 0.6)],
-  jungle: [p('jungleTree', 14), p('palm', 2, 0.7)],
-};
-
-// null = keep the biome's props.
-export const FEATURE_PROPS: Record<FeatureKey, PropSpec[] | null> = {
-  marsh: [p('reeds', 9)],
-  swamp: [p('broadleaf', 6), p('reeds', 4)],
-  mangrove: [p('mangroveTree', 10)],
-  bog: [p('shrub', 4, 0.75), p('conifer', 1, 0.6)],
-  floodplain: [p('reeds', 2, 0.6), p('broadleaf', 1, 0.6)],
-  oasis: [p('palm', 6, 0.45)],
-  volcano: [],
-  glacier: [],
-  reef: [],
-  kelp: [],
-};
+// Props (trees, shrubs, rocks...) are chosen per tile by flora.ts and
+// placed by vegetation.ts.
 
 export const SNOW = new THREE.Color(0xf4f7fa);
 
@@ -186,8 +147,6 @@ export interface TileLook {
   roughness: number;
   wet: number;
   detail: Detail;
-  props: PropSpec[];
-  propScale: number; // hills: fewer props
   beach: number;     // 1 = this tile's shore can be sandy (water tiles defer to the land side)
   water: boolean;    // open water (ocean, shallow sea, lake): the ground is a bed under the sea surface
   bed: number;       // bed level under water (land tiles: the shallow bed off their shore)
@@ -240,7 +199,6 @@ export function tileLook(map: MapData, t: number): TileLook {
     bump: Math.min(1, B.detail.bump + (water === undefined ? R.bump : 0)),
   };
 
-  const props = relief === 'mountains' ? [] : (feature ? FEATURE_PROPS[feature] : null) ?? BIOME_PROPS[biome];
   return {
     color,
     rockColor,
@@ -249,8 +207,6 @@ export function tileLook(map: MapData, t: number): TileLook {
     height, plateau, roughness,
     wet: Math.max(B.wet, F?.wet ?? 0),
     detail,
-    props,
-    propScale: relief === 'hills' ? 0.65 : 1,
     beach: water !== undefined ? 1 : SANDY.has(biome) && relief === 'flat' && (!feature || feature === 'floodplain' || feature === 'oasis') ? 1 : 0,
     water: isOpenWater(biome),
     bed: !isOpenWater(biome) ? SHORE_BED

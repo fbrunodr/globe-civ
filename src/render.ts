@@ -2,8 +2,8 @@ import * as THREE from 'three';
 import { unitDef } from './rules.ts';
 import { GlobeCamera } from './camera.ts';
 import type { Game, Unit, City } from './game.ts';
-import { SNOW, tileLook, type TileLook, type PropKind } from './look.ts';
-import { buildTerrainMesh, locate, type TerrainMesh } from './terrainMesh.ts';
+import { SNOW, tileLook, type TileLook } from './look.ts';
+import { buildTerrainMesh, locate, newSample, type TerrainMesh } from './terrainMesh.ts';
 import { makeTerrainMaterial, makeTable, FAN_ROWS, TILE_ROWS, type TerrainMaterial } from './terrainMaterial.ts';
 import { buildPaintData, fanCoords, fanFrames, paintAt, warpAt, FAN_COORDS, FINE_MAX, FINE_WAVELENGTH, type PaintData, type FanFrame } from './paint.ts';
 import { buildRelief, CONE_RADIUS, CRATER, CRATER_DEPTH, type Relief } from './relief.ts';
@@ -12,7 +12,8 @@ import { makeWaterMaterial, type WaterMaterial } from './water.ts';
 import { WalkCamera } from './walk.ts';
 import { makeSky, makeHalo, installHaze, HAZE, HAZE_DENSITY, AIR } from './sky.ts';
 import { makeWeather, type Weather } from './weather.ts';
-import { buildPropGeometry, PROP_KINDS } from './props.ts';
+import { buildPropGeometry, catalogEntry, CATALOG, CATALOG_KINDS, type CatalogKind } from './propCatalog.ts';
+import { Vegetation, type SpotEnv } from './vegetation.ts';
 import { mulberry32, makePerlin } from './rng.ts';
 
 const FOG = new THREE.Color(0x0b0e15);
@@ -24,24 +25,29 @@ const SUBDIV = 4;
 // Props: size relative to the original models, density multiplier, and the
 // number of chunks they are grouped in for horizon culling.
 const PROP_SIZE = 0.425;
-const PROP_DENSITY = 5;
-const PROP_CHUNKS = 16;
+// Variant densities are per flat tile at the reference tile size.
+const PROP_DENSITY_SCALE = 1;
+// Per-instance variety: random tilt (radians) and color shift per channel.
+const MAX_LEAN = (6 * Math.PI) / 180;
+const HUE_JITTER = 0.12;
+// Camera altitude (globe radii, at the reference tile size) above which each
+// layer of props is too small to see and is not drawn.
+const HIDE_ABOVE = { Canopy: Infinity, Accent: Infinity, Understory: 1.6, Ground: 0.8 } as const;
+const PROP_CHUNKS = 8;
 
 interface PropChunk {
   dir: THREE.Vector3;  // chunk center
   radius: number;      // angular radius, with a margin for prop size
   tiles: number[];
-  meshes: Map<PropKind, THREE.InstancedMesh>;
+  meshes: Map<CatalogKind, THREE.InstancedMesh>;
 }
 
 interface PlacedProp {
-  kind: PropKind;
+  kind: CatalogKind;
   matrix: THREE.Matrix4;
-  shade: number; // brightness variation
+  color: THREE.Color; // per-instance shade and slight hue shift
+  leaf: THREE.Color;  // leaf color (the model's own, or a variant's tint)
 }
-
-// Props that may stand in shallow water (up to this depth).
-const WADING: Partial<Record<PropKind, number>> = { reeds: 0.0007, mangroveTree: 0.0006, broadleaf: 0.00025 };
 
 // Frame rate while nothing moves (water ripples and foam still animate).
 const IDLE_FPS = 15;
@@ -100,8 +106,14 @@ export class GlobeRenderer {
   private prevVisible: Uint8Array;
   private prevOwner: Int32Array;
 
-  private readonly propMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, flatShading: true });
-  private readonly propGeo = new Map<PropKind, THREE.BufferGeometry>();
+  private readonly propMat = makePropMaterial();
+  private readonly propGeo = new Map<CatalogKind, THREE.BufferGeometry>();
+  private readonly vegetation: Vegetation;
+  // Per terrain vertex, for prop placement: ground slope, signed distance to
+  // the shore and the direction away from it.
+  private readonly vertSlope: Float32Array;
+  private readonly vertCoast: Float32Array;
+  private readonly vertInland: Float32Array;
   private readonly chunks: PropChunk[] = [];
   private readonly propCache = new Map<number, PlacedProp[]>();
   private readonly craters = new THREE.Group();
@@ -192,9 +204,14 @@ export class GlobeRenderer {
     this.relief = buildRelief(g.globe, g.map, L, g.seed, params.r0);
     const frames = this.frames, fans = this.paint.fans;
     const levels = meshLevels(g.globe, g.map, L);
+    let coast: Float32Array | null = null;
     this.terrain = buildTerrainMesh(g.globe, {
       level: (t) => levels[t] as 1 | 2 | 4,
-      surface: (topo) => buildSurface(g.globe, g.map, L, this.paint, this.relief, g.seed, topo).fields,
+      surface: (topo) => {
+        const sf = buildSurface(g.globe, g.map, L, this.paint, this.relief, g.seed, topo);
+        coast = sf.coast;
+        return sf.fields;
+      },
       warp: (dir, out) => { warpAt(params, dir.x, dir.y, dir.z, out); },
       fanAttributes: [{
         name: 'pc', itemSize: FAN_COORDS + 1,
@@ -253,10 +270,11 @@ export class GlobeRenderer {
         snow[v] = Math.max(snow[v], smoothstep(capFrom, capFrom + 0.15, frac));
       }
     }
+    this.vegetation = new Vegetation(g.globe, g.map, g.flora, L, this.relief.base, this.relief.peak, params.r0, g.seed);
+    ;[this.vertSlope, this.vertCoast, this.vertInland] = slopeAndShore(this.terrain, coast!);
     // Forest floors sit in the canopy's shade.
     for (let t = 0; t < N; t++) {
-      const trees = L[t].props.reduce((a, p) => a + (p.count >= 6 ? p.count : 0), 0);
-      if (trees === 0) continue;
+      if (!this.vegetation.isForest(t)) continue;
       for (const v of this.terrain.tileVerts[t]) shade[v] *= 0.93;
     }
     const geo = this.terrain.geometry;
@@ -291,7 +309,7 @@ export class GlobeRenderer {
     const s = this.scale;
     // Props are drawn per chunk of the globe, one instanced mesh per kind, so
     // chunks behind the horizon or off screen cost nothing.
-    for (const kind of PROP_KINDS) this.propGeo.set(kind, buildPropGeometry(kind, s * 1.5 * PROP_SIZE));
+    for (const kind of CATALOG_KINDS) this.propGeo.set(kind, buildPropGeometry(kind, s * 1.5 * PROP_SIZE));
     const golden = Math.PI * (3 - Math.sqrt(5));
     for (let k = 0; k < PROP_CHUNKS; k++) {
       const y = 1 - (2 * (k + 0.5)) / PROP_CHUNKS, rr = Math.sqrt(1 - y * y);
@@ -521,34 +539,38 @@ export class GlobeRenderer {
     wDim.needsUpdate = true;
   }
 
-  // Props (trees, shrubs, reeds, palms...) of one tile, placed once and cached.
+  // Props (trees, shrubs, rocks, reeds...) of one tile, placed once and cached.
   // Spots come from a jittered triangular lattice in each fan of the tile, so
   // props keep an even, natural spacing (no clumps). Each spot takes the props
   // of whichever tile the painting shows there, so forests feather into their
-  // neighbors exactly where the ground color does; sparse props skip spots at
-  // random. Everything is fixed by the tile id, so props never move between
-  // reloads.
+  // neighbors exactly where the ground color does; what stands there and how
+  // likely a spot is used follow the ground under it (vegetation.ts).
+  // Everything is fixed by the tile id, so props never move between reloads.
   private placeProps(t: number): PlacedProp[] {
     const cached = this.propCache.get(t);
     if (cached) return cached;
-    const g = this.game;
+    const g = this.game, veg = this.vegetation, topo = this.terrain.topo;
     const out: PlacedProp[] = [];
-    const total = (u: number) => this.looks[u].props.reduce((a, p) => a + Math.ceil(p.count * this.looks[u].propScale), 0) * PROP_DENSITY;
     const tile = g.tiles[t];
-    const most = Math.max(total(t), ...tile.neighbors.map(total));
+    const most = Math.max(veg.maxDensity(t), ...tile.neighbors.map((u) => veg.maxDensity(u))) * PROP_DENSITY_SCALE;
     if (most > 0) {
       const co = new Float32Array(FAN_COORDS);
       const delta = [0, 0, 0];
-      const q = new THREE.Quaternion(), sc = new THREE.Vector3();
+      const q = new THREE.Quaternion(), sc = new THREE.Vector3(), axis = new THREE.Vector3();
+      const smp = newSample();
       const rand = mulberry32(t * 7919 + 1);
       const k = tile.corners.length;
+      const r0 = this.paint.params.r0;
+      const bank = this.terrain.fields.ground['bank']!;
+      let ancient = veg.hasAncientTree(t);
       // Rows of the lattice per fan: enough spots for the densest look nearby.
       const m = Math.max(1, Math.ceil((Math.sqrt(8 * (most / k) + 1) - 1) / 2));
       const spots = (k * m * (m + 1)) / 2;
+      const env: SpotEnv = { t, i: 0, r: 0, u: t, dir: new THREE.Vector3(), ground: 0, water: 0, slope: 0, bank: 0, coast: 0, inland: new THREE.Vector3() };
       for (let i = 0; i < k; i++) {
         for (let a = 0; a < m; a++) {
           for (let b = 0; a + b < m; b++) {
-            const pick = rand(), keep = rand(), which = rand(), spin = rand(), sz = rand(), tall = rand(), tint = rand();
+            const pick = rand(), keep = rand(), spin = rand(), sz = rand(), tall = rand(), tint = rand(), seed = rand();
             const ja = (rand() - 0.5) * 0.6, jb = (rand() - 0.5) * 0.6;
             // Spot (a, b) of the fan's lattice, kept inside the fan.
             const wa = Math.min(0.98, Math.max(0.02, (a + 1 / 3 + ja) / m));
@@ -562,23 +584,52 @@ export class GlobeRenderer {
             // Which tile's props show here.
             let u = fan.ids[0], acc = 0;
             for (let c = 0; c < 4; c++) { acc += ps.w[c]; if (pick < acc) { u = fan.ids[c]; break; } }
-            const look = this.looks[u];
-            const tu = total(u);
-            if (tu === 0) continue;
+            if (veg.maxDensity(u) === 0) continue;
+            // The ground here.
+            const lv = this.terrain.at(t, i, wa, wb);
+            topo.sample(t, i, wa, wb, smp);
+            env.i = i; env.r = wa + wb; env.u = u; env.dir.copy(d);
+            env.ground = lv.ground - 1; env.water = lv.water - 1;
+            env.slope = 0; env.bank = 0; env.coast = 0; env.inland.set(0, 0, 0);
+            for (let c = 0; c < 3; c++) {
+              const v = smp.v[c], w = smp.w[c];
+              env.slope += w * this.vertSlope[v];
+              env.bank += w * bank[v];
+              env.coast += w * this.vertCoast[v];
+              env.inland.x += w * this.vertInland[v * 3]; env.inland.y += w * this.vertInland[v * 3 + 1]; env.inland.z += w * this.vertInland[v * 3 + 2];
+            }
+            env.coast /= r0;
+            if (env.inland.lengthSq() > 1e-6) env.inland.normalize();
             // Gentle large-scale variation in density, never clearings.
             const vary = 0.85 + 0.3 * this.propNoise.fbm(p.x * 9, p.y * 9, p.z * 9, 2);
-            if (keep >= Math.min(1, (tu / spots) * vary)) continue;
-            let spec = look.props[0];
-            let cut = which * tu;
-            for (const sp of look.props) { cut -= Math.ceil(sp.count * look.propScale) * PROP_DENSITY; if (cut < 0) { spec = sp; break; } }
-            if (!spec) continue;
-            // Out of the water, except what grows in it.
-            const lv = this.terrain.at(t, i, wa, wb);
-            if (lv.water - lv.ground > (WADING[spec.kind] ?? -0.00008)) continue;
+            if (keep >= Math.min(1, (veg.density(env) * PROP_DENSITY_SCALE / spots) * vary)) continue;
+            const prop = veg.pick(env, mulberry32(Math.floor(seed * 4294967296)), ancient && u === t);
+            if (!prop) continue;
+            if (prop.size > 2) ancient = false;
             q.setFromUnitVectors(UP, d);
             q.multiply(new THREE.Quaternion().setFromAxisAngle(UP, spin * Math.PI * 2));
-            const size = 0.8 + 0.45 * sz;
-            out.push({ kind: spec.kind, matrix: new THREE.Matrix4().compose(p, q, sc.set(size, size * (0.9 + 0.3 * tall), size)), shade: 0.82 + 0.36 * tint });
+            // Lean: toward the coast's wind direction, or a slight random tilt.
+            const lean = prop.lean ?? axis.set(rand() - 0.5, rand() - 0.5, rand() - 0.5).addScaledVector(d, -axis.dot(d));
+            if (lean.lengthSq() > 1e-9) {
+              const angle = prop.lean ? prop.leanAngle : tint * MAX_LEAN;
+              q.premultiply(new THREE.Quaternion().setFromAxisAngle(d.clone().cross(lean).normalize(), angle));
+            }
+            const size = (0.8 + 0.45 * sz) * prop.size;
+            let stretch = 0.9 + 0.3 * tall;
+            // Under water (kelp, coral): the top stays under the surface.
+            if (catalogEntry(prop.kind).water?.kind === 'bed') {
+              const top = this.propHeight(prop.kind) * size * stretch;
+              const room = 0.85 * (env.water - env.ground);
+              if (top > room) stretch *= room / top;
+            }
+            const shade = 0.82 + 0.36 * tint;
+            const color = new THREE.Color(shade * (1 + (rand() - 0.5) * HUE_JITTER), shade * (1 + (rand() - 0.5) * HUE_JITTER), shade * (1 + (rand() - 0.5) * HUE_JITTER));
+            const pos = d.clone().multiplyScalar(1 + prop.height);
+            out.push({
+              kind: prop.kind, color,
+              leaf: new THREE.Color(prop.leaf ?? CATALOG[prop.kind].leaf),
+              matrix: new THREE.Matrix4().compose(pos, q, sc.set(size, size * stretch, size)),
+            });
           }
         }
       }
@@ -587,12 +638,19 @@ export class GlobeRenderer {
     return out;
   }
 
+  // Height of a prop model as drawn (before per-instance scaling).
+  private propHeight(kind: CatalogKind): number {
+    const g = this.propGeo.get(kind)!;
+    if (!g.boundingBox) g.computeBoundingBox();
+    return g.boundingBox!.max.y;
+  }
+
   // Rebuilds the instanced props of explored tiles, chunk by chunk.
   private updateProps(): void {
     const g = this.game;
     const color = new THREE.Color();
     for (const chunk of this.chunks) {
-      const lists = new Map<PropKind, { p: PlacedProp; dim: number }[]>();
+      const lists = new Map<CatalogKind, { p: PlacedProp; dim: number }[]>();
       for (const t of chunk.tiles) {
         if (!g.explored[t]) continue;
         const dim = g.visible[t] ? 1 : 0.45;
@@ -602,23 +660,29 @@ export class GlobeRenderer {
           l.push({ p, dim });
         }
       }
-      for (const kind of PROP_KINDS) {
+      for (const kind of CATALOG_KINDS) {
         const items = lists.get(kind) ?? [];
         let mesh = chunk.meshes.get(kind);
         if (!mesh || mesh.instanceMatrix.count < items.length) {
-          if (mesh) { this.scene.remove(mesh); mesh.dispose(); }
+          if (mesh) { this.scene.remove(mesh); mesh.dispose(); mesh.geometry.getAttribute('leafTint')?.array && mesh.geometry.deleteAttribute('leafTint'); }
           if (items.length === 0) { chunk.meshes.delete(kind); continue; }
-          mesh = new THREE.InstancedMesh(this.propGeo.get(kind)!, this.propMat, Math.ceil(items.length * 1.3) + 8);
-          mesh.castShadow = true;
+          const cap = Math.ceil(items.length * 1.3) + 8;
+          mesh = new THREE.InstancedMesh(instanceGeometry(this.propGeo.get(kind)!, cap), this.propMat, cap);
+          // Ground cover is too small to cast a visible shadow (and skipping it saves draw calls).
+          mesh.castShadow = CATALOG[kind].layer !== 'Ground';
+          mesh.userData['hideAbove'] = HIDE_ABOVE[CATALOG[kind].layer];
           chunk.meshes.set(kind, mesh);
           this.scene.add(mesh);
         }
+        const leaf = mesh.geometry.getAttribute('leafTint') as THREE.InstancedBufferAttribute;
         items.forEach(({ p, dim }, i) => {
           mesh.setMatrixAt(i, p.matrix);
-          mesh.setColorAt(i, color.setScalar(p.shade * dim));
+          mesh.setColorAt(i, color.copy(p.color).multiplyScalar(dim));
+          leaf.setXYZ(i, p.leaf.r, p.leaf.g, p.leaf.b);
         });
         mesh.count = items.length;
         mesh.instanceMatrix.needsUpdate = true;
+        leaf.needsUpdate = true;
         if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
         mesh.computeBoundingSphere();
       }
@@ -632,9 +696,11 @@ export class GlobeRenderer {
     const dist = cam.length();
     const camDir = cam.clone().divideScalar(dist);
     const horizon = Math.acos(Math.min(1, 1 / dist));
+    // Small props vanish when they would be under a pixel or so.
+    const altitude = (dist - 1) / this.scale;
     for (const chunk of this.chunks) {
       const seen = camDir.angleTo(chunk.dir) < horizon + chunk.radius;
-      for (const mesh of chunk.meshes.values()) mesh.visible = seen;
+      for (const mesh of chunk.meshes.values()) mesh.visible = seen && altitude < (mesh.userData['hideAbove'] as number);
     }
   }
 
@@ -1014,4 +1080,57 @@ function drawCityLabel(ctx: CanvasRenderingContext2D, color: string, label: stri
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(label, 256, 50);
+}
+
+// Prop material: per-vertex colors, with the leaf parts (leafMask) taking
+// each instance's leaf color (leafTint), times the instance's color.
+function makePropMaterial(): THREE.MeshStandardMaterial {
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, flatShading: true, side: THREE.DoubleSide });
+  mat.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>
+        attribute float leafMask;
+        attribute vec3 leafTint;`)
+      .replace('#include <color_vertex>', `#include <color_vertex>
+        #ifdef USE_INSTANCING_COLOR
+          vColor.xyz = mix(color.xyz, leafTint, leafMask) * instanceColor.xyz;
+        #endif`);
+  };
+  return mat;
+}
+
+// A geometry sharing a prop model's buffers, with its own per-instance leaf colors.
+function instanceGeometry(model: THREE.BufferGeometry, capacity: number): THREE.BufferGeometry {
+  const g = new THREE.BufferGeometry();
+  for (const [name, attr] of Object.entries(model.attributes)) g.setAttribute(name, attr);
+  g.setAttribute('leafTint', new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3));
+  return g;
+}
+
+// Per terrain vertex: the ground's slope (height per radian, the steepest
+// edge to a neighbor), the signed distance to the shore, and the unit
+// tangent pointing away from the shore (zero far from any).
+function slopeAndShore(terrain: TerrainMesh, coast: Float32Array): [Float32Array, Float32Array, Float32Array] {
+  const { topo, fields } = terrain;
+  const H = fields.height, D = topo.dir;
+  const slope = new Float32Array(topo.V), inland = new Float32Array(topo.V * 3);
+  for (let v = 0; v < topo.V; v++) {
+    const x = D[v * 3], y = D[v * 3 + 1], z = D[v * 3 + 2];
+    let best = 0, gx = 0, gy = 0, gz = 0;
+    for (let j = topo.adjStart[v]; j < topo.adjStart[v + 1]; j++) {
+      const n = topo.adj[j];
+      const dx = D[n * 3] - x, dy = D[n * 3 + 1] - y, dz = D[n * 3 + 2] - z;
+      const l2 = dx * dx + dy * dy + dz * dz;
+      if (l2 < 1e-14) continue;
+      best = Math.max(best, Math.abs(H[n] - H[v]) / Math.sqrt(l2));
+      const dc = (coast[n] - coast[v]) / l2;
+      gx += dc * dx; gy += dc * dy; gz += dc * dz;
+    }
+    slope[v] = best;
+    const radial = gx * x + gy * y + gz * z;
+    gx -= radial * x; gy -= radial * y; gz -= radial * z;
+    const gl = Math.hypot(gx, gy, gz);
+    if (gl > 1e-9) { inland[v * 3] = gx / gl; inland[v * 3 + 1] = gy / gl; inland[v * 3 + 2] = gz / gl; }
+  }
+  return [slope, coast, inland];
 }

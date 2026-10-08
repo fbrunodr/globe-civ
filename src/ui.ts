@@ -1,3 +1,4 @@
+import { floraLabel } from './flora.ts';
 import { unitDef, buildDef, isUnitKey, growthCost, BUILDINGS, type BuildKey } from './rules.ts';
 import { terrainName } from './terrain.ts';
 import { HUMAN, BUILDABLE, type Game, type City, type Unit } from './game.ts';
@@ -148,7 +149,8 @@ export class UI {
     const y = g.tileYield(t);
     const name = terrainName(g.terrainAt(t));
     const owner = g.ownerOf(t);
-    const lines = [`<b>${name}</b> ${yieldStr(y.food, y.prod, y.gold)}`];
+    const variant = floraLabel(g.map, g.flora, t);
+    const lines = [`<b>${name}</b>${variant ? ` <small>${esc(variant)}</small>` : ''} ${yieldStr(y.food, y.prod, y.gold)}`];
     if (!g.isWater(t)) {
       const def = g.defenseBonus(t);
       lines.push(`Move cost ${g.moveCost(t)}${def ? ` · Defense +${Math.round(def * 100)}%` : ''}`);

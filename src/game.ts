@@ -1,3 +1,4 @@
+import { buildFlora, type Flora } from './flora.ts';
 import type { Globe, Tile } from './goldberg.ts';
 import type { MapData } from './mapgen.ts';
 import { generateWorld, type World } from './world.ts';
@@ -87,6 +88,7 @@ export class Game {
   readonly relief: ReliefKey[];
   readonly feature: (FeatureKey | null)[];
   readonly map: MapData;
+  readonly flora: Flora; // which variant of its biome each tile shows (visual only)
   readonly world: World;
   readonly rng: Rng;
 
@@ -113,6 +115,7 @@ export class Game {
     this.biome = this.map.biome;
     this.relief = this.map.relief;
     this.feature = this.map.feature;
+    this.flora = buildFlora(this.globe, this.map, seed);
     this.rng = mulberry32(seed ^ 0x9e3779b9);
     this.tileCity = new Int32Array(this.N).fill(-1);
     this.explored = new Uint8Array(this.N);
