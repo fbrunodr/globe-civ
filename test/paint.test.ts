@@ -118,7 +118,7 @@ describe('terrain painting', () => {
         expect(sumShare / globe.tiles.length).toBeGreaterThanOrEqual(0.9);
       });
 
-      it(`P5 ${size} seed ${seed}: rivers stay within 0.15 r of their edges`, () => {
+      it(`P5 ${size} seed ${seed}: rivers stay within 0.6 r of their edges (they bend with the painted border)`, () => {
         const { w, paint } = setup(size, seed);
         const { globe, map } = w;
         const r0 = paint.params.r0;
@@ -134,7 +134,7 @@ describe('terrain painting', () => {
               const u = Math.min(1, Math.max(0, tmp.subVectors(p.dir, a).dot(seg) / seg.lengthSq()));
               best = Math.min(best, tmp.copy(a).addScaledVector(seg, u).distanceTo(p.dir));
             }
-            expect(best / r0).toBeLessThanOrEqual(0.15 + 1e-6);
+            expect(best / r0).toBeLessThanOrEqual(0.6);
           }
         }
       });

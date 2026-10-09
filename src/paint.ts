@@ -70,8 +70,8 @@ type ClassPair = `${GroundClass}-${GroundClass}`;
 export const PAIR_OVERRIDES: Partial<Record<ClassPair, PairRule>> = {
   'ice-water': { warp: 0.5, round: 0.12 }, // ice floes read sharp
 };
-// Borders along rivers stay near the river (P5).
-export const RIVER_RULE: PairRule = { warp: 0.2, round: 0.12 };
+// Borders along rivers bend a little less than others; rivers follow them (P5).
+export const RIVER_RULE: PairRule = { warp: 0.7, round: 0.12 };
 
 export function pairRule(a: GroundClass, b: GroundClass): PairRule {
   const o = PAIR_OVERRIDES[`${a}-${b}`] ?? PAIR_OVERRIDES[`${b}-${a}`];
