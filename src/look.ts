@@ -25,23 +25,23 @@ const d = (grain: number, patch: number, strata: number, dunes: number, bump: nu
 
 export const BIOME_LOOK: Record<BiomeKey, BiomeLook> = {
   // Water tiles: the color is the bed's, seen through the water surface.
-  ocean:               { color: 0x6c776f, rock: 0x7d8a8c, detail: d(0.5, 0, 0, 0, 0.3), wet: 1 },
-  shallowSea:          { color: 0xc9b07a, rock: 0x8a9690, detail: d(0.6, 0, 0, 0.6, 0.4), wet: 1 },
-  lake:                { color: 0x8f8a62, rock: 0x8a9690, detail: d(0.6, 0, 0, 0, 0.4), wet: 1 },
+  ocean:               { color: 0x56605a, rock: 0x7d8a8c, detail: d(0.5, 0, 0, 0, 0.3), wet: 1 },
+  shallowSea:          { color: 0x8d8466, rock: 0x8a9690, detail: d(0.6, 0, 0, 0.6, 0.4), wet: 1 },
+  lake:                { color: 0x77735a, rock: 0x8a9690, detail: d(0.6, 0, 0, 0, 0.4), wet: 1 },
   seaIce:              { color: 0xd8e9f1, rock: 0xb9c9d1, detail: d(0.5, 0, 0, 0, 0.5), wet: 0.2 },
   iceSheet:            { color: 0xf3f7fa, rock: 0xa9b8c2, detail: d(0.35, 0, 0, 0.2, 0.5), wet: 0 },
-  tundra:              { color: 0xa6ad87, rock: 0x8e8d86, detail: d(0.9, 0, 0, 0, 0.6), wet: 0 },
-  taiga:               { color: 0x5d7d4f, rock: 0x7d7c73, detail: d(0.7, 0, 0, 0, 0.6), wet: 0 },
-  coldDesert:          { color: 0xcbbb92, rock: 0xa6977b, detail: d(1, 0, 0.15, 0, 0.9), wet: 0 },
-  steppe:              { color: 0xccc171, rock: 0x9f8f76, detail: d(0.8, 0, 0, 0, 0.5), wet: 0 },
-  prairie:             { color: 0x8ec25b, rock: 0x958b7a, detail: d(0.7, 0, 0, 0, 0.5), wet: 0 },
-  temperateForest:     { color: 0x6ea548, rock: 0x8b8170, detail: d(0.7, 0, 0, 0, 0.6), wet: 0 },
-  temperateRainforest: { color: 0x4f8b4b, rock: 0x75746a, detail: d(0.7, 0, 0, 0, 0.6), wet: 0 },
-  mediterranean:       { color: 0xbcb266, rock: 0xb59a72, detail: d(0.9, 0, 0, 0, 0.6), wet: 0 },
-  hotDesert:           { color: 0xefd59d, rock: 0xc68d5c, detail: d(0.5, 0, 0, 1, 0.7), wet: 0 },
-  savanna:             { color: 0xdbba63, rock: 0xb3845a, detail: d(0.85, 0, 0, 0, 0.5), wet: 0 },
-  monsoonForest:       { color: 0x88aa46, rock: 0x9b7f62, detail: d(0.7, 0, 0, 0, 0.6), wet: 0 },
-  jungle:              { color: 0x4e9642, rock: 0x87735e, detail: d(0.6, 0, 0, 0, 0.6), wet: 0 },
+  tundra:              { color: 0x8b8f74, rock: 0x8e8d86, detail: d(0.9, 0, 0, 0, 0.6), wet: 0 },
+  taiga:               { color: 0x435c3c, rock: 0x7d7c73, detail: d(0.7, 0, 0, 0, 0.6), wet: 0 },
+  coldDesert:          { color: 0xbcb093, rock: 0xa6977b, detail: d(1, 0, 0.15, 0, 0.9), wet: 0 },
+  steppe:              { color: 0xa39e74, rock: 0x9f8f76, detail: d(0.8, 0, 0, 0, 0.5), wet: 0 },
+  prairie:             { color: 0x718a47, rock: 0x958b7a, detail: d(0.7, 0, 0, 0, 0.5), wet: 0 },
+  temperateForest:     { color: 0x55723c, rock: 0x8b8170, detail: d(0.7, 0, 0, 0, 0.6), wet: 0 },
+  temperateRainforest: { color: 0x41603a, rock: 0x75746a, detail: d(0.7, 0, 0, 0, 0.6), wet: 0 },
+  mediterranean:       { color: 0x969166, rock: 0xb59a72, detail: d(0.9, 0, 0, 0, 0.6), wet: 0 },
+  hotDesert:           { color: 0xd9c5a0, rock: 0xc68d5c, detail: d(0.5, 0, 0, 1, 0.7), wet: 0 },
+  savanna:             { color: 0xa99b69, rock: 0xb3845a, detail: d(0.85, 0, 0, 0, 0.5), wet: 0 },
+  monsoonForest:       { color: 0x6c803f, rock: 0x9b7f62, detail: d(0.7, 0, 0, 0, 0.6), wet: 0 },
+  jungle:              { color: 0x3e6c36, rock: 0x87735e, detail: d(0.6, 0, 0, 0, 0.6), wet: 0 },
 };
 
 export interface ReliefLook {
@@ -75,12 +75,12 @@ export interface FeatureLook {
 export const FEATURE_LOOK: Record<FeatureKey, FeatureLook> = {
   // Wetland water is real (pools in the height field, see POOL_LOOK); the
   // patches are tussocks, mud and moss between the pools.
-  marsh:      { color: 0x86a862, rock: null, colorMix: 0.55, patch: 0.5,  patchColor: 0x6d8d45, heightDelta: -0.0005, plateau: null, strata: 0, wet: 0.25 },
-  swamp:      { color: 0x5f8250, rock: null, colorMix: 0.5,  patch: 0.5,  patchColor: 0x4d5f3a, heightDelta: -0.0005, plateau: null, strata: 0, wet: 0.2 },
-  mangrove:   { color: 0x4f8460, rock: null, colorMix: 0.4,  patch: 0.5,  patchColor: 0x6b6247, heightDelta: -0.001, plateau: null, strata: 0, wet: 0.25 },
-  bog:        { color: 0x8f8456, rock: null, colorMix: 0.55, patch: 0.55, patchColor: 0x6e6038, heightDelta: -0.0005, plateau: null, strata: 0, wet: 0.15 },
-  floodplain: { color: 0x96bd52, rock: null, colorMix: 0.55, patch: 0.25, patchColor: 0x5d8a3a, heightDelta: -0.002, plateau: 0.7, strata: 0, wet: 0 },
-  oasis:      { color: 0x8aa04e, rock: null, colorMix: 0.45, patch: 0.3,  patchColor: 0x6f8f3e, heightDelta: 0,      plateau: null, strata: 0, wet: 0 },
+  marsh:      { color: 0x71895a, rock: null, colorMix: 0.55, patch: 0.5,  patchColor: 0x6d8d45, heightDelta: -0.0005, plateau: null, strata: 0, wet: 0.25 },
+  swamp:      { color: 0x526b48, rock: null, colorMix: 0.5,  patch: 0.5,  patchColor: 0x4d5f3a, heightDelta: -0.0005, plateau: null, strata: 0, wet: 0.2 },
+  mangrove:   { color: 0x48694f, rock: null, colorMix: 0.4,  patch: 0.5,  patchColor: 0x6b6247, heightDelta: -0.001, plateau: null, strata: 0, wet: 0.25 },
+  bog:        { color: 0x7d7552, rock: null, colorMix: 0.55, patch: 0.55, patchColor: 0x6e6038, heightDelta: -0.0005, plateau: null, strata: 0, wet: 0.15 },
+  floodplain: { color: 0x7d9750, rock: null, colorMix: 0.55, patch: 0.25, patchColor: 0x5d8a3a, heightDelta: -0.002, plateau: 0.7, strata: 0, wet: 0 },
+  oasis:      { color: 0x71874a, rock: null, colorMix: 0.45, patch: 0.3,  patchColor: 0x6f8f3e, heightDelta: 0,      plateau: null, strata: 0, wet: 0 },
   volcano:    { color: 0x4a423c, rock: 0x3d3632, colorMix: 0.7,  patch: 0,    patchColor: 0x000000, heightDelta: 0.008,  plateau: null, strata: 0.3, wet: 0 },
   // Glaciers keep the mountain's colors; the renderer caps only the peak with ice.
   glacier:    { color: null,     rock: null, colorMix: 0,    patch: 0,    patchColor: 0x000000, heightDelta: 0.0026, plateau: null, strata: 0, wet: 0 },
@@ -101,8 +101,8 @@ const WATER_HEIGHT: Partial<Record<BiomeKey, number>> = { ocean: SEA_LEVEL, shal
 export interface WaterTint { deep: number; murk: number }
 
 export const SEA_TINT: Record<'ocean' | 'shallowSea' | 'lake', WaterTint> = {
-  ocean:      { deep: 0x0d3a66, murk: 1 },
-  shallowSea: { deep: 0x0f4670, murk: 1 },
+  ocean:      { deep: 0x123a6c, murk: 1 },
+  shallowSea: { deep: 0x154573, murk: 1 },
   lake:       { deep: 0x124f5c, murk: 1.3 },
 };
 export const RIVER_TINT: WaterTint = { deep: 0x15505e, murk: 2.2 };

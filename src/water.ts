@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { NOISE_GLSL, noiseTexture } from './terrainMaterial.ts';
+import { GRADE_GLSL, NOISE_GLSL, noiseTexture } from './terrainMaterial.ts';
 
 // The water surface: a translucent sheet at the water level over the carved
 // ground (the trick of old console games: a see-through, gently moving
@@ -84,7 +84,8 @@ export function makeWaterMaterial(): WaterMaterial {
         varying vec3 vObjPos;
         float tLod;
         float foam;
-        ${NOISE_GLSL}`)
+        ${NOISE_GLSL}
+        ${GRADE_GLSL}`)
       .replace('#include <color_fragment>', `#include <color_fragment>
         {
           // Under the ground (past the waterline): the ground hides it anyway.
@@ -97,10 +98,10 @@ export function makeWaterMaterial(): WaterMaterial {
           // Open water (murk ~1) rolls waves onto its shores; rivers and pools
           // are calmer.
           float open = clamp(1.6 / murk - 0.3, 0.0, 1.0);
-          vec3 shallow = mix(deep, vec3(0.16, 0.7, 0.72), 0.9 * clamp(1.3 / murk, 0.0, 1.0));
+          vec3 shallow = mix(deep, vec3(0.1, 0.45, 0.48), 0.65 * clamp(1.3 / murk, 0.0, 1.0));
           float k = d * murk;
-          vec3 col = mix(shallow, deep, 1.0 - exp(-k / 0.004));
-          float alpha = mix(0.3, 0.97, 1.0 - exp(-k / 0.0025));
+          vec3 col = mix(shallow, deep, 1.0 - exp(-k / 0.0012));
+          float alpha = mix(0.72, 0.97, 1.0 - exp(-k / 0.0015));
 
           // Rivers: ripples drifting downstream (two phases, so the pattern
           // never stretches).
@@ -132,7 +133,7 @@ export function makeWaterMaterial(): WaterMaterial {
           col *= 1.0 - 0.15 * grid * uGrid;
 
           // Remembered but not in sight: grayed and darker, like the ground.
-          col = mix(col, vec3(dot(col, vec3(0.333))), 0.5 * vDim) * (1.0 - 0.38 * vDim);
+          col = mix(col, vec3(dot(col, vec3(0.333))), 0.6 * vDim) * (1.0 - 0.5 * vDim);
           diffuseColor = vec4(col, alpha);
           // Debug water view: blue = sea or lake, teal = river, magenta =
           // wetland pool; red where the surface steps (faster than a river may fall).
@@ -155,7 +156,7 @@ export function makeWaterMaterial(): WaterMaterial {
       .replace('#include <opaque_fragment>', `{
           // The sky's reflection, strong at grazing angles.
           float fres = pow(1.0 - clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0), 5.0) * (1.0 - foam);
-          outgoingLight = mix(outgoingLight, uSky * 0.9, fres * 0.5);
+          outgoingLight = grade(mix(outgoingLight, uSky * 0.9, fres * 0.5), 0.85);
           diffuseColor.a = max(diffuseColor.a, fres * 0.85) * (1.0 - vFog);
         }
         #include <opaque_fragment>`);

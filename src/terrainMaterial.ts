@@ -43,6 +43,14 @@ export const FAN_ROWS = 6;
 const NOISE_SIZE = 64;
 
 // Noise and bump helpers, shared with the water shader (needs uNoise and tLod).
+// Color grade shared by terrain, water and props: everything in sight loses
+// some saturation, so the world reads natural rather than cartoonish.
+// grade(c, s) keeps share s of the saturation: ground 0.72, props (whose
+// leaves would otherwise read lime) 0.6 and a little darker.
+export const GRADE_GLSL = /* glsl */ `
+vec3 grade(vec3 c, float s) { return mix(vec3(dot(c, vec3(0.299, 0.587, 0.114))), c, s); }
+`;
+
 export const NOISE_GLSL = /* glsl */ `
 float tNoise(vec3 x) { return texture(uNoise, x * ${(1 / NOISE_SIZE).toFixed(8)}).r; }
 float tFbm(vec3 p, int octaves) {
@@ -229,6 +237,7 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
         vec4 vDetail;
         float vBump;
         ${NOISE_GLSL}
+        ${GRADE_GLSL}
         ${PAINT_GLSL}`)
       .replace('#include <color_fragment>', `#include <color_fragment>
         {
@@ -383,6 +392,7 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
           normal = tPerturb(-vViewPosition, normal, h);
         }`)
       .replace('#include <opaque_fragment>', `{
+          outgoingLight = grade(outgoingLight, 0.72);
           vec3 fogCol = vec3(0.012, 0.016, 0.026) * (1.0 + 0.6 * gridLine);
           outgoingLight = mix(outgoingLight, fogCol, smoothstep(0.0, 1.0, vFog));
         }

@@ -4,7 +4,7 @@ import { GlobeCamera } from './camera.ts';
 import type { Game, Unit, City } from './game.ts';
 import { SNOW, tileLook, type TileLook } from './look.ts';
 import { buildTerrainMesh, locate, newSample, type TerrainMesh } from './terrainMesh.ts';
-import { makeTerrainMaterial, makeTable, FAN_ROWS, TILE_ROWS, type TerrainMaterial } from './terrainMaterial.ts';
+import { makeTerrainMaterial, makeTable, FAN_ROWS, TILE_ROWS, GRADE_GLSL, type TerrainMaterial } from './terrainMaterial.ts';
 import { buildPaintData, fanCoords, fanFrames, paintAt, warpAt, FAN_COORDS, FINE_MAX, FINE_WAVELENGTH, type PaintData, type FanFrame } from './paint.ts';
 import { buildRelief, CONE_RADIUS, CRATER, CRATER_DEPTH, type Relief } from './relief.ts';
 import { buildSurface, meshLevels } from './surface.ts';
@@ -497,7 +497,7 @@ export class GlobeRenderer {
     if (owner >= 0) out.lerp(this.playerColors[owner], 0.12);
     if (!g.visible[t]) {
       const gray = (out.r + out.g + out.b) / 3;
-      out.setRGB(lerp(out.r, gray, 0.5) * 0.62, lerp(out.g, gray, 0.5) * 0.62, lerp(out.b, gray, 0.5) * 0.62);
+      out.setRGB(lerp(out.r, gray, 0.6) * 0.5, lerp(out.g, gray, 0.6) * 0.5, lerp(out.b, gray, 0.6) * 0.5);
     }
     return out;
   }
@@ -665,7 +665,7 @@ export class GlobeRenderer {
       const lists = new Map<CatalogKind, { p: PlacedProp; dim: number }[]>();
       for (const t of chunk.tiles) {
         if (!g.explored[t]) continue;
-        const dim = g.visible[t] ? 1 : 0.45;
+        const dim = g.visible[t] ? 1 : 0.38;
         for (const p of this.placeProps(t)) {
           let l = lists.get(p.kind);
           if (!l) { l = []; lists.set(p.kind, l); }
@@ -690,7 +690,9 @@ export class GlobeRenderer {
         items.forEach(({ p, dim }, i) => {
           mesh.setMatrixAt(i, p.matrix);
           mesh.setColorAt(i, color.copy(p.color).multiplyScalar(dim));
-          leaf.setXYZ(i, p.leaf.r, p.leaf.g, p.leaf.b);
+          // Out of sight, leaves lose their color like the ground does.
+          const k = dim < 1 ? 0.6 : 0, gray = (p.leaf.r + p.leaf.g + p.leaf.b) / 3;
+          leaf.setXYZ(i, p.leaf.r + (gray - p.leaf.r) * k, p.leaf.g + (gray - p.leaf.g) * k, p.leaf.b + (gray - p.leaf.b) * k);
         });
         mesh.count = items.length;
         mesh.instanceMatrix.needsUpdate = true;
@@ -1108,6 +1110,11 @@ function makePropMaterial(): THREE.MeshStandardMaterial {
         #ifdef USE_INSTANCING_COLOR
           vColor.xyz = mix(color.xyz, leafTint, leafMask) * instanceColor.xyz;
         #endif`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+        ${GRADE_GLSL}`)
+      .replace('#include <opaque_fragment>', `outgoingLight = grade(outgoingLight, 0.6) * 0.9;
+        #include <opaque_fragment>`);
   };
   return mat;
 }
