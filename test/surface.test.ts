@@ -10,7 +10,7 @@ import { buildPaintData, warpAt } from '../src/paint.ts';
 import { buildRelief } from '../src/relief.ts';
 import { tileLook } from '../src/look.ts';
 import { buildTerrainMesh, locate } from '../src/terrainMesh.ts';
-import { buildSurface, meshLevels, waterLevels, MAX_RIVER_SLOPE, type Surface } from '../src/surface.ts';
+import { buildSurface, meshLevels, waterLevels, MAX_RIVER_SLOPE, LOWLAND, type Surface } from '../src/surface.ts';
 import type { MapSizeKey } from '../src/rules.ts';
 
 const SEEDS: Record<MapSizeKey, number[]> = { small: [1, 2], medium: [4], large: [6] };
@@ -147,17 +147,20 @@ describe('surface', () => {
         const plain = (t: number) => map.relief[t] === 'flat' && !looks[t].water && !looks[t].pool && map.feature[t] === null;
         const off: string[] = [];
         const d = new THREE.Vector3();
+        let checked = 0;
         for (let v = 0; v < topo.V; v++) {
           const t = topo.tile[v];
           // (Two rings of plain tiles: hills' erosion fades out over about that.)
-          if (!plain(t) || !globe.tiles[t].neighbors.every((nb) => plain(nb) && globe.tiles[nb].neighbors.every(plain)) || surface.coast[v] < 2.5 * r0) continue;
+          if (!plain(t) || !globe.tiles[t].neighbors.every((nb) => plain(nb) && globe.tiles[nb].neighbors.every(plain)) || surface.coast[v] < (LOWLAND.reach + LOWLAND.vary) * r0) continue;
           d.set(topo.dir[v * 3], topo.dir[v * 3 + 1], topo.dir[v * 3 + 2]);
           // Away from rivers and the valleys they cut.
           if (surface.rivers.some((c) => c.pts.some((p, j) => p.distanceTo(d) < c.half[j] + 0.7 * r0))) continue;
           const own = relief.heightAt(t, topo.fanIndex[v], topo.wa[v], topo.wb[v], d);
+          checked++;
           if (Math.abs(fields.height[v] - own) > 0.0005) off.push(`tile ${t}: ${fields.height[v].toFixed(5)} vs ${own.toFixed(5)}`);
         }
         expect(off.slice(0, 10)).toEqual([]);
+        expect(checked).toBeGreaterThan(200);
       });
 
       it(`W3 ${size} seed ${seed}: every river's water is unbroken from near its source to its end`, () => {

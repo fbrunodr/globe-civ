@@ -6,8 +6,8 @@
 // 1. Coast. The painted shore (where the soft water weight of the painting
 //    crosses 1/2) is found on the mesh, and every vertex gets its signed
 //    distance D to it along the surface (land > 0). The land relief rises
-//    from sea level at the shore, gently at first (beaches), and reaches its
-//    full height inland; sea and lake beds fall away on the other side. The
+//    from sea level at the shore, gently at first (beaches), over a coastal
+//    lowland that climbs to the plain's full height a couple of tiles inland; sea and lake beds fall away on the other side. The
 //    ground crosses the water's level exactly on the painted shore. Where
 //    waters of different levels are near (a lake and the sea), the land
 //    blends their levels by distance, so it never steps where the nearest
@@ -34,7 +34,7 @@
 import * as THREE from 'three';
 import type { Globe } from './goldberg.ts';
 import type { MapData } from './mapgen.ts';
-import { SEA_LEVEL, SEA_TINT, RIVER_TINT, type TileLook, type WaterTint } from './look.ts';
+import { SEA_LEVEL, SEA_TINT, RIVER_TINT, RELIEF_LOOK, type TileLook, type WaterTint } from './look.ts';
 import type { Relief } from './relief.ts';
 import { fanCoords, fanFrames, softAt, FAN_COORDS, type PaintData } from './paint.ts';
 import { riverCurve } from './riverCurve.ts';
@@ -72,7 +72,14 @@ const POOL_DEPTH = 0.0004;
 const POOL_BANK = 0.0002; // pool water sits this far under the lowest ground around it
 const POOL_BAND = 0.0012; // height range of one pool body: pools on slopes step down in terraces
 const LAKE_BANK = 0.0006; // lakes sit this far under the lowest land around them
-const COAST_CAP = 3;
+const COAST_CAP = 7;
+// Coastal lowland (tile radii; a tile is 2 across): near open water the
+// plain is pulled down to LOWLAND.floor of its height, easing back to full by
+// LOWLAND.reach (± LOWLAND.vary along the coast). Only the plain's own height
+// (up to the flat relief's) is lowered: hills keep their rise above it and
+// mountain ranges are added on top.
+export const LOWLAND = { floor: 0.2, reach: 4.5, vary: 1.5 };
+const PLAIN = RELIEF_LOOK.flat.height;
 // Land near open water (tile radii): the water's level reaches SHORE_WATER
 // inland; the ground stays SHORE_RISE above it up to FLOOR_FULL, easing back
 // to its own relief by FLOOR_END.
@@ -179,7 +186,11 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
       // Near the shore the land stays above the water (no spills); further
       // inland it keeps its own relief, even where that is lower (a
       // floodplain beside a lake).
-      const own = relief.heightAt(topo.tile[v], topo.fanIndex[v], topo.wa[v], topo.wb[v], d);
+      let own = relief.heightAt(topo.tile[v], topo.fanIndex[v], topo.wa[v], topo.wb[v], d);
+      const fw = 1 / (4 * r0);
+      const reach = r0 * (LOWLAND.reach + LOWLAND.vary * noise.noise(d.x * fw + 3.1, d.y * fw, d.z * fw - 5.7));
+      const lift = LOWLAND.floor + (1 - LOWLAND.floor) * smoothstep(0, reach, D);
+      own -= (1 - lift) * Math.min(Math.max(own - wl, 0), PLAIN);
       const near = 1 - smoothstep(FLOOR_FULL * r0, FLOOR_END * r0, D);
       const land = own + (Math.max(own, wl + SHORE_RISE) - own) * near;
       // Beach width varies along the coast.
