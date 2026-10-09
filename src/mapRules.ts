@@ -102,6 +102,11 @@ const BASE = {
 } as const;
 
 export const MAP_LIMITS: Record<MapSizeKey, MapLimits> = {
+  small: {
+    ...BASE, continents: r(2, 3), lakes: r(5, 30), lakeMaxTiles: 7, biomesPresentMin: 12,
+    volcanoes: r(2, 4), reefSystems: r(2, 4), kelpSystems: r(2, 4), oases: r(2, 8),
+    marsh: r(1, 40), swamp: r(1, 60), bog: r(2, 65), floodplain: r(2, 60), startSpacing: 10, rivers: r(5, 30), longRivers: 1,
+  },
   medium: {
     ...BASE, continents: r(3, 3), lakes: r(8, 45), lakeMaxTiles: 11, biomesPresentMin: 13,
     volcanoes: r(2, 5), reefSystems: r(3, 5), kelpSystems: r(3, 5), oases: r(3, 10),

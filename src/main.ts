@@ -11,7 +11,7 @@ function showStartScreen(): void {
   const params = new URLSearchParams(location.search);
   const sizes = (Object.keys(MAP_SIZES) as MapSizeKey[]).map((k) => {
     const s = MAP_SIZES[k];
-    return `<button data-size="${k}" class="${k === 'medium' ? 'active' : ''}">
+    return `<button data-size="${k}" class="${k === 'small' ? 'active' : ''}">
       <b>${s.name}</b><span>${tileCount(s.n).toLocaleString()} tiles · ${s.players} civs</span><small>≈ ${s.civEquivalent}</small></button>`;
   }).join('');
   menu.innerHTML = `<div class="card">
@@ -21,7 +21,7 @@ function showStartScreen(): void {
     <label>Seed <input id="seed" value="${params.get('seed') ?? Math.floor(Math.random() * 1e6)}"></label>
     <button id="go" class="primary">Start game</button>
   </div>`;
-  let size: MapSizeKey = 'medium';
+  let size: MapSizeKey = 'small';
   const pSize = params.get('size');
   if (pSize && isMapSize(pSize)) size = pSize;
   const mark = () => menu.querySelectorAll<HTMLElement>('[data-size]').forEach((b) => b.classList.toggle('active', b.dataset['size'] === size));

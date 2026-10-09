@@ -7,17 +7,17 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const SCENES = [
-  { name: 'coast', q: 'seed=42&size=medium&look=shallowSea&dist=1.3' },
-  { name: 'forest', q: 'seed=42&size=medium&look=temperateForest&dist=1.3' },
-  { name: 'jungle', q: 'seed=42&size=medium&look=jungle&dist=1.35' },
-  { name: 'desert', q: 'seed=42&size=medium&look=hotDesert&dist=1.35' },
-  { name: 'desertHills', q: 'seed=1&size=medium&look=coldDesert+hills&dist=1.3' },
-  { name: 'steppeRange', q: 'seed=1&size=medium&look=steppe+mountains&dist=1.35' },
+  { name: 'coast', q: 'seed=42&size=small&look=shallowSea&dist=1.3' },
+  { name: 'forest', q: 'seed=42&size=small&look=temperateForest&dist=1.3' },
+  { name: 'jungle', q: 'seed=42&size=small&look=jungle&dist=1.35' },
+  { name: 'desert', q: 'seed=42&size=small&look=hotDesert&dist=1.35' },
+  { name: 'desertHills', q: 'seed=1&size=small&look=coldDesert+hills&dist=1.3' },
+  { name: 'steppeRange', q: 'seed=1&size=small&look=steppe+mountains&dist=1.35' },
   { name: 'range', q: 'seed=7&size=medium&look=temperateForest+mountains&dist=1.4' },
-  { name: 'mountains', q: 'seed=3&size=medium&look=glacier&dist=1.4' },
-  { name: 'bog', q: 'seed=42&size=medium&look=bog&dist=1.35' },
-  { name: 'pole', q: 'seed=42&size=medium&look=iceSheet&dist=1.6' },
-  { name: 'river', q: 'seed=42&size=medium&look=floodplain&dist=1.35' },
+  { name: 'mountains', q: 'seed=3&size=small&look=glacier&dist=1.4' },
+  { name: 'bog', q: 'seed=42&size=small&look=bog&dist=1.35' },
+  { name: 'pole', q: 'seed=42&size=small&look=iceSheet&dist=1.6' },
+  { name: 'river', q: 'seed=42&size=small&look=floodplain&dist=1.35' },
   { name: 'globe', q: 'seed=42&size=medium&look=prairie&dist=3.2' },
 ];
 const CHROME = process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';

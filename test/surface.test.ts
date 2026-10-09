@@ -13,7 +13,7 @@ import { buildTerrainMesh, locate } from '../src/terrainMesh.ts';
 import { buildSurface, meshLevels, waterLevels, MAX_RIVER_SLOPE, type Surface } from '../src/surface.ts';
 import type { MapSizeKey } from '../src/rules.ts';
 
-const SEEDS: Record<MapSizeKey, number[]> = { medium: [4, 5], large: [6] };
+const SEEDS: Record<MapSizeKey, number[]> = { small: [1, 2], medium: [4], large: [6] };
 
 function setup(size: MapSizeKey, seed: number) {
   const w = generateWorld(size, seed);
