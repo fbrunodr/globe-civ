@@ -26,7 +26,7 @@ import { mulberry32 } from './rng.ts';
 //   ring        0 at a tile center, 1 on its edge -> hex grid line
 //   unexplored  1 under fog of war -> flat dark fog, no lighting
 //   shade       baked ambient occlusion and tint
-//   snow        snow cover on peaks
+//   snow        snowline altitude (height above radius 1; NO_SNOW where none)
 //   depth       water level minus ground height (> 0 under water; the water
 //               surface itself is its own mesh, see water.ts)
 //   bank        1 beside a river, fading away from it
@@ -264,7 +264,15 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               vBeach += soft[k] * tileRow(tt, 4).a;
             }
           }
-          diffuseColor.rgb = mix(m0.rgb, m4.rgb, vSnow) * vShade;
+          // Snow: a crisp, ragged edge where the interpolated cover crosses one
+          // half; it slides off steep faces (bare rock shows there).
+          float steepness = 1.0 - dot(normalize(vObjNormal), normalize(P));
+          float snowCover = 0.0;
+          if (vSnow < 0.5) {
+            float edge = length(P) - 1.0 - vSnow + 0.0016 * (tFbm(P * 260.0 + 5.3, 3) - 0.5);
+            snowCover = smoothstep(-0.00015, 0.00015, edge) * (1.0 - smoothstep(0.16, 0.3, steepness));
+          }
+          diffuseColor.rgb = mix(m0.rgb, m4.rgb, snowCover) * vShade;
           // Water is geometry: vDepth > 0 under the water surface (water.ts
           // draws the surface), < 0 above it.
           float under = smoothstep(0.0, 0.00015, vDepth);
@@ -272,7 +280,7 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
           float above = -vDepth;
 
           // River banks: greener, damper ground beside the water.
-          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.05, 0.2, 0.035) * vShade, vBank * 0.55 * dry * (1.0 - vSnow));
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.05, 0.2, 0.035) * vShade, vBank * 0.55 * dry * (1.0 - snowCover));
 
           // Grain: fine speckle plus medium-scale patchiness.
           float grain = (tFbm(P * 380.0, 2) - 0.5) * tFade(380.0);
@@ -303,12 +311,14 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
           // and mountain crests are bare whatever their slope.
           float rock = 0.0;
           if (dry > 0.0) {
-            float steep = 1.0 - dot(normalize(vObjNormal), normalize(P));
+            float steep = steepness;
             float alt = length(P) - 1.0;
             float allow = max(vRock.a, smoothstep(0.0104, 0.0169, alt));
             float alpine = smoothstep(0.0169, 0.0234, alt);
-            rock = max(smoothstep(0.04, 0.09, steep) * allow, alpine) * dry * (1.0 - 0.8 * vSnow) * (1.0 - vBank);
-            diffuseColor.rgb = mix(diffuseColor.rgb, vRock.rgb * (0.88 + 0.24 * patchy), rock * 0.8);
+            rock = max(smoothstep(0.04, 0.09, steep) * allow, alpine) * dry * (1.0 - snowCover) * (1.0 - vBank);
+            // Rock tone varies: greyer bands and lighter speckle, so faces read as stone.
+            vec3 stone = mix(vRock.rgb, vec3(0.62, 0.6, 0.57), 0.45 * tNoise(P * 55.0 + 1.7)) * (0.9 + 0.3 * patchy + 0.15 * grain);
+            diffuseColor.rgb = mix(diffuseColor.rgb, stone * vShade, rock * 0.95);
           }
 
           // Shores, at the real waterline: sandy coasts get a beach that runs on

@@ -26,6 +26,8 @@ const SUBDIV = 4;
 // are grouped in for horizon culling. (Variant densities are per flat tile at
 // the reference tile size.)
 const PROP_SIZE = 0.276;
+// Snowline of ground that never has snow (above any peak).
+const NO_SNOW = 1;
 // Per-instance variety: random tilt (radians) and color shift per channel.
 const MAX_LEAN = (6 * Math.PI) / 180;
 const HUE_JITTER = 0.12;
@@ -245,13 +247,14 @@ export class GlobeRenderer {
       fd.set(f.sim.slice(0, 4), o + 20);
     });
 
-    // Per-vertex shade (baked occlusion and a fine tint) and snow, fixed for
-    // the whole game. Snow caps sit high on mountain crests, measured against
-    // each tile's peak: glaciers are iced from about halfway up, other cold
-    // peaks get a small tip, warm peaks (e.g. near the equator) stay bare.
+    // Per-vertex shade (baked occlusion and a fine tint) and the snowline,
+    // fixed for the whole game. Snow caps sit high on mountain crests,
+    // measured against each tile's peak: glaciers are iced from about halfway
+    // up, other cold peaks get a small tip, warm peaks (e.g. near the equator)
+    // stay bare. The shader compares each pixel's altitude with the snowline.
     const V = this.terrain.vertRadius.length;
     const shade = new Float32Array(V);
-    const snow = new Float32Array(V);
+    const snow = new Float32Array(V).fill(NO_SNOW);
     for (let v = 0; v < V; v++) {
       const x = this.terrain.vertDir[v * 3], y = this.terrain.vertDir[v * 3 + 1], z = this.terrain.vertDir[v * 3 + 2];
       const tint = Math.sin(x * 97.1 + y * 41.3) * Math.cos(z * 83.7 - x * 29.9) * Math.sin(y * 61.7 + z * 17.3);
@@ -261,10 +264,8 @@ export class GlobeRenderer {
       if (g.relief[t] !== 'mountains' || this.relief.peak[t] <= 0) continue;
       const capFrom = g.feature[t] === 'glacier' ? 0.55 : g.map.temperature[t] < 3 ? 0.8 : null;
       if (capFrom === null) continue;
-      for (const v of this.terrain.tileVerts[t]) {
-        const frac = (this.terrain.vertRadius[v] - 1 - this.relief.base[t]) / this.relief.peak[t];
-        snow[v] = Math.max(snow[v], smoothstep(capFrom, capFrom + 0.15, frac));
-      }
+      const line = this.relief.base[t] + (capFrom + 0.08) * this.relief.peak[t];
+      for (const v of this.terrain.tileVerts[t]) snow[v] = Math.min(snow[v], line);
     }
     this.vegetation = new Vegetation(g.globe, g.map, g.flora, L, this.relief.base, this.relief.peak, params.r0, g.seed);
     ;[this.vertSlope, this.vertCoast, this.vertInland] = slopeAndShore(this.terrain, coast!);

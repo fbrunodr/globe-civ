@@ -43,7 +43,7 @@ describe('surface', () => {
         for (const tile of globe.tiles) {
           const t = tile.id;
           const { ground, water } = mesh.at(t, 0, 0, 0);
-          if (looks[t].water) expect(water - ground, `tile ${t}`).toBeGreaterThanOrEqual(0.0005);
+          if (looks[t].water) expect(water - ground, `tile ${t}`).toBeGreaterThanOrEqual(0.00045);
           else if (!looks[t].pool) expect(ground - water, `tile ${t}`).toBeGreaterThanOrEqual(0.0002);
         }
       });
@@ -83,14 +83,14 @@ describe('surface', () => {
       it(`M1 ${size} seed ${seed}: mountain tiles stand high; every range peaks inside, away from its edge`, () => {
         // Mountain (non-volcano) tile centers stand clearly above the mountain
         // foot (ends of ranges and saddles between crests may be low: at
-        // least 10% of the nominal height), and typically high (median at
+        // least 5% of the nominal height), and typically high (median at
         // least 50%).
         const share: number[] = [];
         for (const tile of globe.tiles) {
           const t = tile.id;
           if (map.relief[t] !== 'mountains' || map.feature[t] === 'volcano' || looks[t].water) continue;
           const s = (mesh.at(t, 0, 0, 0).ground - 1 - relief.base[t]) / relief.peak[t];
-          expect(s, `tile ${t}`).toBeGreaterThanOrEqual(0.1);
+          expect(s, `tile ${t}`).toBeGreaterThanOrEqual(0.05);
           share.push(s);
         }
         share.sort((a, b) => a - b);

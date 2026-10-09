@@ -94,7 +94,7 @@ const FLOOR_END = 1.2;
 // crest wavelength; how much the crests vary the height; overall height
 // (share of nominal) and the extra height of the biggest ranges.
 export const RANGE = { reach: 6, foot: 1, full: 1.6, crest: 2, texture: 0.65, height: 0.9, sizeBoost: 0.3 };
-export const EROSION = { wavelength: 0.55, octaves: 3, amplitude: 0.002, slope: [0.08, 0.45] as [number, number], hills: 0.25 };
+export const EROSION = { wavelength: 0.55, octaves: 4, amplitude: 0.0032, slope: [0.08, 0.45] as [number, number], hills: 0.16 };
 const MARGIN_R = 0.35; // rivers own the water level this far beyond their edge (tile radii) // distances to the shore are tracked up to this many tile radii
 
 const smoothstep = (a: number, b: number, x: number) => {
@@ -248,7 +248,7 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
       // Bigger ranges stand a little taller.
       const size = 1 + RANGE.sizeBoost * smoothstep(0.8 * r0, 2.5 * r0, depthMax[c]);
       // Ridged noise: sharp crests and peaks, saddles and cols between.
-      const crest = Math.max(0, 1 - Math.abs(noise.fbm(d.x * fr + 11.3, d.y * fr - 4.2, d.z * fr + 7.7, 2) * 2));
+      const crest = Math.max(0, 1 - Math.abs(noise.fbm(d.x * fr + 11.3, d.y * fr - 4.2, d.z * fr + 7.7, 4) * 2)) ** 2;
       // Crests shape the interior; near the edge the rise itself dominates.
       const tex = RANGE.texture * smoothstep(0.2 * r0, Math.max(full, RANGE.foot * r0), deep);
       height[v] += RANGE.height * heightOf[c] * size * dome * (1 - tex + 1.3 * tex * crest) * ramp[v];
