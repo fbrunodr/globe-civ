@@ -607,6 +607,21 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
     }
   }
 
+  // ---- beaches: a strip along sea and lake shores, by distance to the
+  // waterline (so its edge is as round as the shore), its width varying
+  // along the coast. 1 on the strip and under the water, 0 inland.
+  const shore = new Float32Array(V);
+  {
+    const fs = 1 / (1.3 * r0);
+    for (let v = 0; v < V; v++) {
+      const D = coast[v];
+      if (D < 0) { shore[v] = 1; continue; }
+      dirOf(v, d);
+      const w = r0 * (0.12 + 0.3 * smoothstep(0.3, 0.7, noise.noise(d.x * fs - 4.2, d.y * fs + 8.1, d.z * fs) * 0.5 + 0.5));
+      shore[v] = 1 - smoothstep(0.4 * w, w, D);
+    }
+  }
+
   // ---- water look per vertex: deep color and murk ----
   const tint = new Float32Array(V * 4);
   const ocean = tintRGB(SEA_TINT.ocean), lakeC = tintRGB(SEA_TINT.lake), river = tintRGB(RIVER_TINT);
@@ -623,7 +638,7 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
   return {
     fields: {
       height, water,
-      ground: { bank },
+      ground: { bank, shore },
       water3d: [{ name: 'tint', itemSize: 4, data: tint }, { name: 'flow', itemSize: 3, data: flowVec },
         { name: 'wsrc', itemSize: 1, data: Float32Array.from(source) }, { name: 'wstep', itemSize: 1, data: waterSteps(topo, height, water) }],
     },

@@ -30,6 +30,7 @@ import { mulberry32 } from './rng.ts';
 //   depth       water level minus ground height (> 0 under water; the water
 //               surface itself is its own mesh, see water.ts)
 //   bank        1 beside a river, fading away from it
+//   shore       1 on a sea or lake shore's beach strip (and under the water)
 //   pc0, pc1    warped distances to the fan's 5 boundaries (fanCoords in
 //               paint.ts) and the fan id
 //
@@ -80,7 +81,7 @@ vec4 paintWeights(int fan, vec3 P, vec4 ids, out vec3 sEdge, out vec4 soft) {
   soft = vec4(1.0, 0.0, 0.0, 0.0);
   if (s.x >= r1.x + uFine && s.y >= r1.y + uFine && s.z >= r1.z + uFine) return soft;
   vec4 r2 = fanRow(fan, 2), r3 = fanRow(fan, 3), r4 = fanRow(fan, 4);
-  float fine = clamp((tNoise(P * uFineFreq) - 0.5) * 3.0, -1.0, 1.0) * uFine;
+  float fine = clamp((tFbm(P * uFineFreq, 3) - 0.5) * 3.2, -1.0, 1.0) * uFine;
   s += r3.xyz * fine * vec3(ids.x < ids.y ? 1.0 : -1.0, ids.x < ids.z ? 1.0 : -1.0, ids.x < ids.w ? 1.0 : -1.0);
   float uL = (vPc0.w + r3.w * fine * (ids.z < ids.y ? 1.0 : -1.0)) / r1.w;
   float uR = (vPc1.x + r4.x * fine * (ids.z < ids.w ? 1.0 : -1.0)) / r2.x;
@@ -179,6 +180,7 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
         attribute float snow;
         attribute float depth;
         attribute float bank;
+        attribute float shore;
         attribute vec4 pc0;
         attribute vec2 pc1;
         varying vec4 vPc0;
@@ -190,9 +192,10 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
         varying float vSnow;
         varying float vDepth;
         varying float vBank;
+        varying float vShore;
         varying vec3 vObjPos;`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
-        vRing = ring; vFog = unexplored; vShade = shade; vSnow = snow; vDepth = depth; vBank = bank;
+        vRing = ring; vFog = unexplored; vShade = shade; vSnow = snow; vDepth = depth; vBank = bank; vShore = shore;
         vPc0 = pc0; vPc1 = pc1;
         vObjPos = position; vObjNormal = normal;`);
 
@@ -214,6 +217,7 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
         varying float vShade;
         varying float vSnow;
         varying float vDepth;
+        varying float vShore;
         varying float vBank;
         varying vec3 vObjPos;
         varying vec3 vObjNormal;
@@ -315,10 +319,10 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
             // Beaches on sea and lake shores; river banks above the water stay
             // green (faded, so a river mouth has no edge; under water the bed
             // stays sandy).
-            if (vBeach > 0.75 && vWet > 0.0) {
-              float top = 0.00055 + 0.0004 * tNoise(P * 120.0 + 9.0);
+            if (vShore > 0.0) {
+              float top = 0.0009 + 0.0005 * tNoise(P * 120.0 + 9.0);
               float noBank = mix(1.0 - smoothstep(0.02, 0.4, vBank), 1.0, under);
-              float sand = (1.0 - smoothstep(top * 0.6, top, above)) * smoothstep(0.75, 0.95, vBeach) * smoothstep(0.0, 0.05, vWet) * noBank;
+              float sand = (1.0 - smoothstep(top * 0.6, top, above)) * smoothstep(0.15, 0.45, vShore + 0.4 * (tFbm(P * 160.0 + 2.7, 2) - 0.5)) * noBank;
               diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.86, 0.73, 0.45) * (0.95 + 0.1 * grain) * vShade, sand * (1.0 - rock));
             }
             float landBed = 1.0 - smoothstep(0.3, 0.8, vWet);

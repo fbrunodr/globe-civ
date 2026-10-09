@@ -63,7 +63,7 @@ export const CLASS_RULES: Record<GroundClass, PairRule> = {
   arid:   { warp: 1,    round: 0.5 },
   grass:  { warp: 1,    round: 0.5 },
   forest: { warp: 1,    round: 0.45 },
-  wet:    { warp: 0.55, round: 0.25 }, // features carry yields: they stay closer to their tile
+  wet:    { warp: 0.8,  round: 0.35 }, // features carry yields: they stay a little closer to their tile
   rock:   { warp: 0.9,  round: 0.45 },
 };
 type ClassPair = `${GroundClass}-${GroundClass}`;
@@ -82,14 +82,14 @@ export function pairRule(a: GroundClass, b: GroundClass): PairRule {
 
 // Warp layers (shares of the inner radius): amplitude and wavelength.
 export const WARP_LAYERS = [
-  { amp: 0.36, wavelength: 8 },   // region scale: ~4 tiles
-  { amp: 0.18, wavelength: 3 },   // a tile and a half
-  { amp: 0.09, wavelength: 1.2 }, // bends along each border
+  { amp: 0.2, wavelength: 8 },    // region scale: ~4 tiles
+  { amp: 0.35, wavelength: 2 },   // about a tile: breaks the hex outline
+  { amp: 0.22, wavelength: 1.2 }, // bends along each border
 ] as const;
 export const WARP_MAX = WARP_LAYERS.reduce((a, l) => a + l.amp, 0);
 // GPU-only fine wiggle (share of the inner radius) and its wavelength.
-export const FINE_MAX = 0.035;
-export const FINE_WAVELENGTH = 0.7;
+export const FINE_MAX = 0.14;
+export const FINE_WAVELENGTH = 1.1;
 // Sharpening between groups: higher = crisper region outlines.
 export const SHARPEN = 6;
 
