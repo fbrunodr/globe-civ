@@ -36,7 +36,7 @@ const smoothstep = (a: number, b: number, x: number) => {
   return t * t * (3 - 2 * t);
 };
 
-export interface View {
+interface View {
   target: THREE.Vector3;  // unit direction of the point looked at
   forward: THREE.Vector3; // unit tangent at target: the screen's "up" direction on the ground
   dist: number;
@@ -86,16 +86,6 @@ export class GlobeCamera {
     this.cur.forward.copy(this.goal.forward);
     this.cur.dist = this.goal.dist;
     this.ground = this.surface(this.cur.target, false);
-    this.changed = true;
-    this.apply();
-  }
-
-  // The current view, to carry it over to another camera (a rebuilt renderer).
-  get view(): View { return cloneView(this.goal); }
-
-  setView(v: View): void {
-    this.jump(v.target, v.dist);
-    for (const x of [this.goal, this.cur]) { x.forward.copy(v.forward); x.tilt = v.tilt; orthonormalize(x); }
     this.changed = true;
     this.apply();
   }

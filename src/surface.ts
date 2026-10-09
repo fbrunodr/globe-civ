@@ -40,7 +40,6 @@ import { fanCoords, fanFrames, softAt, FAN_COORDS, type PaintData } from './pain
 import { riverCurve } from './riverCurve.ts';
 import { locate, newSample, type Topology, type SurfaceFields } from './terrainMesh.ts';
 import { makePerlin, mulberry32 } from './rng.ts';
-import { WORLD_SCALE } from './worldScale.ts';
 import { erosionAt, type ErosionParams } from './erosion.ts';
 
 // River courses as drawn: points from source to the end inside the water.
@@ -95,7 +94,7 @@ const FLOOR_END = 1.2;
 // crest wavelength; how much the crests vary the height; overall height
 // (share of nominal) and the extra height of the biggest ranges.
 export const RANGE = { reach: 6, foot: 1, full: 1.6, crest: 2, texture: 0.65, height: 0.9, sizeBoost: 0.3 };
-export const EROSION = { wavelength: 0.55, octaves: 3, amplitude: 0.003, slope: [0.12, 0.7] as [number, number], hills: 0.25 };
+export const EROSION = { wavelength: 0.55, octaves: 3, amplitude: 0.002, slope: [0.08, 0.45] as [number, number], hills: 0.25 };
 const MARGIN_R = 0.35; // rivers own the water level this far beyond their edge (tile radii) // distances to the shore are tracked up to this many tile radii
 
 const smoothstep = (a: number, b: number, x: number) => {
@@ -291,10 +290,7 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
       }
       mask = next;
     }
-    // Gullies follow the relief's scale: as deep, relative to it, and starting
-    // on the same (relative) slopes.
-    const X = WORLD_SCALE.linear;
-    const P: ErosionParams = { wavelength: EROSION.wavelength * r0, octaves: EROSION.octaves, amplitude: EROSION.amplitude * X, slope: [EROSION.slope[0] * X, EROSION.slope[1] * X], seed: seed ^ 0x6e70 };
+    const P: ErosionParams = { wavelength: EROSION.wavelength * r0, octaves: EROSION.octaves, amplitude: EROSION.amplitude, slope: EROSION.slope, seed: seed ^ 0x6e70 };
     for (let v = 0; v < V; v++) {
       const m = mask[v] * ramp[v];
       if (coast[v] < 0 || m <= 0.01) continue;

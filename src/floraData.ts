@@ -53,121 +53,121 @@ const none = (name: string): FloraSet => ({ variants: [v(name, 'any', 0, [])] })
 
 export const BIOME_FLORA: Record<BiomeKey, FloraSet> = {
   ocean: { variants: [
-    v('Cold ocean', 'any', 0.3, [['iceFloe', 100]], { maxTemp: -1 }),
+    v('Cold ocean', 'any', 0.7, [['iceFloe', 100]], { maxTemp: -1 }),
     v('Open ocean', 'any', 0, []),
   ] },
   shallowSea: none('Shallow sea'),
-  lake: { variants: [v('Lake', 'any', 14, [['lilyPads', 100]])] },
-  seaIce: { variants: [v('Sea ice', 'any', 4, [['iceFloe', 100]])] },
-  iceSheet: { variants: [v('Ice sheet', 'any', 3, [['iceSerac', 70], ['boulder', 20], ['tor', 10]])] },
+  lake: { variants: [v('Lake', 'any', 35, [['lilyPads', 100]])] },
+  seaIce: { variants: [v('Sea ice', 'any', 9, [['iceFloe', 100]])] },
+  iceSheet: { variants: [v('Ice sheet', 'any', 7, [['iceSerac', 70], ['boulder', 20], ['tor', 10]])] },
   tundra: { variants: [
-    v('Shrub tundra', 'any', 30, [['spruce', 3, undefined, STUNTED], ['shrub', 30, DWARF_WILLOW], ['heather', 10], ['grassTuft', 20], ['moss', 27], ['boulder', 10]], { warm: 0.4 }),
-    v('Fell field', 'any', 20, [['heather', 5], ['grassTuft', 15], ['moss', 45, LICHEN], ['boulder', 30], ['tor', 5]], { warm: -0.6, wet: -0.3 }),
-    v('Wet tundra', N, 30, [['shrub', 8, DWARF_WILLOW], ['grassTuft', 25], ['cottonGrass', 30], ['moss', 32], ['boulder', 5]], { wet: 0.6 }),
-    v('Subantarctic', A, 30, [['tallGrass', 50, TUSSOCK], ['moss', 30], ['boulder', 15], ['tor', 5]]),
+    v('Shrub tundra', 'any', 70, [['spruce', 3, undefined, STUNTED], ['shrub', 30, DWARF_WILLOW], ['heather', 10], ['grassTuft', 20], ['moss', 27], ['boulder', 10]], { warm: 0.4 }),
+    v('Fell field', 'any', 45, [['heather', 5], ['grassTuft', 15], ['moss', 45, LICHEN], ['boulder', 30], ['tor', 5]], { warm: -0.6, wet: -0.3 }),
+    v('Wet tundra', N, 70, [['shrub', 8, DWARF_WILLOW], ['grassTuft', 25], ['cottonGrass', 30], ['moss', 32], ['boulder', 5]], { wet: 0.6 }),
+    v('Subantarctic', A, 70, [['tallGrass', 50, TUSSOCK], ['moss', 30], ['boulder', 15], ['tor', 5]]),
   ] },
   taiga: { variants: [
-    v('Dark taiga', 'any', 60, [['spruce', 50], ['fir', 20], ['birch', 4], ['berryBush', 4], ['moss', 12], ['snag', 4], ['fallenLog', 4], ['boulder', 2]], { wet: 0.4 }),
-    v('Light taiga', N, 40, [['larch', 40], ['pine', 20], ['birch', 6], ['shrub', 8], ['moss', 14, LICHEN], ['snag', 4], ['fallenLog', 3], ['boulder', 5]], { warm: -0.6, wet: -0.5 }),
-    v('Birch fringe', N, 50, [['spruce', 25], ['pine', 5], ['birch', 35], ['berryBush', 8], ['shrub', 7], ['grassTuft', 10], ['moss', 2], ['fallenLog', 5], ['boulder', 3]], { warm: 0.7 }),
-    v('Fuegian', A, 50, [['southernBeech', 55, FUEGIAN], ['shrub', 10], ['moss', 15], ['snag', 6], ['fallenLog', 6], ['boulder', 8]]),
+    v('Dark taiga', 'any', 140, [['spruce', 50], ['fir', 20], ['birch', 4], ['berryBush', 4], ['moss', 12], ['snag', 4], ['fallenLog', 4], ['boulder', 2]], { wet: 0.4 }),
+    v('Light taiga', N, 95, [['larch', 40], ['pine', 20], ['birch', 6], ['shrub', 8], ['moss', 14, LICHEN], ['snag', 4], ['fallenLog', 3], ['boulder', 5]], { warm: -0.6, wet: -0.5 }),
+    v('Birch fringe', N, 120, [['spruce', 25], ['pine', 5], ['birch', 35], ['berryBush', 8], ['shrub', 7], ['grassTuft', 10], ['moss', 2], ['fallenLog', 5], ['boulder', 3]], { warm: 0.7 }),
+    v('Fuegian', A, 120, [['southernBeech', 55, FUEGIAN], ['shrub', 10], ['moss', 15], ['snag', 6], ['fallenLog', 6], ['boulder', 8]]),
   ] },
   coldDesert: { variants: [
-    v('Sagebrush basin', 'any', 20, [['juniper', 8], ['sagebrush', 55], ['grassTuft', 22, FEATHER], ['boulder', 15]], { wet: 0.3 }),
-    v('Gobi', N, 10, [['saxaul', 25], ['dryBush', 20], ['grassTuft', 20, FEATHER], ['boulder', 30], ['rockSpire', 5]], { wet: -0.6 }),
-    v('Joshua', W, 15, [['joshuaTree', 20], ['sagebrush', 25], ['dryBush', 20], ['grassTuft', 15, FEATHER], ['boulder', 20]]),
-    v('Patagonian', A, 20, [['dryBush', 30, CUSHION], ['grassTuft', 55, TUSSOCK], ['boulder', 15]]),
+    v('Sagebrush basin', 'any', 45, [['juniper', 8], ['sagebrush', 55], ['grassTuft', 22, FEATHER], ['boulder', 15]], { wet: 0.3 }),
+    v('Gobi', N, 25, [['saxaul', 25], ['dryBush', 20], ['grassTuft', 20, FEATHER], ['boulder', 30], ['rockSpire', 5]], { wet: -0.6 }),
+    v('Joshua', W, 35, [['joshuaTree', 20], ['sagebrush', 25], ['dryBush', 20], ['grassTuft', 15, FEATHER], ['boulder', 20]]),
+    v('Patagonian', A, 45, [['dryBush', 30, CUSHION], ['grassTuft', 55, TUSSOCK], ['boulder', 15]]),
   ] },
   steppe: { variants: [
-    v('Feather grass', 'any', 35, [['shrub', 5], ['grassTuft', 72, FEATHER], ['flowers', 15], ['boulder', 8]]),
-    v('Shrub steppe', N, 30, [['juniper', 5], ['sagebrush', 40], ['grassTuft', 45, FEATHER], ['boulder', 10]], { wet: -0.6 }),
-    v('Forest-steppe', N, 40, [['birch', 12], ['pine', 6], ['shrub', 8], ['grassTuft', 55], ['flowers', 15], ['boulder', 4]], { wet: 0.7 }),
+    v('Feather grass', 'any', 85, [['shrub', 5], ['grassTuft', 72, FEATHER], ['flowers', 15], ['boulder', 8]]),
+    v('Shrub steppe', N, 70, [['juniper', 5], ['sagebrush', 40], ['grassTuft', 45, FEATHER], ['boulder', 10]], { wet: -0.6 }),
+    v('Forest-steppe', N, 95, [['birch', 12], ['pine', 6], ['shrub', 8], ['grassTuft', 55], ['flowers', 15], ['boulder', 4]], { wet: 0.7 }),
   ] },
   prairie: { variants: [
-    v('Tallgrass', 'any', 45, [['oak', 3], ['shrub', 7], ['tallGrass', 65, GREEN_GRASS], ['flowers', 22], ['boulder', 3]], { wet: 0.3 }),
-    v('Meadow', N, 50, [['beechMaple', 3], ['shrub', 10], ['grassTuft', 50], ['flowers', 33], ['boulder', 4]], { warm: -0.4 }),
-    v('Oak parkland', N, 45, [['oak', 15], ['shrub', 12], ['grassTuft', 50], ['flowers', 18], ['boulder', 5]], { wet: 0.6 }),
-    v('Pampas', A, 45, [['shrub', 5], ['tallGrass', 30, PLUME], ['grassTuft', 55], ['flowers', 7], ['boulder', 3]]),
+    v('Tallgrass', 'any', 105, [['oak', 3], ['shrub', 7], ['tallGrass', 65, GREEN_GRASS], ['flowers', 22], ['boulder', 3]], { wet: 0.3 }),
+    v('Meadow', N, 120, [['beechMaple', 3], ['shrub', 10], ['grassTuft', 50], ['flowers', 33], ['boulder', 4]], { warm: -0.4 }),
+    v('Oak parkland', N, 105, [['oak', 15], ['shrub', 12], ['grassTuft', 50], ['flowers', 18], ['boulder', 5]], { wet: 0.6 }),
+    v('Pampas', A, 105, [['shrub', 5], ['tallGrass', 30, PLUME], ['grassTuft', 55], ['flowers', 7], ['boulder', 3]]),
   ] },
   temperateForest: { variants: [
-    v('Oak-beech', N, 60, [['oak', 30], ['beechMaple', 28], ['birch', 5], ['shrub', 10], ['berryBush', 2], ['fernClump', 12], ['flowers', 5], ['fallenLog', 5], ['boulder', 3]], { warm: 0.4 }),
-    v('Maple-birch', N, 60, [['beechMaple', 35, AUTUMN], ['birch', 18], ['pine', 10], ['spruce', 5], ['shrub', 8], ['berryBush', 3], ['fernClump', 10], ['fallenLog', 6], ['boulder', 5]], { warm: -0.5 }),
-    v('Mixed pine', 'any', 60, [['oak', 5], ['beechMaple', 20], ['birch', 10], ['pine', 25], ['spruce', 12], ['shrub', 8], ['berryBush', 2], ['fernClump', 10], ['fallenLog', 5], ['boulder', 3]], { wet: -0.3 }),
-    v('Eucalypt', A, 45, [['eucalyptus', 45], ['treeFern', 8], ['shrub', 15], ['grassTuft', 20], ['fallenLog', 7], ['boulder', 5]]),
+    v('Oak-beech', N, 140, [['oak', 30], ['beechMaple', 28], ['birch', 5], ['shrub', 10], ['berryBush', 2], ['fernClump', 12], ['flowers', 5], ['fallenLog', 5], ['boulder', 3]], { warm: 0.4 }),
+    v('Maple-birch', N, 140, [['beechMaple', 35, AUTUMN], ['birch', 18], ['pine', 10], ['spruce', 5], ['shrub', 8], ['berryBush', 3], ['fernClump', 10], ['fallenLog', 6], ['boulder', 5]], { warm: -0.5 }),
+    v('Mixed pine', 'any', 140, [['oak', 5], ['beechMaple', 20], ['birch', 10], ['pine', 25], ['spruce', 12], ['shrub', 8], ['berryBush', 2], ['fernClump', 10], ['fallenLog', 5], ['boulder', 3]], { wet: -0.3 }),
+    v('Eucalypt', A, 105, [['eucalyptus', 45], ['treeFern', 8], ['shrub', 15], ['grassTuft', 20], ['fallenLog', 7], ['boulder', 5]]),
   ] },
   temperateRainforest: { variants: [
-    v('Cascadian', N, 75, [['giantCedar', 15], ['fir', 20], ['spruce', 15], ['beechMaple', 10, MOSS], ['fernClump', 22], ['moss', 8], ['fallenLog', 6], ['snag', 2], ['boulder', 2]], { warm: -0.3 }),
-    v('Colchic', N, 65, [['fir', 5], ['beechMaple', 45, MOSS], ['shrub', 15, LAUREL], ['fernClump', 20], ['moss', 5], ['fallenLog', 6], ['snag', 2], ['boulder', 2]], { warm: 0.7 }),
-    v('Valdivian', A, 70, [['southernBeech', 35], ['araucaria', 10], ['treeFern', 10], ['bamboo', 15], ['fernClump', 18], ['moss', 4], ['fallenLog', 5], ['snag', 1], ['boulder', 2]], { warm: -0.3 }),
+    v('Cascadian', N, 180, [['giantCedar', 15], ['fir', 20], ['spruce', 15], ['beechMaple', 10, MOSS], ['fernClump', 22], ['moss', 8], ['fallenLog', 6], ['snag', 2], ['boulder', 2]], { warm: -0.3 }),
+    v('Colchic', N, 155, [['fir', 5], ['beechMaple', 45, MOSS], ['shrub', 15, LAUREL], ['fernClump', 20], ['moss', 5], ['fallenLog', 6], ['snag', 2], ['boulder', 2]], { warm: 0.7 }),
+    v('Valdivian', A, 165, [['southernBeech', 35], ['araucaria', 10], ['treeFern', 10], ['bamboo', 15], ['fernClump', 18], ['moss', 4], ['fallenLog', 5], ['snag', 1], ['boulder', 2]], { warm: -0.3 }),
     // Wet tropical hills are cool enough to count as temperate rainforest:
     // montane cloud forest.
-    v('Cloud forest', 'any', 65, [['treeFern', 25], ['beechMaple', 35, MOSS], ['bamboo', 10], ['fernClump', 20], ['moss', 10]], { hills: true, maxLat: 28 }),
-    v('Tasman', A, 70, [['southernBeech', 25], ['kauri', 12], ['treeFern', 25], ['fernClump', 20], ['moss', 10], ['fallenLog', 5], ['snag', 1], ['boulder', 2]], { warm: 0.5 }),
+    v('Cloud forest', 'any', 155, [['treeFern', 25], ['beechMaple', 35, MOSS], ['bamboo', 10], ['fernClump', 20], ['moss', 10]], { hills: true, maxLat: 28 }),
+    v('Tasman', A, 165, [['southernBeech', 25], ['kauri', 12], ['treeFern', 25], ['fernClump', 20], ['moss', 10], ['fallenLog', 5], ['snag', 1], ['boulder', 2]], { warm: 0.5 }),
   ] },
   mediterranean: { variants: [
-    v('Maquis', 'any', 45, [['olive', 15], ['cypress', 8], ['juniper', 5], ['shrub', 45, LAUREL], ['flowers', 7], ['grassTuft', 8], ['boulder', 10], ['tor', 2]], { wet: -0.3 }),
-    v('Pine-oak woodland', N, 45, [['olive', 25], ['stonePine', 25], ['shrub', 25], ['flowers', 5], ['grassTuft', 12], ['boulder', 8]], { wet: 0.5 }),
-    v('Chaparral', W, 40, [['oak', 8], ['juniper', 6], ['shrub', 50], ['flowers', 12], ['grassTuft', 14], ['boulder', 10]]),
-    v('Fynbos', O, 40, [['shrub', 35], ['heather', 25], ['flowers', 22], ['grassTuft', 8], ['boulder', 7], ['tor', 3]]),
+    v('Maquis', 'any', 105, [['olive', 15], ['cypress', 8], ['juniper', 5], ['shrub', 45, LAUREL], ['flowers', 7], ['grassTuft', 8], ['boulder', 10], ['tor', 2]], { wet: -0.3 }),
+    v('Pine-oak woodland', N, 105, [['olive', 25], ['stonePine', 25], ['shrub', 25], ['flowers', 5], ['grassTuft', 12], ['boulder', 8]], { wet: 0.5 }),
+    v('Chaparral', W, 95, [['oak', 8], ['juniper', 6], ['shrub', 50], ['flowers', 12], ['grassTuft', 14], ['boulder', 10]]),
+    v('Fynbos', O, 95, [['shrub', 35], ['heather', 25], ['flowers', 22], ['grassTuft', 8], ['boulder', 7], ['tor', 3]]),
   ] },
   hotDesert: { variants: [
-    v('Erg', 'any', 3, [['dryBush', 80], ['grassTuft', 20, SPINIFEX]], { wet: -0.6 }),
-    v('Hamada', 'any', 8, [['dryBush', 30], ['boulder', 45], ['rockSpire', 15], ['tor', 10]], { wet: 0.2 }),
-    v('Sonoran', W, 12, [['saguaro', 25], ['pricklyPear', 25], ['dryBush', 30], ['boulder', 15], ['rockSpire', 5]], { wet: 0.5 }),
-    v('Succulent', O, 10, [['dragonTree', 8], ['euphorbia', 20], ['dryBush', 42], ['boulder', 20], ['tor', 10]], { wet: 0.5 }),
+    v('Erg', 'any', 7, [['dryBush', 80], ['grassTuft', 20, SPINIFEX]], { wet: -0.6 }),
+    v('Hamada', 'any', 19, [['dryBush', 30], ['boulder', 45], ['rockSpire', 15], ['tor', 10]], { wet: 0.2 }),
+    v('Sonoran', W, 30, [['saguaro', 25], ['pricklyPear', 25], ['dryBush', 30], ['boulder', 15], ['rockSpire', 5]], { wet: 0.5 }),
+    v('Succulent', O, 25, [['dragonTree', 8], ['euphorbia', 20], ['dryBush', 42], ['boulder', 20], ['tor', 10]], { wet: 0.5 }),
   ] },
   savanna: { variants: [
-    v('Acacia', 'any', 40, [['acacia', 22], ['shrub', 10], ['tallGrass', 58, GOLDEN], ['termiteMound', 6], ['boulder', 3], ['tor', 1]], { wet: -0.3 }),
-    v('Miombo', O, 45, [['acacia', 4], ['baobab', 6], ['beechMaple', 30, DRY], ['shrub', 12], ['tallGrass', 43, GOLDEN], ['termiteMound', 3], ['boulder', 2]], { wet: 0.5 }),
-    v('Cerrado', W, 40, [['beechMaple', 12, DRY], ['fanPalm', 8], ['shrub', 30, TWISTED], ['tallGrass', 40, GOLDEN], ['termiteMound', 8], ['boulder', 2]]),
-    v('Outback', A, 35, [['eucalyptus', 15], ['shrub', 15], ['tallGrass', 55, SPINIFEX], ['termiteMound', 10], ['boulder', 3], ['tor', 2]]),
+    v('Acacia', 'any', 95, [['acacia', 22], ['shrub', 10], ['tallGrass', 58, GOLDEN], ['termiteMound', 6], ['boulder', 3], ['tor', 1]], { wet: -0.3 }),
+    v('Miombo', O, 105, [['acacia', 4], ['baobab', 6], ['beechMaple', 30, DRY], ['shrub', 12], ['tallGrass', 43, GOLDEN], ['termiteMound', 3], ['boulder', 2]], { wet: 0.5 }),
+    v('Cerrado', W, 95, [['beechMaple', 12, DRY], ['fanPalm', 8], ['shrub', 30, TWISTED], ['tallGrass', 40, GOLDEN], ['termiteMound', 8], ['boulder', 2]]),
+    v('Outback', A, 85, [['eucalyptus', 15], ['shrub', 15], ['tallGrass', 55, SPINIFEX], ['termiteMound', 10], ['boulder', 3], ['tor', 2]]),
   ] },
   monsoonForest: { variants: [
-    v('Teak-sal', 'any', 60, [['beechMaple', 50, DRY], ['bamboo', 12], ['banana', 5], ['palm', 5], ['shrub', 13], ['tallGrass', 8], ['termiteMound', 2], ['fallenLog', 5]], { wet: -0.2 }),
-    v('Bamboo forest', O, 70, [['beechMaple', 20, DRY], ['bamboo', 45], ['banana', 12], ['shrub', 8], ['fernClump', 10], ['fallenLog', 5]], { wet: 0.6 }),
-    v('Thorn forest', W, 40, [['beechMaple', 20, DRY], ['acacia', 15], ['pricklyPear', 15], ['shrub', 30], ['tallGrass', 12], ['termiteMound', 3], ['boulder', 5]], { wet: -0.6 }),
+    v('Teak-sal', 'any', 140, [['beechMaple', 50, DRY], ['bamboo', 12], ['banana', 5], ['palm', 5], ['shrub', 13], ['tallGrass', 8], ['termiteMound', 2], ['fallenLog', 5]], { wet: -0.2 }),
+    v('Bamboo forest', O, 165, [['beechMaple', 20, DRY], ['bamboo', 45], ['banana', 12], ['shrub', 8], ['fernClump', 10], ['fallenLog', 5]], { wet: 0.6 }),
+    v('Thorn forest', W, 95, [['beechMaple', 20, DRY], ['acacia', 15], ['pricklyPear', 15], ['shrub', 30], ['tallGrass', 12], ['termiteMound', 3], ['boulder', 5]], { wet: -0.6 }),
   ] },
   jungle: { variants: [
-    v('Lowland', 'any', 85, [['jungleTree', 40], ['kapok', 6], ['palm', 10], ['banana', 14], ['shrub', 7], ['fernClump', 18], ['fallenLog', 5]]),
-    v('Várzea', W, 80, [['jungleTree', 30], ['kapok', 4], ['palm', 6], ['fanPalm', 25], ['banana', 10], ['fernClump', 18], ['fallenLog', 7]], { wet: 0.5 }),
-    v('Dipterocarp', O, 80, [['jungleTree', 35], ['kapok', 15], ['palm', 8], ['banana', 8], ['bamboo', 6], ['shrub', 5], ['fernClump', 18], ['fallenLog', 5]]),
+    v('Lowland', 'any', 200, [['jungleTree', 40], ['kapok', 6], ['palm', 10], ['banana', 14], ['shrub', 7], ['fernClump', 18], ['fallenLog', 5]]),
+    v('Várzea', W, 190, [['jungleTree', 30], ['kapok', 4], ['palm', 6], ['fanPalm', 25], ['banana', 10], ['fernClump', 18], ['fallenLog', 7]], { wet: 0.5 }),
+    v('Dipterocarp', O, 190, [['jungleTree', 35], ['kapok', 15], ['palm', 8], ['banana', 8], ['bamboo', 6], ['shrub', 5], ['fernClump', 18], ['fallenLog', 5]]),
   ] },
 };
 
 // Feature variants: the first one whose biomes and realms match is used.
 export const FEATURE_FLORA: Record<FeatureKey, FloraSet> = {
   marsh: { variants: [
-    v('Tropical marsh', 'any', 45, [['papyrus', 45], ['reeds', 25], ['lilyPads', 15], ['tallGrass', 15, GREEN_GRASS]], { biomes: ['jungle', 'monsoonForest', 'savanna'] }),
-    v('Temperate marsh', 'any', 45, [['reeds', 40], ['cattail', 25], ['grassTuft', 20], ['lilyPads', 10], ['willow', 5]]),
+    v('Tropical marsh', 'any', 105, [['papyrus', 45], ['reeds', 25], ['lilyPads', 15], ['tallGrass', 15, GREEN_GRASS]], { biomes: ['jungle', 'monsoonForest', 'savanna'] }),
+    v('Temperate marsh', 'any', 105, [['reeds', 40], ['cattail', 25], ['grassTuft', 20], ['lilyPads', 10], ['willow', 5]]),
   ] },
   swamp: { variants: [
-    v('Swamp forest', 'any', 55, [['jungleTree', 30], ['fanPalm', 20], ['reeds', 15], ['lilyPads', 15], ['fernClump', 15], ['fallenLog', 5]], { biomes: ['jungle'] }),
-    v('Cypress swamp', 'any', 50, [['baldCypress', 40], ['reeds', 15], ['lilyPads', 15], ['fernClump', 10], ['stump', 10], ['snag', 5], ['fallenLog', 5]]),
+    v('Swamp forest', 'any', 130, [['jungleTree', 30], ['fanPalm', 20], ['reeds', 15], ['lilyPads', 15], ['fernClump', 15], ['fallenLog', 5]], { biomes: ['jungle'] }),
+    v('Cypress swamp', 'any', 120, [['baldCypress', 40], ['reeds', 15], ['lilyPads', 15], ['fernClump', 10], ['stump', 10], ['snag', 5], ['fallenLog', 5]]),
   ] },
-  mangrove: { variants: [v('Mangrove', 'any', 50, [['mangrove', 75], ['reeds', 10], ['coconutPalm', 8], ['stump', 7]])] },
+  mangrove: { variants: [v('Mangrove', 'any', 120, [['mangrove', 75], ['reeds', 10], ['coconutPalm', 8], ['stump', 7]])] },
   bog: { variants: [
-    v('Palsa bog', 'any', 25, [['moss', 40], ['cottonGrass', 30], ['spruce', 10, undefined, STUNTED], ['snag', 10], ['boulder', 10]], { biomes: ['tundra', 'taiga'] }),
-    v('Raised bog', 'any', 35, [['moss', 30], ['heather', 25], ['cottonGrass', 20], ['pine', 12, undefined, STUNTED], ['snag', 8], ['stump', 5]]),
+    v('Palsa bog', 'any', 60, [['moss', 40], ['cottonGrass', 30], ['spruce', 10, undefined, STUNTED], ['snag', 10], ['boulder', 10]], { biomes: ['tundra', 'taiga'] }),
+    v('Raised bog', 'any', 85, [['moss', 30], ['heather', 25], ['cottonGrass', 20], ['pine', 12, undefined, STUNTED], ['snag', 8], ['stump', 5]]),
   ] },
   floodplain: { variants: [
-    v('Gallery floodplain', 'any', 30, [['tallGrass', 35, GOLDEN], ['reeds', 25], ['palm', 20], ['shrub', 15], ['poplar', 5]],
+    v('Gallery floodplain', 'any', 70, [['tallGrass', 35, GOLDEN], ['reeds', 25], ['palm', 20], ['shrub', 15], ['poplar', 5]],
       { biomes: ['hotDesert', 'coldDesert', 'steppe', 'savanna', 'mediterranean'] }),
-    v('Green floodplain', 'any', 30, [['tallGrass', 35, GREEN_GRASS], ['willow', 15], ['reeds', 15], ['flowers', 15], ['poplar', 10], ['cattail', 10]]),
+    v('Green floodplain', 'any', 70, [['tallGrass', 35, GREEN_GRASS], ['willow', 15], ['reeds', 15], ['flowers', 15], ['poplar', 10], ['cattail', 10]]),
   ] },
   oasis: { variants: [
-    v('Fan palm oasis', W, 30, [['fanPalm', 50], ['shrub', 20], ['reeds', 15], ['pricklyPear', 15]]),
-    v('Date palm oasis', 'any', 30, [['palm', 60], ['shrub', 15], ['reeds', 15], ['tallGrass', 10, GREEN_GRASS]]),
+    v('Fan palm oasis', W, 70, [['fanPalm', 50], ['shrub', 20], ['reeds', 15], ['pricklyPear', 15]]),
+    v('Date palm oasis', 'any', 70, [['palm', 60], ['shrub', 15], ['reeds', 15], ['tallGrass', 10, GREEN_GRASS]]),
   ] },
   // Mountain features: the mix of the slopes between the tree line and the
   // bare upper part (vegetation.ts).
-  volcano: { variants: [v('Volcano', 'any', 6, [['boulder', 35], ['rockSpire', 40], ['snag', 25]])] },
-  glacier: { variants: [v('Glacier', 'any', 5, [['iceSerac', 60], ['scree', 40]])] },
-  reef: { variants: [v('Coral reef', 'any', 30, [['coralHeads', 55], ['branchingCoral', 45]])] },
-  kelp: { variants: [v('Kelp forest', 'any', 40, [['kelp', 100]])] },
+  volcano: { variants: [v('Volcano', 'any', 14, [['boulder', 35], ['rockSpire', 40], ['snag', 25]])] },
+  glacier: { variants: [v('Glacier', 'any', 12, [['iceSerac', 60], ['scree', 40]])] },
+  reef: { variants: [v('Coral reef', 'any', 70, [['coralHeads', 55], ['branchingCoral', 45]])] },
+  kelp: { variants: [v('Kelp forest', 'any', 95, [['kelp', 100]])] },
 };
 
 // ---- placement modifiers' mixes ----
-export const MOUNTAIN_SLOPES: Variant = v('Mountain slopes', 'any', 10, [['spruce', 30, undefined, STUNTED], ['boulder', 35], ['scree', 35]]);
+export const MOUNTAIN_SLOPES: Variant = v('Mountain slopes', 'any', 25, [['spruce', 30, undefined, STUNTED], ['boulder', 35], ['scree', 35]]);
 // River banks, by the climate of the biome they cross.
 export type BankClimate = 'temperate' | 'dry' | 'tropical' | 'cold';
 export const BANK_CLIMATE: Record<BiomeKey, BankClimate> = {

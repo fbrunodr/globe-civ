@@ -25,7 +25,6 @@ import type { MapData } from './mapgen.ts';
 import type { TileLook } from './look.ts';
 import { isWaterKey, isWorldOcean } from './mapRules.ts';
 import { makePerlin, mulberry32, type Noise3, type Rng } from './rng.ts';
-import { WORLD_SCALE } from './worldScale.ts';
 import { CATALOG, CATALOG_KINDS, catalogEntry, type CatalogKind } from './propCatalog.ts';
 import {
   BANK_CLIMATE, COASTS, FOREST_FRINGE, HILL_ROCKS, LAKE_SHORES, MOUNTAIN_SLOPES, RIVER_BANKS, WARM_COASTS,
@@ -52,6 +51,7 @@ export interface PropPick {
   kind: CatalogKind;
   leaf: number | null;   // leaf tint, null = the model's own
   size: number;
+  ancient: boolean;      // the tile's one ancient tree
   height: number;        // radius-1 of where it stands (ground, or the water surface)
   lean: THREE.Vector3 | null; // tilt toward this tangent direction...
   leanAngle: number;          // ...by this angle
@@ -117,10 +117,10 @@ export class Vegetation {
           density: mix.density * HILL_DENSITY,
           entries: [...mix.entries.map(([k, s, l, z]) => [k, temperate && CONIFERS.has(k) ? s * 1.5 : s, l, z] as const), ...HILL_ROCKS],
         };
-        this.hillSpan[t] = Math.max(1e-4, (looks[t].height - base[t]) * WORLD_SCALE.linear);
+        this.hillSpan[t] = Math.max(1e-4, looks[t].height - base[t]);
       }
       this.plain.push(mix);
-      this.forest[t] = !mountain && mix.density >= 35 && canopyShare(mix.entries) >= 0.35 ? 1 : 0;
+      this.forest[t] = !mountain && mix.density >= 80 && canopyShare(mix.entries) >= 0.35 ? 1 : 0;
       const nbs = [t, ...globe.tiles[t].neighbors];
       this.nearSea[t] = nbs.some((n) => isWorldOcean(map.biome[n])) ? 1 : 0;
       this.nearLake[t] = nbs.some((n) => map.biome[n] === 'lake') ? 1 : 0;
@@ -211,7 +211,8 @@ export class Vegetation {
       tint = undefined; size = 1;
     }
     const leaf = pickTint(tint, rand);
-    if (ancient && CATALOG[kind].layer === 'Canopy') size *= 2.5;
+    const old = ancient && CATALOG[kind].layer === 'Canopy';
+    if (old) size *= 1.6;
 
     // Coast trees lean: palms out to sea, pines inland (away from the wind).
     if (leanBy && e.inland.lengthSq() > 0.5) {
@@ -230,7 +231,7 @@ export class Vegetation {
       if (depth > wu.maxDepth || (wu.needWater && depth < 0.00005)) return null;
       height = Math.max(e.ground, e.water);
     }
-    return { kind, leaf, size, height, lean, leanAngle };
+    return { kind, leaf, size, ancient: old, height, lean, leanAngle };
   }
 }
 

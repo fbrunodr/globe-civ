@@ -1,4 +1,3 @@
-import { WORLD_SCALE } from './worldScale.ts';
 import * as THREE from 'three';
 import { mulberry32 } from './rng.ts';
 
@@ -162,7 +161,6 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
   const uGrid = { value: 0 };
   const uView = { value: 0 };
   const noise = noiseTexture();
-  const X = WORLD_SCALE.linear;
   mat.onBeforeCompile = (shader) => {
     shader.uniforms['uTime'] = uTime;
     shader.uniforms['uTileTex'] = { value: paint.tileTex };
@@ -303,8 +301,8 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
           if (dry > 0.0) {
             float steep = 1.0 - dot(normalize(vObjNormal), normalize(P));
             float alt = length(P) - 1.0;
-            float allow = max(vRock.a, smoothstep(${(0.016 * X).toFixed(5)}, ${(0.026 * X).toFixed(5)}, alt));
-            float alpine = smoothstep(${(0.026 * X).toFixed(5)}, ${(0.036 * X).toFixed(5)}, alt);
+            float allow = max(vRock.a, smoothstep(0.0104, 0.0169, alt));
+            float alpine = smoothstep(0.0169, 0.0234, alt);
             rock = max(smoothstep(0.04, 0.09, steep) * allow, alpine) * dry * (1.0 - 0.8 * vSnow) * (1.0 - vBank);
             diffuseColor.rgb = mix(diffuseColor.rgb, vRock.rgb * (0.88 + 0.24 * patchy), rock * 0.8);
           }

@@ -56,8 +56,8 @@ export interface ReliefLook {
 
 export const RELIEF_LOOK: Record<ReliefKey, ReliefLook> = {
   flat:      { height: 0.007, plateau: 0.55, roughness: 0.0016, rock: 0.35, stone: 0,    strata: 0,    bump: 0 },
-  hills:     { height: 0.019, plateau: 0.12, roughness: 0.004,  rock: 0.6,  stone: 0.12, strata: 0.15, bump: 0.3 },
-  mountains: { height: 0.04,  plateau: 0,    roughness: 0.02,   rock: 0.6,  stone: 0,    strata: 0.5,  bump: 0.6 },
+  hills:     { height: 0.015, plateau: 0.12, roughness: 0.004,  rock: 0.6,  stone: 0.12, strata: 0.15, bump: 0.3 },
+  mountains: { height: 0.029, plateau: 0,    roughness: 0.02,   rock: 0.6,  stone: 0,    strata: 0.5,  bump: 0.6 },
 };
 
 export interface FeatureLook {
@@ -81,9 +81,9 @@ export const FEATURE_LOOK: Record<FeatureKey, FeatureLook> = {
   bog:        { color: 0x8f8456, rock: null, colorMix: 0.55, patch: 0.55, patchColor: 0x6e6038, heightDelta: -0.0005, plateau: null, strata: 0, wet: 0.15 },
   floodplain: { color: 0x96bd52, rock: null, colorMix: 0.55, patch: 0.25, patchColor: 0x5d8a3a, heightDelta: -0.002, plateau: 0.7, strata: 0, wet: 0 },
   oasis:      { color: 0x8aa04e, rock: null, colorMix: 0.45, patch: 0.3,  patchColor: 0x6f8f3e, heightDelta: 0,      plateau: null, strata: 0, wet: 0 },
-  volcano:    { color: 0x4a423c, rock: 0x3d3632, colorMix: 0.7,  patch: 0,    patchColor: 0x000000, heightDelta: 0.012,  plateau: null, strata: 0.3, wet: 0 },
+  volcano:    { color: 0x4a423c, rock: 0x3d3632, colorMix: 0.7,  patch: 0,    patchColor: 0x000000, heightDelta: 0.008,  plateau: null, strata: 0.3, wet: 0 },
   // Glaciers keep the mountain's colors; the renderer caps only the peak with ice.
-  glacier:    { color: null,     rock: null, colorMix: 0,    patch: 0,    patchColor: 0x000000, heightDelta: 0.004,  plateau: null, strata: 0, wet: 0 },
+  glacier:    { color: null,     rock: null, colorMix: 0,    patch: 0,    patchColor: 0x000000, heightDelta: 0.0026, plateau: null, strata: 0, wet: 0 },
   reef:       { color: 0x3fbcc0, rock: null, colorMix: 0.55, patch: 0.45, patchColor: 0xb59a8a, heightDelta: 0,      plateau: null, strata: 0, wet: 0 },
   kelp:       { color: 0x24646f, rock: null, colorMix: 0.45, patch: 0.5,  patchColor: 0x3f8a6a, heightDelta: 0,      plateau: null, strata: 0, wet: 0 },
 };
@@ -180,8 +180,8 @@ export function tileLook(map: MapData, t: number): TileLook {
     roughness = biome === 'seaIce' ? 0.0016 : 0; // open water is flat
   } else {
     height = R.height;
-    if (relief === 'mountains') height += 0.03 * Math.max(0, e - 0.6);
-    if (relief === 'hills') height += 0.008 * e;
+    if (relief === 'mountains') height += 0.02 * Math.max(0, e - 0.6);
+    if (relief === 'hills') height += 0.005 * e;
     if (biome === 'iceSheet') height += 0.004;
     plateau = R.plateau;
     roughness = R.roughness;

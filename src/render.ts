@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { unitDef } from './rules.ts';
-import { GlobeCamera, type View as CameraView } from './camera.ts';
+import { GlobeCamera } from './camera.ts';
 import type { Game, Unit, City } from './game.ts';
 import { SNOW, tileLook, type TileLook } from './look.ts';
 import { buildTerrainMesh, locate, newSample, type TerrainMesh } from './terrainMesh.ts';
@@ -15,7 +15,6 @@ import { makeWeather, type Weather } from './weather.ts';
 import { buildPropGeometry, catalogEntry, CATALOG, CATALOG_KINDS, type CatalogKind } from './propCatalog.ts';
 import { Vegetation, type SpotEnv } from './vegetation.ts';
 import { mulberry32, makePerlin } from './rng.ts';
-import { WORLD_SCALE } from './worldScale.ts';
 
 const FOG = new THREE.Color(0x0b0e15);
 
@@ -23,12 +22,10 @@ const UP = new THREE.Vector3(0, 1, 0);
 // Subdivisions per tile fan; higher = smoother relief, more triangles. Tiles
 // near water and relief get 2× or 4× this (see the mesh levels below).
 const SUBDIV = 4;
-// Props: size relative to the original models, density multiplier, and the
-// number of chunks they are grouped in for horizon culling.
-const PROP_SIZE = 0.425;
-// Variant densities are per flat tile at the reference tile size (and the
-// world's linear scale: bigger props, fewer of them).
-const propDensityScale = () => 1 / WORLD_SCALE.linear ** 2;
+// Props: size relative to the original models, and the number of chunks they
+// are grouped in for horizon culling. (Variant densities are per flat tile at
+// the reference tile size.)
+const PROP_SIZE = 0.276;
 // Per-instance variety: random tilt (radians) and color shift per channel.
 const MAX_LEAN = (6 * Math.PI) / 180;
 const HUE_JITTER = 0.12;
@@ -308,7 +305,7 @@ export class GlobeRenderer {
     const s = this.scale;
     // Props are drawn per chunk of the globe, one instanced mesh per kind, so
     // chunks behind the horizon or off screen cost nothing.
-    for (const kind of CATALOG_KINDS) this.propGeo.set(kind, buildPropGeometry(kind, s * 1.5 * PROP_SIZE * WORLD_SCALE.linear));
+    for (const kind of CATALOG_KINDS) this.propGeo.set(kind, buildPropGeometry(kind, s * 1.5 * PROP_SIZE));
     const golden = Math.PI * (3 - Math.sqrt(5));
     for (let k = 0; k < PROP_CHUNKS; k++) {
       const y = 1 - (2 * (k + 0.5)) / PROP_CHUNKS, rr = Math.sqrt(1 - y * y);
@@ -351,9 +348,6 @@ export class GlobeRenderer {
     this.cam.focus(this.game.tiles[tile].center);
   }
 
-  // The camera's view, to restore it in a rebuilt renderer.
-  cameraPose(): CameraView { return this.cam.view; }
-  restoreCamera(v: CameraView): void { this.cam.setView(v); }
 
   // Jump straight to a tile at the given camera distance (debug / screenshots).
   lookAt(tile: number, distance: number): void {
@@ -562,7 +556,7 @@ export class GlobeRenderer {
     const g = this.game, veg = this.vegetation, topo = this.terrain.topo;
     const out: PlacedProp[] = [];
     const tile = g.tiles[t];
-    const most = Math.max(veg.maxDensity(t), ...tile.neighbors.map((u) => veg.maxDensity(u))) * propDensityScale();
+    const most = Math.max(veg.maxDensity(t), ...tile.neighbors.map((u) => veg.maxDensity(u)));
     if (most > 0) {
       const co = new Float32Array(FAN_COORDS);
       const delta = [0, 0, 0];
@@ -612,10 +606,10 @@ export class GlobeRenderer {
             if (env.inland.lengthSq() > 1e-6) env.inland.normalize();
             // Gentle large-scale variation in density, never clearings.
             const vary = 0.85 + 0.3 * this.propNoise.fbm(p.x * 9, p.y * 9, p.z * 9, 2);
-            if (keep >= Math.min(1, (veg.density(env) * propDensityScale() / spots) * vary)) continue;
+            if (keep >= Math.min(1, (veg.density(env) / spots) * vary)) continue;
             const prop = veg.pick(env, mulberry32(Math.floor(seed * 4294967296)), ancient && u === t);
             if (!prop) continue;
-            if (prop.size > 2) ancient = false;
+            if (prop.ancient) ancient = false;
             q.setFromUnitVectors(UP, d);
             q.multiply(new THREE.Quaternion().setFromAxisAngle(UP, spin * Math.PI * 2));
             // Lean: toward the coast's wind direction, or a slight random tilt.

@@ -17,7 +17,7 @@ import { makePerlin, mulberry32, type Rng } from './rng.ts';
 
 const SC = 100;
 const R = 0.07 * SC;          // hex circumradius = tile edge
-const PROP = 0.6375 * SC;     // render.ts: 1.5 × PROP_SIZE
+const PROP = 0.414 * SC;     // render.ts: 1.5 × PROP_SIZE
 const EYE = 0.0011 * SC;      // walk.ts eye height
 const SPACING = 2.25 * R;
 const BUDGET = 40;

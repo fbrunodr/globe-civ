@@ -23,7 +23,6 @@ import type { Globe } from './goldberg.ts';
 import type { MapData } from './mapgen.ts';
 import type { TileLook } from './look.ts';
 import { makePerlin, mulberry32 } from './rng.ts';
-import { WORLD_SCALE } from './worldScale.ts';
 
 export interface Relief {
   // Height above radius 1 of a point in fan i of tile t, at barycentric
@@ -63,8 +62,7 @@ export function buildRelief(globe: Globe, map: MapData, looks: readonly TileLook
   const volcano = (t: number) => map.feature[t] === 'volcano';
   const mountain = (t: number) => map.relief[t] === 'mountains' && looks[t].wet < 0.5 && !volcano(t);
   const hill = (t: number) => map.relief[t] === 'hills' && looks[t].wet < 0.5;
-  // A hill's top: its height above the lowland follows the world's scale.
-  const hillTop = (t: number) => HILL_FOOT + (looks[t].height - HILL_FOOT) * WORLD_SCALE.linear;
+  const hillTop = (t: number) => looks[t].height;
 
   // ---- per-tile base level, plateau and noise amplitude ----
   const base = new Float32Array(N), plateau = new Float32Array(N), amp = new Float32Array(N), peak = new Float32Array(N);
@@ -72,7 +70,7 @@ export function buildRelief(globe: Globe, map: MapData, looks: readonly TileLook
     const l = looks[t];
     base[t] = l.height; plateau[t] = l.plateau; amp[t] = l.roughness;
     if (mountain(t)) {
-      peak[t] = (l.height - MOUNTAIN_BASE) * WORLD_SCALE.linear;
+      peak[t] = l.height - MOUNTAIN_BASE;
       base[t] = MOUNTAIN_BASE; plateau[t] = 0.2; amp[t] = 0.0012;
     } else if (hill(t)) {
       // Most of a hill's height comes from its bumps; the base only lifts a little.
@@ -156,7 +154,7 @@ export function buildRelief(globe: Globe, map: MapData, looks: readonly TileLook
   const cones: { c: THREE.Vector3; h: number }[][] = tiles.map(() => []);
   for (let t = 0; t < N; t++) {
     if (!volcano(t)) continue;
-    const cone = { c: tiles[t].center, h: Math.max(0.02, looks[t].height - MOUNTAIN_BASE) * WORLD_SCALE.linear };
+    const cone = { c: tiles[t].center, h: Math.max(0.013, looks[t].height - MOUNTAIN_BASE) };
     peak[t] = cone.h;
     base[t] = MOUNTAIN_BASE; plateau[t] = 0.2; amp[t] = 0.0008;
     cones[t].push(cone);
