@@ -103,6 +103,8 @@ const FLOOR_END = 1.2;
 // overall height (share of nominal) and the extra height of the biggest ranges.
 export const RANGE = { reach: 6, full: 2, flank: 0.8, crest: 2, texture: 0.55, massif: 5, massifVary: 0.35, height: 1.15, sizeBoost: 0.3 };
 export const EROSION = { wavelength: 0.55, octaves: 4, amplitude: 0.0032, slope: [0.08, 0.45] as [number, number], hills: 0.16 };
+// Mean annual temperature (°C) where shores start to freeze / are frozen (no sand).
+const FROZEN_TEMP = [0, -6] as const;
 const ERODE_BELOW = 0.0008; // gullies reach at most this far below the land a mountain rises from
 const MARGIN_R = 0.35; // rivers own the water level this far beyond their edge (tile radii) // distances to the shore are tracked up to this many tile radii
 
@@ -147,6 +149,7 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
   const poolThr = new Float32Array(V); // their flooding threshold
   const poolPond = new Float32Array(V);
   const poolTint = new Float32Array(V * 4);
+  const frozen = new Float32Array(V); // 1 on frozen ground and sea ice (no sandy beaches)
   const co = new Float32Array(FAN_COORDS);
   // Tiles that make up mountain ranges (volcanoes are cones of their own).
   const inRange = (t: number) => map.relief[t] === 'mountains' && !looks[t].water && map.feature[t] !== 'volcano';
@@ -166,6 +169,7 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
       if (l.water) { m += w[k]; wl += w[k] * bodyLevel[u]; if (map.biome[u] === 'lake') lk += w[k]; }
       if (inRange(u)) { rocky[v] += w[k]; rockH[v] += w[k] * relief.peak[u]; }
       b += w[k] * l.bed;
+      frozen[v] += w[k] * smoothstep(FROZEN_TEMP[0], FROZEN_TEMP[1], map.temperature[u]);
       if (l.pool) {
         q += w[k]; thr += w[k] * l.pool.threshold; pond += w[k] * (l.pool.pond ? 1 : 0);
         const c = poolColor[u]!;
@@ -636,10 +640,10 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
     const fs = 1 / (1.3 * r0);
     for (let v = 0; v < V; v++) {
       const D = coast[v];
-      if (D < 0) { shore[v] = 1; continue; }
+      if (D < 0) { shore[v] = 1 - frozen[v]; continue; }
       dirOf(v, d);
       const w = r0 * (0.12 + 0.3 * smoothstep(0.3, 0.7, noise.noise(d.x * fs - 4.2, d.y * fs + 8.1, d.z * fs) * 0.5 + 0.5));
-      shore[v] = 1 - smoothstep(0.4 * w, w, D);
+      shore[v] = (1 - smoothstep(0.4 * w, w, D)) * (1 - frozen[v]);
     }
   }
 

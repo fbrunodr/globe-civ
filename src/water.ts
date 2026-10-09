@@ -22,7 +22,7 @@ import { GRADE_GLSL, NOISE_GLSL, noiseTexture } from './terrainMaterial.ts';
 //   dim         seen before but not in sight now: grayed like the ground
 
 export interface WaterMaterial {
-  material: THREE.MeshStandardMaterial;
+  material: THREE.MeshPhysicalMaterial;
   setTime(seconds: number): void;
   setGrid(on: boolean): void;
   setView(mode: number): void; // 2 = debug water view: color by source, steps in red
@@ -31,7 +31,8 @@ export interface WaterMaterial {
 export const SKY_COLOR = new THREE.Color(0.62, 0.76, 0.92);
 
 export function makeWaterMaterial(): WaterMaterial {
-  const mat = new THREE.MeshStandardMaterial({ roughness: 0.1, metalness: 0, transparent: true, depthWrite: false });
+  // A dim specular: a small sun glint, not a blinding disc.
+  const mat = new THREE.MeshPhysicalMaterial({ roughness: 0.1, metalness: 0, specularIntensity: 0.2, transparent: true, depthWrite: false });
   const uTime = { value: 0 };
   const uGrid = { value: 0 };
   const uView = { value: 0 };
@@ -144,7 +145,7 @@ export function makeWaterMaterial(): WaterMaterial {
           }
         }`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
-        roughnessFactor = mix(0.16, 0.6, foam);`)
+        roughnessFactor = mix(0.14, 0.6, foam);`)
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
         {
           // Ripples: two layers of drifting noise.
@@ -156,8 +157,8 @@ export function makeWaterMaterial(): WaterMaterial {
       .replace('#include <opaque_fragment>', `{
           // The sky's reflection, strong at grazing angles.
           float fres = pow(1.0 - clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0), 5.0) * (1.0 - foam);
-          outgoingLight = grade(mix(outgoingLight, uSky * 0.9, fres * 0.5), 0.85);
-          diffuseColor.a = max(diffuseColor.a, fres * 0.85) * (1.0 - vFog);
+          outgoingLight = grade(mix(outgoingLight, uSky * 0.8, fres * 0.25), 0.85);
+          diffuseColor.a = max(diffuseColor.a, fres * 0.6) * (1.0 - vFog);
         }
         #include <opaque_fragment>`);
   };

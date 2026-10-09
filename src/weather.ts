@@ -28,7 +28,10 @@ const WIND = 0.0014;       // wind speed (radians per second) at its strongest
 const CYCLE = 240;         // seconds each drifting copy of the noise lives
 const RAIN_SPACING = 1.3;  // distance between rain columns, in tile inner radii
 const RAIN_STREAKS = 28;   // streaks per raining column
+const SNOW_FLAKES = 60;    // flakes per snowing column
 const RAIN_SCALE = 2400;   // yearly rain (mm) that counts as fully wet
+// Mean annual temperature (°C) where rain starts turning to snow / is all snow.
+const SNOW_TEMP = [1, -4] as const;
 
 // Shared by the cloud layer and the rain.
 const WEATHER_GLSL = /* glsl */ `
@@ -39,6 +42,11 @@ uniform highp sampler3D uNoise;
 float wWet(vec3 p) {
   vec2 uv = vec2(atan(p.z, p.x) / 6.2831853 + 0.5, asin(clamp(p.y, -1.0, 1.0)) / 3.1415927 + 0.5);
   return texture(uRain, uv).r;
+}
+// 1 where it is cold enough to snow instead of rain.
+float wCold(vec3 p) {
+  vec2 uv = vec2(atan(p.z, p.x) / 6.2831853 + 0.5, asin(clamp(p.y, -1.0, 1.0)) / 3.1415927 + 0.5);
+  return texture(uRain, uv).g;
 }
 float wFbm(vec3 q) {
   float s = 0.0, a = 0.5;
@@ -68,7 +76,10 @@ float wCover(vec3 p, out float rain) {
   float g0 = wFbm(wTurn(p, wind * f0) * k * 0.7 + drift + floor(ph) * 37.1 + 53.0);
   float g1 = wFbm(wTurn(p, wind * f1) * k * 0.7 + drift + floor(ph + 0.5) * 37.1 + 71.0);
   float rainy = smoothstep(0.48, 0.52, mix(g0, g1, blend));
-  rain = smoothstep(0.75, 0.95, u - (1.0 - P) + 0.75) * smoothstep(0.35, 0.7, wet) * cover * rainy;
+  // Cold climates are dry, yet still snow: there less moisture is enough.
+  float cold = wCold(p);
+  float moist = mix(smoothstep(0.35, 0.7, wet), smoothstep(0.08, 0.3, wet), cold);
+  rain = smoothstep(0.75, 0.95, u - (1.0 - P) + 0.75) * moist * cover * rainy;
   return cover;
 }
 `;
@@ -81,13 +92,13 @@ export interface Weather {
   update(time: number, sunDir: THREE.Vector3, fade: [number, number], amount: number, haze: { color: THREE.Color; density: number }): void;
 }
 
-export function makeWeather(globe: Globe, rainfall: Float32Array, r0: number, seed: number): Weather {
+export function makeWeather(globe: Globe, rainfall: Float32Array, temperature: Float32Array, r0: number, seed: number): Weather {
   const ALT = 0.05 * AIR.height; // cloud height above sea level (globe radii), above most peaks
   const rand = mulberry32(seed ^ 0x77ea7e);
   const uniforms = {
     uTime: { value: 0 },
     uR0: { value: r0 },
-    uRain: { value: rainTexture(globe, rainfall) },
+    uRain: { value: rainTexture(globe, rainfall, temperature) },
     uNoise: { value: noiseTexture() },
     uFade: { value: new THREE.Vector2(0, 0) },
     uAmount: { value: 1 },
@@ -137,7 +148,8 @@ export function makeWeather(globe: Globe, rainfall: Float32Array, r0: number, se
   );
   layer.renderOrder = 4;
 
-  // ---- rain: streaks in fixed columns, shown where thick cloud passes over wet ground ----
+  // ---- rain: streaks in fixed columns, shown where thick cloud passes over wet ground;
+  // where it is very cold, slow drifting snowflakes instead ----
   const count = Math.round((4 * Math.PI) / (RAIN_SPACING * r0) ** 2);
   const anchors: number[] = [];
   const golden = Math.PI * (3 - Math.sqrt(5));
@@ -168,8 +180,8 @@ export function makeWeather(globe: Globe, rainfall: Float32Array, r0: number, se
       void main() {
         float rain;
         wCover(aAnchor, rain);
-        // Only as many streaks as the rain is heavy.
-        if (fract(aStreak.z * 7.13) > rain) { gl_Position = vec4(0.0, 0.0, 2.0, 1.0); vAlpha = 0.0; return; }
+        // Only as many streaks as the rain is heavy; none where it snows.
+        if (fract(aStreak.z * 7.13) > rain || wCold(aAnchor) >= 0.5) { gl_Position = vec4(0.0, 0.0, 2.0, 1.0); vAlpha = 0.0; return; }
         vec3 east = cross(vec3(0.0, 1.0, 0.0), aAnchor);
         east = dot(east, east) < 1e-8 ? vec3(1.0, 0.0, 0.0) : normalize(east);
         vec3 north = cross(aAnchor, east);
@@ -186,8 +198,55 @@ export function makeWeather(globe: Globe, rainfall: Float32Array, r0: number, se
   const rain = new THREE.LineSegments(rgeo, rmat);
   rain.frustumCulled = false;
 
+  // ---- snow: slow drifting flakes (points) in the same columns, where it is very cold ----
+  const flake = new Float32Array(SNOW_FLAKES * 4);
+  for (let s = 0; s < SNOW_FLAKES; s++) {
+    const ang = rand() * Math.PI * 2, rad = Math.sqrt(rand());
+    flake.set([Math.cos(ang) * rad, Math.sin(ang) * rad, rand(), rand()], s * 4);
+  }
+  const sgeo = new THREE.InstancedBufferGeometry();
+  sgeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(SNOW_FLAKES * 3), 3));
+  sgeo.setAttribute('aFlake', new THREE.BufferAttribute(flake, 4));
+  sgeo.setAttribute('aAnchor', new THREE.InstancedBufferAttribute(Float32Array.from(anchors), 3));
+  sgeo.instanceCount = count;
+  const smat = new THREE.ShaderMaterial({
+    uniforms, transparent: true, depthWrite: false,
+    vertexShader: /* glsl */ `
+      ${WEATHER_GLSL}
+      attribute vec4 aFlake;
+      attribute vec3 aAnchor;
+      varying float vAlpha;
+      void main() {
+        float snow;
+        wCover(aAnchor, snow);
+        if (fract(aFlake.z * 7.13) > snow || wCold(aAnchor) < 0.5) { gl_Position = vec4(0.0, 0.0, 2.0, 1.0); vAlpha = 0.0; return; }
+        vec3 east = cross(vec3(0.0, 1.0, 0.0), aAnchor);
+        east = dot(east, east) < 1e-8 ? vec3(1.0, 0.0, 0.0) : normalize(east);
+        vec3 north = cross(aAnchor, east);
+        float fall = fract(aFlake.z + uTime * 0.07); // slow
+        float h = mix(1.0 + ${(ALT - 0.002).toFixed(4)}, 0.995, fall);
+        // Flakes drift and flutter on the way down.
+        float t = uTime * 0.9 + aFlake.w * 40.0;
+        vec2 sway = 0.12 * vec2(sin(t), cos(t * 0.8));
+        vec3 p = aAnchor * h + (east * (aFlake.x + sway.x) + north * (aFlake.y + sway.y)) * (0.6 * uR0);
+        vec4 mv = viewMatrix * vec4(p, 1.0);
+        gl_Position = projectionMatrix * mv;
+        gl_PointSize = clamp(0.0008 * projectionMatrix[1][1] * 400.0 / -mv.z, 1.0, 3.5);
+        vAlpha = snow * smoothstep(0.0, 0.1, fall) * (1.0 - smoothstep(0.9, 1.0, fall));
+      }`,
+    fragmentShader: /* glsl */ `
+      varying float vAlpha;
+      void main() {
+        float r = length(gl_PointCoord - 0.5);
+        if (r > 0.5) discard;
+        gl_FragColor = vec4(0.95, 0.97, 1.0, 0.55 * vAlpha * (1.0 - smoothstep(0.25, 0.5, r)));
+      }`,
+  });
+  const snow = new THREE.Points(sgeo, smat);
+  snow.frustumCulled = false;
+
   const group = new THREE.Group();
-  group.add(layer, rain);
+  group.add(layer, rain, snow);
   return {
     group,
     update(time, sunDir, fade, amount, haze) {
@@ -204,9 +263,11 @@ export function makeWeather(globe: Globe, rainfall: Float32Array, r0: number, se
 
 // The tiles' yearly rain as a small longitude-latitude map (0..1), blurred
 // into a smooth field (no tile edges).
-function rainTexture(globe: Globe, rainfall: Float32Array): THREE.DataTexture {
+// Per pixel (longitude, latitude): wetness (r) and cold enough to snow (g),
+// blurred so neither has tile edges.
+function rainTexture(globe: Globe, rainfall: Float32Array, temperature: Float32Array): THREE.DataTexture {
   const W = 256, H = 128;
-  let wet = new Float32Array(W * H);
+  let wet = new Float32Array(W * H), cold = new Float32Array(W * H);
   const d = new THREE.Vector3();
   let t = 0;
   for (let y = 0; y < H; y++) {
@@ -216,22 +277,29 @@ function rainTexture(globe: Globe, rainfall: Float32Array): THREE.DataTexture {
       d.set(Math.cos(lat) * Math.cos(lon), Math.sin(lat), Math.cos(lat) * Math.sin(lon));
       t = nearestTile(globe, d, t);
       wet[y * W + x] = Math.min(1, rainfall[t] / RAIN_SCALE) ** 0.8;
+      cold[y * W + x] = Math.min(1, Math.max(0, (SNOW_TEMP[0] - temperature[t]) / (SNOW_TEMP[0] - SNOW_TEMP[1])));
     }
   }
-  for (let pass = 0; pass < 6; pass++) {
-    const next = new Float32Array(W * H);
-    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-      let s = 0, c = 0;
-      for (let dy = -1; dy <= 1; dy++) {
-        const yy = y + dy;
-        if (yy < 0 || yy >= H) continue;
-        for (let dx = -1; dx <= 1; dx++) { s += wet[yy * W + ((x + dx + W) % W)]; c++; }
+  const blur = (f: Float32Array<ArrayBuffer>): Float32Array<ArrayBuffer> => {
+    for (let pass = 0; pass < 6; pass++) {
+      const next = new Float32Array(W * H);
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        let s = 0, c = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          const yy = y + dy;
+          if (yy < 0 || yy >= H) continue;
+          for (let dx = -1; dx <= 1; dx++) { s += f[yy * W + ((x + dx + W) % W)]; c++; }
+        }
+        next[y * W + x] = s / c;
       }
-      next[y * W + x] = s / c;
+      f = next;
     }
-    wet = next;
-  }
-  const tex = new THREE.DataTexture(Uint8Array.from(wet, (v) => Math.round(v * 255)), W, H, THREE.RedFormat, THREE.UnsignedByteType);
+    return f;
+  };
+  wet = blur(wet); cold = blur(cold);
+  const rg = new Uint8Array(W * H * 2);
+  for (let i = 0; i < W * H; i++) { rg[i * 2] = Math.round(wet[i] * 255); rg[i * 2 + 1] = Math.round(cold[i] * 255); }
+  const tex = new THREE.DataTexture(rg, W, H, THREE.RGFormat, THREE.UnsignedByteType);
   tex.wrapS = THREE.RepeatWrapping;
   tex.magFilter = tex.minFilter = THREE.LinearFilter;
   tex.needsUpdate = true;
