@@ -1,3 +1,4 @@
+import { WORLD_SCALE } from './worldScale.ts';
 import * as THREE from 'three';
 
 // The air around the planet.
@@ -87,7 +88,7 @@ export const HAZE = new THREE.Color(0.66, 0.78, 0.93);
 
 // How tall the atmosphere is: the haze's scale height, the halo, how high
 // the sky reaches and the cloud layer's height all follow it.
-export const AIR = { height: 1.3, get scale() { return 0.02 * this.height; } } as const;
+export const AIR = { get height() { return 1.3 * WORLD_SCALE.linear; }, get scale() { return 0.02 * this.height; } };
 export const HAZE_DENSITY = 2.3; // veil per unit of air crossed at sea level density
 
 // Optical depth (amount of air) along the straight path from a to b, with the

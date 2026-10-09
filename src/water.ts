@@ -25,6 +25,7 @@ export interface WaterMaterial {
   material: THREE.MeshStandardMaterial;
   setTime(seconds: number): void;
   setGrid(on: boolean): void;
+  setView(mode: number): void; // 2 = debug water view: color by source, steps in red
 }
 
 export const SKY_COLOR = new THREE.Color(0.62, 0.76, 0.92);
@@ -33,11 +34,13 @@ export function makeWaterMaterial(): WaterMaterial {
   const mat = new THREE.MeshStandardMaterial({ roughness: 0.1, metalness: 0, transparent: true, depthWrite: false });
   const uTime = { value: 0 };
   const uGrid = { value: 0 };
+  const uView = { value: 0 };
   mat.onBeforeCompile = (shader) => {
     shader.uniforms['uTime'] = uTime;
     shader.uniforms['uNoise'] = { value: noiseTexture() };
     shader.uniforms['uSky'] = { value: SKY_COLOR };
     shader.uniforms['uGrid'] = uGrid;
+    shader.uniforms['uView'] = uView;
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
         attribute float depth;
@@ -46,6 +49,10 @@ export function makeWaterMaterial(): WaterMaterial {
         attribute float ring;
         attribute float unexplored;
         attribute float dim;
+        attribute float wsrc;
+        attribute float wstep;
+        varying float vSrc;
+        varying float vStep;
         varying float vDepth;
         varying vec4 vTint;
         varying vec3 vFlow;
@@ -56,6 +63,7 @@ export function makeWaterMaterial(): WaterMaterial {
       // The surface is level: its normal points straight up, away from the center.
       .replace('#include <beginnormal_vertex>', 'vec3 objectNormal = normalize(position);')
       .replace('#include <begin_vertex>', `#include <begin_vertex>
+        vSrc = wsrc; vStep = wstep;
         vDepth = depth; vTint = tint; vFlow = flow; vRing = ring; vFog = unexplored; vDim = dim;
         vObjPos = position;`);
     shader.fragmentShader = shader.fragmentShader
@@ -64,6 +72,9 @@ export function makeWaterMaterial(): WaterMaterial {
         uniform highp sampler3D uNoise;
         uniform vec3 uSky;
         uniform float uGrid;
+        uniform float uView;
+        varying float vSrc;
+        varying float vStep;
         varying float vDepth;
         varying vec4 vTint;
         varying vec3 vFlow;
@@ -123,6 +134,13 @@ export function makeWaterMaterial(): WaterMaterial {
           // Remembered but not in sight: grayed and darker, like the ground.
           col = mix(col, vec3(dot(col, vec3(0.333))), 0.5 * vDim) * (1.0 - 0.38 * vDim);
           diffuseColor = vec4(col, alpha);
+          // Debug water view: blue = sea or lake, teal = river, magenta =
+          // wetland pool; red where the surface steps (faster than a river may fall).
+          if (uView > 1.5) {
+            vec3 sc = vSrc < 0.5 ? vec3(0.15, 0.4, 1.0) : vSrc < 1.5 ? vec3(0.1, 0.85, 0.7) : vec3(0.9, 0.3, 0.9);
+            diffuseColor = vec4(mix(sc, vec3(1.0, 0.0, 0.0), smoothstep(0.8, 1.2, vStep)), 0.9);
+            foam = 0.0;
+          }
         }`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
         roughnessFactor = mix(0.16, 0.6, foam);`)
@@ -142,5 +160,5 @@ export function makeWaterMaterial(): WaterMaterial {
         }
         #include <opaque_fragment>`);
   };
-  return { material: mat, setTime: (s) => { uTime.value = s; }, setGrid: (on) => { uGrid.value = on ? 1 : 0; } };
+  return { material: mat, setTime: (s) => { uTime.value = s; }, setGrid: (on) => { uGrid.value = on ? 1 : 0; }, setView: (m) => { uView.value = m; } };
 }

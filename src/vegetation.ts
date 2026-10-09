@@ -25,6 +25,7 @@ import type { MapData } from './mapgen.ts';
 import type { TileLook } from './look.ts';
 import { isWaterKey, isWorldOcean } from './mapRules.ts';
 import { makePerlin, mulberry32, type Noise3, type Rng } from './rng.ts';
+import { WORLD_SCALE } from './worldScale.ts';
 import { CATALOG, CATALOG_KINDS, catalogEntry, type CatalogKind } from './propCatalog.ts';
 import {
   BANK_CLIMATE, COASTS, FOREST_FRINGE, HILL_ROCKS, LAKE_SHORES, MOUNTAIN_SLOPES, RIVER_BANKS, WARM_COASTS,
@@ -116,7 +117,7 @@ export class Vegetation {
           density: mix.density * HILL_DENSITY,
           entries: [...mix.entries.map(([k, s, l, z]) => [k, temperate && CONIFERS.has(k) ? s * 1.5 : s, l, z] as const), ...HILL_ROCKS],
         };
-        this.hillSpan[t] = Math.max(1e-4, looks[t].height - base[t]);
+        this.hillSpan[t] = Math.max(1e-4, (looks[t].height - base[t]) * WORLD_SCALE.linear);
       }
       this.plain.push(mix);
       this.forest[t] = !mountain && mix.density >= 35 && canopyShare(mix.entries) >= 0.35 ? 1 : 0;

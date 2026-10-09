@@ -1,8 +1,9 @@
 import './style.css';
 import { Game, HUMAN, type Unit } from './game.ts';
-import { GlobeRenderer, type Selection } from './render.ts';
+import { GlobeRenderer, type DebugView, type Selection } from './render.ts';
 import { UI, assertNever, type Action } from './ui.ts';
 import { MAP_SIZES, tileCount, unitDef, type MapSizeKey } from './rules.ts';
+import { WORLD_SCALE } from './worldScale.ts';
 
 const isMapSize = (s: string): s is MapSizeKey => s in MAP_SIZES;
 
@@ -39,12 +40,56 @@ function showStartScreen(): void {
 
 function startGame(sizeKey: MapSizeKey, seed: number): void {
   const game = new Game({ size: sizeKey, seed });
-  const view = new GlobeRenderer(document.getElementById('c') as HTMLCanvasElement, game);
+  let view = new GlobeRenderer(document.getElementById('c') as HTMLCanvasElement, game);
   const ui = new UI(game, act);
-  view.onTileHover = onHover;
-  view.onTileClick = onClick;
-  // Dev-only handle for profiling from the browser console or test scripts.
-  if (import.meta.env.DEV) Object.assign(window, { __globe: { game, view } });
+  const hook = () => {
+    view.onTileHover = onHover;
+    view.onTileClick = onClick;
+    // Dev-only handle for profiling from the browser console or test scripts.
+    if (import.meta.env.DEV) Object.assign(window, { __globe: { game, view } });
+  };
+  hook();
+
+  // Dev tuning (temporary): the world's linear size (worldScale.ts). Moving
+  // the slider rebuilds the view of the same game, keeping the camera.
+  const scalePanel = document.createElement('div');
+  scalePanel.className = 'panel';
+  scalePanel.id = 'scale';
+  scalePanel.innerHTML = `<label>Linear size <input type="range" min="0.25" max="3" step="0.05" value="${WORLD_SCALE.linear}"> <b>${WORLD_SCALE.linear.toFixed(2)}</b></label>
+    <div class="views">View <button data-view="normal" class="active">Normal</button><button data-view="height">Height</button><button data-view="water">Water</button> <kbd>J</kbd></div>`;
+  // Debug views (render.ts): height map with contours, or water by source with steps in red.
+  const VIEWS: DebugView[] = ['normal', 'height', 'water'];
+  const setView = (m: DebugView) => {
+    view.setView(m);
+    scalePanel.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((b) => b.classList.toggle('active', b.dataset['view'] === m));
+  };
+  scalePanel.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((b) => b.addEventListener('click', () => { setView(b.dataset['view'] as DebugView); b.blur(); }));
+  addEventListener('keydown', (e) => {
+    if (e.target instanceof HTMLInputElement || e.metaKey || e.ctrlKey || e.altKey || (e.key !== 'j' && e.key !== 'J')) return;
+    setView(VIEWS[(VIEWS.indexOf(view.view) + 1) % VIEWS.length]!);
+  });
+  document.getElementById('fps')!.after(scalePanel);
+  const slider = scalePanel.querySelector('input')!, shown = scalePanel.querySelector('b')!;
+  slider.addEventListener('input', () => { shown.textContent = Number(slider.value).toFixed(2); });
+  slider.addEventListener('change', () => {
+    WORLD_SCALE.linear = Number(slider.value);
+    const url = new URL(location.href);
+    url.searchParams.set('scale', slider.value);
+    history.replaceState(null, '', url);
+    const pose = view.cameraPose();
+    view.dispose();
+    // A fresh canvas: the old one's WebGL context was released.
+    const old = document.getElementById('c') as HTMLCanvasElement;
+    const canvas = old.cloneNode(false) as HTMLCanvasElement;
+    old.replaceWith(canvas);
+    const mode = view.view;
+    view = new GlobeRenderer(canvas, game);
+    hook();
+    setView(mode);
+    refresh();
+    view.restoreCamera(pose);
+    slider.blur();
+  });
   document.getElementById('hud')!.classList.remove('hidden');
 
   let sel: Selection = null;

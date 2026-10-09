@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { unitDef } from './rules.ts';
-import { GlobeCamera } from './camera.ts';
+import { GlobeCamera, type View as CameraView } from './camera.ts';
 import type { Game, Unit, City } from './game.ts';
 import { SNOW, tileLook, type TileLook } from './look.ts';
 import { buildTerrainMesh, locate, newSample, type TerrainMesh } from './terrainMesh.ts';
@@ -15,6 +15,7 @@ import { makeWeather, type Weather } from './weather.ts';
 import { buildPropGeometry, catalogEntry, CATALOG, CATALOG_KINDS, type CatalogKind } from './propCatalog.ts';
 import { Vegetation, type SpotEnv } from './vegetation.ts';
 import { mulberry32, makePerlin } from './rng.ts';
+import { WORLD_SCALE } from './worldScale.ts';
 
 const FOG = new THREE.Color(0x0b0e15);
 
@@ -25,8 +26,9 @@ const SUBDIV = 4;
 // Props: size relative to the original models, density multiplier, and the
 // number of chunks they are grouped in for horizon culling.
 const PROP_SIZE = 0.425;
-// Variant densities are per flat tile at the reference tile size.
-const PROP_DENSITY_SCALE = 1;
+// Variant densities are per flat tile at the reference tile size (and the
+// world's linear scale: bigger props, fewer of them).
+const propDensityScale = () => 1 / WORLD_SCALE.linear ** 2;
 // Per-instance variety: random tilt (radians) and color shift per channel.
 const MAX_LEAN = (6 * Math.PI) / 180;
 const HUE_JITTER = 0.12;
@@ -49,10 +51,10 @@ interface PlacedProp {
   leaf: THREE.Color;  // leaf color (the model's own, or a variant's tint)
 }
 
-// Frame rate while nothing moves (water ripples and foam still animate).
-const IDLE_FPS = 15;
 // Reference tile spacing (radians) that unit/city sizes were tuned for.
 const REF_EDGE = 0.07;
+
+export type DebugView = 'normal' | 'height' | 'water';
 
 export type Selection =
   | { kind: 'unit'; unit: Unit }
@@ -73,10 +75,6 @@ export class GlobeRenderer {
   private readonly sun: THREE.DirectionalLight;
   private readonly lastView = { pos: new THREE.Vector3(), quat: new THREE.Quaternion() };
   private shadowsDirty = true;
-  // Frames are drawn only when something changed; otherwise a slow tick keeps
-  // the water moving (IDLE_FPS).
-  private needsRender = true;
-  private lastRender = 0;
   private readonly cam: GlobeCamera;
   private readonly walk: WalkCamera;
   private readonly sky = makeSky();
@@ -133,6 +131,7 @@ export class GlobeRenderer {
   private readonly fpsEl: HTMLElement | null = document.getElementById('fps');
   private fpsFrames = 0;
   private fpsWork = 0;
+  private fpsTris = 0;
   private fpsSince = performance.now();
 
   constructor(canvas: HTMLCanvasElement, game: Game) {
@@ -309,7 +308,7 @@ export class GlobeRenderer {
     const s = this.scale;
     // Props are drawn per chunk of the globe, one instanced mesh per kind, so
     // chunks behind the horizon or off screen cost nothing.
-    for (const kind of CATALOG_KINDS) this.propGeo.set(kind, buildPropGeometry(kind, s * 1.5 * PROP_SIZE));
+    for (const kind of CATALOG_KINDS) this.propGeo.set(kind, buildPropGeometry(kind, s * 1.5 * PROP_SIZE * WORLD_SCALE.linear));
     const golden = Math.PI * (3 - Math.sqrt(5));
     for (let k = 0; k < PROP_CHUNKS; k++) {
       const y = 1 - (2 * (k + 0.5)) / PROP_CHUNKS, rr = Math.sqrt(1 - y * y);
@@ -329,7 +328,6 @@ export class GlobeRenderer {
 
     this.bindInput(canvas);
     const resize = () => {
-      this.needsRender = true;
       this.renderer.setSize(innerWidth, innerHeight);
       this.camera.aspect = innerWidth / innerHeight;
       this.camera.updateProjectionMatrix();
@@ -353,16 +351,18 @@ export class GlobeRenderer {
     this.cam.focus(this.game.tiles[tile].center);
   }
 
+  // The camera's view, to restore it in a rebuilt renderer.
+  cameraPose(): CameraView { return this.cam.view; }
+  restoreCamera(v: CameraView): void { this.cam.setView(v); }
+
   // Jump straight to a tile at the given camera distance (debug / screenshots).
   lookAt(tile: number, distance: number): void {
     this.cam.jump(this.game.tiles[tile].center, distance - 1);
-    this.needsRender = true;
   }
 
   // Redraw everything that depends on game state.
   syncWorld(sel: Selection): void {
     this.shadowsDirty = true;
-    this.needsRender = true;
     const changed = this.changedTiles();
     if (changed.length) {
       this.updateColors(changed);
@@ -375,7 +375,6 @@ export class GlobeRenderer {
 
   // Redraw selection ring, hover ring and path preview.
   syncOverlay(sel: Selection, hover: number, path: number[] | null): void {
-    this.needsRender = true;
     for (const o of this.overlayGroup.children) if (o instanceof THREE.Mesh || o instanceof THREE.Line) o.geometry.dispose();
     this.overlayGroup.clear();
     const selTile = sel?.kind === 'unit' ? sel.unit.tile : sel?.kind === 'city' ? sel.city.tile : sel?.kind === 'tile' ? sel.tile : -1;
@@ -405,11 +404,23 @@ export class GlobeRenderer {
   // Hex grid lines on or off (off by default, as in Civ V; selection and
   // hover rings always show).
   private grid = false;
+  // Debug views of the terrain: the height map (contours, no water) or the
+  // water (colored by source, steps in red). Props and clouds are hidden.
+  view: DebugView = 'normal';
+  setView(mode: DebugView): void {
+    this.view = mode;
+    const m = mode === 'normal' ? 0 : mode === 'height' ? 1 : 2;
+    this.terrainMat.setView(m);
+    this.waterMat.setView(m);
+    this.waterMesh.visible = mode !== 'height';
+    this.weather.group.visible = mode === 'normal';
+    this.shadowsDirty = true;
+  }
+
   setGrid(on: boolean): void {
     this.grid = on;
     this.terrainMat.setGrid(on);
     this.waterMat.setGrid(on);
-    this.needsRender = true;
   }
 
   // Walk mode on or off: walking starts where the map view looks, facing up
@@ -427,7 +438,6 @@ export class GlobeRenderer {
     }
     this.cam.enabled = !on;
     this.camera.updateProjectionMatrix();
-    this.needsRender = true;
     this.shadowsDirty = true;
     if (on && !this.walkHint) {
       this.walkHint = document.createElement('div');
@@ -552,7 +562,7 @@ export class GlobeRenderer {
     const g = this.game, veg = this.vegetation, topo = this.terrain.topo;
     const out: PlacedProp[] = [];
     const tile = g.tiles[t];
-    const most = Math.max(veg.maxDensity(t), ...tile.neighbors.map((u) => veg.maxDensity(u))) * PROP_DENSITY_SCALE;
+    const most = Math.max(veg.maxDensity(t), ...tile.neighbors.map((u) => veg.maxDensity(u))) * propDensityScale();
     if (most > 0) {
       const co = new Float32Array(FAN_COORDS);
       const delta = [0, 0, 0];
@@ -602,7 +612,7 @@ export class GlobeRenderer {
             if (env.inland.lengthSq() > 1e-6) env.inland.normalize();
             // Gentle large-scale variation in density, never clearings.
             const vary = 0.85 + 0.3 * this.propNoise.fbm(p.x * 9, p.y * 9, p.z * 9, 2);
-            if (keep >= Math.min(1, (veg.density(env) * PROP_DENSITY_SCALE / spots) * vary)) continue;
+            if (keep >= Math.min(1, (veg.density(env) * propDensityScale() / spots) * vary)) continue;
             const prop = veg.pick(env, mulberry32(Math.floor(seed * 4294967296)), ancient && u === t);
             if (!prop) continue;
             if (prop.size > 2) ancient = false;
@@ -700,7 +710,7 @@ export class GlobeRenderer {
     const altitude = (dist - 1) / this.scale;
     for (const chunk of this.chunks) {
       const seen = camDir.angleTo(chunk.dir) < horizon + chunk.radius;
-      for (const mesh of chunk.meshes.values()) mesh.visible = seen && altitude < (mesh.userData['hideAbove'] as number);
+      for (const mesh of chunk.meshes.values()) mesh.visible = this.view === 'normal' && seen && altitude < (mesh.userData['hideAbove'] as number);
     }
   }
 
@@ -967,7 +977,7 @@ export class GlobeRenderer {
     const t = performance.now();
     const dt = Math.min(0.1, (t - this.lastFrame) / 1000);
     this.lastFrame = t;
-    if (this.walk.active ? this.walk.update(dt) : this.cam.update(dt)) this.needsRender = true;
+    if (this.walk.active) this.walk.update(dt); else this.cam.update(dt);
 
     if (this.pointer.dirty && !this.walk.active) {
       this.pointer.dirty = false;
@@ -978,10 +988,9 @@ export class GlobeRenderer {
       }
     }
 
+    // Every display frame: water, clouds and rain keep moving smoothly. (The
+    // shadow map still re-renders only when the view or the world changes.)
     const now = performance.now();
-    if (!this.needsRender && now - this.lastRender < 1000 / IDLE_FPS) return;
-    this.needsRender = false;
-    this.lastRender = now;
     this.updateSun();
     this.updateAir();
     this.cullProps();
@@ -994,19 +1003,21 @@ export class GlobeRenderer {
       this.walk.active ? 1 : smoothstep(0.2, 0.55, alt / AIR.height), { color: fog.color, density: fog.density });
     const t0 = performance.now();
     this.renderer.render(this.scene, this.camera);
-    this.countFrame(performance.now() - t0);
+    this.countFrame(performance.now() - t0, this.renderer.info.render.triangles);
   }
 
-  // FPS counter: frames drawn per second (frames are only drawn when
-  // something changes, plus the idle tick) and CPU time per frame.
-  private countFrame(ms: number): void {
+  // FPS counter: frames drawn per second, CPU time per frame and triangles
+  // drawn per frame (shadow passes included).
+  private countFrame(ms: number, tris: number): void {
     if (!this.fpsEl) return;
     this.fpsFrames++;
     this.fpsWork += ms;
+    this.fpsTris = tris;
     const now = performance.now();
     if (now - this.fpsSince < 500) return;
     const fps = (this.fpsFrames * 1000) / (now - this.fpsSince);
-    this.fpsEl.textContent = `${fps.toFixed(0)} fps · ${(this.fpsWork / this.fpsFrames).toFixed(1)} ms`;
+    const tri = this.fpsTris >= 1e6 ? `${(this.fpsTris / 1e6).toFixed(1)}M` : `${Math.round(this.fpsTris / 1e3)}k`;
+    this.fpsEl.textContent = `${fps.toFixed(0)} fps · ${(this.fpsWork / this.fpsFrames).toFixed(1)} ms · ${tri} tris`;
     this.fpsFrames = 0; this.fpsWork = 0; this.fpsSince = now;
   }
 }

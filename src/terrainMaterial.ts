@@ -1,3 +1,4 @@
+import { WORLD_SCALE } from './worldScale.ts';
 import * as THREE from 'three';
 import { mulberry32 } from './rng.ts';
 
@@ -112,6 +113,7 @@ export interface TerrainMaterial {
   material: THREE.MeshStandardMaterial;
   setTime(seconds: number): void;
   setGrid(on: boolean): void; // the hex grid lines (fog of war shows them regardless)
+  setView(mode: number): void; // debug views: 0 normal, 1 height map, 2 water (ground grayed)
 }
 
 export interface PaintUniforms {
@@ -158,7 +160,9 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
   const mat = new THREE.MeshStandardMaterial({ roughness: 1, metalness: 0 });
   const uTime = { value: 0 };
   const uGrid = { value: 0 };
+  const uView = { value: 0 };
   const noise = noiseTexture();
+  const X = WORLD_SCALE.linear;
   mat.onBeforeCompile = (shader) => {
     shader.uniforms['uTime'] = uTime;
     shader.uniforms['uTileTex'] = { value: paint.tileTex };
@@ -168,6 +172,7 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
     shader.uniforms['uFine'] = { value: paint.fine };
     shader.uniforms['uFineFreq'] = { value: paint.fineFreq };
     shader.uniforms['uGrid'] = uGrid;
+    shader.uniforms['uView'] = uView;
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
         attribute float ring;
@@ -203,6 +208,7 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
         uniform float uFine;
         uniform float uFineFreq;
         uniform float uGrid;
+        uniform float uView;
         varying vec4 vPc0;
         varying vec2 vPc1;
         varying float vRing;
@@ -297,8 +303,8 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
           if (dry > 0.0) {
             float steep = 1.0 - dot(normalize(vObjNormal), normalize(P));
             float alt = length(P) - 1.0;
-            float allow = max(vRock.a, smoothstep(0.016, 0.026, alt));
-            float alpine = smoothstep(0.026, 0.036, alt);
+            float allow = max(vRock.a, smoothstep(${(0.016 * X).toFixed(5)}, ${(0.026 * X).toFixed(5)}, alt));
+            float alpine = smoothstep(${(0.026 * X).toFixed(5)}, ${(0.036 * X).toFixed(5)}, alt);
             rock = max(smoothstep(0.04, 0.09, steep) * allow, alpine) * dry * (1.0 - 0.8 * vSnow) * (1.0 - vBank);
             diffuseColor.rgb = mix(diffuseColor.rgb, vRock.rgb * (0.88 + 0.24 * patchy), rock * 0.8);
           }
@@ -336,6 +342,23 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
           gridLine = 1.0 - smoothstep(0.0, fw * 1.5, 1.0 - vRing);
           gridLine *= (1.0 - smoothstep(0.05, 0.16, fw)) * dry; // the water surface draws its own
           diffuseColor.rgb *= 1.0 - 0.18 * gridLine * uGrid;
+
+          // Debug views: the ground's height as colors with contour lines
+          // (thin every 0.0005, thick every 0.0025), so steps, terraces and
+          // trenches show as bunched lines.
+          if (uView > 0.5) {
+            float alt = length(vObjPos) - 1.0;
+            vec3 hc = alt < 0.0 ? mix(vec3(0.05, 0.15, 0.45), vec3(0.45, 0.75, 0.95), clamp(1.0 + alt / 0.008, 0.0, 1.0))
+              : alt < 0.01 ? mix(vec3(0.15, 0.5, 0.2), vec3(0.75, 0.8, 0.3), alt / 0.01)
+              : alt < 0.025 ? mix(vec3(0.75, 0.8, 0.3), vec3(0.8, 0.45, 0.15), (alt - 0.01) / 0.015)
+              : mix(vec3(0.8, 0.45, 0.15), vec3(1.0), clamp((alt - 0.025) / 0.03, 0.0, 1.0));
+            float c1 = alt / 0.0005, c2 = alt / 0.0025;
+            float l1 = 1.0 - smoothstep(0.0, fwidth(c1) * 1.2, abs(fract(c1 - 0.5) - 0.5));
+            float l2 = 1.0 - smoothstep(0.0, fwidth(c2) * 1.5, abs(fract(c2 - 0.5) - 0.5));
+            hc *= 1.0 - 0.25 * l1 * (1.0 - smoothstep(0.2, 0.6, fwidth(c1))) - 0.5 * l2;
+            if (uView > 1.5) hc = mix(vec3(dot(hc, vec3(0.333))), hc, 0.25);
+            diffuseColor.rgb = hc;
+          }
         }`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
         roughnessFactor = mix(1.0, 0.5, wetGround);`)
@@ -353,5 +376,5 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
         }
         #include <opaque_fragment>`);
   };
-  return { material: mat, setTime: (s) => { uTime.value = s; }, setGrid: (on) => { uGrid.value = on ? 1 : 0; } };
+  return { material: mat, setTime: (s) => { uTime.value = s; }, setGrid: (on) => { uGrid.value = on ? 1 : 0; }, setView: (m) => { uView.value = m; } };
 }

@@ -22,8 +22,10 @@
 //    the coast, the river cuts a valley instead of a waterfall. Rivers that
 //    come close (a tributary beside the river it joins, a meander folding
 //    back) share one level there.
-// 4. Pools. Wetlands get pools of their own water among dry tussocks; oases
-//    a pond. Coastal wetlands sit at sea level.
+// 4. Pools. Wetlands get pools of still water among dry tussocks; oases
+//    a pond. Pools are dug into the height map as it is: each one lies
+//    within a narrow band of its contours, holds one flat level just under
+//    its lowest ground (so it never spills), and is dug down to that level.
 //
 // Water stands wherever the water level is above the ground: sea level
 // everywhere, a river's level near the river, a wetland's level on it.
@@ -38,6 +40,7 @@ import { fanCoords, fanFrames, softAt, FAN_COORDS, type PaintData } from './pain
 import { riverCurve } from './riverCurve.ts';
 import { locate, newSample, type Topology, type SurfaceFields } from './terrainMesh.ts';
 import { makePerlin, mulberry32 } from './rng.ts';
+import { WORLD_SCALE } from './worldScale.ts';
 import { erosionAt, type ErosionParams } from './erosion.ts';
 
 // River courses as drawn: points from source to the end inside the water.
@@ -54,6 +57,7 @@ export interface RiverCourse {
 export interface Surface {
   fields: SurfaceFields;
   coast: Float32Array; // signed distance to the painted shore per vertex (radians, land > 0)
+  source: Uint8Array;  // whose water level each vertex has: 0 sea or lake (or none), 1 river, 2 pool
   rivers: RiverCourse[];
 }
 
@@ -65,7 +69,8 @@ const K_BANK = 0.6;    // slope of the channel's banks
 const BANK_H = 0.00025; // height of the banks above the water, before the valley's gentler slope
 const K_VALLEY = 0.16; // slope of the valley sides a river cuts
 const POOL_DEPTH = 0.0004;
-const POOL_BANK = 0.0002; // pools sit this far under their tile's ground
+const POOL_BANK = 0.0002; // pool water sits this far under the lowest ground around it
+const POOL_BAND = 0.0012; // height range of one pool body: pools on slopes step down in terraces
 const LAKE_BANK = 0.0006; // lakes sit this far under the lowest land around them
 const COAST_CAP = 3;
 // Land near open water (tile radii): the water's level reaches SHORE_WATER
@@ -124,15 +129,12 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
   const lake = new Float32Array(V);    // share of that water that is lake
   const bed = new Float32Array(V);     // bed level
   const poolQ = new Float32Array(V);   // soft weight of pool tiles (wetlands, oases)
-  const poolLvl = new Float32Array(V); // their water level
   const poolThr = new Float32Array(V); // their flooding threshold
   const poolPond = new Float32Array(V);
   const poolTint = new Float32Array(V * 4);
   const co = new Float32Array(FAN_COORDS);
   // Tiles that make up mountain ranges (volcanoes are cones of their own).
   const inRange = (t: number) => map.relief[t] === 'mountains' && !looks[t].water && map.feature[t] !== 'volcano';
-  // Pools sit just under their own ground.
-  const poolLevelOf = tiles.map((tile) => (looks[tile.id].pool ? looks[tile.id].height - POOL_BANK : 0));
   const bodyLevel = waterLevels(globe, map, looks, relief);
   const tintRGB = (t: WaterTint) => new THREE.Color(t.deep);
   const poolColor = tiles.map((tile) => { const pl = looks[tile.id].pool; return pl ? tintRGB(pl.tint) : null; });
@@ -141,7 +143,7 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
     const fan = paint.fans[f];
     fanCoords(frames[f], fan, topo.warp.subarray(v * 3, v * 3 + 3), topo.dir[v * 3], topo.dir[v * 3 + 1], topo.dir[v * 3 + 2], co);
     const w = softAt(paint, f, co);
-    let m = 0, lk = 0, b = 0, q = 0, lvl = 0, thr = 0, pond = 0, wl = 0;
+    let m = 0, lk = 0, b = 0, q = 0, thr = 0, pond = 0, wl = 0;
     const tint = [0, 0, 0, 0];
     for (let k = 0; k < 4; k++) {
       if (w[k] <= 0) continue;
@@ -150,7 +152,7 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
       if (inRange(u)) { rocky[v] += w[k]; rockH[v] += w[k] * relief.peak[u]; }
       b += w[k] * l.bed;
       if (l.pool) {
-        q += w[k]; lvl += w[k] * poolLevelOf[u]; thr += w[k] * l.pool.threshold; pond += w[k] * (l.pool.pond ? 1 : 0);
+        q += w[k]; thr += w[k] * l.pool.threshold; pond += w[k] * (l.pool.pond ? 1 : 0);
         const c = poolColor[u]!;
         tint[0] += w[k] * c.r; tint[1] += w[k] * c.g; tint[2] += w[k] * c.b; tint[3] += w[k] * l.pool.tint.murk;
       }
@@ -158,7 +160,7 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
     wet[v] = m; lake[v] = m > 0 ? lk / m : 0; bed[v] = b; poolQ[v] = q;
     level0[v] = m > 0 ? wl / m : SEA_LEVEL;
     if (q > 0) {
-      poolLvl[v] = lvl / q; poolThr[v] = thr / q; poolPond[v] = pond / q;
+      poolThr[v] = thr / q; poolPond[v] = pond / q;
       for (let c = 0; c < 4; c++) poolTint[v * 4 + c] = tint[c] / q;
     }
   }
@@ -278,7 +280,10 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
       }
       mask = next;
     }
-    const P: ErosionParams = { wavelength: EROSION.wavelength * r0, octaves: EROSION.octaves, amplitude: EROSION.amplitude, slope: EROSION.slope, seed: seed ^ 0x6e70 };
+    // Gullies follow the relief's scale: as deep, relative to it, and starting
+    // on the same (relative) slopes.
+    const X = WORLD_SCALE.linear;
+    const P: ErosionParams = { wavelength: EROSION.wavelength * r0, octaves: EROSION.octaves, amplitude: EROSION.amplitude * X, slope: [EROSION.slope[0] * X, EROSION.slope[1] * X], seed: seed ^ 0x6e70 };
     for (let v = 0; v < V; v++) {
       const m = mask[v] * ramp[v];
       if (coast[v] < 0 || m <= 0.01) continue;
@@ -507,18 +512,24 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
   }
 
   // ---- 4. pools: away from the coast and from rivers (no steps between waters) ----
+  // Where the pools are (pwOf, 0..1): a noise mask over the wetland, eased
+  // to nothing at its edge.
   {
     const fp = 1 / (0.42 * r0);
+    const pwOf = new Float32Array(V);
+    // Vertices on the edge of a coarser tile are fixed to that tile's edge
+    // by the mesh (its T-junctions), so a pool there would not hold; nor
+    // where a sea's or lake's water already reaches.
+    const levels = meshLevels(globe, map, looks);
+    const seam = (v: number) => { for (let s = 0; s < 3; s++) { const t = topo.owners[v * 3 + s]; if (t >= 0 && levels[t] < 4) return true; } return false; };
     for (let v = 0; v < V; v++) {
       const q = poolQ[v];
-      if (q <= 0.25) continue;
-      dirOf(v, d);
-      // Filled to just under the ground they are cut into, which descends
-      // toward a shore like the land around it.
-      const lvl = shoreLevel[v] + (poolLvl[v] - shoreLevel[v]) * ramp[v];
+      if (q <= 0.45 || seam(v) || water[v] !== NONE) continue;
       const nearRiver = smoothstep(MARGIN, MARGIN + 0.25 * r0, riverGap[v]);
-      if (nearRiver <= 0) continue;
-      const clear = smoothstep(0.15 * r0, 0.4 * r0, coast[v]) * nearRiver;
+      // Clear of rivers, and a strip of dry land along the shore.
+      const clear = smoothstep(0.1 * r0, 0.3 * r0, coast[v]) * nearRiver;
+      if (clear <= 0) continue;
+      dirOf(v, d);
       let p: number;
       if (poolPond[v] > 0.5) {
         // Oasis: one pond around the tile center.
@@ -529,16 +540,63 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
         const n = noise.fbm(d.x * fp + 7.3, d.y * fp, d.z * fp - 2.1, 3);
         p = smoothstep(poolThr[v] - 0.07, poolThr[v] + 0.07, n);
       }
-      const pw = p * smoothstep(0.45, 0.85, q) * clear;
-      const flat = lvl + BANK_H - (BANK_H + POOL_DEPTH) * pw + 0.00008 * noise.noise(d.x * fp * 3, d.y * fp * 3, d.z * fp * 3);
-      let h = height[v] + (flat - height[v]) * smoothstep(0.25, 0.6, q) * clear;
-      if (q > 0.3) {
-        // Outside the pools the ground stays above their water, so every pool
-        // has a rim of dry ground and no water spills or slopes away.
-        if (pw < 0.02) h = Math.max(h, lvl + 0.0001);
-        if (lvl >= water[v]) { water[v] = lvl; source[v] = 2; }
+      pwOf[v] = p * smoothstep(0.45, 0.85, q) * clear;
+    }
+    // Pools follow the height map's contours: each body lies within one band
+    // of POOL_BAND in height, so it is never much higher at one end than at
+    // the other. Where a pool crosses into a higher band, that ground is left
+    // as a narrow dyke between the two (terraced pools on slopes).
+    const band = (v: number) => Math.floor(height[v] / POOL_BAND);
+    const inPool = new Uint8Array(V);
+    for (let v = 0; v < V; v++) inPool[v] = pwOf[v] >= 0.02 ? 1 : 0;
+    const dyke: number[] = [];
+    for (let v = 0; v < V; v++) {
+      if (!inPool[v]) continue;
+      for (let k = topo.adjStart[v]; k < topo.adjStart[v + 1]; k++) {
+        const u = topo.adj[k];
+        if (pwOf[u] >= 0.02 && band(u) < band(v)) { dyke.push(v); break; }
       }
-      height[v] = h;
+    }
+    for (const v of dyke) inPool[v] = 0;
+    // Each connected body is one level of still water, POOL_BANK under the
+    // lowest ground of its rim, so it never spills.
+    const body = new Float32Array(V).fill(NaN);
+    const stack: number[] = [], members: number[] = [];
+    for (let v0 = 0; v0 < V; v0++) {
+      if (!inPool[v0] || !Number.isNaN(body[v0])) continue;
+      const b0 = band(v0);
+      let low = Infinity;
+      members.length = 0;
+      stack.push(v0); body[v0] = 0;
+      while (stack.length) {
+        const v = stack.pop()!;
+        members.push(v);
+        for (let k = topo.adjStart[v]; k < topo.adjStart[v + 1]; k++) {
+          const u = topo.adj[k];
+          if (inPool[u] && band(u) === b0) { if (Number.isNaN(body[u])) { body[u] = 0; stack.push(u); } }
+          else low = Math.min(low, height[u]); // the rim
+        }
+      }
+      if (!Number.isFinite(low)) for (const v of members) low = Math.min(low, height[v]);
+      for (const v of members) body[v] = low - POOL_BANK;
+    }
+    // The dip: down to POOL_DEPTH under the body's level in the middle of the
+    // pool, easing back to the ground as it is toward the pool's edge. Within
+    // one band this is never deeper than about two bands.
+    for (let v = 0; v < V; v++) {
+      const lvl = body[v];
+      if (Number.isNaN(lvl)) continue;
+      height[v] -= pwOf[v] * Math.max(0, height[v] - lvl + POOL_DEPTH);
+      if (lvl >= water[v]) { water[v] = lvl; source[v] = 2; }
+    }
+    // Rim vertices: the water reaches them (so the surface meets the ground
+    // there), but their ground is above it.
+    for (let v = 0; v < V; v++) {
+      if (!Number.isNaN(body[v])) continue;
+      for (let k = topo.adjStart[v]; k < topo.adjStart[v + 1]; k++) {
+        const lvl = body[topo.adj[k]];
+        if (!Number.isNaN(lvl) && lvl >= water[v]) { water[v] = lvl; source[v] = 2; }
+      }
     }
   }
 
@@ -559,9 +617,11 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
     fields: {
       height, water,
       ground: { bank },
-      water3d: [{ name: 'tint', itemSize: 4, data: tint }, { name: 'flow', itemSize: 3, data: flowVec }],
+      water3d: [{ name: 'tint', itemSize: 4, data: tint }, { name: 'flow', itemSize: 3, data: flowVec },
+        { name: 'wsrc', itemSize: 1, data: Float32Array.from(source) }, { name: 'wstep', itemSize: 1, data: waterSteps(topo, height, water) }],
     },
     coast,
+    source,
     rivers: courses,
   };
 }
@@ -658,6 +718,24 @@ export function waterLevels(globe: Globe, map: MapData, looks: readonly TileLook
     for (const t of lake) level[t] = l;
   }
   return level;
+}
+
+// Per vertex under water: how steeply its water level changes toward wet
+// neighbors, as a share of the steepest a surface may be (twice a river's
+// steepest fall, as in test W5): above 1 is a step in the water.
+function waterSteps(topo: Topology, height: Float32Array, water: Float32Array): Float32Array {
+  const out = new Float32Array(topo.V);
+  const D = topo.dir;
+  for (let v = 0; v < topo.V; v++) {
+    if (water[v] <= height[v]) continue;
+    for (let k = topo.adjStart[v]; k < topo.adjStart[v + 1]; k++) {
+      const u = topo.adj[k];
+      if (water[u] <= height[u]) continue;
+      const dist = Math.hypot(D[u * 3] - D[v * 3], D[u * 3 + 1] - D[v * 3 + 1], D[u * 3 + 2] - D[v * 3 + 2]);
+      out[v] = Math.max(out[v], Math.abs(water[u] - water[v]) / (2 * MAX_RIVER_SLOPE * dist + 2e-5));
+    }
+  }
+  return out;
 }
 
 class MinHeap {

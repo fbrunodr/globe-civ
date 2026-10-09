@@ -120,15 +120,13 @@ describe('surface', () => {
       });
 
       it(`W5 ${size} seed ${seed}: the water surface has no steps`, () => {
-        // Between neighboring vertices that are both under open water or a
-        // river, the water level changes no faster than a river may fall (no
-        // walls of water where two waters meet). Wetland pools (and the edge
-        // of their painting on neighboring tiles) are left out: near a coast
-        // they ease down to sea level.
+        // Between neighboring vertices that are both under water (sea, lake,
+        // river or wetland pool), the water level changes no faster than a
+        // river may fall: no walls of water where two waters meet, and every
+        // pool is flat.
         const { topo, fields } = mesh;
         const steps: string[] = [];
-        const nearPool = (t: number) => looks[t].pool !== null || globe.tiles[t].neighbors.some((nb) => looks[nb].pool !== null);
-        const wetAt = (v: number) => fields.water[v] > fields.height[v] && !nearPool(topo.tile[v]);
+        const wetAt = (v: number) => fields.water[v] > fields.height[v];
         for (let v = 0; v < topo.V; v++) {
           if (!wetAt(v)) continue;
           for (let k = topo.adjStart[v]; k < topo.adjStart[v + 1]; k++) {
