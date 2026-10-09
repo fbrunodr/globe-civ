@@ -408,8 +408,15 @@ export class GlobeRenderer {
     this.terrainMat.setView(m);
     this.waterMat.setView(m);
     this.waterMesh.visible = mode !== 'height';
-    this.weather.group.visible = mode === 'normal';
+    this.weather.group.visible = mode === 'normal' && this.clouds;
     this.shadowsDirty = true;
+  }
+
+  // Clouds and rain on or off (the debug views always hide them).
+  clouds = true;
+  setClouds(on: boolean): void {
+    this.clouds = on;
+    this.weather.group.visible = on && this.view === 'normal';
   }
 
   setGrid(on: boolean): void {

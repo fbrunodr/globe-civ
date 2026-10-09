@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>World View</title>
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+    <div id="hud">
+      <div id="topbar">
+        <span id="civ">World view</span>
+        <label>Size <select id="size"></select></label>
+        <label>Seed <input id="seed" size="9" /></label>
+        <button id="random">Random</button>
+        <button id="generate" class="primary">Generate <kbd>Enter</kbd></button>
+        <span class="spacer"></span>
+        <span id="hint"></span>
+      </div>
+      <div id="tileinfo" class="panel hidden"></div>
+      <div id="side">
+        <div id="fps" class="panel">– fps</div>
+        <div id="views" class="panel">View <button data-view="normal" class="active">Normal</button><button data-view="height">Height</button><button data-view="water">Water</button> <kbd>J</kbd> · <button id="clouds" class="active">Clouds</button> <kbd>K</kbd> · <button id="sight" class="active">In sight</button> <kbd>F</kbd></div>
+        <details id="help" class="panel">
+          <summary>Controls</summary>
+          <div>Drag: move · Wheel: zoom (the view tilts as you get closer)</div>
+          <div>Right-drag or <kbd>Shift</kbd>+drag: rotate and tilt</div>
+          <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Q</kbd>/<kbd>E</kbd> rotate · <kbd>T</kbd>/<kbd>G</kbd> tilt · <kbd>Z</kbd>/<kbd>X</kbd> zoom</div>
+          <div><kbd>H</kbd> hex grid on/off · <kbd>V</kbd> walk on the surface · <kbd>J</kbd> debug views · <kbd>K</kbd> clouds · <kbd>F</kbd> in sight / explored only</div>
+        </details>
+      </div>
+    </div>
+    <script type="module" src="/src/worldView.ts"></script>
+  </body>
+</html>
