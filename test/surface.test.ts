@@ -10,7 +10,7 @@ import { buildPaintData, warpAt } from '../src/paint.ts';
 import { buildRelief } from '../src/relief.ts';
 import { tileLook } from '../src/look.ts';
 import { buildTerrainMesh, locate } from '../src/terrainMesh.ts';
-import { buildSurface, meshLevels, waterLevels, MAX_RIVER_SLOPE, LOWLAND, type Surface } from '../src/surface.ts';
+import { buildSurface, meshLevels, waterLevels, LOWLAND, type Surface } from '../src/surface.ts';
 import type { MapSizeKey } from '../src/rules.ts';
 
 const SEEDS: Record<MapSizeKey, number[]> = { small: [1, 2], medium: [4], large: [6] };
@@ -64,7 +64,7 @@ describe('surface', () => {
           }
           for (let j = 0; j + 1 < n; j++) {
             expect(c.level[j + 1]).toBeLessThanOrEqual(c.level[j] + 1e-12);
-            expect(c.level[j] - c.level[j + 1]).toBeLessThanOrEqual(MAX_RIVER_SLOPE * c.pts[j].distanceTo(c.pts[j + 1]) + 1e-12);
+            expect(c.level[j] - c.level[j + 1]).toBeLessThanOrEqual(Math.min(c.fall[j], c.fall[j + 1]) * c.pts[j].distanceTo(c.pts[j + 1]) + 1e-12);
           }
         }
       });
@@ -122,8 +122,9 @@ describe('surface', () => {
       it(`W5 ${size} seed ${seed}: the water surface has no steps`, () => {
         // Between neighboring vertices that are both under water (sea, lake,
         // river or wetland pool), the water level changes no faster than a
-        // river may fall: no walls of water where two waters meet, and every
-        // pool is flat.
+        // river may fall there (steeply only on mountains, where rivers run in
+        // rapids and falls): no walls of water where two waters meet, and
+        // every pool is flat.
         const { topo, fields } = mesh;
         const steps: string[] = [];
         const wetAt = (v: number) => fields.water[v] > fields.height[v];
@@ -134,7 +135,7 @@ describe('surface', () => {
             if (u < v || !wetAt(u)) continue;
             const dist = Math.hypot(topo.dir[u * 3] - topo.dir[v * 3], topo.dir[u * 3 + 1] - topo.dir[v * 3 + 1], topo.dir[u * 3 + 2] - topo.dir[v * 3 + 2]);
             const dw = Math.abs(fields.water[u] - fields.water[v]);
-            if (dw > 2 * MAX_RIVER_SLOPE * dist + 2e-5) steps.push(`tile ${topo.tile[v]}: ${dw.toFixed(5)}`);
+            if (dw > 2 * Math.max(surface.fall[u], surface.fall[v]) * dist + 2e-5) steps.push(`tile ${topo.tile[v]}: ${dw.toFixed(5)}`);
           }
         }
         expect(steps.slice(0, 10)).toEqual([]);

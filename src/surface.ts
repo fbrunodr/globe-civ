@@ -19,7 +19,9 @@
 //    level never rises downstream, stays a little under the banks, ends at
 //    sea level at the mouth (or at the level of the river it joins), and
 //    never falls steeper than MAX_RIVER_SLOPE: where the land is high near
-//    the coast, the river cuts a valley instead of a waterfall. Rivers that
+//    the coast, the river cuts a valley instead of a waterfall. On mountains
+//    it may fall as steeply as STEEP_RIVER_SLOPE, running down the slope in
+//    rapids and falls instead of cutting through the range. Rivers that
 //    come close (a tributary beside the river it joins, a meander folding
 //    back) share one level there.
 // 4. Pools. Wetlands get pools of still water among dry tussocks; oases
@@ -50,6 +52,7 @@ export interface RiverCourse {
   depth: number[]; // water depth in the middle of the channel
   ground: number[]; // the ground along the course before it was cut (lowest of middle and banks)
   mouth: number;   // index of the point where the drawn course met the coast (or the river it joins)
+  fall: number[];  // steepest fall allowed at each point (height per radian)
   tributary: boolean;
 }
 
@@ -57,6 +60,7 @@ export interface Surface {
   fields: SurfaceFields;
   coast: Float32Array; // signed distance to the painted shore per vertex (radians, land > 0)
   source: Uint8Array;  // whose water level each vertex has: 0 sea or lake (or none), 1 river, 2 pool
+  fall: Float32Array;  // steepest a river may fall at each vertex (height per radian): steeper on mountains
   rivers: RiverCourse[];
 }
 
@@ -64,6 +68,9 @@ export interface Surface {
 export const RIVER_BANK = 0.0004;
 // Steepest a river may fall (height per radian along its course).
 export const MAX_RIVER_SLOPE = 0.07;
+// On mountains a river may fall as steeply as this: it runs down the slope
+// in rapids and falls instead of cutting a valley through the range.
+export const STEEP_RIVER_SLOPE = 2;
 const K_BANK = 0.6;    // slope of the channel's banks
 const BANK_H = 0.00025; // height of the banks above the water, before the valley's gentler slope
 const K_VALLEY = 0.16; // slope of the valley sides a river cuts
@@ -383,6 +390,8 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
       }
     }
     const n = pts.length;
+    // Steepest fall at each point: steep on mountains (rapids and falls).
+    const fall = pts.map((p) => MAX_RIVER_SLOPE + (STEEP_RIVER_SLOPE - MAX_RIVER_SLOPE) * smoothstep(0.3, 0.7, sampleField(rocky, p)));
     // Width: from the flow, varying a little along the course, and narrow
     // at the source.
     let along = 0;
@@ -402,15 +411,16 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
       return Math.min(sampleField(height, p), sampleField(height, a), sampleField(height, b));
     });
     // Levels: never rising downstream, under the banks, at least the level
-    // it ends in, then no steeper than MAX_RIVER_SLOPE (cutting a valley).
+    // it ends in, then no steeper than its fall (MAX_RIVER_SLOPE, cutting a
+    // valley; STEEP_RIVER_SLOPE on mountains).
     const level = new Array<number>(n);
     for (let j = 0; j < n; j++) {
       const under = ground[j] - RIVER_BANK;
       level[j] = Math.max(joinLevel, j === 0 ? under : Math.min(level[j - 1], under));
     }
     level[n - 1] = joinLevel; // meets the sea, or the river it joins, at its level
-    for (let j = n - 2; j >= 0; j--) level[j] = Math.min(level[j], level[j + 1] + MAX_RIVER_SLOPE * pts[j].distanceTo(pts[j + 1]));
-    courses.push({ pts, level, half, depth, ground, mouth, tributary: r.tributary });
+    for (let j = n - 2; j >= 0; j--) level[j] = Math.min(level[j], level[j + 1] + Math.min(fall[j], fall[j + 1]) * pts[j].distanceTo(pts[j + 1]));
+    courses.push({ pts, level, half, depth, ground, mouth, fall, tributary: r.tributary });
   }
 
   // Rivers that come close (a tributary beside the river it joins, two
@@ -450,7 +460,7 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
         const n = c.pts.length;
         for (let j = 1; j < n; j++) c.level[j] = Math.min(c.level[j], c.level[j - 1]);
         if (!c.tributary) c.level[n - 1] = ends[ci];
-        for (let j = n - 2; j >= 0; j--) c.level[j] = Math.max(ends[ci], Math.min(c.level[j], c.level[j + 1] + MAX_RIVER_SLOPE * c.pts[j].distanceTo(c.pts[j + 1])));
+        for (let j = n - 2; j >= 0; j--) c.level[j] = Math.max(ends[ci], Math.min(c.level[j], c.level[j + 1] + Math.min(c.fall[j], c.fall[j + 1]) * c.pts[j].distanceTo(c.pts[j + 1])));
       });
     }
   }
@@ -633,6 +643,9 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
     }
   }
 
+  // Steepest a river may fall at each vertex (rapids on mountains).
+  const fall = Float32Array.from(rocky, (r) => MAX_RIVER_SLOPE + (STEEP_RIVER_SLOPE - MAX_RIVER_SLOPE) * smoothstep(0.3, 0.7, r));
+
   // ---- water look per vertex: deep color and murk ----
   const tint = new Float32Array(V * 4);
   const ocean = tintRGB(SEA_TINT.ocean), lakeC = tintRGB(SEA_TINT.lake), river = tintRGB(RIVER_TINT);
@@ -651,10 +664,11 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
       height, water,
       ground: { bank, shore },
       water3d: [{ name: 'tint', itemSize: 4, data: tint }, { name: 'flow', itemSize: 3, data: flowVec },
-        { name: 'wsrc', itemSize: 1, data: Float32Array.from(source) }, { name: 'wstep', itemSize: 1, data: waterSteps(topo, height, water) }],
+        { name: 'wsrc', itemSize: 1, data: Float32Array.from(source) }, { name: 'wstep', itemSize: 1, data: waterSteps(topo, height, water, fall) }],
     },
     coast,
     source,
+    fall,
     rivers: courses,
   };
 }
@@ -756,7 +770,7 @@ export function waterLevels(globe: Globe, map: MapData, looks: readonly TileLook
 // Per vertex under water: how steeply its water level changes toward wet
 // neighbors, as a share of the steepest a surface may be (twice a river's
 // steepest fall, as in test W5): above 1 is a step in the water.
-function waterSteps(topo: Topology, height: Float32Array, water: Float32Array): Float32Array {
+function waterSteps(topo: Topology, height: Float32Array, water: Float32Array, fall: Float32Array): Float32Array {
   const out = new Float32Array(topo.V);
   const D = topo.dir;
   for (let v = 0; v < topo.V; v++) {
@@ -765,7 +779,7 @@ function waterSteps(topo: Topology, height: Float32Array, water: Float32Array): 
       const u = topo.adj[k];
       if (water[u] <= height[u]) continue;
       const dist = Math.hypot(D[u * 3] - D[v * 3], D[u * 3 + 1] - D[v * 3 + 1], D[u * 3 + 2] - D[v * 3 + 2]);
-      out[v] = Math.max(out[v], Math.abs(water[u] - water[v]) / (2 * MAX_RIVER_SLOPE * dist + 2e-5));
+      out[v] = Math.max(out[v], Math.abs(water[u] - water[v]) / (2 * Math.max(fall[u], fall[v]) * dist + 2e-5));
     }
   }
   return out;
