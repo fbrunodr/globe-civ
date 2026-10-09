@@ -89,12 +89,14 @@ const FLOOR_END = 1.2;
 // Erosion on slopes: wavelength of the coarsest gullies (tile radii), octaves,
 // their depth at full slope, the slopes where they start / reach full depth,
 // and the strength on hills (mountains: 1).
-// Mountain ranges (tile radii): how far the height field reaches inside, the
-// depth of the foothills, the depth at which a range reaches full height, the
-// crest wavelength; how much the crests vary the height; overall height
-// (share of nominal) and the extra height of the biggest ranges.
-export const RANGE = { reach: 6, foot: 1, full: 1.6, crest: 2, texture: 0.65, height: 0.9, sizeBoost: 0.3 };
+// Mountain ranges (tile radii): how far the depth field reaches inside, the
+// depth of the flanks, the share of the height they reach (the rest rises to
+// the spine of wider ranges), the crest wavelength and how much crests vary the
+// height, the wavelength and spread of massifs and passes along a range,
+// overall height (share of nominal) and the extra height of the biggest ranges.
+export const RANGE = { reach: 6, full: 2, flank: 0.8, crest: 2, texture: 0.55, massif: 5, massifVary: 0.35, height: 1.15, sizeBoost: 0.3 };
 export const EROSION = { wavelength: 0.55, octaves: 4, amplitude: 0.0032, slope: [0.08, 0.45] as [number, number], hills: 0.16 };
+const ERODE_BELOW = 0.0008; // gullies reach at most this far below the land a mountain rises from
 const MARGIN_R = 0.35; // rivers own the water level this far beyond their edge (tile radii) // distances to the shore are tracked up to this many tile radii
 
 const smoothstep = (a: number, b: number, x: number) => {
@@ -189,7 +191,8 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
       const fw = 1 / (4 * r0);
       const reach = r0 * (LOWLAND.reach + LOWLAND.vary * noise.noise(d.x * fw + 3.1, d.y * fw, d.z * fw - 5.7));
       const lift = LOWLAND.floor + (1 - LOWLAND.floor) * smoothstep(0, reach, D);
-      own -= (1 - lift) * Math.min(Math.max(own - wl, 0), PLAIN);
+      // (Not under mountains: their foot stays at its level.)
+      own -= (1 - lift) * Math.min(Math.max(own - wl, 0), PLAIN) * (1 - rocky[v]);
       const near = 1 - smoothstep(FLOOR_FULL * r0, FLOOR_END * r0, D);
       const land = own + (Math.max(own, wl + SHORE_RISE) - own) * near;
       // Beach width varies along the coast.
@@ -206,6 +209,8 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
       height[v] = wl + b * (1 - Math.exp(-(0.7 * y + 0.5 * y * y)));
     }
   }
+  // The land before mountains rise from it (erosion never cuts below it).
+  const land0 = height.slice();
   // ---- mountain ranges: one landform per connected range ----
   // Each range's height grows with the distance from its painted edge, so
   // its highest ground lies deepest inside (whatever the tiles), and ridged
@@ -233,25 +238,29 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
       depthMax.push(deepest);
       heightOf.push(ws > 0 ? hs / ws : 0);
     }
-    const fr = 1 / (RANGE.crest * r0);
+    const fr = 1 / (RANGE.crest * r0), fm = 1 / (RANGE.massif * r0);
     for (let v = 0; v < V; v++) {
       const c = comp[v];
       if (c < 0) continue;
       dirOf(v, d);
-      // Depth inside the range, as a share of how deep the range gets
-      // (capped, so wide ranges have broad high interiors with room for
-      // crests, not one cone).
+      // Depth inside the range: x rises to 1 by RANGE.full inside the edge
+      // (the flanks); wider ranges keep rising beyond, to a spine along their
+      // middle (core). Narrow arms of a wide range stay lower: foothill spurs.
       const deep = -dist[v], full = Math.min(depthMax[c], RANGE.full * r0);
-      // Gentle at the foot (zero slope at the painted edge), rising inward,
-      // so a range's highest ground lies deepest inside.
-      const dome = smoothstep(0, Math.max(full, RANGE.foot * r0), deep);
+      const x = Math.min(1, deep / full);
+      const core = depthMax[c] > full * 1.05 ? Math.min(1, Math.max(0, deep - full) / (depthMax[c] - full)) : x;
+      // Gentle at the foot (zero slope at the painted edge), steepening up to
+      // the spine.
+      const rise = x ** 1.25 * (RANGE.flank + (1 - RANGE.flank) * core);
       // Bigger ranges stand a little taller.
       const size = 1 + RANGE.sizeBoost * smoothstep(0.8 * r0, 2.5 * r0, depthMax[c]);
-      // Ridged noise: sharp crests and peaks, saddles and cols between.
+      // Ridged noise: sharp crests and peaks, saddles and cols between, mostly
+      // up high (the foot is smooth slope).
       const crest = Math.max(0, 1 - Math.abs(noise.fbm(d.x * fr + 11.3, d.y * fr - 4.2, d.z * fr + 7.7, 4) * 2)) ** 2;
-      // Crests shape the interior; near the edge the rise itself dominates.
-      const tex = RANGE.texture * smoothstep(0.2 * r0, Math.max(full, RANGE.foot * r0), deep);
-      height[v] += RANGE.height * heightOf[c] * size * dome * (1 - tex + 1.3 * tex * crest) * ramp[v];
+      const tex = RANGE.texture * x;
+      // Massifs and passes: the range is higher along some stretches.
+      const massif = 1 + RANGE.massifVary * noise.fbm(d.x * fm - 2.9, d.y * fm + 6.1, d.z * fm + 0.4, 2);
+      height[v] += RANGE.height * heightOf[c] * size * massif * rise * (1 - tex + 1.3 * tex * crest) * ramp[v];
     }
   }
 
@@ -294,7 +303,9 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
     for (let v = 0; v < V; v++) {
       const m = mask[v] * ramp[v];
       if (coast[v] < 0 || m <= 0.01) continue;
-      height[v] += m * erosionAt(P, topo.dir[v * 3], topo.dir[v * 3 + 1], topo.dir[v * 3 + 2], grad[v * 3], grad[v * 3 + 1], grad[v * 3 + 2]);
+      const e = m * erosionAt(P, topo.dir[v * 3], topo.dir[v * 3 + 1], topo.dir[v * 3 + 2], grad[v * 3], grad[v * 3 + 1], grad[v * 3 + 2]);
+      // Gullies cut into mountains and hills, never far below the land around them.
+      height[v] = e >= 0 ? height[v] + e : Math.max(height[v] + e, Math.min(height[v], land0[v] - ERODE_BELOW));
     }
   }
 

@@ -84,7 +84,7 @@ describe('surface', () => {
         // Mountain (non-volcano) tile centers stand clearly above the mountain
         // foot (ends of ranges and saddles between crests may be low: at
         // least 5% of the nominal height), and typically high (median at
-        // least 50%).
+        // least 40%: foothills are lower, the spine higher).
         const share: number[] = [];
         for (const tile of globe.tiles) {
           const t = tile.id;
@@ -94,7 +94,7 @@ describe('surface', () => {
           share.push(s);
         }
         share.sort((a, b) => a - b);
-        expect(share[Math.floor(share.length / 2)]).toBeGreaterThanOrEqual(0.5);
+        expect(share[Math.floor(share.length / 2)]).toBeGreaterThanOrEqual(0.4);
         // Every range's highest vertex lies inside it: at least 0.3 r0 from any
         // other tile (narrow ranges, with warped edges, are only about that deep).
         const { topo, fields } = mesh;
