@@ -8,7 +8,10 @@
 //    distance D to it along the surface (land > 0). The land relief rises
 //    from sea level at the shore, gently at first (beaches), and reaches its
 //    full height inland; sea and lake beds fall away on the other side. The
-//    ground crosses sea level exactly on the painted shore.
+//    ground crosses the water's level exactly on the painted shore. Where
+//    waters of different levels are near (a lake and the sea), the land
+//    blends their levels by distance, so it never steps where the nearest
+//    water changes; past its shores a water body leaves the land alone.
 // 2. Beds. Below the water the ground blends the beds of the tiles that
 //    paint it (shallow shelves, deep ocean, reefs close under the surface).
 // 3. Rivers. Each river follows its drawn course, carries on past its mouth
@@ -16,7 +19,9 @@
 //    level never rises downstream, stays a little under the banks, ends at
 //    sea level at the mouth (or at the level of the river it joins), and
 //    never falls steeper than MAX_RIVER_SLOPE: where the land is high near
-//    the coast, the river cuts a valley instead of a waterfall.
+//    the coast, the river cuts a valley instead of a waterfall. Rivers that
+//    come close (a tributary beside the river it joins, a meander folding
+//    back) share one level there.
 // 4. Pools. Wetlands get pools of their own water among dry tussocks; oases
 //    a pond. Coastal wetlands sit at sea level.
 //
@@ -63,6 +68,13 @@ const POOL_DEPTH = 0.0004;
 const POOL_BANK = 0.0002; // pools sit this far under their tile's ground
 const LAKE_BANK = 0.0006; // lakes sit this far under the lowest land around them
 const COAST_CAP = 3;
+// Land near open water (tile radii): the water's level reaches SHORE_WATER
+// inland; the ground stays SHORE_RISE above it up to FLOOR_FULL, easing back
+// to its own relief by FLOOR_END.
+const SHORE_WATER = 0.35;
+const SHORE_RISE = 0.0015;
+const FLOOR_FULL = 0.5;
+const FLOOR_END = 1.2;
 // Erosion on slopes: wavelength of the coarsest gullies (tile radii), octaves,
 // their depth at full slope, the slopes where they start / reach full depth,
 // and the strength on hills (mountains: 1).
@@ -152,7 +164,7 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
   }
 
   // ---- 1. distance to the painted shore, and the level of the water there ----
-  const { dist: coast, level: shoreLevel } = coastDistance(topo, wet, level0, COAST_CAP * r0);
+  const { dist: coast, level: shoreLevel } = coastDistance(topo, wet, level0, COAST_CAP * r0, true);
 
   // ---- land relief, coast and beds ----
   const height = new Float32Array(V);
@@ -162,7 +174,12 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
     dirOf(v, d);
     const D = coast[v], wl = shoreLevel[v];
     if (D >= 0) {
-      const land = Math.max(relief.heightAt(topo.tile[v], topo.fanIndex[v], topo.wa[v], topo.wb[v], d), wl + 0.0015);
+      // Near the shore the land stays above the water (no spills); further
+      // inland it keeps its own relief, even where that is lower (a
+      // floodplain beside a lake).
+      const own = relief.heightAt(topo.tile[v], topo.fanIndex[v], topo.wa[v], topo.wb[v], d);
+      const near = 1 - smoothstep(FLOOR_FULL * r0, FLOOR_END * r0, D);
+      const land = own + (Math.max(own, wl + SHORE_RISE) - own) * near;
       // Beach width varies along the coast.
       const fl = 1 / (3 * r0);
       const L = r0 * (0.42 + 0.3 * noise.noise(d.x * fl, d.y * fl, d.z * fl));
@@ -272,7 +289,10 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
   // Water: open water near its shores (the land stays above it), nothing
   // elsewhere until rivers and pools add theirs.
   const NONE = -1;
-  const water = Float32Array.from(coast, (D, v) => (Math.abs(D) < COAST_CAP * r0 ? shoreLevel[v] : wet[v] >= 0.5 ? level0[v] : NONE));
+  // On land, a water body's level only reaches past its shore (so the
+  // surface meets the rising ground there), never into lower ground inland.
+  const water = Float32Array.from(coast, (D, v) =>
+    (D >= 0 ? (D < SHORE_WATER * r0 ? shoreLevel[v] : NONE) : -D < COAST_CAP * r0 ? shoreLevel[v] : level0[v]));
   const source = new Uint8Array(V); // 0 open water, 1 river, 2 pool
 
   // ---- 3. rivers ----
@@ -368,6 +388,48 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
     level[n - 1] = joinLevel; // meets the sea, or the river it joins, at its level
     for (let j = n - 2; j >= 0; j--) level[j] = Math.min(level[j], level[j + 1] + MAX_RIVER_SLOPE * pts[j].distanceTo(pts[j + 1]));
     courses.push({ pts, level, half, depth, ground, mouth, tributary: r.tributary });
+  }
+
+  // Rivers that come close (a tributary beside the river it joins, two
+  // rivers side by side, or a meander folding back on itself) meet at one
+  // water level: the higher water drops to the lower where they near each
+  // other, no faster than a river may fall, so no wall of water stands
+  // between them. Levels then still never rise downstream, never fall too
+  // steeply, and end at the water they run into.
+  {
+    const along = courses.map((c) => {
+      const a = [0];
+      for (let j = 1; j < c.pts.length; j++) a.push(a[j - 1] + c.pts[j].distanceTo(c.pts[j - 1]));
+      return a;
+    });
+    // Rivers into the sea or a lake end at its level; tributaries end at the
+    // river they join, which may itself drop here.
+    const ends = courses.map((c) => (c.tributary ? -Infinity : c.level[c.level.length - 1]));
+    for (let pass = 0; pass < 2; pass++) {
+      for (let a = 0; a < courses.length; a++) {
+        const A = courses[a];
+        for (let b = 0; b < courses.length; b++) {
+          const B = courses[b];
+          for (let j = 0; j < A.pts.length; j++) {
+            for (let k = 0; k < B.pts.length; k++) {
+              if (B.level[k] >= A.level[j]) continue;
+              const d = A.pts[j].distanceTo(B.pts[k]);
+              const gap = d - A.half[j] - B.half[k] - 2 * MARGIN;
+              if (gap > 0.5 * r0) continue;
+              // Along one course, only where it folds back (not its own next points).
+              if (a === b && Math.abs(along[a][j] - along[a][k]) < 3 * d + 2 * (A.half[j] + B.half[k] + MARGIN)) continue;
+              A.level[j] = Math.min(A.level[j], B.level[k] + MAX_RIVER_SLOPE * Math.max(0, gap));
+            }
+          }
+        }
+      }
+      courses.forEach((c, ci) => {
+        const n = c.pts.length;
+        for (let j = 1; j < n; j++) c.level[j] = Math.min(c.level[j], c.level[j - 1]);
+        if (!c.tributary) c.level[n - 1] = ends[ci];
+        for (let j = n - 2; j >= 0; j--) c.level[j] = Math.max(ends[ci], Math.min(c.level[j], c.level[j + 1] + MAX_RIVER_SLOPE * c.pts[j].distanceTo(c.pts[j + 1])));
+      });
+    }
   }
 
   // Segments that can reach each tile: those within two rings of tiles.
@@ -516,19 +578,29 @@ function smin(a: number, b: number, k: number): number {
 // keep their own). Each crossing point on a mesh edge seeds both ends; the
 // nearest seed then spreads over the mesh (every vertex keeps the seed point
 // itself, so distances stay straight-line, not grid paths).
-function coastDistance(topo: Topology, wet: Float32Array, level: Float32Array, cap: number): { dist: Float32Array; level: Float32Array } {
+function coastDistance(topo: Topology, wet: Float32Array, level: Float32Array, cap: number, blend = false): { dist: Float32Array; level: Float32Array } {
   const V = topo.V, dir = topo.dir;
-  const dist = new Float64Array(V).fill(cap);
-  const src = new Float32Array(V * 3);
-  const lvl = Float32Array.from(level);
+  // Per vertex: the nearest shore point and its water's level (slot 0) and,
+  // with `blend`, the nearest one whose level differs (slot 1).
+  const dist = [new Float64Array(V).fill(cap), new Float64Array(V).fill(cap)];
+  const src = [new Float32Array(V * 3), new Float32Array(V * 3)];
+  const lvl = [Float32Array.from(level), new Float32Array(V)];
   const heap = new MinHeap();
+  const set = (s: number, v: number, dd: number, x: number, y: number, z: number, l: number) => {
+    dist[s][v] = dd;
+    src[s][v * 3] = x; src[s][v * 3 + 1] = y; src[s][v * 3 + 2] = z;
+    if (s === 1 || wet[v] < 0.5) lvl[s][v] = l;
+    heap.push(dd, v * 2 + s);
+  };
   const offer = (v: number, x: number, y: number, z: number, l: number) => {
     const dd = Math.hypot(dir[v * 3] - x, dir[v * 3 + 1] - y, dir[v * 3 + 2] - z);
-    if (dd >= dist[v]) return;
-    dist[v] = dd;
-    src[v * 3] = x; src[v * 3 + 1] = y; src[v * 3 + 2] = z;
-    if (wet[v] < 0.5) lvl[v] = l;
-    heap.push(dd, v);
+    const land = wet[v] < 0.5;
+    const other = blend && land && dist[0][v] < cap && Math.abs(lvl[0][v] - l) > 1e-7;
+    if (dd < dist[0][v]) {
+      // A closer shore of another level: the old nearest becomes the second.
+      if (other && dist[0][v] < dist[1][v]) set(1, v, dist[0][v], src[0][v * 3], src[0][v * 3 + 1], src[0][v * 3 + 2], lvl[0][v]);
+      set(0, v, dd, x, y, z, l);
+    } else if (other && dd < dist[1][v]) set(1, v, dd, x, y, z, l);
   };
   for (let u = 0; u < V; u++) {
     const wu = wet[u] >= 0.5;
@@ -545,11 +617,24 @@ function coastDistance(topo: Topology, wet: Float32Array, level: Float32Array, c
     }
   }
   while (heap.size) {
-    const [dd, u] = heap.pop();
-    if (dd > dist[u]) continue;
-    for (let k = topo.adjStart[u]; k < topo.adjStart[u + 1]; k++) offer(topo.adj[k], src[u * 3], src[u * 3 + 1], src[u * 3 + 2], lvl[u]);
+    const [dd, e] = heap.pop();
+    const u = e >> 1, s = e & 1;
+    if (dd > dist[s][u]) continue;
+    const S = src[s];
+    for (let k = topo.adjStart[u]; k < topo.adjStart[u + 1]; k++) offer(topo.adj[k], S[u * 3], S[u * 3 + 1], S[u * 3 + 2], lvl[s][u]);
   }
-  return { dist: Float32Array.from(dist, (dd, v) => (wet[v] >= 0.5 ? -dd : dd)), level: lvl };
+  // The level on land: the two nearest waters' levels, weighted by closeness,
+  // so it never jumps where the nearest water changes (e.g. halfway between a
+  // lake and the sea); right at a shore it is that shore's level.
+  const out = lvl[0];
+  if (blend) {
+    for (let v = 0; v < V; v++) {
+      if (wet[v] >= 0.5 || dist[1][v] >= cap) continue;
+      const w0 = 1 / Math.max(dist[0][v], 1e-9) ** 2 - 1 / cap ** 2, w1 = 1 / dist[1][v] ** 2 - 1 / cap ** 2;
+      out[v] = (w0 * lvl[0][v] + w1 * lvl[1][v]) / (w0 + w1);
+    }
+  }
+  return { dist: Float32Array.from(dist[0], (dd, v) => (wet[v] >= 0.5 ? -dd : dd)), level: out };
 }
 
 // Level of each open-water tile: the sea at sea level; each lake just under

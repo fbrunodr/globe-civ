@@ -13,7 +13,7 @@ import { buildTerrainMesh, locate } from '../src/terrainMesh.ts';
 import { buildSurface, meshLevels, waterLevels, MAX_RIVER_SLOPE, type Surface } from '../src/surface.ts';
 import type { MapSizeKey } from '../src/rules.ts';
 
-const SEEDS: Record<MapSizeKey, number[]> = { small: [1, 2], medium: [4], large: [6] };
+const SEEDS: Record<MapSizeKey, number[]> = { medium: [4, 5], large: [6] };
 
 function setup(size: MapSizeKey, seed: number) {
   const w = generateWorld(size, seed);
@@ -117,6 +117,49 @@ describe('surface', () => {
           }
           expect(near / r0, `range of ${range.length} at tile ${tile.id}`).toBeGreaterThanOrEqual(0.3);
         }
+      });
+
+      it(`W5 ${size} seed ${seed}: the water surface has no steps`, () => {
+        // Between neighboring vertices that are both under open water or a
+        // river, the water level changes no faster than a river may fall (no
+        // walls of water where two waters meet). Wetland pools (and the edge
+        // of their painting on neighboring tiles) are left out: near a coast
+        // they ease down to sea level.
+        const { topo, fields } = mesh;
+        const steps: string[] = [];
+        const nearPool = (t: number) => looks[t].pool !== null || globe.tiles[t].neighbors.some((nb) => looks[nb].pool !== null);
+        const wetAt = (v: number) => fields.water[v] > fields.height[v] && !nearPool(topo.tile[v]);
+        for (let v = 0; v < topo.V; v++) {
+          if (!wetAt(v)) continue;
+          for (let k = topo.adjStart[v]; k < topo.adjStart[v + 1]; k++) {
+            const u = topo.adj[k];
+            if (u < v || !wetAt(u)) continue;
+            const dist = Math.hypot(topo.dir[u * 3] - topo.dir[v * 3], topo.dir[u * 3 + 1] - topo.dir[v * 3 + 1], topo.dir[u * 3 + 2] - topo.dir[v * 3 + 2]);
+            const dw = Math.abs(fields.water[u] - fields.water[v]);
+            if (dw > 2 * MAX_RIVER_SLOPE * dist + 2e-5) steps.push(`tile ${topo.tile[v]}: ${dw.toFixed(5)}`);
+          }
+        }
+        expect(steps.slice(0, 10)).toEqual([]);
+      });
+
+      it(`W6 ${size} seed ${seed}: flat land away from water keeps its own relief (no terraces or trenches)`, () => {
+        // Water levels shape the land only near their shores: further inland,
+        // even ground below a nearby lake's level is left as it is.
+        const { topo, fields } = mesh;
+        const plain = (t: number) => map.relief[t] === 'flat' && !looks[t].water && !looks[t].pool && map.feature[t] === null;
+        const off: string[] = [];
+        const d = new THREE.Vector3();
+        for (let v = 0; v < topo.V; v++) {
+          const t = topo.tile[v];
+          // (Two rings of plain tiles: hills' erosion fades out over about that.)
+          if (!plain(t) || !globe.tiles[t].neighbors.every((nb) => plain(nb) && globe.tiles[nb].neighbors.every(plain)) || surface.coast[v] < 2.5 * r0) continue;
+          d.set(topo.dir[v * 3], topo.dir[v * 3 + 1], topo.dir[v * 3 + 2]);
+          // Away from rivers and the valleys they cut.
+          if (surface.rivers.some((c) => c.pts.some((p, j) => p.distanceTo(d) < c.half[j] + 0.7 * r0))) continue;
+          const own = relief.heightAt(t, topo.fanIndex[v], topo.wa[v], topo.wb[v], d);
+          if (Math.abs(fields.height[v] - own) > 0.0005) off.push(`tile ${t}: ${fields.height[v].toFixed(5)} vs ${own.toFixed(5)}`);
+        }
+        expect(off.slice(0, 10)).toEqual([]);
       });
 
       it(`W3 ${size} seed ${seed}: every river's water is unbroken from near its source to its end`, () => {

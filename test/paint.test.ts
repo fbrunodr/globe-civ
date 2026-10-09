@@ -13,7 +13,7 @@ import { tileLook } from '../src/look.ts';
 import { mulberry32 } from '../src/rng.ts';
 import type { MapSizeKey } from '../src/rules.ts';
 
-const SEEDS: Record<MapSizeKey, number[]> = { small: [1, 2, 3], medium: [4, 5], large: [6] };
+const SEEDS: Record<MapSizeKey, number[]> = { medium: [4, 5], large: [6] };
 const SAMPLES = 64; // per tile
 
 // Painted share of every candidate tile, sampled uniformly over tile t.
@@ -44,7 +44,7 @@ describe('terrain painting', () => {
 
   it('same seed, same painting, relief and rivers (reloads look identical)', () => {
     const snap = () => {
-      const { w, paint } = setup('small', 7);
+      const { w, paint } = setup('medium', 7);
       const looks = w.globe.tiles.map((t) => tileLook(w.map, t.id));
       const relief = buildRelief(w.globe, w.map, looks, 7, paint.params.r0);
       const d = new THREE.Vector3(0.3, 0.8, 0.52).normalize();

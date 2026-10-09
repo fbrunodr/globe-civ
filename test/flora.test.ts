@@ -31,8 +31,7 @@ describe('prop catalog', () => {
 });
 
 const MAPS: [MapSizeKey, number][] = [
-  ...Array.from({ length: 30 }, (_, i): [MapSizeKey, number] => ['small', i + 1]),
-  ...Array.from({ length: 4 }, (_, i): [MapSizeKey, number] => ['medium', i + 1]),
+  ...Array.from({ length: 24 }, (_, i): [MapSizeKey, number] => ['medium', i + 1]),
 ];
 
 describe('flora', () => {
@@ -92,7 +91,7 @@ describe('flora', () => {
     expect(allVariants.filter((v) => v.mix.length > 0 && !seen.has(v)).map((v) => v.name)).toEqual([]);
   });
   it('is a pure function of the map and the seed', () => {
-    const { globe, map } = generateWorld('small', 3);
+    const { globe, map } = generateWorld('medium', 3);
     expect(buildFlora(globe, map, 3)).toEqual(buildFlora(globe, map, 3));
   });
 });
