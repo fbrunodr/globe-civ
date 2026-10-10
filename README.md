@@ -51,6 +51,34 @@ are drawn only when something changes) and CPU time per frame.
 
 URL params: `?seed=123`, `?size=small|medium|large`, `?reveal` (debug: show the whole map).
 
+## Cities
+
+A city is a growing patch of the globe (design doc "Cities: Feel & Play"):
+its center, **urban** tiles that fill with buildings and houses, and **rural**
+tiles whose improvement the terrain picks (farm, mine, camp, quarry, wetland
+harvest, fishing boats). There are no workers.
+
+- **Growth is spatial.** Each new citizen develops one tile you pick (a rural
+  improvement, a new urban tile next to the core, or a specialist), or the
+  city's governor picks by its focus (balanced, food, production, gold,
+  science, culture, faith). Population = center + urban + rural + specialists.
+- **Buildings sit on tiles.** Every urban tile (and the center) has two slots;
+  two buildings of one family make a quarter (Campus, Market, Forge, Harbor,
+  Temple, Theater, Garrison) with adjacency bonuses from what surrounds it.
+  A building is placed on the map when it completes. Walls ring the center.
+- **Wonders** take a whole tile with a terrain need, picked when started, and
+  are built once in the world. **Eras** advance with science (a stand-in for
+  the science system) and upgrade improvements and restyle towns.
+- **War.** Centers have hit points and strike nearby enemies; a city falls
+  when its HP is gone and a melee unit enters. Units pillage rural tiles;
+  captured cities can be razed into ruins.
+
+The look is derived from the same tile state: urban ground and field
+patterns are painted by the terrain shader, houses, buildings, wonders and
+walls are instanced props (`src/buildingCatalog.ts`, also in `/gallery.html`),
+roads join cities. City guarantees live in `test/cities.test.ts`,
+`test/cityLook.test.ts` and `test/war.test.ts`.
+
 ## Map sizes (matched to Civ VI)
 
 | Size   | n  | Tiles | Civs | Civ VI equivalent           |
@@ -71,7 +99,12 @@ URL params: `?seed=123`, `?size=small|medium|large`, `?reveal` (debug: show the 
 | `src/starts.ts`          | Fair start placement                                                |
 | `src/world.ts`           | Map + starts + validation, with deterministic retries               |
 | `src/terrain.ts`         | Terrain gameplay: biome × relief × feature, yields, movement, defense |
-| `src/rules.ts`           | Units, buildings, civs, map sizes                                   |
+| `src/rules.ts`           | Units, civs, map sizes                                              |
+| `src/cities.ts`          | City rules: tile uses, improvements, buildings, quarters, wonders, eras, governor |
+| `src/cityProps.ts`       | What stands on city tiles: houses, buildings, wonders, walls, ruins |
+| `src/buildingCatalog.ts` | Low-poly models of houses, buildings and wonders                    |
+| `src/roads.ts`           | Roads between cities                                                |
+| `src/smoke.ts`           | Smoke and fire columns                                              |
 | `src/game.ts`            | Game state and rules (no rendering): movement, A*, combat, cities, turns, fog |
 | `src/ai.ts`              | Simple AI opponents                                                 |
 | `src/look.ts`            | How each terrain looks: colors, rock, heights, shader detail, props |
@@ -86,4 +119,4 @@ URL params: `?seed=123`, `?size=small|medium|large`, `?reveal` (debug: show the 
 | `src/ui.ts`              | HTML panels and typed player actions                                |
 | `src/main.ts`            | Start screen, input, wiring                                         |
 
-Debug URL params: `?reveal` shows the whole map; `?look=jungle` (any biome, relief or feature key; combine with `+`, e.g. `?look=coldDesert+hills`) flies the camera to the first match.
+Debug URL params: `?turns=N` lets the AI play your first N turns (to look at a grown empire); `?reveal` shows the whole map; `?look=jungle` (any biome, relief or feature key; combine with `+`, e.g. `?look=coldDesert+hills`) flies the camera to the first match.
