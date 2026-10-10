@@ -3,6 +3,8 @@ import { unitDef, buildDef, isUnitKey, growthCost, BUILDINGS, type BuildKey } fr
 import { terrainName } from './terrain.ts';
 import { HUMAN, BUILDABLE, type Game, type City, type Unit } from './game.ts';
 import type { Selection } from './render.ts';
+import { USE, FOCUSES, IMPROVEMENTS, improvementFor, isFocusKey, type FocusKey, type GrowthKind, type GrowthOption } from './cities.ts';
+import type { Yields } from './terrain.ts';
 
 export type Action =
   | { type: 'found' }
@@ -11,6 +13,9 @@ export type Action =
   | { type: 'skip' }
   | { type: 'disband' }
   | { type: 'build'; key: BuildKey | null }
+  | { type: 'placeKind'; kind: GrowthKind }
+  | { type: 'governorPlace' }
+  | { type: 'focus'; focus: FocusKey }
   | { type: 'endTurn' };
 
 export function assertNever(x: never): never {
@@ -23,8 +28,16 @@ const isBuildKey = (s: string): s is BuildKey => (BUILDABLE as string[]).include
 function parseAction(el: HTMLElement): Action | null {
   const type = el.dataset['act'];
   switch (type) {
-    case 'found': case 'fortify': case 'wake': case 'skip': case 'disband': case 'endTurn':
+    case 'found': case 'fortify': case 'wake': case 'skip': case 'disband': case 'endTurn': case 'governorPlace':
       return { type };
+    case 'placeKind': {
+      const kind = el.dataset['kind'];
+      return kind === 'rural' || kind === 'urban' || kind === 'specialist' ? { type, kind } : null;
+    }
+    case 'focus': {
+      const focus = el.dataset['focus'] ?? '';
+      return isFocusKey(focus) ? { type, focus } : null;
+    }
     case 'build': {
       const key = el.dataset['key'] ?? '';
       if (key === '') return { type, key: null };
@@ -44,6 +57,14 @@ const $ = (id: string): HTMLElement => {
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
 const yieldStr = (food: number, prod: number, gold: number) =>
   `<span class="y food">🌾 ${food}</span><span class="y prod">⚒ ${prod}</span><span class="y gold">● ${gold}</span>`;
+const signed = (n: number) => (n > 0 ? `+${n}` : `${n}`);
+const gainStr = (y: Yields) => `<span class="y food">🌾 ${signed(y.food)}</span><span class="y prod">⚒ ${signed(y.prod)}</span><span class="y gold">● ${signed(y.gold)}</span>`;
+
+const KIND_NAME: Record<GrowthKind, string> = { rural: 'Rural', urban: 'Urban', specialist: 'Specialist' };
+export const optionName = (o: GrowthOption): string =>
+  o.kind === 'rural' ? IMPROVEMENTS[o.improvement].name
+    : o.kind === 'urban' ? (o.over ? `Urban (replaces the ${IMPROVEMENTS[o.over].name.toLowerCase()}; +1 specialist)` : 'Urban')
+    : 'Specialist';
 
 export class UI {
   private readonly game: Game;
@@ -61,7 +82,9 @@ export class UI {
     });
   }
 
-  render(sel: Selection, hover: number, hint: string): void {
+  // `placing`: the kind of growth placement shown on the map, if the
+  // selected city has a citizen to place.
+  render(sel: Selection, hover: number, hint: string, placing: GrowthKind | null = null): void {
     const g = this.game;
     const me = g.players[HUMAN];
     this.el.civ.innerHTML = `<span class="swatch" style="background:${me.color}"></span>${esc(me.name)}`;
@@ -69,8 +92,8 @@ export class UI {
     this.el.gold.textContent = `● ${me.gold} gold`;
     this.el.hint.textContent = hint;
     this.el.log.innerHTML = g.messages.slice(-7).map((m) => `<div><b>T${m.turn}</b> ${esc(m.text)}</div>`).join('');
-    this.renderSelection(sel);
-    this.renderTile(sel, hover);
+    this.renderSelection(sel, placing);
+    this.renderTile(sel, hover, placing);
 
     if (g.over) {
       this.el.overlay.classList.remove('hidden');
@@ -80,11 +103,11 @@ export class UI {
     }
   }
 
-  private renderSelection(sel: Selection): void {
+  private renderSelection(sel: Selection, placing: GrowthKind | null): void {
     const box = this.el.selection;
     if (!sel || sel.kind === 'tile') { box.classList.add('hidden'); return; }
     box.classList.remove('hidden');
-    box.innerHTML = sel.kind === 'unit' ? this.unitHtml(sel.unit) : this.cityHtml(sel.city);
+    box.innerHTML = sel.kind === 'unit' ? this.unitHtml(sel.unit) : this.cityHtml(sel.city, placing);
   }
 
   private unitHtml(u: Unit): string {
@@ -111,12 +134,31 @@ export class UI {
       <div class="buttons">${buttons.join('')}</div>`;
   }
 
-  private cityHtml(c: City): string {
+  private cityHtml(c: City, placing: GrowthKind | null): string {
     const g = this.game;
     const y = g.cityYields(c);
     const mine = c.owner === HUMAN;
-    const cost = growthCost(c.pop);
-    const grow = y.surplus > 0 ? `grows in ${Math.ceil((cost - c.food) / y.surplus)} turns` : y.surplus < 0 ? 'starving!' : 'stagnant';
+    const cost = growthCost(c.pop + c.growth);
+    const grow = c.growth > 0 ? 'a citizen waits to be placed'
+      : y.surplus > 0 ? `grows in ${Math.ceil((cost - c.food) / y.surplus)} turns` : y.surplus < 0 ? 'starving!' : 'stagnant';
+    const urban = g.cityTiles(c, USE.urban);
+    const specialists = urban.reduce((n, t) => n + g.specialists[t], 0);
+    const rural = g.cityTiles(c, USE.rural).length;
+    const makeup = `Center · ${urban.length} urban · ${rural} rural${specialists ? ` · ${specialists} specialist${specialists > 1 ? 's' : ''}` : ''}`;
+    let place = '';
+    if (mine && c.growth > 0) {
+      const opts = g.growthOptions(c);
+      const kinds = (['rural', 'urban', 'specialist'] as const).map((k) => {
+        const n = opts.filter((o) => o.kind === k).length;
+        return `<button data-act="placeKind" data-kind="${k}" class="${placing === k ? 'active' : ''}" ${n ? '' : 'disabled'}>${KIND_NAME[k]} <small>${n}</small></button>`;
+      }).join('');
+      place = `<div class="place"><b>Place a citizen</b> <small>click a highlighted tile · <kbd>Esc</kbd> leaves it to the governor</small>
+        <div class="buttons">${kinds}<button data-act="governorPlace">Governor</button></div></div>`;
+    }
+    const focus = mine
+      ? `<div class="focus">Governor <span>${(Object.keys(FOCUSES) as FocusKey[]).map((k) =>
+          `<button data-act="focus" data-focus="${k}" class="${c.focus === k ? 'active' : ''}">${FOCUSES[k].name}</button>`).join('')}</span></div>`
+      : '';
     const turnsFor = (k: BuildKey) => Math.max(1, Math.ceil((buildDef(k).cost - (c.building === k ? c.prod : 0)) / Math.max(1, y.prod)));
     let current = 'Nothing — production becomes gold';
     if (c.building) {
@@ -135,13 +177,16 @@ export class UI {
     const built = [...c.buildings].map((b) => BUILDINGS[b].name).join(', ') || 'none';
     return `<h3>${esc(c.name)} <small>size ${c.pop} · ${esc(g.players[c.owner].name)}</small></h3>
       <div class="stats">${yieldStr(y.food, y.prod, y.gold)}</div>
+      <div class="desc">${makeup}</div>
       <div class="desc">Food ${c.food}/${cost} (${y.surplus >= 0 ? '+' : ''}${y.surplus}) — ${grow}</div>
+      ${place}
+      ${focus}
       <div class="desc">Building: <b>${current}</b></div>
       <div class="desc">Buildings: ${built}</div>
       ${mine ? `<div class="build">${options}</div>` : ''}`;
   }
 
-  private renderTile(sel: Selection, t: number): void {
+  private renderTile(sel: Selection, t: number, placing: GrowthKind | null): void {
     const box = this.el.tile;
     const g = this.game;
     if (t < 0 || !g.explored[t]) { box.classList.add('hidden'); return; }
@@ -151,13 +196,24 @@ export class UI {
     const owner = g.ownerOf(t);
     const variant = floraLabel(g.map, g.flora, t);
     const lines = [`<b>${name}</b>${variant ? ` <small>${esc(variant)}</small>` : ''} ${yieldStr(y.food, y.prod, y.gold)}`];
+    const tc = g.cityById.get(g.tileCity[t]);
+    if (tc) {
+      const u = g.use[t];
+      const k = improvementFor(g.terrainAt(t));
+      const out = g.tileOutput(t);
+      const what = u === USE.center ? 'City center' : u === USE.urban ? `Urban${g.specialists[t] ? ` · ${g.specialists[t]} specialist${g.specialists[t] > 1 ? 's' : ''}` : ''}`
+        : u === USE.rural && k ? IMPROVEMENTS[k].name : `Wild${k ? ` <small>(${IMPROVEMENTS[k].name.toLowerCase()} if developed)</small>` : ''}`;
+      lines.push(`${what} of ${esc(tc.name)}${u === USE.wild ? '' : ` ${yieldStr(out.food, out.prod, out.gold)}`}`);
+    }
+    if (placing && sel?.kind === 'city') {
+      const opts = g.growthOptions(sel.city).filter((o) => o.tile === t);
+      for (const o of opts) lines.push(`<span class="${o.kind === placing ? 'warn' : ''}">${o.kind === placing ? 'Click: ' : ''}${optionName(o)} ${gainStr(g.optionYield(o))}</span>`);
+    }
     if (!g.isWater(t)) {
       const def = g.defenseBonus(t);
       lines.push(`Move cost ${g.moveCost(t)}${def ? ` · Defense +${Math.round(def * 100)}%` : ''}`);
     }
     if (owner >= 0) lines.push(`Territory of ${esc(g.players[owner].name)}`);
-    const city = g.cityByTile.get(t);
-    if (city) lines.push(`City: ${esc(city.name)} (size ${city.pop})`);
     if (g.visible[t]) {
       const units = g.unitsAt(t);
       if (units.length) lines.push(units.map((u) => `${esc(g.players[u.owner].name)} ${unitDef(u.type).name} (${u.hp}hp)`).join(', '));

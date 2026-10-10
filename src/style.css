@@ -78,3 +78,10 @@ small { color: var(--muted); font-weight: normal; }
   pointer-events: none;
 }
 
+
+/* City panel: growth placement and governor focus */
+.place { margin: 10px 0 4px; padding: 8px 10px; border: 1px solid rgba(255, 224, 102, 0.35); border-radius: 8px; background: rgba(255, 224, 102, 0.06); }
+.place .buttons { margin-top: 8px; }
+.focus { display: flex; align-items: center; gap: 8px; margin-top: 8px; color: var(--muted); font-size: 13px; }
+.focus span { display: flex; flex-wrap: wrap; gap: 4px; }
+.focus button { padding: 2px 7px; font-size: 12px; }

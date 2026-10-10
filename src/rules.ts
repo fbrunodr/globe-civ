@@ -75,5 +75,5 @@ export const MAP_SIZES = {
 export type MapSizeKey = keyof typeof MAP_SIZES;
 export const tileCount = (n: number): number => 10 * n * n + 2;
 
-export const growthCost = (pop: number): number => 8 + 6 * pop;
+export const growthCost = (pop: number): number => Math.floor(15 + 8 * (pop - 1) + Math.pow(pop - 1, 1.5));
 export const territoryRadius = (pop: number): number => (pop >= 6 ? 3 : pop >= 3 ? 2 : 1);

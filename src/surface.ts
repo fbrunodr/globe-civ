@@ -442,7 +442,10 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
     // Rivers into the sea or a lake end at its level; tributaries end at the
     // river they join, which may itself drop here.
     const ends = courses.map((c) => (c.tributary ? -Infinity : c.level[c.level.length - 1]));
-    for (let pass = 0; pass < 2; pass++) {
+    // Repeat until the levels settle: one river dropping can let another
+    // drop in turn (a chain of tributaries).
+    for (let pass = 0; pass < 8; pass++) {
+      const before = courses.map((c) => c.level.slice());
       for (let a = 0; a < courses.length; a++) {
         const A = courses[a];
         for (let b = 0; b < courses.length; b++) {
@@ -466,6 +469,7 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
         if (!c.tributary) c.level[n - 1] = ends[ci];
         for (let j = n - 2; j >= 0; j--) c.level[j] = Math.max(ends[ci], Math.min(c.level[j], c.level[j + 1] + Math.min(c.fall[j], c.fall[j + 1]) * c.pts[j].distanceTo(c.pts[j + 1])));
       });
+      if (courses.every((c, ci) => c.level.every((l, j) => Math.abs(l - before[ci][j]) < 1e-9))) break;
     }
   }
 

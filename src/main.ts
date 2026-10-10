@@ -1,6 +1,7 @@
 import './style.css';
-import { Game, HUMAN, type Unit } from './game.ts';
-import { GlobeRenderer, type DebugView, type Selection } from './render.ts';
+import { Game, HUMAN, type City, type Unit } from './game.ts';
+import { GlobeRenderer, type DebugView, type Selection, type TileMark } from './render.ts';
+import type { GrowthKind } from './cities.ts';
 import { UI, assertNever, type Action } from './ui.ts';
 import { MAP_SIZES, tileCount, unitDef, type MapSizeKey } from './rules.ts';
 
@@ -66,6 +67,27 @@ function startGame(sizeKey: MapSizeKey, seed: number): void {
 
   let sel: Selection = null;
   let hover = -1;
+  // Growth placement: the kind of tile shown while the selected city has a
+  // citizen to place (null otherwise).
+  let placing: GrowthKind | null = null;
+  const placingCity = (): City | null => (sel?.kind === 'city' && sel.city.owner === HUMAN && sel.city.growth > 0 ? sel.city : null);
+  const PLACE_COLOR: Record<GrowthKind, number> = { rural: 0x8ce99a, urban: 0xe6dccb, specialist: 0xffe066 };
+
+  // Select a city; if it has a citizen to place, start with the governor's kind.
+  function selectCity(c: City): void {
+    sel = { kind: 'city', city: c };
+    placing = c.owner === HUMAN && c.growth > 0 ? game.governorPick(c)?.kind ?? null : null;
+  }
+
+  // Legal tiles of the current kind; the governor's pick stands out.
+  function marks(): TileMark[] {
+    const c = placingCity();
+    if (!c || !placing) return [];
+    const pick = game.governorPick(c);
+    return game.growthOptions(c).filter((o) => o.kind === placing).map((o) => ({
+      tile: o.tile, color: PLACE_COLOR[o.kind], opacity: pick && pick.tile === o.tile && pick.kind === o.kind ? 0.95 : 0.5,
+    }));
+  }
 
   const needsOrders = (u: Unit) => u.owner === HUMAN && u.moves > 0 && !u.fortified && !u.skipped && u.goal == null;
 
@@ -73,7 +95,9 @@ function startGame(sizeKey: MapSizeKey, seed: number): void {
     if (game.over) return '';
     const waiting = game.units.filter(needsOrders).length;
     const idle = game.cities.filter((c) => c.owner === HUMAN && !c.building).length;
+    const growing = game.cities.filter((c) => c.owner === HUMAN && c.growth > 0).map((c) => c.name);
     const parts: string[] = [];
+    if (growing.length) parts.push(`${growing.join(', ')}: place a citizen`);
     if (waiting) parts.push(`${waiting} unit${waiting > 1 ? 's' : ''} need orders`);
     if (idle) parts.push(`${idle} cit${idle > 1 ? 'ies' : 'y'} producing gold`);
     return parts.join(' · ') || 'Press Enter to end turn';
@@ -88,9 +112,10 @@ function startGame(sizeKey: MapSizeKey, seed: number): void {
   function refresh(): void {
     if (sel?.kind === 'unit' && sel.unit.dead) sel = null;
     if (sel?.kind === 'city' && sel.city.owner !== HUMAN) sel = { kind: 'tile', tile: sel.city.tile };
+    if (!placingCity()) placing = null;
     view.syncWorld(sel);
-    view.syncOverlay(sel, hover, previewPath());
-    ui.render(sel, hover, hint());
+    view.syncOverlay(sel, hover, previewPath(), marks());
+    ui.render(sel, hover, hint(), placing);
   }
 
   function selectNextUnit(): void {
@@ -131,11 +156,25 @@ function startGame(sizeKey: MapSizeKey, seed: number): void {
       case 'build':
         if (sel?.kind === 'city' && sel.city.owner === HUMAN) sel.city.building = a.key;
         break;
-      case 'endTurn':
+      case 'placeKind':
+        if (placingCity()) placing = a.kind;
+        break;
+      case 'governorPlace': {
+        const c = placingCity();
+        if (c) { game.autoPlace(c); placing = null; }
+        break;
+      }
+      case 'focus':
+        if (sel?.kind === 'city' && sel.city.owner === HUMAN) sel.city.focus = a.focus;
+        break;
+      case 'endTurn': {
         game.endTurn();
         sel = null;
-        selectNextUnit();
+        // A city that grew asks for its citizen first.
+        const grown = game.cities.find((c) => c.owner === HUMAN && c.growth > 0);
+        if (grown) { selectCity(grown); view.focusOn(grown.tile); } else selectNextUnit();
         break;
+      }
       default:
         assertNever(a);
     }
@@ -144,8 +183,8 @@ function startGame(sizeKey: MapSizeKey, seed: number): void {
 
   function onHover(t: number): void {
     hover = t;
-    view.syncOverlay(sel, hover, previewPath());
-    ui.render(sel, hover, hint());
+    view.syncOverlay(sel, hover, previewPath(), marks());
+    ui.render(sel, hover, hint(), placing);
   }
 
   function onClick(t: number, button: number): void {
@@ -157,6 +196,15 @@ function startGame(sizeKey: MapSizeKey, seed: number): void {
         afterUnitAction(u);
       }
     } else if (button === 0) {
+      // Placing a citizen: a click on a highlighted tile places it there.
+      const c = placingCity();
+      const o = c && placing ? game.growthOptions(c).find((x) => x.tile === t && x.kind === placing) : undefined;
+      if (c && o) {
+        game.placeGrowth(c, o);
+        placing = c.growth > 0 ? placing : null;
+        refresh();
+        return;
+      }
       // Clicking cycles through own units on the tile, then the city.
       const options: Selection[] = game.unitsAt(t).filter((u) => u.owner === HUMAN).map((unit) => ({ kind: 'unit', unit }));
       const city = game.cityByTile.get(t);
@@ -164,7 +212,8 @@ function startGame(sizeKey: MapSizeKey, seed: number): void {
       const idx = options.findIndex((o) =>
         (o?.kind === 'unit' && sel?.kind === 'unit' && o.unit === sel.unit) ||
         (o?.kind === 'city' && sel?.kind === 'city' && o.city === sel.city));
-      sel = options.length ? options[(idx + 1) % options.length] : { kind: 'tile', tile: t };
+      const next = options.length ? options[(idx + 1) % options.length] : { kind: 'tile' as const, tile: t };
+      if (next?.kind === 'city') selectCity(next.city); else sel = next;
     }
     refresh();
   }
@@ -177,7 +226,7 @@ function startGame(sizeKey: MapSizeKey, seed: number): void {
     const a = keyActions[e.key];
     if (a) { e.preventDefault(); act(a); return; }
     if (e.key === 'n' || e.key === 'Tab') { e.preventDefault(); selectNextUnit(); refresh(); }
-    else if (e.key === 'Escape') { sel = null; refresh(); }
+    else if (e.key === 'Escape') { sel = null; placing = null; refresh(); }
     else if (e.key === 'c' && sel && sel.kind !== 'tile') { view.focusOn(sel.kind === 'unit' ? sel.unit.tile : sel.city.tile); }
   });
 

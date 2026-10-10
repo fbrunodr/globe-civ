@@ -15,6 +15,7 @@ import { makeWeather, type Weather } from './weather.ts';
 import { buildPropGeometry, catalogEntry, CATALOG, CATALOG_KINDS, type CatalogKind } from './propCatalog.ts';
 import { Vegetation, type SpotEnv } from './vegetation.ts';
 import { mulberry32, makePerlin } from './rng.ts';
+import { USE, improvementFor, type ImprovementKey } from './cities.ts';
 
 const FOG = new THREE.Color(0x0b0e15);
 
@@ -54,6 +55,22 @@ interface PlacedProp {
 const REF_EDGE = 0.07;
 
 export type DebugView = 'normal' | 'height' | 'water';
+
+// Placeholder art for city tiles (phase 1 of the city design: colored
+// tiles until urban ground and field patterns are painted). Muted, earthy
+// tones, like the ground they stand for.
+const USE_TINT = { center: 0x3d3935, urban: 0x5c5650 } as const;
+const IMPROVEMENT_TINT: Record<ImprovementKey, number> = {
+  farm: 0xc4b26a, mine: 0x6e5a48, camp: 0x5a7344, quarry: 0xaaa392, wetland: 0x6c8a6a, boats: 0x3f6f8c,
+};
+const USE_OPACITY = { center: 0.85, urban: 0.75, rural: 0.5 } as const;
+
+// A tile highlighted in the overlay (growth placement options).
+export interface TileMark {
+  tile: number;
+  color: number;
+  opacity: number;
+}
 
 export type Selection =
   | { kind: 'unit'; unit: Unit }
@@ -118,6 +135,8 @@ export class GlobeRenderer {
   private readonly citiesGroup = new THREE.Group();
   private readonly overlayGroup = new THREE.Group();
   private borders: THREE.Mesh | null = null;
+  private uses: THREE.Mesh | null = null;
+  private usesVersion = -1;
   private readonly textures = new Map<string, THREE.CanvasTexture>();
   private readonly cityBase: THREE.CylinderGeometry;
   private readonly cityBlock: THREE.BoxGeometry;
@@ -364,14 +383,16 @@ export class GlobeRenderer {
       this.updateProps();
       this.updateBorders();
     }
+    if (changed.length || this.usesVersion !== this.game.useVersion) this.updateUses();
     this.updateCities();
     this.updateUnits(sel);
   }
 
-  // Redraw selection ring, hover ring and path preview.
-  syncOverlay(sel: Selection, hover: number, path: number[] | null): void {
+  // Redraw selection ring, hover ring, path preview and tile marks.
+  syncOverlay(sel: Selection, hover: number, path: number[] | null, marks: readonly TileMark[] = []): void {
     for (const o of this.overlayGroup.children) if (o instanceof THREE.Mesh || o instanceof THREE.Line) o.geometry.dispose();
     this.overlayGroup.clear();
+    for (const m of marks) this.overlayGroup.add(this.ring(m.tile, m.color, m.opacity));
     const selTile = sel?.kind === 'unit' ? sel.unit.tile : sel?.kind === 'city' ? sel.city.tile : sel?.kind === 'tile' ? sel.tile : -1;
     if (selTile >= 0) this.overlayGroup.add(this.ring(selTile, 0xffffff, 0.9));
     if (hover >= 0 && hover !== selTile) this.overlayGroup.add(this.ring(hover, 0xffffff, 0.35));
@@ -783,6 +804,41 @@ export class GlobeRenderer {
     }));
     this.borders.renderOrder = 2;
     this.scene.add(this.borders);
+  }
+
+  // City tiles: a translucent fill per developed tile, colored by its use.
+  private updateUses(): void {
+    const g = this.game;
+    this.usesVersion = g.useVersion;
+    const pos: number[] = [], col: number[] = [];
+    const c = new THREE.Color();
+    const rings = [0.88, 0.66, 0.44, 0.22, 0];
+    for (let t = 0; t < g.N; t++) {
+      const u = g.use[t];
+      if (u === USE.wild || !g.explored[t]) continue;
+      const k = u === USE.rural ? improvementFor(g.terrainAt(t)) : null;
+      c.setHex(u === USE.center ? USE_TINT.center : u === USE.urban ? USE_TINT.urban : k ? IMPROVEMENT_TINT[k] : USE_TINT.urban);
+      const a = u === USE.center ? USE_OPACITY.center : u === USE.urban ? USE_OPACITY.urban : USE_OPACITY.rural;
+      const before = pos.length;
+      for (let i = 0; i < g.tiles[t].corners.length; i++) {
+        for (let r = 0; r + 1 < rings.length; r++) this.edgeRibbon(t, i, rings[r]!, rings[r + 1]!, 0.0012, pos);
+      }
+      for (let k2 = before; k2 < pos.length; k2 += 3) col.push(c.r, c.g, c.b, a);
+    }
+    if (this.uses) {
+      this.scene.remove(this.uses);
+      this.uses.geometry.dispose();
+      (this.uses.material as THREE.Material).dispose();
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 4));
+    this.uses = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+      vertexColors: true, transparent: true, side: THREE.DoubleSide, depthWrite: false,
+      polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
+    }));
+    this.uses.renderOrder = 1;
+    this.scene.add(this.uses);
   }
 
   private ring(t: number, color: number, opacity: number): THREE.Mesh {
