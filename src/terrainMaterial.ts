@@ -389,11 +389,11 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
             float edgeN = tFbm(P / (0.45 * uR0) + 4.1, 2) - 0.5;
             if (uS > 0.02) {
               urban = smoothstep(0.36, 0.5, uS + 0.5 * edgeN) * keep;
-              // Packed earth and paving, lighter toward the center's plaza.
-              vec3 ground = mix(vec3(0.33, 0.3, 0.26), vec3(0.42, 0.38, 0.33), tNoise(P / (0.08 * uR0)));
-              ground = mix(ground, vec3(0.5, 0.47, 0.42), smoothstep(0.5, 0.9, cS) * 0.6);
-              // Streets are drawn over this by render.ts (cityProps.ts lays them out).
-              diffuseColor.rgb = mix(diffuseColor.rgb, ground * (0.92 + 0.12 * grain) * vShade, urban);
+              // No paving: the town keeps its own ground (gardens and yards
+              // between the houses), just a little trodden. Streets and
+              // squares are drawn over it by render.ts (cityDesigns.ts).
+              vec3 trodden = diffuseColor.rgb * vec3(0.97, 0.95, 0.9);
+              diffuseColor.rgb = mix(diffuseColor.rgb, trodden, 0.35 * urban);
             }
             float fieldMask = 1.0 - urban;
             if (farmS > 0.02) {

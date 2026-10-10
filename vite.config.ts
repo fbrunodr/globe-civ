@@ -15,6 +15,7 @@ export default defineConfig({
         gallery: resolve(import.meta.dirname, 'gallery.html'),
         worldView: resolve(import.meta.dirname, 'world_view.html'),
         cityLab: resolve(import.meta.dirname, 'city_lab.html'),
+        cityDesigns: resolve(import.meta.dirname, 'city_designs.html'),
       },
     },
   },

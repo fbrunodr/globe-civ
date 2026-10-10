@@ -14,6 +14,7 @@ import {
   quarterOf, familyOf, improvementFor, type BuildingKey, type WonderKey, type GrowthKind, type EraIndex, type FamilyKey, type FocusKey, type Output,
 } from './cities.ts';
 import { buildPresets, foundCity, grow, shrink, setEra, addBuilding, addWonder } from './sandbox.ts';
+import { DENSITIES, type Density } from './cityDesigns.ts';
 
 const isMapSize = (s: string): s is MapSizeKey => s in MAP_SIZES;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -45,6 +46,7 @@ game.explored.fill(1);
 game.visible.fill(1);
 const built = buildPresets(game);
 const view = new GlobeRenderer($<HTMLCanvasElement>('c'), game);
+for (const b of built) if (b.city && b.preset.density) for (const t of [b.city.tile, ...game.cityTiles(b.city, USE.urban)]) view.setDensity(t, b.preset.density);
 view.setClouds(false);
 if (import.meta.env.DEV) Object.assign(window, { __globe: { game, view } });
 
@@ -56,6 +58,7 @@ type Mode =
   | { kind: 'wonder'; key: WonderKey }
   | { kind: 'pillage' }
   | { kind: 'demolish' }
+  | { kind: 'density'; d: Density | null }
   | null;
 
 let selTile = -1;
@@ -64,11 +67,12 @@ let mode: Mode = null;
 let hover = -1;
 let lens = false;
 let founder = 0;
+let lastDensity: Density | null = null;
 
 const FAMILY_COLOR: Record<FamilyKey, number> = {
   campus: 0x5c9ded, market: 0xf2c94c, forge: 0xe07b39, harbor: 0x2bb5b5, temple: 0xf4f1de, theater: 0xb07cd8, garrison: 0xc0392b,
 };
-const MODE_COLOR = { grow: 0x8ce99a, building: 0x9cc8ff, wonder: 0xf5d76e, pillage: 0xff8a5c, demolish: 0xff6b6b } as const;
+const MODE_COLOR = { grow: 0x8ce99a, building: 0x9cc8ff, wonder: 0xf5d76e, pillage: 0xff8a5c, demolish: 0xff6b6b, density: 0xd0a0ff } as const;
 
 // Tiles a mode can act on.
 function modeTiles(): number[] {
@@ -80,6 +84,7 @@ function modeTiles(): number[] {
     case 'wonder': return game.wonderSpots(c, mode.key);
     case 'pillage': return game.cityTiles(c, USE.rural);
     case 'demolish': return [c.tile, ...game.cityTiles(c, USE.urban)].filter((t) => game.slotKeys(t).some((k) => k !== null));
+    case 'density': return [c.tile, ...game.cityTiles(c, USE.urban)];
   }
 }
 
@@ -148,12 +153,18 @@ function renderBuilder(): void {
   let modeHtml = '';
   if (mode) {
     const what = mode.kind === 'grow' ? `Click a tile for a ${mode.growth} citizen` : mode.kind === 'building' ? `Click a tile for the ${BUILDINGS[mode.key].name}`
-      : mode.kind === 'wonder' ? `Click a tile for the ${WONDERS[mode.key].name}` : mode.kind === 'pillage' ? 'Click rural tiles to burn or mend them' : 'Click a built tile to clear its slots';
+      : mode.kind === 'wonder' ? `Click a tile for the ${WONDERS[mode.key].name}` : mode.kind === 'pillage' ? 'Click rural tiles to burn or mend them'
+      : mode.kind === 'density' ? `Click built tiles to make them ${mode.d ?? 'follow the rules'}` : 'Click a built tile to clear its slots';
     const gov = mode.kind === 'grow' || mode.kind === 'building' || mode.kind === 'wonder';
     modeHtml = `<div class="mode">${what} <div class="row">${gov ? btn('data-lab="governor"', "Governor's pick") : ''}${btn('data-lab="cancel"', 'Done <kbd>Esc</kbd>')}</div></div>`;
   }
   const eras = ERAS.map((e, i) => btn(`data-lab="era" data-v="${i}"`, e.name, { active: p.era === i })).join('');
   const focuses = (Object.keys(FOCUSES) as FocusKey[]).map((k) => btn(`data-lab="focus" data-v="${k}"`, FOCUSES[k].name, { active: c.focus === k })).join('');
+  const cityTiles = [c.tile, ...game.cityTiles(c, USE.urban)];
+  const densities = [null, ...DENSITIES].map((d) => {
+    const all = cityTiles.every((t) => (d === null ? true : view.densityOf(t) === d));
+    return btn(`data-lab="density" data-v="${d ?? 'auto'}"`, d ?? 'auto', { active: d !== null && all, title: d === null ? 'By the rules (city size, buildings)' : `All built tiles ${d} (click a tile afterwards to set just that one)` });
+  }).join('') + btn('data-lab="densityTile"', 'per tile', { active: mode?.kind === 'density' });
   const kinds = (['rural', 'urban', 'specialist'] as const).map((k) => btn(`data-lab="place" data-v="${k}"`, k, { active: mode?.kind === 'grow' && mode.growth === k, disabled: !game.growthOptions(c).some((o) => o.kind === k) })).join('');
   const blds = BUILDING_KEYS.filter((k) => k !== 'walls').map((k) => {
     const has = c.buildings.has(k);
@@ -174,6 +185,7 @@ function renderBuilder(): void {
     <div class="row"><span>Place</span>${kinds}</div>
     <div class="row"><span>Era</span>${eras}</div>
     <div class="row"><span>Focus</span>${focuses}</div>
+    <div class="row"><span>Density</span>${densities}</div>
     <hr><div class="row"><span>Buildings</span>${blds}</div>
     <div class="row"><span>Walls</span>${btn('data-lab="walls"', c.buildings.has('walls') ? 'Walls up' : 'No walls', { active: c.buildings.has('walls') })}</div>
     <div class="row"><span>Wonders</span>${wonders}</div>
@@ -231,6 +243,7 @@ function apply(t: number): boolean {
     case 'wonder': addWonder(game, c, mode.key, t); mode = null; break;
     case 'pillage': game.pillaged[t] = game.pillaged[t] ? 0 : 3; game.useVersion++; break;
     case 'demolish': for (let k = 0; k < SLOTS; k++) game.demolish(t, k); break;
+    case 'density': view.setDensity(t, mode.d); break;
   }
   return true;
 }
@@ -286,6 +299,14 @@ document.body.addEventListener('click', (e) => {
     case 'pillage': mode = mode?.kind === 'pillage' ? null : { kind: 'pillage' }; break;
     case 'demolish': mode = mode?.kind === 'demolish' ? null : { kind: 'demolish' }; break;
     case 'raze': if (c) { game.destroyCity(c); city = null; mode = null; } break;
+    case 'density': {
+      if (!c) break;
+      const d = v === 'auto' ? null : (v as Density);
+      for (const t of [c.tile, ...game.cityTiles(c, USE.urban)]) view.setDensity(t, d);
+      lastDensity = d;
+      break;
+    }
+    case 'densityTile': mode = mode?.kind === 'density' ? null : { kind: 'density', d: lastDensity ?? 'medium' }; break;
     case 'governor': governorPick(); break;
     case 'cancel': mode = null; break;
     default: return;
@@ -294,6 +315,13 @@ document.body.addEventListener('click', (e) => {
   refresh();
 });
 document.body.addEventListener('input', (e) => {
+  if (e.target instanceof HTMLInputElement && e.target.id === 'hills') {
+    const k = Number(e.target.value);
+    view.setHillKeep(k);
+    view.syncWorld(null);
+    $('hillsVal').textContent = `${Math.round(k * 100)}%`;
+    return;
+  }
   if (!(e.target instanceof HTMLInputElement) || e.target.id !== 'hp' || !city) return;
   city.hp = Number(e.target.value);
   view.syncWorld(null);

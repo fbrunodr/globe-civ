@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Town Designs</title>
+    <style>
+      #labels { position: fixed; inset: 0; pointer-events: none; }
+      .lbl { background: rgba(14,17,26,0.78); color: #e8ecf3; padding: 2px 7px; border-radius: 6px; font: 12px system-ui, sans-serif; white-space: nowrap; }
+      body.far .lbl { display: none; }
+      #groups { display: flex; gap: 10px; }
+      #groups label, #topbar label { display: flex; align-items: center; gap: 4px; }
+    </style>
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+    <div id="labels"></div>
+    <div id="hud">
+      <div id="topbar">
+        <span id="civ">Town designs</span>
+        <nav class="devnav"><a href="/">Game</a><a href="/gallery.html">Gallery</a><a href="/city_lab.html">City lab</a><a class="active" href="/city_designs.html">Town designs</a><a href="/world_view.html">World view</a></nav>
+        <span id="groups"></span>
+        <label>Density <select id="density"><option value="all">all</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></label>
+        <label><input type="checkbox" id="buildings" checked /> buildings in spots</label>
+        <button id="fit">Whole sheet</button>
+        <span class="spacer"></span>
+        <span id="hint">Double-click a cell to look closer · row = left tile, column = right tile</span>
+        <span id="info"></span>
+      </div>
+    </div>
+    <script type="module" src="/src/designSheet.ts"></script>
+  </body>
+</html>

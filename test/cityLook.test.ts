@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { BUILDING_KINDS, buildBuildingGeometry, buildingEntry } from '../src/buildingCatalog.ts';
 import { triangles } from '../src/propCatalog.ts';
-import { CityProps, housesOn, type CitySpot } from '../src/cityProps.ts';
+import { CityProps, type CitySpot } from '../src/cityProps.ts';
+import { stamp, type StampTile } from '../src/cityStamp.ts';
 import { Game } from '../src/game.ts';
 import { aiTurn } from '../src/ai.ts';
 import { USE, WONDER_KEYS, isWonderKey } from '../src/cities.ts';
@@ -21,17 +22,31 @@ describe('L1: building models', () => {
   });
 });
 
+// (Was a housesOn(pop) bound on houses per tile; houses now come from the
+// hand-drawn tiles, so the bound is on what the drawings stamp.)
 describe('L2: houses grow with the city', () => {
-  it('a size-3 town shows a few dozen houses on its center', () => {
-    expect(housesOn(3, 0, true)).toBeGreaterThanOrEqual(12);
-    expect(housesOn(3, 0, true)).toBeLessThanOrEqual(45);
+  const count = (tiles: StampTile[]) => stamp(tiles).lots.filter((l) => l.kind === 'house' || l.kind === 'row' || l.kind === 'block' || l.kind === 'tower').length;
+  const g = new Game({ size: 'small', seed: 5 });
+  const settler = g.units.find((u) => u.owner === 0 && u.type === 'settler')!;
+  const city = g.foundCity(settler)!;
+  const cp = new CityProps(g, () => ({ dir: new THREE.Vector3(0, 1, 0), ground: 0, water: 0, slope: 0, urban: 1 }), (d) => ({ dir: d, ground: 0, water: 0, slope: 0, urban: 1, t: 0 }), 1);
+  it('a small town shows a few dozen houses on its center (and its outskirts)', () => {
+    const n = count(cp.stampTiles([city.tile], null));
+    expect(n).toBeGreaterThanOrEqual(25);
+    expect(n).toBeLessThanOrEqual(90);
   });
-  it('a size-15 capital with 5 urban tiles shows a couple of hundred', () => {
-    const total = housesOn(15, 0, true) + 5 * housesOn(15, 0, false);
-    expect(total).toBeGreaterThanOrEqual(150);
+  it('a capital with 5 urban tiles at medium density shows a couple of hundred', () => {
+    const tiles = [city.tile, ...g.tiles[city.tile].neighbors.slice(0, 5)];
+    for (const t of tiles) cp.setDensity(t, 'medium');
+    for (const t of tiles.slice(1)) g.use[t] = USE.urban, g.tileCity[t] = city.id;
+    expect(count(cp.stampTiles(tiles, null))).toBeGreaterThanOrEqual(300);
   });
-  it('more people, more houses', () => {
-    for (let p = 1; p < 30; p++) expect(housesOn(p + 1, 0, false)).toBeGreaterThanOrEqual(housesOn(p, 0, false));
+  it('denser tiles, more houses', () => {
+    const tiles = [city.tile, ...g.tiles[city.tile].neighbors.slice(0, 5)];
+    for (const t of tiles) cp.setDensity(t, 'low');
+    const low = count(cp.stampTiles(tiles, null));
+    for (const t of tiles) cp.setDensity(t, 'medium');
+    expect(count(cp.stampTiles(tiles, null))).toBeGreaterThan(low);
   });
 });
 

@@ -56,8 +56,18 @@ export interface RiverCourse {
   tributary: boolean;
 }
 
+// Layers kept so cities can reshape their ground later (render.ts): what
+// hills add to the height, and wetland pools as dug (the ground before
+// the dig and the pool's water level; NaN where there is no pool).
+export interface SurfaceLayers {
+  hill: Float32Array;
+  preDig: Float32Array;
+  poolLevel: Float32Array;
+}
+
 export interface Surface {
   fields: SurfaceFields;
+  layers: SurfaceLayers;
   coast: Float32Array; // signed distance to the painted shore per vertex (radians, land > 0)
   source: Uint8Array;  // whose water level each vertex has: 0 sea or lake (or none), 1 river, 2 pool
   fall: Float32Array;  // steepest a river may fall at each vertex (height per radian): steeper on mountains
@@ -75,7 +85,7 @@ const K_BANK = 0.6;    // slope of the channel's banks
 const BANK_H = 0.00025; // height of the banks above the water, before the valley's gentler slope
 const K_VALLEY = 0.16; // slope of the valley sides a river cuts
 const POOL_DEPTH = 0.0004;
-const POOL_BANK = 0.0002; // pool water sits this far under the lowest ground around it
+export const POOL_BANK = 0.0002; // pool water sits this far under the lowest ground around it
 const POOL_BAND = 0.0012; // height range of one pool body: pools on slopes step down in terraces
 const LAKE_BANK = 0.0006; // lakes sit this far under the lowest land around them
 const COAST_CAP = 7;
@@ -189,6 +199,7 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
 
   // ---- land relief, coast and beds ----
   const height = new Float32Array(V);
+  const hill = new Float32Array(V);
   const ramp = new Float32Array(V); // 0 at a shore, 1 inland: how far the land has risen from the water
   const d = new THREE.Vector3();
   for (let v = 0; v < V; v++) {
@@ -212,6 +223,7 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
       const x = D / L;
       ramp[v] = 1 - Math.exp(-(0.35 * x + 0.6 * x * x));
       height[v] = wl + (land - wl) * ramp[v];
+      hill[v] = relief.hillAt(topo.tile[v], topo.fanIndex[v], topo.wa[v], topo.wb[v], d) * ramp[v];
     } else {
       // Beds are depths below the water's own level.
       const f = 1 / (0.6 * r0);
@@ -547,6 +559,8 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
     }
   }
 
+  const preDig = height.slice();
+  const poolLevel = new Float32Array(V).fill(NaN);
   // ---- 4. pools: away from the coast and from rivers (no steps between waters) ----
   // Where the pools are (pwOf, 0..1): a noise mask over the wetland, eased
   // to nothing at its edge.
@@ -623,7 +637,7 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
       const lvl = body[v];
       if (Number.isNaN(lvl)) continue;
       height[v] -= pwOf[v] * Math.max(0, height[v] - lvl + POOL_DEPTH);
-      if (lvl >= water[v]) { water[v] = lvl; source[v] = 2; }
+      if (lvl >= water[v]) { water[v] = lvl; source[v] = 2; poolLevel[v] = lvl; }
     }
     // Rim vertices: the water reaches them (so the surface meets the ground
     // there), but their ground is above it.
@@ -631,7 +645,7 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
       if (!Number.isNaN(body[v])) continue;
       for (let k = topo.adjStart[v]; k < topo.adjStart[v + 1]; k++) {
         const lvl = body[topo.adj[k]];
-        if (!Number.isNaN(lvl) && lvl >= water[v]) { water[v] = lvl; source[v] = 2; }
+        if (!Number.isNaN(lvl) && lvl >= water[v]) { water[v] = lvl; source[v] = 2; poolLevel[v] = lvl; }
       }
     }
   }
@@ -674,6 +688,7 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
       water3d: [{ name: 'tint', itemSize: 4, data: tint }, { name: 'flow', itemSize: 3, data: flowVec },
         { name: 'wsrc', itemSize: 1, data: Float32Array.from(source) }, { name: 'wstep', itemSize: 1, data: waterSteps(topo, height, water, fall) }],
     },
+    layers: { hill, preDig, poolLevel },
     coast,
     source,
     fall,

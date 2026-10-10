@@ -28,6 +28,9 @@ export interface Relief {
   // Height above radius 1 of a point in fan i of tile t, at barycentric
   // weights wa (toward corner i) and wb (toward corner i+1); dir is its unit direction.
   heightAt(t: number, i: number, wa: number, wb: number, dir: THREE.Vector3): number;
+  // The share of heightAt that hills add over flat land (their bumps and
+  // their raised base), so cities can soften hills (render.ts).
+  hillAt(t: number, i: number, wa: number, wb: number, dir: THREE.Vector3): number;
   peak: Float32Array; // nominal height of each mountain tile above its base (0 elsewhere)
   base: Float32Array; // base level of each tile
 }
@@ -174,7 +177,11 @@ export function buildRelief(globe: Globe, map: MapData, looks: readonly TileLook
     return best;
   };
 
+  const hillBase = Float32Array.from(tiles, (tl) => (hill(tl.id) ? base[tl.id] - HILL_FOOT : 0));
+  const hillPart = (t: number, i: number, wa: number, wb: number, dir: THREE.Vector3) =>
+    interiorVal(hillBase, t, i, wa, wb) + (bumps[t].length ? bumpAt(t, dir) * smoothstep(0.25, 0.75, interiorVal(isHill, t, i, wa, wb)) : 0);
   return {
+    hillAt: hillPart,
     heightAt(t, i, wa, wb, dir) {
       const n = 2 * noise.fbm(dir.x * 22 + 5.1, dir.y * 22 - 3.3, dir.z * 22 + 1.7, 5);
       return interiorVal(base, t, i, wa, wb) + interiorVal(amp, t, i, wa, wb) * n

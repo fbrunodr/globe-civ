@@ -4,11 +4,13 @@ import { GlobeCamera } from './camera.ts';
 import type { Game, Unit, City } from './game.ts';
 import { SNOW, tileLook, type TileLook } from './look.ts';
 import { buildTerrainMesh, locate, newSample, type TerrainMesh } from './terrainMesh.ts';
-import { makeTerrainMaterial, makeTable, FAN_ROWS, TILE_ROWS, GRADE_GLSL, IMPROVEMENT_CODE, BURNT_CODE, type TerrainMaterial } from './terrainMaterial.ts';
+import { makeTerrainMaterial, makeTable, FAN_ROWS, TILE_ROWS, IMPROVEMENT_CODE, BURNT_CODE, type TerrainMaterial } from './terrainMaterial.ts';
 import { makeSmoke, type Emitter, type Smoke } from './smoke.ts';
 import { buildPaintData, fanCoords, fanFrames, paintAt, softAt, warpAt, FAN_COORDS, FINE_MAX, FINE_WAVELENGTH, type PaintData, type FanFrame } from './paint.ts';
 import { buildRelief, CONE_RADIUS, CRATER, CRATER_DEPTH, type Relief } from './relief.ts';
-import { buildSurface, meshLevels } from './surface.ts';
+import { buildSurface, meshLevels, type SurfaceLayers } from './surface.ts';
+import { cityGround } from './terraform.ts';
+import type { Density } from './cityDesigns.ts';
 import { makeWaterMaterial, type WaterMaterial } from './water.ts';
 import { WalkCamera } from './walk.ts';
 import { makeSky, makeHalo, installHaze, HAZE, HAZE_DENSITY, AIR } from './sky.ts';
@@ -20,6 +22,7 @@ import { planRoads } from './roads.ts';
 import { Vegetation, type SpotEnv } from './vegetation.ts';
 import { mulberry32, makePerlin } from './rng.ts';
 import { USE, WONDERS, improvementFor, type ImprovementKey } from './cities.ts';
+import { makePropMaterial, instanceGeometry } from './propMaterial.ts';
 
 const FOG = new THREE.Color(0x0b0e15);
 
@@ -82,6 +85,7 @@ const FLORA_KEEP: Record<'urban' | ImprovementKey, Record<Layer, number>> = {
 const ROAD_RGB = [0.62, 0.55, 0.43] as const;
 const DIRT_RGB = [0.55, 0.49, 0.39] as const;
 const PAVED_RGB = [0.55, 0.53, 0.49] as const;
+const PLAZA_RGB = [0.6, 0.57, 0.52] as const;
 
 // A tile highlighted in the overlay (growth placement options).
 export interface TileMark {
@@ -162,6 +166,13 @@ export class GlobeRenderer {
   private roads: THREE.Mesh | null = null;
   private roadsKey = '';
   private readonly prevUse: Uint8Array;
+  // City ground (terraform.ts): the surface's layers, the heights as built,
+  // the vertices reshaped so far, what they were reshaped for.
+  private readonly layers: SurfaceLayers;
+  private readonly origHeight: Float32Array;
+  private reshaped = new Set<number>();
+  private groundKey = '';
+  private hillKeep = 1;
   private readonly textures = new Map<string, THREE.CanvasTexture>();
 
   private pointer = { x: 0, y: 0, dirty: false };
@@ -245,11 +256,13 @@ export class GlobeRenderer {
     const frames = this.frames, fans = this.paint.fans;
     const levels = meshLevels(g.globe, g.map, L);
     let coast: Float32Array | null = null;
+    let layers: SurfaceLayers | null = null;
     this.terrain = buildTerrainMesh(g.globe, {
       level: (t) => levels[t] as 1 | 2 | 4,
       surface: (topo) => {
         const sf = buildSurface(g.globe, g.map, L, this.paint, this.relief, g.seed, topo);
         coast = sf.coast;
+        layers = sf.layers;
         return sf.fields;
       },
       warp: (dir, out) => { warpAt(params, dir.x, dir.y, dir.z, out); },
@@ -262,6 +275,8 @@ export class GlobeRenderer {
         },
       }],
     }, SUBDIV);
+    this.layers = layers!;
+    this.origHeight = this.terrain.fields.height.slice();
     this.baseColors = L.map((l) => l.color);
     this.playerColors = g.players.map((p) => new THREE.Color(p.color));
 
@@ -396,6 +411,20 @@ export class GlobeRenderer {
     this.renderer.forceContextLoss();
   }
 
+  // How much of the hills built-up tiles keep (1: all; the City Lab).
+  setHillKeep(k: number): void {
+    if (k === this.hillKeep) return;
+    this.hillKeep = k;
+    this.cityProps.invalidate();
+  }
+  // A density set by hand for a built-up tile (null: the rules decide).
+  setDensity(t: number, d: Density | null): void {
+    this.cityProps.setDensity(t, d);
+  }
+  densityOf(t: number): Density {
+    return this.cityProps.densityOf(t);
+  }
+
   focusOn(tile: number): void {
     this.cam.focus(this.game.tiles[tile].center);
   }
@@ -425,6 +454,8 @@ export class GlobeRenderer {
       for (const x of [t, ...g.tiles[t].neighbors]) { this.propCache.delete(x); dirty.add(this.tileChunk[x]!); }
     }
     if (useChanged || this.groundVersion !== g.useVersion) { this.groundVersion = g.useVersion; this.updateCityGround(); }
+    // Built-up ground is drained and its hills softened (before anything is placed there).
+    for (const t of this.terraform()) { this.propCache.delete(t); dirty.add(this.tileChunk[t]!); }
     // Summits levelled for wonders standing on them (before anything is placed there).
     for (const [w, t] of g.wondersBuilt) {
       if (WONDERS[w].site !== 'mountainTop' || this.levelled.has(t) || !g.wonderAt[t]) continue;
@@ -873,6 +904,43 @@ export class GlobeRenderer {
     this.scene.add(this.borders);
   }
 
+  // Reshapes built-up ground (terraform.ts) when what is built up, or how
+  // much of the hills it keeps, changed. Returns the tiles whose ground moved.
+  private terraform(): number[] {
+    const g = this.game;
+    const built = (t: number) => g.use[t] === USE.urban || g.use[t] === USE.center || g.ruins[t] === 1;
+    let key = `${this.hillKeep}|`;
+    for (let t = 0; t < g.N; t++) if (built(t)) key += `${t},`;
+    if (key === this.groundKey) return [];
+    this.groundKey = key;
+    const topo = this.terrain.topo;
+    const target = cityGround(g.globe, topo, this.layers, this.origHeight, this.terrain.fields.water, built, this.hillKeep);
+    const changes = new Map(target);
+    for (const v of this.reshaped) if (!target.has(v)) changes.set(v, { height: this.origHeight[v]!, up: 0 });
+    for (const [v, c] of [...changes]) if (this.terrain.fields.height[v] === c.height) changes.delete(v);
+    if (!changes.size) return [];
+    this.terrain.reshape(changes);
+    this.reshaped = new Set(target.keys());
+    // Slopes around what moved (props and buildings read them).
+    const H = this.terrain.fields.height, D = topo.dir;
+    const touched = new Set<number>();
+    for (const v of changes.keys()) { touched.add(v); for (let j = topo.adjStart[v]; j < topo.adjStart[v + 1]; j++) touched.add(topo.adj[j]!); }
+    for (const v of touched) {
+      let best = 0;
+      for (let j = topo.adjStart[v]; j < topo.adjStart[v + 1]; j++) {
+        const n = topo.adj[j]!;
+        const l = Math.hypot(D[n * 3]! - D[v * 3]!, D[n * 3 + 1]! - D[v * 3 + 1]!, D[n * 3 + 2]! - D[v * 3 + 2]!);
+        if (l > 1e-7) best = Math.max(best, Math.abs(H[n]! - H[v]!) / l);
+      }
+      this.vertSlope[v] = best;
+    }
+    this.shadowsDirty = true;
+    const tiles = new Set<number>();
+    for (const v of changes.keys()) tiles.add(topo.tile[v]!);
+    for (const t of [...tiles]) for (const n of g.tiles[t].neighbors) tiles.add(n);
+    return [...tiles];
+  }
+
   // Levels the top of a mountain tile for a wonder: within LEVEL_R of the
   // peak the ground is cut down to LEVEL_AT of the way up, easing back into
   // the slopes beyond; the cut is flat (its normals straight up).
@@ -989,8 +1057,9 @@ export class GlobeRenderer {
       fine.push(pts[pts.length - 1]!);
       this.drape(fine, halfW, ROAD_RGB, pos, col, at, lift);
     }
-    // Streets inside towns (cityProps.ts lays them out).
+    // Streets and squares inside towns (cityProps.ts lays them out).
     for (const st of this.cityProps.streets()) this.drape(st.points, st.halfWidth, st.paved ? PAVED_RGB : DIRT_RGB, pos, col, at, lift);
+    for (const pv of this.cityProps.pavings()) this.pave(pv.points, at, lift, pos, col);
     if (this.roads) {
       this.scene.remove(this.roads);
       this.roads.geometry.dispose();
@@ -1007,6 +1076,25 @@ export class GlobeRenderer {
     this.roads.receiveShadow = true;
     this.roads.renderOrder = 1;
     this.scene.add(this.roads);
+  }
+
+  // A paved square: a fan from its middle, each point on the ground.
+  private pave(pts: readonly THREE.Vector3[], at: (d: THREE.Vector3) => { t: number; h: number }, lift: number, pos: number[], col: number[]): void {
+    if (pts.length < 3 || !this.game.explored[at(pts[0]!).t]) return;
+    const mid = pts.reduce((a, p) => a.add(p), new THREE.Vector3()).normalize();
+    const on = (d: THREE.Vector3) => d.clone().multiplyScalar(at(d).h + lift);
+    // Edges subdivided so the paving follows the ground.
+    const ring: THREE.Vector3[] = [];
+    pts.forEach((p, k) => { const q = pts[(k + 1) % pts.length]!; for (let s = 0; s < 3; s++) ring.push(p.clone().lerp(q, s / 3).normalize()); });
+    const m = on(mid);
+    const rgb = PLAZA_RGB;
+    ring.forEach((p, k) => {
+      const q = ring[(k + 1) % ring.length]!;
+      const a = on(p), b = on(q), am = on(p.clone().lerp(mid, 0.5).normalize()), bm = on(q.clone().lerp(mid, 0.5).normalize());
+      pos.push(a.x, a.y, a.z, b.x, b.y, b.z, bm.x, bm.y, bm.z, a.x, a.y, a.z, bm.x, bm.y, bm.z, am.x, am.y, am.z);
+      pos.push(am.x, am.y, am.z, bm.x, bm.y, bm.z, m.x, m.y, m.z);
+      for (let n = 0; n < 9; n++) col.push(rgb[0], rgb[1], rgb[2], n < 6 && (n === 0 || n === 1 || n === 3) ? 0.6 : 0.95);
+    });
   }
 
   // A ribbon along `pts` draped on the ground (or the water), three
@@ -1377,41 +1465,6 @@ function drawCityLabel(ctx: CanvasRenderingContext2D, color: string, label: stri
     ctx.fillStyle = hp > 0.5 ? '#51cf66' : hp > 0.25 ? '#fcc419' : '#fa5252';
     ctx.fillRect(x + 18, 70, (w - 36) * Math.max(0, hp), 8);
   }
-}
-
-// Prop material: per-vertex colors, with the leaf parts (leafMask) taking
-// each instance's leaf color (leafTint), times the instance's color.
-// `bounce`: light bounced off the ground onto walls (buildings, whose walls
-// would otherwise sit dark under a high sun).
-function makePropMaterial(bounce = 0): THREE.MeshStandardMaterial {
-  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, flatShading: true, side: THREE.DoubleSide });
-  mat.onBeforeCompile = (shader) => {
-    shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', `#include <common>
-        attribute float leafMask;
-        attribute vec3 leafTint;`)
-      .replace('#include <color_vertex>', `#include <color_vertex>
-        #ifdef USE_INSTANCING_COLOR
-          vColor.xyz = mix(color.xyz, leafTint, leafMask) * instanceColor.xyz;
-        #endif`);
-    shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', `#include <common>
-        ${GRADE_GLSL}`)
-      .replace('#include <opaque_fragment>', `outgoingLight += diffuseColor.rgb * ${bounce.toFixed(3)};
-        outgoingLight = grade(outgoingLight, 0.6) * 0.9;
-        #include <opaque_fragment>`);
-  };
-  // Distinct programs per bounce.
-  mat.customProgramCacheKey = () => `prop-${bounce}`;
-  return mat;
-}
-
-// A geometry sharing a prop model's buffers, with its own per-instance leaf colors.
-function instanceGeometry(model: THREE.BufferGeometry, capacity: number): THREE.BufferGeometry {
-  const g = new THREE.BufferGeometry();
-  for (const [name, attr] of Object.entries(model.attributes)) g.setAttribute(name, attr);
-  g.setAttribute('leafTint', new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3));
-  return g;
 }
 
 // Per terrain vertex: the ground's slope (height per radian, the steepest

@@ -5,6 +5,7 @@
 
 import type { Game, City } from './game.ts';
 import { ERAS, BUILDINGS, type BuildingKey, type WonderKey, type FocusKey, type EraIndex } from './cities.ts';
+import type { Density } from './cityDesigns.ts';
 
 export function foundCity(g: Game, tile: number, owner: number): City | null {
   const settler = g.createUnit('settler', owner, tile);
@@ -78,11 +79,14 @@ export interface Preset {
   readonly hp?: number;        // share of max HP (a siege)
   readonly pillage?: number;   // rural tiles burnt
   readonly razed?: boolean;    // built, then razed to ruins
+  readonly density?: Density;
+  readonly urbanFirst?: (g: Game, t: number) => boolean; // grows onto these tiles as urban first  // every built tile drawn at this density (the renderer's choice, for now)
 }
 
 const flatOpen = (g: Game, t: number) => g.relief[t] === 'flat' && g.feature[t] === null && ['prairie', 'savanna', 'steppe', 'mediterranean'].includes(g.biome[t]);
 const coast = (g: Game, t: number) => g.tiles[t].neighbors.some((n) => g.biome[n] === 'shallowSea');
 const river = (g: Game, t: number) => g.map.riverTile[t] === 1;
+const wetland = (g: Game, t: number) => g.feature[t] === 'marsh' || g.feature[t] === 'swamp' || g.feature[t] === 'mangrove' || g.feature[t] === 'bog';
 
 export const PRESETS: readonly Preset[] = [
   { name: 'Hamlet', desc: 'Size 2, Ancient: a few huts and fields.', era: 0, pop: 2, focus: 'food', buildings: [], wonders: [], site: flatOpen },
@@ -96,6 +100,9 @@ export const PRESETS: readonly Preset[] = [
   { name: 'Garden city', desc: 'Size 11, Classical, on a river: the Hanging Gardens, Stonehenge.', era: 1, pop: 11, focus: 'culture', buildings: ['amphitheater', 'odeon', 'monument', 'waterMill'], wonders: ['hangingGardens', 'stonehenge'], site: (g, t) => river(g, t) && flatOpen(g, t) },
   { name: 'Lighthouse port', desc: 'Size 10, Medieval: the Great Lighthouse.', era: 2, pop: 10, focus: 'gold', buildings: ['walls', 'lighthouse', 'shipyard', 'market', 'countingHouse'], wonders: ['greatLighthouse'], site: coast },
   { name: 'Besieged city', desc: 'Size 10, Medieval: walls breached, fields burning.', era: 2, pop: 10, focus: 'production', buildings: ['walls', 'barracks', 'stable', 'workshop'], wonders: [], site: flatOpen, hp: 0.25, pillage: 3 },
+  { name: 'Metropolis', desc: 'Size 18, high density: towers (later eras), two buildings per tile.', era: 2, pop: 18, focus: 'gold', buildings: ['market', 'countingHouse', 'library', 'academy', 'workshop', 'smithy', 'odeon', 'amphitheater'], wonders: [], site: flatOpen, density: 'high' },
+  { name: 'Wetland town', desc: 'Size 8 on a marsh, swamp or mangrove: drained where it is built.', era: 1, pop: 8, focus: 'food', buildings: ['market', 'granary'], wonders: [], site: (g, t) => g.feature[t] === null && g.relief[t] === 'flat' && g.tiles[t].neighbors.filter((n) => wetland(g, n)).length >= 3, urbanFirst: wetland },
+  { name: 'Hill town', desc: 'Size 9, Medieval, on hills: walls.', era: 2, pop: 9, focus: 'production', buildings: ['walls', 'workshop', 'shrine', 'monument'], wonders: [], site: (g, t) => g.relief[t] === 'hills' && g.tiles[t].neighbors.filter((n) => g.relief[n] === 'hills').length >= 3 },
   { name: 'Ruins', desc: 'A razed town: broken walls where houses stood.', era: 1, pop: 7, focus: 'balanced', buildings: ['market', 'shrine'], wonders: [], site: flatOpen, razed: true },
 ];
 
@@ -129,7 +136,15 @@ export function buildPresets(g: Game, presets: readonly Preset[] = PRESETS): Bui
     if (!c) continue;
     used.push(best);
     c.focus = p.focus;
-    grow(g, c, p.pop - 1);
+    if (p.urbanFirst) {
+      for (;;) {
+        const o = g.growthOptions(c).find((x) => x.kind === 'urban' && p.urbanFirst!(g, x.tile));
+        if (!o || c.pop >= p.pop) break;
+        c.growth = 1;
+        g.placeGrowth(c, o);
+      }
+    }
+    grow(g, c, p.pop - c.pop);
     for (const w of p.wonders) addWonder(g, c, w);
     for (const b of p.buildings) addBuilding(g, c, b);
     if (p.hp !== undefined) c.hp = Math.round(g.cityMaxHp(c) * p.hp);

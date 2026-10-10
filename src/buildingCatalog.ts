@@ -90,6 +90,41 @@ export const BUILDINGS_CATALOG = {
     cyl(0.0019, 0.0019, 0.0018, 6, 0xa58d6c),
     cone(0.0024, 0.0022, 6, p.leaf, { y: 0.0018 }),
   ] },
+  // ---------- high density (towers; the City Lab until later eras) ----------
+  apartment: { name: 'Apartment block', leaf: 0x6a6460, build: (p) => [
+    walls(0.0064, 0.0054, 0.0078, 0xb9ad9a), flat(0.0064, 0.0054, p.leaf, { y: 0.0078 }),
+    ...block(0.0022, 0.0018, 0.0012, 0x8d877c, { x: 0.0012, y: 0.0078 }),
+  ] },
+  officeTower: { name: 'Office tower', leaf: 0x55606a, build: (p) => [
+    walls(0.006, 0.006, 0.021, 0x8d9aa3), flat(0.006, 0.006, p.leaf, { y: 0.021 }),
+    ...block(0.0062, 0.0062, 0.0016, 0xb0ada6),
+  ] },
+  skyscraper: { name: 'Skyscraper', leaf: 0x6a7480, build: (p) => [
+    ...block(0.0064, 0.0064, 0.016, 0xa7a49c),
+    ...block(0.0047, 0.0047, 0.012, 0x8e9ba5, { y: 0.016 }),
+    walls(0.003, 0.003, 0.007, 0x8e9ba5, { y: 0.028 }),
+    cone(0.0012, 0.006, 4, p.leaf, { y: 0.035, ry: Math.PI / 4 }),
+  ] },
+  // ---------- street furniture ----------
+  gardenTree: { name: 'Garden tree', leaf: 0x5b7a3e, build: (p) => [
+    cyl(0.00028, 0.0002, 0.0022, 3, 0x6a5038),
+    part(new THREE.OctahedronGeometry(0.0021, 0), p.leaf, tf({ y: 0.0034, sy: 1.15 })),
+  ] },
+  well: { name: 'Well', leaf: 0x7a5a48, build: (p) => [
+    cyl(0.0011, 0.0011, 0.0008, 6, STONE),
+    ...[-0.0009, 0.0009].map((x) => column(0.0022, 0.00012, TIMBER, { x })),
+    gable(0.0024, 0.0016, 0.0008, p.leaf, { y: 0.0022 }),
+  ] },
+  fountain: { name: 'Fountain', leaf: 0x8fa6b0, build: (p) => [
+    cyl(0.0022, 0.0024, 0.0006, 8, STONE),
+    flat(0.0036, 0.0036, p.leaf, { y: 0.00055, ry: Math.PI / 8 }),
+    column(0.0026, 0.00035, MARBLE),
+  ] },
+  stall: { name: 'Market stall', leaf: 0xa86a4a, build: (p) => [
+    ...[[-0.0009, -0.0006], [0.0009, -0.0006], [-0.0009, 0.0006], [0.0009, 0.0006]].map(([x, z]) => column(0.0016, 0.0001, TIMBER, { x, z })),
+    gable(0.0024, 0.0018, 0.0007, p.leaf, { y: 0.0016 }),
+    flat(0.0018, 0.0011, 0xb08a5a, { y: 0.0008 }),
+  ] },
   // ---------- city center ----------
   hall: { name: 'City hall', leaf: 0x5f5650, build: (p) => [
     walls(0.011, 0.0075, 0.0055, STONE),
