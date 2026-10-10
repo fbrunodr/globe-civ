@@ -120,12 +120,16 @@ export interface PoolLook {
   // flooded above this threshold. Oases have one pond in the middle instead.
   threshold: number;
   pond: boolean;
+  // Most of a tile's own ground under water, pools or sea (the pools'
+  // threshold rises tile by tile until it holds; the pattern still runs
+  // across the whole wetland).
+  maxShare?: number;
 }
 
 export const POOL_LOOK: Partial<Record<FeatureKey, PoolLook>> = {
   marsh:    { tint: { deep: 0x1d4a44, murk: 2.6 }, threshold: 0.02, pond: false },
   swamp:    { tint: { deep: 0x1e2e1a, murk: 4 },   threshold: 0.1,  pond: false },
-  mangrove: { tint: { deep: 0x1f4840, murk: 2.4 }, threshold: -0.04, pond: false },
+  mangrove: { tint: { deep: 0x1f4840, murk: 2.4 }, threshold: -0.04, pond: false, maxShare: 0.27 },
   bog:      { tint: { deep: 0x1f160b, murk: 7 },   threshold: 0.14, pond: false },
   oasis:    { tint: { deep: 0x0f5a6a, murk: 1.4 }, threshold: 0,    pond: true },
 };

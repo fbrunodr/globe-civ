@@ -149,6 +149,8 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
   const poolThr = new Float32Array(V); // their flooding threshold
   const poolPond = new Float32Array(V);
   const poolTint = new Float32Array(V * 4);
+  const poolTile = new Int32Array(V * 4).fill(-1); // the pool tiles painted at each vertex...
+  const poolW = new Float32Array(V * 4);            // ...and their soft weights
   const frozen = new Float32Array(V); // 1 on frozen ground and sea ice (no sandy beaches)
   const co = new Float32Array(FAN_COORDS);
   // Tiles that make up mountain ranges (volcanoes are cones of their own).
@@ -171,6 +173,7 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
       b += w[k] * l.bed;
       frozen[v] += w[k] * smoothstep(FROZEN_TEMP[0], FROZEN_TEMP[1], map.temperature[u]);
       if (l.pool) {
+        poolTile[v * 4 + k] = u; poolW[v * 4 + k] = w[k];
         q += w[k]; thr += w[k] * l.pool.threshold; pond += w[k] * (l.pool.pond ? 1 : 0);
         const c = poolColor[u]!;
         tint[0] += w[k] * c.r; tint[1] += w[k] * c.g; tint[2] += w[k] * c.b; tint[3] += w[k] * l.pool.tint.murk;
@@ -553,11 +556,14 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
   {
     const fp = 1 / (0.42 * r0);
     const pwOf = new Float32Array(V);
+    const N = tiles.length;
     // Vertices on the edge of a coarser tile are fixed to that tile's edge
     // by the mesh (its T-junctions), so a pool there would not hold; nor
     // where a sea's or lake's water already reaches.
     const levels = meshLevels(globe, map, looks);
     const seam = (v: number) => { for (let s = 0; s < 3; s++) { const t = topo.owners[v * 3 + s]; if (t >= 0 && levels[t] < 4) return true; } return false; };
+    // The mask's pieces that do not depend on the threshold, once.
+    const base = new Float32Array(V), nval = new Float32Array(V), pondOf = new Float32Array(V);
     for (let v = 0; v < V; v++) {
       const q = poolQ[v];
       if (q <= 0.45 || seam(v) || water[v] !== NONE) continue;
@@ -566,17 +572,50 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
       const clear = smoothstep(0.1 * r0, 0.3 * r0, coast[v]) * nearRiver;
       if (clear <= 0) continue;
       dirOf(v, d);
-      let p: number;
+      base[v] = smoothstep(0.45, 0.85, q) * clear;
       if (poolPond[v] > 0.5) {
         // Oasis: one pond around the tile center.
         const c = tiles[topo.tile[v]].center;
         const r = c.distanceTo(d) / r0 + 0.12 * noise.noise(d.x * fp, d.y * fp, d.z * fp);
-        p = smoothstep(0.42, 0.3, r);
+        pondOf[v] = smoothstep(0.42, 0.3, r);
       } else {
-        const n = noise.fbm(d.x * fp + 7.3, d.y * fp, d.z * fp - 2.1, 3);
-        p = smoothstep(poolThr[v] - 0.07, poolThr[v] + 0.07, n);
+        nval[v] = noise.fbm(d.x * fp + 7.3, d.y * fp, d.z * fp - 2.1, 3);
       }
-      pwOf[v] = p * smoothstep(0.45, 0.85, q) * clear;
+    }
+    // One noise pattern runs over the whole wetland; a tile whose own ground
+    // would be flooded more than its look allows raises its threshold (the
+    // offsets blend between tiles like the thresholds, so no seams), a few
+    // rounds until every tile holds.
+    const offset = new Float32Array(N);
+    const fill = () => {
+      for (let v = 0; v < V; v++) {
+        if (base[v] <= 0) { pwOf[v] = 0; continue; }
+        if (poolPond[v] > 0.5) { pwOf[v] = pondOf[v] * base[v]; continue; }
+        let off = 0;
+        for (let k = 0; k < 4; k++) { const u = poolTile[v * 4 + k]; if (u >= 0) off += poolW[v * 4 + k] * offset[u]; }
+        const thr = poolThr[v] + off / poolQ[v];
+        pwOf[v] = smoothstep(thr - 0.07, thr + 0.07, nval[v]) * base[v];
+      }
+    };
+    const capped = tiles.filter((tile) => looks[tile.id].pool?.maxShare !== undefined).map((tile) => tile.id);
+    fill();
+    for (let round = 0; round < 10 && capped.length; round++) {
+      const ground = new Map<number, number>(), flooded = new Map<number, number>();
+      for (let v = 0; v < V; v++) {
+        const t = topo.tile[v];
+        if (looks[t].pool?.maxShare === undefined || poolQ[v] < 0.5) continue;
+        ground.set(t, (ground.get(t) ?? 0) + 1);
+        // Under water: the sea's already, or a pool's middle (its fringe stays dry).
+        if (water[v] > height[v] || pwOf[v] >= 0.25) flooded.set(t, (flooded.get(t) ?? 0) + 1);
+      }
+      let over = false;
+      for (const t of capped) {
+        const share = (flooded.get(t) ?? 0) / Math.max(1, ground.get(t) ?? 0);
+        const cap = looks[t].pool!.maxShare!;
+        if (share > cap) { offset[t] += 0.03 + 0.6 * (share - cap); over = true; }
+      }
+      if (!over) break;
+      fill();
     }
     // Pools follow the height map's contours: each body lies within one band
     // of POOL_BAND in height, so it is never much higher at one end than at

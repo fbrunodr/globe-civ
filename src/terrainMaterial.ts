@@ -16,6 +16,7 @@ import type { ImprovementKey } from './cities.ts';
 //   4 snow.rgb, beach       (snow as this tile shows it; sandy shores)
 //   5 urban, group, improvement, center   (city ground, see CITY_GLSL; urban:
 //                           1 on urban and center tiles; improvement: IMPROVEMENT_CODE)
+//   6 owner.rgb, owned      (the owner's color: a tint seen only from afar)
 // Fan table rows (FAN_ROWS texels):
 //   0 ids (t, A, B, C)
 //   1 rounding of edges i-1, i, i+1 and A|B
@@ -40,7 +41,7 @@ import type { ImprovementKey } from './cities.ts';
 // at the object-space position, so it wraps the sphere without seams.
 
 export const TEX_W = 2048;
-export const TILE_ROWS = 6;
+export const TILE_ROWS = 7;
 export const FAN_ROWS = 6;
 const NOISE_SIZE = 64;
 
@@ -325,6 +326,15 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
             snowCover = smoothstep(-0.00015, 0.00015, edge) * (1.0 - smoothstep(0.16, 0.3, steepness));
           }
           diffuseColor.rgb = mix(m0.rgb, m4.rgb, snowCover) * vShade;
+          // The owner's color, faintly, and only from afar: territory reads
+          // at strategic zoom, the land keeps its own colors up close.
+          {
+            vec4 m6 = vec4(0.0);
+            for (int k = 0; k < 4; k++) if (w[k] > 0.001) m6 += w[k] * tileRow(int(ids[k]), 6);
+            m6 /= wsum;
+            float far = smoothstep(0.3, 0.9, distance(cameraPosition, P));
+            if (m6.a > 0.001) diffuseColor.rgb = mix(diffuseColor.rgb, m6.rgb / max(m6.a, 1e-3) * vShade, 0.12 * m6.a * far);
+          }
           // Water is geometry: vDepth > 0 under the water surface (water.ts
           // draws the surface), < 0 above it.
           float under = smoothstep(0.0, 0.00015, vDepth);
@@ -419,11 +429,22 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               diffuseColor.rgb = mix(diffuseColor.rgb, c * vShade, mine * spoil * 0.8);
             }
             if (quarryS > 0.02) {
+              // Open pits: a couple of irregular hollows per tile, cut in
+              // steps (benches) of pale stone, dusty ground around them.
               float quarry = smoothstep(0.4, 0.55, quarryS + 0.35 * edgeN) * keep * fieldMask;
-              vec2 f; float edge;
-              float h = cPlots(P, vec2(0.1, 0.07), 9.0, f, edge);
-              float cut = step(0.45, h) * smoothstep(0.5, 0.65, tFbm(P / (0.3 * uR0), 2) + 0.3);
-              diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.7, 0.68, 0.63) * (0.9 + 0.2 * h) * vShade, quarry * cut * 0.8);
+              float n = tFbm(P / (0.32 * uR0) + 6.1, 2);
+              float pit = smoothstep(0.6, 0.63, n);
+              float dust = smoothstep(0.52, 0.6, n) * (1.0 - pit);
+              // Broad benches, darker toward the floor; each starts with the
+              // shaded face of the step down, then its flat lighter top.
+              float depth = max(0.0, n - 0.6) * 16.0;
+              float bench = fract(depth), level = min(floor(depth), 5.0);
+              float face = mix(1.0, 1.0 - smoothstep(0.0, 0.3, bench), tFade(1.0 / (0.04 * uR0)));
+              vec3 stone = vec3(0.78, 0.74, 0.66) * (0.94 + 0.1 * tNoise(P / (0.025 * uR0))) * (1.0 - 0.1 * level);
+              stone *= mix(1.0, 0.68, face * pit * step(0.5, depth));
+              vec3 c = mix(diffuseColor.rgb, vec3(0.62, 0.58, 0.5) * vShade, dust * 0.6);
+              c = mix(c, stone * vShade, pit);
+              diffuseColor.rgb = mix(diffuseColor.rgb, c, quarry);
             }
             if (burntS > 0.02) {
               // Pillaged: scorched ground and ash, the plots still showing faintly.

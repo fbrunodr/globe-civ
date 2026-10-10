@@ -543,13 +543,13 @@ export class GlobeRenderer {
     return out;
   }
 
-  // Color of tile t as seen by the player; `snow` shows its snow instead.
-  private displayColor(t: number, snow: boolean, out: THREE.Color): THREE.Color {
+  // Color of tile t as seen by the player; `snow` shows its snow instead,
+  // `tint` the owner's color (the shader mixes it in only from afar).
+  private displayColor(t: number, snow: boolean, out: THREE.Color, tint = false): THREE.Color {
     const g = this.game;
     if (!g.explored[t]) return out.copy(FOG);
-    out.copy(snow ? SNOW : this.baseColors[t]);
     const owner = g.ownerOf(t);
-    if (owner >= 0) out.lerp(this.playerColors[owner], 0.12);
+    out.copy(tint ? (owner >= 0 ? this.playerColors[owner]! : FOG) : snow ? SNOW : this.baseColors[t]);
     if (!g.visible[t]) {
       const gray = (out.r + out.g + out.b) / 3;
       out.setRGB(lerp(out.r, gray, 0.6) * 0.5, lerp(out.g, gray, 0.6) * 0.5, lerp(out.b, gray, 0.6) * 0.5);
@@ -568,6 +568,8 @@ export class GlobeRenderer {
       td[o] = c.r; td[o + 1] = c.g; td[o + 2] = c.b;
       this.displayColor(t, true, c);
       td[o + 16] = c.r; td[o + 17] = c.g; td[o + 18] = c.b;
+      this.displayColor(t, false, c, true);
+      td[o + 24] = c.r; td[o + 25] = c.g; td[o + 26] = c.b; td[o + 27] = g.explored[t] && g.ownerOf(t) >= 0 ? 1 : 0;
     }
     this.tileTex.needsUpdate = true;
     const fogAttr = this.terrain.geometry.getAttribute('unexplored') as THREE.BufferAttribute;
