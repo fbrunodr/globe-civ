@@ -77,3 +77,26 @@ describe('L3: city buildings stand on dry, gentle ground (boats on water)', () =
     expect(wet).toEqual([]);
   });
 });
+
+describe('L4: City Lab presets build as described', () => {
+  it('every preset finds a site and reaches its size, buildings and wonders', async () => {
+    const { buildPresets, PRESETS } = await import('../src/sandbox.ts');
+    const bad: string[] = [];
+    for (const seed of [7, 8]) {
+      const g = new Game({ size: 'medium', seed });
+      g.units.length = 0;
+      const built = buildPresets(g);
+      if (built.length !== PRESETS.length) bad.push(`seed ${seed}: ${built.length}/${PRESETS.length} presets placed`);
+      for (const b of built) {
+        if (!b.city) continue;
+        const p = b.preset;
+        if (b.city.pop < p.pop) bad.push(`seed ${seed} ${p.name}: size ${b.city.pop}/${p.pop}`);
+        const missing = p.buildings.filter((k) => !b.city!.buildings.has(k));
+        if (missing.length) bad.push(`seed ${seed} ${p.name}: missing ${missing.join(', ')}`);
+        const noWonder = p.wonders.filter((w) => !g.wondersBuilt.has(w));
+        if (noWonder.length) bad.push(`seed ${seed} ${p.name}: no ${noWonder.join(', ')}`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+});

@@ -27,7 +27,7 @@ const canvas = document.querySelector<HTMLCanvasElement>('#c')!;
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;
 const labels = new CSS2DRenderer({ element: document.querySelector<HTMLDivElement>('#labels')! });
 
 const scene = new THREE.Scene();

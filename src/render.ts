@@ -189,7 +189,7 @@ export class GlobeRenderer {
     // updateSun) so its shadow map only covers what is on screen. The
     // hemisphere light fills shadows with a cool sky tone.
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     // Shadows re-render only when the view or the world changes (laptops).
     this.renderer.shadowMap.autoUpdate = false;
     this.sun = new THREE.DirectionalLight(0xffefd2, 2.3);

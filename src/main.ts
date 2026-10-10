@@ -21,6 +21,7 @@ function showStartScreen(): void {
     <div class="sizes">${sizes}</div>
     <label>Seed <input id="seed" value="${params.get('seed') ?? Math.floor(Math.random() * 1e6)}"></label>
     <button id="go" class="primary">Start game</button>
+    <p class="tools"><small>Tools: <a href="/gallery.html">Gallery</a> · <a href="/city_lab.html">City lab</a> · <a href="/world_view.html">World view</a></small></p>
   </div>`;
   let size: MapSizeKey = 'small';
   const pSize = params.get('size');

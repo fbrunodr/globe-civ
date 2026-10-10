@@ -90,3 +90,32 @@ small { color: var(--muted); font-weight: normal; }
 .quarters { margin: 8px 0; padding: 6px 8px; border-radius: 8px; background: rgba(255, 255, 255, 0.04); font-size: 13px; color: var(--muted); }
 .qrow + .qrow { margin-top: 3px; }
 .qrow b { color: var(--text); font-weight: 600; margin-right: 6px; }
+
+/* Dev pages: links between the game, the gallery, the City Lab and the world view */
+.devnav { display: flex; gap: 2px; }
+.devnav a { color: var(--muted); text-decoration: none; padding: 3px 9px; border-radius: 6px; }
+.devnav a:hover { color: var(--text); background: rgba(255, 255, 255, 0.08); }
+.devnav a.active { color: var(--text); background: rgba(61, 139, 253, 0.25); }
+#topbar label { color: var(--muted); display: flex; align-items: center; gap: 6px; }
+#topbar input, #topbar select { font: inherit; background: rgba(255,255,255,0.06); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 7px; }
+#topbar select option { background: #1a1f2b; }
+
+/* City Lab */
+#lab { position: fixed; left: 14px; top: 56px; bottom: 14px; width: 340px; display: flex; flex-direction: column; gap: 8px; }
+#lab .panel { position: static; overflow: auto; }
+#presets { max-height: 42%; }
+#presets h3, #builder h3 { margin: 0 0 6px; font-size: 15px; }
+#presets .preset { display: block; width: 100%; text-align: left; margin-top: 4px; }
+#presets .preset small { display: block; }
+#presets .preset.active { outline: 2px solid var(--accent); }
+#builder { flex: 1; }
+#builder .row { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 6px 0; }
+#builder .row > span { color: var(--muted); min-width: 64px; }
+#builder .row button { padding: 3px 8px; font-size: 12px; }
+#builder .row button:disabled { opacity: 0.35; }
+#builder .mode { margin: 8px 0; padding: 6px 8px; border: 1px solid rgba(255, 224, 102, 0.35); border-radius: 8px; background: rgba(255, 224, 102, 0.06); }
+#builder input[type=range] { width: 160px; }
+#builder hr { border: 0; border-top: 1px solid var(--border); margin: 8px 0; }
+.card .tools { margin: 16px 0 0; }
+.card .tools a { color: var(--muted); }
+.card .tools a:hover { color: var(--text); }

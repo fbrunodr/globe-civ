@@ -504,7 +504,7 @@ export class Game {
     return true;
   }
 
-  private destroyCity(c: City): void {
+  destroyCity(c: City): void {
     for (let t = 0; t < this.N; t++) {
       if (this.tileCity[t] !== c.id) continue;
       if (this.use[t] === USE.urban || this.use[t] === USE.center) this.ruins[t] = 1;
@@ -672,6 +672,23 @@ export class Game {
       if (s > bestS) { best = t; bestS = s; }
     }
     return best;
+  }
+
+  // Builds wonder k on tile t at once (the City Lab; the game completes
+  // wonders through production).
+  placeWonder(city: City, k: WonderKey, t: number): boolean {
+    if (this.wondersBuilt.has(k) || !this.wonderSpots(city, k).includes(t)) return false;
+    this.completeWonder(city, k, t);
+    return true;
+  }
+
+  // Empties slot k of tile t (the City Lab).
+  demolish(t: number, k: number): void {
+    const b = slotKey(this.slots[t * SLOTS + k]!);
+    if (!b) return;
+    this.slots[t * SLOTS + k] = 0;
+    this.cityById.get(this.tileCity[t]!)?.buildings.delete(b);
+    this.useVersion++;
   }
 
   private completeWonder(city: City, k: WonderKey, t: number): void {
