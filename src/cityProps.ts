@@ -61,7 +61,7 @@ const HOUSE_URBAN = 0.5;   // houses stand where the urban weight is at least th
 // Houses on an urban tile (×1.3 on the center): a size-3 town shows about 15,
 // a size-15 capital a couple of hundred.
 export const housesOn = (pop: number, specialists: number, center: boolean): number =>
-  Math.min(120, Math.round((10 + 3.5 * pop) * (center ? 1.3 : 1) + 8 * specialists));
+  Math.min(160, Math.round((14 + 5 * pop) * (center ? 1.3 : 1) + 8 * specialists));
 // Models are enlarged a little over true scale so towns read from afar.
 const HOUSE_SCALE = 1.5;
 
@@ -269,91 +269,167 @@ export class CityProps {
     }
     keepOut.push({ d: up, r: 0.13 }); // the plaza
 
-    // 2. Streets: radiating from the plaza, and rings around it.
-    const streets: Street[] = [];
-    const main = 0.016 * D, lane = 0.011 * D;
-    const paved = era > 0;
-    const K = Math.min(9, 5 + Math.floor(tiles.length / 2));
-    const radials: THREE.Vector3[][] = [];
-    for (let i = 0; i < K; i++) {
-      let th = (i / K) * Math.PI * 2 + (rand() - 0.5) * 0.5;
-      const pts: THREE.Vector3[] = [];
-      for (let r = 0.12; r < 3.8; r += 0.05) {
-        const d = polar(r, th);
-        if (!town(this.sampleDir(d), 0.45)) break;
-        pts.push(d);
-        th += (rand() - 0.5) * 0.08 + 0.025 * Math.sin(r * 4 + i);
-      }
-      if (pts.length >= 3) { radials.push(pts); streets.push({ points: pts, halfWidth: main, paved }); }
-    }
-    const rings: THREE.Vector3[][] = [];
-    const phase = rand() * 6;
-    for (const r0 of [0.3, 0.64, 0.98, 1.34, 1.72, 2.14, 2.6, 3.1]) {
-      const steps = Math.max(12, Math.ceil((Math.PI * 2 * r0) / 0.05));
-      let run: THREE.Vector3[] = [];
-      const runs: THREE.Vector3[][] = [];
-      for (let j = 0; j <= steps; j++) {
-        const th = (j / steps) * Math.PI * 2;
-        const d = polar(r0 + 0.045 * Math.sin(3 * th + phase + r0), th);
-        if (town(this.sampleDir(d), 0.5)) run.push(d);
-        else { if (run.length >= 3) runs.push(run); run = []; }
-      }
-      if (run.length >= 3) {
-        // Closed all the way round: the last run joins the first.
-        if (runs.length && runs[0]![0]!.angleTo(polar(r0, 0)) < 0.2 * D && run.length > 0) runs[0] = [...run, ...runs[0]!];
-        else runs.push(run);
-      }
-      for (const rr of runs) { rings.push(rr); streets.push({ points: rr, halfWidth: lane, paved }); }
-    }
-
-    // Street points in a grid, for "is this spot on a street?".
-    const CELL = 0.08;
-    const cellOf = (d: THREE.Vector3) => `${Math.floor(d.dot(east) / D / CELL)},${Math.floor(d.dot(north) / D / CELL)}`;
-    const onStreet = new Map<string, { d: THREE.Vector3; hw: number }[]>();
-    for (const st of streets) for (const d of st.points) {
-      const key = cellOf(d);
-      const l = onStreet.get(key);
-      if (l) l.push({ d, hw: st.halfWidth / D }); else onStreet.set(key, [{ d, hw: st.halfWidth / D }]);
-    }
-    const near = (d: THREE.Vector3, f: (x: { d: THREE.Vector3; hw: number }) => boolean) => {
-      const cx = Math.floor(d.dot(east) / D / CELL), cy = Math.floor(d.dot(north) / D / CELL);
-      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (const x of onStreet.get(`${cx + dx},${cy + dy}`) ?? []) if (f(x)) return true;
-      return false;
-    };
-
-    // 3. Walls along the center's edge, with a gate where a street passes.
-    const wallLine: THREE.Vector3[] = [];
-    if (city.buildings.has('walls')) {
+    // The wall line along the center's edge (walls are built after the
+    // streets, with gates where main streets pass).
+    const walled = city.buildings.has('walls');
+    const wallSpots: { a: CitySpot; b: CitySpot; m: CitySpot; corner: boolean }[] = [];
+    if (walled) {
       const t = city.tile, k = g.tiles[t].corners.length;
       const R = 0.86, STEPS = 4;
-      const crossed = (d: THREE.Vector3) => radials.some((pts) => pts.some((p) => dist(p, d) < 0.06));
       for (let i = 0; i < k; i++) {
         for (let j = 0; j < STEPS; j++) {
           const f = j / STEPS, f2 = (j + 0.5) / STEPS;
-          const a = this.sample(t, i, R * (1 - f), R * f), b = this.sample(t, i, R * (1 - f - 1 / STEPS), R * (f + 1 / STEPS));
-          const m = this.sample(t, i, R * (1 - f2), R * f2);
-          const gate = crossed(m.dir);
-          if (j === 0 && standsAt('wallTower', a) && !crossed(a.dir)) put(t, this.make('wallTower', a.dir, a.ground, 0, HOUSE_SCALE, buildingEntry('wallTower').leaf, rand));
-          wallLine.push(m.dir, a.dir);
-          if (gate) {
-            // Towers either side of the gate.
-            for (const s of [a, b]) if (standsAt('wallTower', s) && !crossed(s.dir)) put(t, this.make('wallTower', s.dir, s.ground, 0, HOUSE_SCALE * 0.85, buildingEntry('wallTower').leaf, rand));
-            continue;
-          }
-          if (!standsAt('wallSegment', m)) continue;
-          const seg = this.make('wallSegment', m.dir, m.ground, facing(m.dir, b.dir), HOUSE_SCALE, buildingEntry('wallSegment').leaf, rand);
-          // Stretch the segment to the gap between its ends (model length 0.01 at prop scale).
-          const len = a.dir.angleTo(b.dir) / (0.01 * HOUSE_SCALE * this.scale * PROP_SCALE);
-          seg.matrix.multiply(new THREE.Matrix4().makeScale(Math.max(0.6, Math.min(2.5, len)), 1, 1));
-          put(t, seg);
+          wallSpots.push({
+            a: this.sample(t, i, R * (1 - f), R * f), b: this.sample(t, i, R * (1 - f - 1 / STEPS), R * (f + 1 / STEPS)),
+            m: this.sample(t, i, R * (1 - f2), R * f2), corner: j === 0,
+          });
         }
       }
     }
+    const wallLine = wallSpots.flatMap((w) => [w.m.dir, w.a.dir]);
 
-    // 4. Houses along the streets, facing them.
-    const want = tiles.reduce((n, t) => n + housesOn(city.pop, g.specialists[t]!, t === city.tile), 0);
-    const cand: { d: THREE.Vector3; yaw: number; score: number; r: number }[] = [];
+    // 2. Streets, grown the way a town grows: a few main streets wind out
+    // from the plaza (one toward each built tile, a few more between);
+    // side streets branch off them at irregular angles, and lanes off
+    // those. Each street bends a little as it goes and stops where it meets
+    // another street (a T-junction), the edge of the town, or water. Only
+    // main streets pass through the walls.
+    const streets: Street[] = [];
+    const paved = era > 0;
+    const CELL = 0.08;
+    const cellKey = (cx: number, cy: number) => `${cx},${cy}`;
+    const cellOf = (d: THREE.Vector3): [number, number] => [Math.floor(d.dot(east) / D / CELL), Math.floor(d.dot(north) / D / CELL)];
+    const onStreet = new Map<string, { d: THREE.Vector3; hw: number; id: number }[]>();
+    const addPoint = (d: THREE.Vector3, hw: number, id: number) => {
+      const [cx, cy] = cellOf(d), key = cellKey(cx, cy);
+      const l = onStreet.get(key);
+      if (l) l.push({ d, hw: hw / D, id }); else onStreet.set(key, [{ d, hw: hw / D, id }]);
+    };
+    const near = (d: THREE.Vector3, f: (x: { d: THREE.Vector3; hw: number; id: number }) => boolean) => {
+      const [cx, cy] = cellOf(d);
+      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (const x of onStreet.get(cellKey(cx + dx, cy + dy)) ?? []) if (f(x)) return true;
+      return false;
+    };
+    const STEP = 0.045;
+    const WIDTH = [0.016 * D, 0.012 * D, 0.009 * D];
+    interface Sprout { from: THREE.Vector3; heading: THREE.Vector3; level: number; max: number }
+    const queue: Sprout[] = [];
+    // A tangent heading at d, turned by `ang` around the local up.
+    const turn = (d: THREE.Vector3, h: THREE.Vector3, ang: number) => {
+      const t = h.clone().addScaledVector(d, -h.dot(d)).normalize();
+      return t.applyAxisAngle(d, ang);
+    };
+    let id = 0;
+    const grow = (sp: Sprout) => {
+      const me = id++;
+      const hw = WIDTH[sp.level]!;
+      const pts: THREE.Vector3[] = [sp.from.clone()];
+      let p = sp.from.clone(), h = sp.heading.clone();
+      let bend = (rand() - 0.5) * 0.12;
+      // The streets it starts from: not "met" in its first steps.
+      const startIds = new Set<number>();
+      near(sp.from, (x) => { if (dist(x.d, sp.from) < 0.08) startIds.add(x.id); return false; });
+      let wet = 0;
+      for (let k = 0; k < sp.max; k++) {
+        bend = 0.85 * bend + (rand() - 0.5) * 0.1;
+        h = turn(p, h, bend);
+        const q = p.clone().addScaledVector(h, STEP * D).normalize();
+        const s = this.sampleDir(q);
+        // (Steeper than houses allow: wetland hollows, gentle hillsides.)
+        if (!(mine.has(s.t) && s.urban >= 0.42 && s.slope <= MAX_SLOPE * 2.5)) break;
+        // Streets bridge a river, an inlet or a wetland's pools; side streets only short ones.
+        // (Wetland pools are short gaps any street steps over.)
+        if (s.water - s.ground > DRY) { if (++wet > (sp.level > 0 ? 2 : 4)) break; }
+        else wet = 0;
+        // Side streets stop at the walls.
+        if (sp.level > 0 && wallLine.some((w) => dist(w, q) < 0.05)) break;
+        // Meeting another street: join it and stop.
+        let join: THREE.Vector3 | null = null;
+        near(q, (x) => { if (x.id !== me && !(k < 3 && startIds.has(x.id)) && dist(x.d, q) < 0.06) { join = x.d; return true; } return false; });
+        if (join && k > 0) { pts.push(join); break; }
+        if (keepOut.some((o) => o.r > 0.2 && dist(o.d, q) < o.r * 0.8)) break; // around wonders
+        pts.push(q);
+        p = q;
+        // Branches: every few steps, to one side or the other.
+        if (sp.level < 2 && k > 1 && k % (sp.level === 0 ? 5 : 6) === 0 && rand() < 0.8) {
+          const side = rand() < 0.5 ? 1 : -1;
+          queue.push({ from: q, heading: turn(q, h, side * (Math.PI / 2 + (rand() - 0.5) * 0.7)), level: sp.level + 1, max: sp.level === 0 ? 16 : 9 });
+        }
+      }
+      if (pts.length < 2) return;
+      for (const d of pts) addPoint(d, hw, me);
+      streets.push({ points: pts, halfWidth: hw, paved });
+    };
+    // Main streets: toward each built tile, and a few more between.
+    const headings: number[] = [];
+    for (const t of tiles) {
+      if (t === city.tile) continue;
+      const c = g.tiles[t].center;
+      headings.push(Math.atan2(c.dot(north), c.dot(east)));
+    }
+    const mains = Math.max(3, Math.min(6, headings.length + 2));
+    while (headings.length < mains) headings.push(rand() * Math.PI * 2);
+    for (const th of headings) {
+      const a = th + (rand() - 0.5) * 0.3;
+      const from = polar(0.12, a);
+      queue.push({ from, heading: polar(0.2, a).sub(from).normalize(), level: 0, max: 80 });
+    }
+    let done = 0;
+    const run = () => { for (; done < queue.length && done < 600; done++) grow(queue[done]!); };
+    run();
+    // Built tiles the streets missed get one from the nearest street (or
+    // the plaza) to their middle, and its branches.
+    for (let pass = 0; pass < 2; pass++) {
+      for (const t of tiles) {
+        if (g.isWater(t)) continue;
+        const c = g.tiles[t].center;
+        const pts = streets.flatMap((st) => st.points);
+        if (pts.filter((p) => dist(p, c) < 0.35).length >= 6) continue;
+        const from = pts.length ? pts.reduce((x, y) => (dist(x, c) < dist(y, c) ? x : y)) : polar(0.12, 0);
+        const heading = c.clone().sub(from);
+        if (heading.lengthSq() < 1e-12) continue;
+        queue.push({ from, heading: heading.normalize(), level: 0, max: 30 });
+      }
+      run();
+    }
+    // Still uncovered (across water too wide to bridge): streets of its own
+    // from its middle.
+    for (const t of tiles) {
+      if (g.isWater(t)) continue;
+      const c = g.tiles[t].center;
+      if (streets.flatMap((st) => st.points).filter((p) => dist(p, c) < 0.35).length >= 6) continue;
+      const a = rand() * Math.PI * 2;
+      const h0 = new THREE.Vector3(Math.cos(a), 0, Math.sin(a)).cross(c).normalize();
+      queue.push({ from: c.clone(), heading: h0, level: 0, max: 20 }, { from: c.clone(), heading: h0.clone().negate(), level: 0, max: 20 });
+      run();
+    }
+    const mainStreets = streets.filter((st) => st.halfWidth === WIDTH[0]);
+
+    // 3. Walls, with a gate (and towers) where a main street passes.
+    if (walled) {
+      const t = city.tile;
+      const crossed = (d: THREE.Vector3) => mainStreets.some((st) => st.points.some((p) => dist(p, d) < 0.06));
+      for (const { a, b, m, corner } of wallSpots) {
+        if (corner && standsAt('wallTower', a) && !crossed(a.dir)) put(t, this.make('wallTower', a.dir, a.ground, 0, HOUSE_SCALE, buildingEntry('wallTower').leaf, rand));
+        if (crossed(m.dir)) {
+          for (const sp of [a, b]) if (standsAt('wallTower', sp) && !crossed(sp.dir)) put(t, this.make('wallTower', sp.dir, sp.ground, 0, HOUSE_SCALE * 0.85, buildingEntry('wallTower').leaf, rand));
+          continue;
+        }
+        if (!standsAt('wallSegment', m)) continue;
+        const seg = this.make('wallSegment', m.dir, m.ground, facing(m.dir, b.dir), HOUSE_SCALE, buildingEntry('wallSegment').leaf, rand);
+        // Stretch the segment to the gap between its ends (model length 0.01 at prop scale).
+        const len = a.dir.angleTo(b.dir) / (0.01 * HOUSE_SCALE * this.scale * PROP_SCALE);
+        seg.matrix.multiply(new THREE.Matrix4().makeScale(Math.max(0.6, Math.min(2.5, len)), 1, 1));
+        put(t, seg);
+      }
+    }
+
+    // 4. Houses along the streets, facing them: each tile gets its share,
+    // spread along all its streets (a few gaps, so rows never run on like
+    // terraces); a second row behind only where the first is short.
+    const quota = new Map(tiles.map((t) => [t, housesOn(city.pop, g.specialists[t]!, t === city.tile)]));
     const HOUSE = 0.022; // half a house's depth, tile steps
+    const cand: { d: THREE.Vector3; yaw: number; score: number; r: number; row: number }[] = [];
     for (const st of streets) {
       const pts = st.points, hw = st.halfWidth / D;
       for (let k = 0; k < pts.length; k++) {
@@ -363,10 +439,10 @@ export class CityProps {
         const side = p.clone().cross(tan).normalize();
         for (const sgn of [-1, 1]) {
           for (let row = 0; row < 2; row++) {
-            const off = (hw + HOUSE + 0.006 + row * (2 * HOUSE + 0.008)) * D;
+            const off = (hw + HOUSE + 0.006 + row * (2 * HOUSE + 0.01)) * D;
             const d = p.clone().addScaledVector(side, sgn * off).normalize();
             const r = dist(d, up);
-            cand.push({ d, yaw: facing(d, d.clone().add(tan)), score: r + row * 0.35 + rand() * 0.12, r });
+            cand.push({ d, yaw: facing(d, d.clone().add(tan)), score: rand() + 0.12 * r, r, row });
           }
         }
       }
@@ -374,27 +450,30 @@ export class CityProps {
     cand.sort((a, b) => a.score - b.score);
     const houses: THREE.Vector3[] = [];
     const temp = g.map.temperature[city.tile]!;
-    let placed = 0;
-    for (const c of cand) {
-      if (placed >= want) break;
-      if (keepOut.some((o) => dist(o.d, c.d) < o.r)) continue;
-      if (wallLine.some((w) => dist(w, c.d) < 0.045)) continue;
-      if (near(c.d, (x) => dist(x.d, c.d) < x.hw + HOUSE * 0.9)) continue;
-      if (houses.some((h) => dist(h, c.d) < 2 * HOUSE * 0.95)) continue;
-      const s = this.sampleDir(c.d);
-      if (!town(s, HOUSE_URBAN)) continue;
-      houses.push(c.d);
-      placed++;
-      const roll = rand();
-      const inner = c.r < 0.9 && city.pop >= 6;
-      const kind: BuildingKind = city.pop <= 2 && roll < 0.4 ? 'hut'
-        : inner && roll < 0.45 ? 'townhouse'
-        : roll < 0.6 ? 'cottage' : roll < 0.8 ? 'longhouse' : 'cornerHouse';
-      const size = HOUSE_SCALE * (inner ? 1.05 : 0.95) * (0.88 + 0.2 * rand());
-      const b = this.make(kind, c.d, s.ground, c.yaw + (rand() - 0.5) * 0.12, size, roofOf(temp, city.pop, era, rand), rand);
-      const [wr, wg, wb] = ERA_WALL[era];
-      b.color.multiply(new THREE.Color(wr, wg, wb));
-      put(s.t, b);
+    for (const row of [0, 1]) {
+      for (const c of cand) {
+        if (c.row !== row || (row === 0 && rand() < 0.15)) continue;
+        if (keepOut.some((o) => dist(o.d, c.d) < o.r)) continue;
+        if (wallLine.some((w) => dist(w, c.d) < 0.045)) continue;
+        if (near(c.d, (x) => dist(x.d, c.d) < x.hw + HOUSE * 0.9)) continue;
+        if (houses.some((h) => dist(h, c.d) < 2 * HOUSE * 0.95)) continue;
+        const s = this.sampleDir(c.d);
+        if (!town(s, HOUSE_URBAN)) continue;
+        const left = quota.get(s.t) ?? 0;
+        if (left <= 0) continue;
+        quota.set(s.t, left - 1);
+        houses.push(c.d);
+        const roll = rand();
+        const inner = c.r < 0.9 && city.pop >= 6;
+        const kind: BuildingKind = city.pop <= 2 && roll < 0.4 ? 'hut'
+          : inner && roll < 0.45 ? 'townhouse'
+          : roll < 0.6 ? 'cottage' : roll < 0.8 ? 'longhouse' : 'cornerHouse';
+        const size = HOUSE_SCALE * (inner ? 1.05 : 0.95) * (0.88 + 0.2 * rand());
+        const b = this.make(kind, c.d, s.ground, c.yaw + (rand() - 0.5) * 0.15, size, roofOf(temp, city.pop, era, rand), rand);
+        const [wr, wg, wb] = ERA_WALL[era];
+        b.color.multiply(new THREE.Color(wr, wg, wb));
+        put(s.t, b);
+      }
     }
     return { sig, byTile, streets };
   }

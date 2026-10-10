@@ -22,9 +22,9 @@ describe('L1: building models', () => {
 });
 
 describe('L2: houses grow with the city', () => {
-  it('a size-3 town shows about 15-30 houses on its center', () => {
+  it('a size-3 town shows a few dozen houses on its center', () => {
     expect(housesOn(3, 0, true)).toBeGreaterThanOrEqual(12);
-    expect(housesOn(3, 0, true)).toBeLessThanOrEqual(30);
+    expect(housesOn(3, 0, true)).toBeLessThanOrEqual(45);
   });
   it('a size-15 capital with 5 urban tiles shows a couple of hundred', () => {
     const total = housesOn(15, 0, true) + 5 * housesOn(15, 0, false);

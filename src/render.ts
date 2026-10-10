@@ -81,7 +81,7 @@ const FLORA_KEEP: Record<'urban' | ImprovementKey, Record<Layer, number>> = {
 // Roads between cities, and streets: dirt, then paving from the Classical era.
 const ROAD_RGB = [0.62, 0.55, 0.43] as const;
 const DIRT_RGB = [0.55, 0.49, 0.39] as const;
-const PAVED_RGB = [0.6, 0.58, 0.54] as const;
+const PAVED_RGB = [0.55, 0.53, 0.49] as const;
 
 // A tile highlighted in the overlay (growth placement options).
 export interface TileMark {
@@ -694,7 +694,9 @@ export class GlobeRenderer {
             if (!prop) continue;
             // Flora yields to cities.
             const use = g.use[u];
-            if (use !== USE.wild) {
+            // (What grows in the water, mangroves and reeds, stays: no house stands there.)
+            const inWater = env.water - env.ground > 0 && catalogEntry(prop.kind).water !== undefined;
+            if (use !== USE.wild && !inWater) {
               const imp = use === USE.rural ? improvementFor(g.terrainAt(u)) : null;
               const keepShare = FLORA_KEEP[use === USE.rural ? imp ?? 'urban' : 'urban'][CATALOG[prop.kind].layer];
               if (rand() >= keepShare) continue;
