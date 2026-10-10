@@ -14,7 +14,8 @@ import { buildSurface, meshLevels, waterLevels, LOWLAND, type Surface } from '..
 import type { MapSizeKey } from '../src/rules.ts';
 
 const SEEDS: Record<MapSizeKey, number[]> = { small: [1, 2], medium: [4], large: [6] };
-const MANGROVE_WATER = 0.3;
+const WETLAND_WATER = 0.3;
+const WETLANDS: ReadonlySet<string> = new Set(['marsh', 'swamp', 'mangrove', 'bog']);
 
 function setup(size: MapSizeKey, seed: number) {
   const w = generateWorld(size, seed);
@@ -40,10 +41,11 @@ describe('surface', () => {
       const { w, looks, relief, mesh, surface, r0, paint } = setup(size, seed);
       const { globe, map } = w;
 
-      // Mangroves are mostly dry ground with water in between (so a city can
-      // build there): on the ground the painting shows as mangrove, at most
-      // MANGROVE_WATER of it under water, whatever the source.
-      it(`W7 ${size} seed ${seed}: at most ${MANGROVE_WATER * 100}% of a mangrove tile's ground is under water`, () => {
+      // Wetlands (marsh, swamp, mangrove, peat bog) are mostly dry ground with
+      // water in between (so a city can build there): of the ground the
+      // painting shows as the tile's wetland, at most WETLAND_WATER is under
+      // water, whatever the source.
+      it(`W7 ${size} seed ${seed}: at most ${WETLAND_WATER * 100}% of a wetland tile's ground is under water`, () => {
         const { topo } = mesh;
         const frames = fanFrames(globe);
         const co = new Float32Array(FAN_COORDS);
@@ -51,18 +53,19 @@ describe('surface', () => {
         const ground = new Map<number, number>(), wet = new Map<number, number>();
         for (let v = 0; v < topo.V; v++) {
           const t = topo.tile[v]!;
-          if (map.feature[t] !== 'mangrove') continue;
+          const feat = map.feature[t];
+          if (!feat || !WETLANDS.has(feat)) continue;
           const f = topo.fan[v]!, fan = paint.fans[f]!;
           fanCoords(frames[f]!, fan, topo.warp.subarray(v * 3, v * 3 + 3), topo.dir[v * 3]!, topo.dir[v * 3 + 1]!, topo.dir[v * 3 + 2]!, co);
           const sw = softAt(paint, f, co);
           let m = 0;
-          for (let k = 0; k < 4; k++) if (map.feature[fan.ids[k]!] === 'mangrove') m += sw[k]!;
+          for (let k = 0; k < 4; k++) if (map.feature[fan.ids[k]!] === feat) m += sw[k]!;
           if (m < 0.5) continue;
           ground.set(t, (ground.get(t) ?? 0) + 1);
           if (Wt[v]! > H[v]! + 0.00005) wet.set(t, (wet.get(t) ?? 0) + 1);
         }
-        const over = [...ground].map(([t, n]) => [t, (wet.get(t) ?? 0) / n] as const).filter(([, s]) => s > MANGROVE_WATER)
-          .map(([t, s]) => `tile ${t}: ${(s * 100).toFixed(0)}%`);
+        const over = [...ground].map(([t, n]) => [t, (wet.get(t) ?? 0) / n] as const).filter(([, s]) => s > WETLAND_WATER)
+          .map(([t, s]) => `tile ${t} (${map.feature[t]}): ${(s * 100).toFixed(0)}%`);
         expect(over).toEqual([]);
       });
 

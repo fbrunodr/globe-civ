@@ -127,10 +127,10 @@ export interface PoolLook {
 }
 
 export const POOL_LOOK: Partial<Record<FeatureKey, PoolLook>> = {
-  marsh:    { tint: { deep: 0x1d4a44, murk: 2.6 }, threshold: 0.02, pond: false },
-  swamp:    { tint: { deep: 0x1e2e1a, murk: 4 },   threshold: 0.1,  pond: false },
+  marsh:    { tint: { deep: 0x1d4a44, murk: 2.6 }, threshold: 0.02, pond: false, maxShare: 0.27 },
+  swamp:    { tint: { deep: 0x1e2e1a, murk: 4 },   threshold: 0.1,  pond: false, maxShare: 0.27 },
   mangrove: { tint: { deep: 0x1f4840, murk: 2.4 }, threshold: -0.04, pond: false, maxShare: 0.27 },
-  bog:      { tint: { deep: 0x1f160b, murk: 7 },   threshold: 0.14, pond: false },
+  bog:      { tint: { deep: 0x1f160b, murk: 7 },   threshold: 0.14, pond: false, maxShare: 0.27 },
   oasis:    { tint: { deep: 0x0f5a6a, murk: 1.4 }, threshold: 0,    pond: true },
 };
 
