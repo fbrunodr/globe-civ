@@ -20,6 +20,12 @@ import {
   type FocusKey, type GrowthOption, type TileUse, type Output, type FamilyKey, type AdjacencySource, type WonderKey, type WonderSite, type EraIndex,
 } from './cities.ts';
 import { isWorldOcean } from './mapRules.ts';
+import { IMPROVEMENTS } from './cities.ts';
+
+const IMPROVEMENT_NAME = (t: TileTerrain): string => {
+  const k = improvementFor(t);
+  return k ? IMPROVEMENTS[k].name.toLowerCase() : 'land';
+};
 import { BIOME_CLASS } from './paint.ts';
 
 export const HUMAN = 0;
@@ -82,7 +88,19 @@ export interface City {
   growth: number; // citizens born but not yet placed (the human places them)
   pendingBuilding: BuildingKey | null; // completed, waiting for the human to place it
   wonderTile: number | null;           // where the wonder being built will stand
+  hp: number;                          // the center's hit points (0: a melee unit can take it)
+  founder: number;                     // the civ that founded it
+  razing: boolean;                     // burning down, a citizen a turn
 }
+
+// Sieges (design doc "Cities: Feel & Play", war): a city's center has hit
+// points and strikes nearby enemies; it falls when its hit points are gone
+// and a melee unit enters.
+export const CITY_HP = 100;
+export const WALLS_HP = 50;
+export const CITY_REGEN = 15;        // hit points back per turn
+export const PILLAGE_REPAIR = 3;     // turns to repair a pillaged tile once no enemy stands on it
+export const PILLAGE_GOLD = 15;
 
 export interface CombatPreview {
   atk: number;
@@ -125,6 +143,8 @@ export class Game {
   readonly specialists: Uint8Array; // specialists living in each urban tile
   readonly slots: Uint8Array;       // SLOTS building slots per tile (cities.ts slotCode; 0 = empty)
   readonly wonderAt: Uint8Array;    // the wonder on each tile (index + 1 in WONDER_KEYS; 0 = none)
+  readonly pillaged: Uint8Array;    // turns of repair left on a pillaged rural tile (0 = fine)
+  readonly ruins: Uint8Array;       // 1 where a razed city's built-up tiles stood
   readonly wondersBuilt = new Map<WonderKey, number>(); // wonder -> tile
   useVersion = 0;                   // bumped whenever a tile's use changes (for the renderer)
   readonly explored: Uint8Array;
@@ -150,6 +170,8 @@ export class Game {
     this.specialists = new Uint8Array(this.N);
     this.slots = new Uint8Array(this.N * SLOTS);
     this.wonderAt = new Uint8Array(this.N);
+    this.pillaged = new Uint8Array(this.N);
+    this.ruins = new Uint8Array(this.N);
     this.explored = new Uint8Array(this.N);
     this.visible = new Uint8Array(this.N);
 
@@ -332,6 +354,8 @@ export class Game {
       let mult = 1 + this.defenseBonus(tile);
       const city = this.cityByTile.get(tile);
       if (city) mult += 0.5 + (city.buildings.has('walls') ? 1 : 0) + 0.25 * (Number(city.buildings.has('barracks')) + Number(city.buildings.has('stable')));
+      // Built-up ground of one's own city is costly to take.
+      else if (this.use[tile] === USE.urban && this.ownerOf(tile) === u.owner) mult += 0.5;
       if (u.fortified) mult += 0.5;
       s *= mult;
     }
@@ -358,12 +382,14 @@ export class Game {
   attack(u: Unit, tile: number): void {
     u.moves = 0;
     u.fortified = false;
+    const ranged = unitDef(u.type).ranged === true;
     const d = this.bestDefender(tile, u.owner);
     if (d) {
       const A = this.unitStrength(u, 'atk', tile), D = this.unitStrength(d, 'def', tile);
-      while (u.hp > 0 && d.hp > 0) {
+      // A ranged attack is a volley: a few exchanges, half the damage back.
+      for (let round = 0; u.hp > 0 && d.hp > 0 && (!ranged || round < 3); round++) {
         const dmg = 18 + Math.floor(this.rng() * 14);
-        if (this.rng() < A / (A + D)) d.hp -= dmg; else u.hp -= dmg;
+        if (this.rng() < A / (A + D)) d.hp -= dmg; else u.hp -= ranged ? Math.round(dmg / 2) : dmg;
       }
       const an = this.players[u.owner].name, dn = this.players[d.owner].name;
       const involved = u.owner === HUMAN || d.owner === HUMAN;
@@ -372,19 +398,127 @@ export class Game {
         if (involved) this.log(`${dn} ${unitDef(d.type).name} defeated ${an} ${unitDef(u.type).name}.`);
         return;
       }
+      if (d.hp > 0) return; // the volley did not finish it
       this.removeUnit(d);
       if (involved) this.log(`${an} ${unitDef(u.type).name} defeated ${dn} ${unitDef(d.type).name}.`);
       if (this.bestDefender(tile, u.owner)) return;
     }
-    // No defenders left: civilians are destroyed and the attacker moves in.
+    // No defenders left: a city still stands while it has hit points.
+    const city = this.cityByTile.get(tile);
+    if (city && city.owner !== u.owner && city.hp > 0) {
+      // That attack went into the defender, or into the walls; entering takes another.
+      if (!d) this.siege(u, city, ranged);
+      return;
+    }
+    if (ranged) return; // ranged units never move in
+    // Civilians are captured and the attacker moves in.
     for (const v of this.unitsAt(tile)) {
       if (v.owner === u.owner) continue;
       if (v.owner === HUMAN || u.owner === HUMAN) this.log(`${this.players[v.owner].name} ${unitDef(v.type).name} was captured.`);
       this.removeUnit(v);
     }
     u.tile = tile;
-    const city = this.cityByTile.get(tile);
     if (city && city.owner !== u.owner) this.captureCity(city, u.owner);
+  }
+
+  cityMaxHp(c: City): number { return CITY_HP + (c.buildings.has('walls') ? WALLS_HP : 0); }
+
+  // The center's strength, attacking and defending: its size, walls and garrison.
+  cityStrength(c: City): number {
+    const garrison = Number(c.buildings.has('barracks')) + Number(c.buildings.has('stable'));
+    return 2.5 + 0.3 * c.pop + (c.buildings.has('walls') ? 3 : 0) + garrison;
+  }
+
+  // A unit attacks a city with no defenders: a few exchanges with its walls.
+  private siege(u: Unit, city: City, ranged: boolean): void {
+    const A = this.unitStrength(u, 'atk', city.tile), D = this.cityStrength(city);
+    for (let round = 0; round < 3 && u.hp > 0 && city.hp > 0; round++) {
+      const dmg = 18 + Math.floor(this.rng() * 14);
+      if (this.rng() < A / (A + D)) city.hp = Math.max(0, city.hp - dmg);
+      else u.hp -= ranged ? Math.round(dmg / 2) : dmg;
+    }
+    const involved = u.owner === HUMAN || city.owner === HUMAN;
+    if (u.hp <= 0) {
+      this.removeUnit(u);
+      if (involved) this.log(`${city.name} drove off the ${this.players[u.owner].name} ${unitDef(u.type).name}.`);
+    } else if (involved) {
+      this.log(city.hp > 0 ? `${city.name} under siege: ${city.hp}/${this.cityMaxHp(city)} HP.` : `${city.name}'s defenses have fallen!`);
+    }
+  }
+
+  // Each city strikes the weakest enemy unit near its center (2 tiles with
+  // walls) or near a Garrison quarter.
+  private cityStrike(city: City): void {
+    if (city.hp <= 0) return;
+    const reach = city.buildings.has('walls') ? 2 : 1;
+    const origins = [city.tile, ...this.cityTiles(city, USE.urban).filter((t) => quarterOf(this.slotKeys(t)) === 'garrison')];
+    const near = new Set(origins.flatMap((t) => this.tilesWithin(t, reach)));
+    let target: Unit | null = null;
+    for (const u of this.units) {
+      if (u.owner === city.owner || unitDef(u.type).civilian || !near.has(u.tile)) continue;
+      if (!target || u.hp < target.hp) target = u;
+    }
+    if (!target) return;
+    const dmg = Math.min(35, Math.round(10 + (6 * this.cityStrength(city)) / Math.max(1, unitDef(target.type).def)));
+    target.hp -= dmg;
+    const involved = target.owner === HUMAN || city.owner === HUMAN;
+    if (target.hp <= 0) {
+      this.removeUnit(target);
+      if (involved) this.log(`${city.name} destroyed the ${this.players[target.owner].name} ${unitDef(target.type).name}.`);
+    } else if (involved) this.log(`${city.name} struck the ${this.players[target.owner].name} ${unitDef(target.type).name} (−${dmg} HP).`);
+  }
+
+  // ---------- pillage and raze ----------
+
+  canPillage(u: Unit): boolean {
+    if (unitDef(u.type).civilian || u.moves <= 0) return false;
+    const t = u.tile, o = this.ownerOf(t);
+    return o >= 0 && o !== u.owner && this.use[t] === USE.rural && this.pillaged[t] === 0;
+  }
+
+  // Burns an enemy rural tile: it yields nothing until repaired; the raider takes gold.
+  pillage(u: Unit): boolean {
+    if (!this.canPillage(u)) return false;
+    const t = u.tile, victim = this.ownerOf(t);
+    this.pillaged[t] = PILLAGE_REPAIR;
+    this.players[u.owner]!.gold += PILLAGE_GOLD;
+    u.moves = 0;
+    u.fortified = false;
+    this.useVersion++;
+    if (u.owner === HUMAN || victim === HUMAN) {
+      const city = this.cityById.get(this.tileCity[t]!);
+      this.log(`${this.players[u.owner].name} pillaged ${city ? `${city.name}'s` : 'a'} ${IMPROVEMENT_NAME(this.terrainAt(t))}.`);
+    }
+    return true;
+  }
+
+  canRaze(c: City): boolean { return c.founder !== c.owner && !c.razing; }
+
+  // A captured city burns down, a citizen a turn, then leaves ruins.
+  raze(c: City): boolean {
+    if (!this.canRaze(c)) return false;
+    c.razing = true;
+    c.building = null;
+    c.wonderTile = null;
+    this.log(`${c.name} is being razed.`);
+    return true;
+  }
+
+  private destroyCity(c: City): void {
+    for (let t = 0; t < this.N; t++) {
+      if (this.tileCity[t] !== c.id) continue;
+      if (this.use[t] === USE.urban || this.use[t] === USE.center) this.ruins[t] = 1;
+      if (this.use[t] !== USE.wild) this.setUse(t, USE.wild);
+      this.slots.fill(0, t * SLOTS, t * SLOTS + SLOTS);
+      this.wonderAt[t] = 0; // its wonders fall with it (never to be rebuilt)
+      this.pillaged[t] = 0;
+      this.tileCity[t] = -1;
+    }
+    this.cities.splice(this.cities.indexOf(c), 1);
+    this.cityById.delete(c.id);
+    this.cityByTile.delete(c.tile);
+    this.useVersion++;
+    this.log(`${c.name} has been razed to the ground.`);
   }
 
   foundCity(u: Unit): City | null {
@@ -393,7 +527,8 @@ export class Game {
     const name = p.cityNames[p.citiesFounded] ?? `${p.name} ${p.citiesFounded + 1}`;
     p.citiesFounded++;
     const city: City = { id: this.nextId++, name, owner: u.owner, tile: u.tile, pop: 1, food: 0, prod: 0,
-      building: p.isHuman ? 'warrior' : null, buildings: new Set(), founded: this.turn, focus: 'balanced', growth: 0, pendingBuilding: null, wonderTile: null };
+      building: p.isHuman ? 'warrior' : null, buildings: new Set(), founded: this.turn, focus: 'balanced', growth: 0, pendingBuilding: null, wonderTile: null,
+      hp: CITY_HP, founder: u.owner, razing: false };
     this.cities.push(city);
     this.cityById.set(city.id, city);
     this.cityByTile.set(city.tile, city);
@@ -417,6 +552,8 @@ export class Game {
     const old = this.players[city.owner];
     const p = this.players[newOwner];
     city.owner = newOwner;
+    city.hp = Math.round(this.cityMaxHp(city) * 0.4);
+    city.razing = false;
     if (city.pop > 1) this.removeCitizen(city);
     city.growth = 0;
     city.pendingBuilding = null;
@@ -566,7 +703,7 @@ export class Game {
   tileOutput(t: number): Output {
     const terrain = this.terrainAt(t), river = this.map.riverTile[t] === 1;
     const u = this.use[t];
-    if (u === USE.rural) return ruralYield(terrain, river, this.eraAt(t));
+    if (u === USE.rural) return this.pillaged[t] ? ZERO : ruralYield(terrain, river, this.eraAt(t));
     if (u !== USE.urban && u !== USE.center) return ZERO;
     const keys = this.slotKeys(t);
     const built = slotsYield(keys, (f) => this.adjacencyHits(t, f).length);
@@ -805,6 +942,11 @@ export class Game {
 
   private processCity(city: City): void {
     const p = this.players[city.owner];
+    if (city.razing) {
+      if (city.pop > 1) this.removeCitizen(city);
+      else this.destroyCity(city);
+      return;
+    }
     const y = this.cityYields(city);
 
     city.food += y.surplus;
@@ -888,6 +1030,19 @@ export class Game {
       if (!p.isHuman && p.alive) aiTurn(this, p);
     }
     for (const city of [...this.cities]) this.processCity(city);
+    // Cities strike nearby enemies and mend their walls; pillaged tiles are
+    // repaired once no enemy stands on them.
+    for (const city of this.cities) {
+      this.cityStrike(city);
+      city.hp = Math.min(this.cityMaxHp(city), city.hp + CITY_REGEN);
+    }
+    for (let t = 0; t < this.N; t++) {
+      if (!this.pillaged[t]) continue;
+      const o = this.ownerOf(t);
+      if (o < 0 || this.use[t] !== USE.rural) { this.pillaged[t] = 0; this.useVersion++; continue; }
+      if (this.units.some((u) => u.tile === t && u.owner !== o)) continue;
+      if (--this.pillaged[t] === 0) this.useVersion++;
+    }
     for (const u of this.units) {
       const mv = unitDef(u.type).mv;
       if (u.moves === mv && u.hp < 100) {

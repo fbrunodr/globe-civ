@@ -206,6 +206,12 @@ function startGame(sizeKey: MapSizeKey, seed: number): void {
       case 'skip':
         if (unit) { unit.skipped = true; afterUnitAction(unit); }
         break;
+      case 'pillage':
+        if (unit && game.pillage(unit)) afterUnitAction(unit);
+        break;
+      case 'raze':
+        if (sel?.kind === 'city' && sel.city.owner === HUMAN) game.raze(sel.city);
+        break;
       case 'disband':
         if (unit) { game.removeUnit(unit); game.updateVisibility(); selectNextUnit(); }
         break;
@@ -298,7 +304,7 @@ function startGame(sizeKey: MapSizeKey, seed: number): void {
   addEventListener('keydown', (e) => {
     if (e.target instanceof HTMLInputElement) return;
     const keyActions: Record<string, Action> = {
-      Enter: { type: 'endTurn' }, ' ': { type: 'skip' }, f: { type: 'fortify' }, b: { type: 'found' },
+      Enter: { type: 'endTurn' }, ' ': { type: 'skip' }, f: { type: 'fortify' }, b: { type: 'found' }, p: { type: 'pillage' },
     };
     const a = keyActions[e.key];
     if (a) { e.preventDefault(); act(a); return; }

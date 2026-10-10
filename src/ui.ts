@@ -1,7 +1,7 @@
 import { floraLabel } from './flora.ts';
 import { unitDef, buildDef, isUnitKey, isWonder, growthCost, BUILDINGS, WONDERS, type BuildKey } from './rules.ts';
 import { terrainName } from './terrain.ts';
-import { HUMAN, BUILDABLE, type Game, type City, type Unit, type AdjacencyHit } from './game.ts';
+import { HUMAN, BUILDABLE, PILLAGE_GOLD, type Game, type City, type Unit, type AdjacencyHit } from './game.ts';
 import type { Selection } from './render.ts';
 import {
   USE, FOCUSES, FAMILIES, IMPROVEMENTS, ERAS, improvementFor, isFocusKey, quarterOf, familyOf,
@@ -14,6 +14,8 @@ export type Action =
   | { type: 'wake' }
   | { type: 'skip' }
   | { type: 'disband' }
+  | { type: 'pillage' }
+  | { type: 'raze' }
   | { type: 'build'; key: BuildKey | null }
   | { type: 'placeKind'; kind: GrowthKind }
   | { type: 'governorPlace' }
@@ -36,7 +38,7 @@ const isBuildKey = (s: string): s is BuildKey => (BUILDABLE as string[]).include
 function parseAction(el: HTMLElement): Action | null {
   const type = el.dataset['act'];
   switch (type) {
-    case 'found': case 'fortify': case 'wake': case 'skip': case 'disband': case 'endTurn': case 'governorPlace':
+    case 'found': case 'fortify': case 'wake': case 'skip': case 'disband': case 'endTurn': case 'governorPlace': case 'pillage': case 'raze':
       return { type };
     case 'placeKind': {
       const kind = el.dataset['kind'];
@@ -147,6 +149,7 @@ export class UI {
       }
       if (!T.civilian) {
         buttons.push(u.fortified ? `<button data-act="wake">Wake</button>` : `<button data-act="fortify">Fortify <kbd>F</kbd></button>`);
+        if (g.canPillage(u)) buttons.push(`<button data-act="pillage" title="Burn this enemy tile: it yields nothing until repaired; you take ${PILLAGE_GOLD} gold">Pillage <kbd>P</kbd></button>`);
       }
       buttons.push(`<button data-act="skip">Skip <kbd>Space</kbd></button>`, `<button data-act="disband" class="danger">Disband</button>`);
     }
@@ -213,15 +216,20 @@ export class UI {
          ${blds.length ? `<div class="desc">Buildings <small>(placed on a tile when finished)</small></div><div class="build">${blds.map(button).join('')}</div>` : ''}
          ${wonders.length ? `<div class="desc">Wonders <small>(pick their tile first; one in the world)</small></div><div class="build">${wonders.map(button).join('')}</div>` : ''}`
       : '';
+    const maxHp = g.cityMaxHp(c);
+    const defense = `<div class="desc">Defense ${g.cityStrength(c).toFixed(1)} · HP ${c.hp}/${maxHp}${c.hp < maxHp ? ' <span class="warn">(damaged)</span>' : ''}${c.razing ? ' · <span class="bad">being razed</span>' : ''}</div>`;
+    const raze = mine && g.canRaze(c) ? `<div class="buttons"><button data-act="raze" class="danger" title="Burn the city down, a citizen a turn; ruins remain">Raze ${esc(c.name)}</button></div>` : '';
     return `<h3>${esc(c.name)} <small>size ${c.pop} · ${esc(g.players[c.owner].name)}</small></h3>
       <div class="stats">${outStr(y)}</div>
+      ${defense}
       <div class="desc">${makeup}</div>
       <div class="desc">Food ${c.food}/${cost} (${y.surplus >= 0 ? '+' : ''}${y.surplus}) — ${grow}</div>
       ${place}
       ${focus}
       ${this.quartersHtml(c)}
       <div class="desc">Producing: <b>${current}</b></div>
-      ${options}`;
+      ${options}
+      ${raze}`;
   }
 
   // The city's built tiles: each tile's buildings, its quarter and yield.
@@ -305,9 +313,12 @@ export class UI {
       if (!path) lines.push('<span class="bad">Unreachable</span>');
       else if (g.isEnemyOccupied(t, u.owner)) {
         const pv = g.combatPreview(u, t);
+        const city = g.cityByTile.get(t);
         lines.push(pv
           ? `<span class="warn">Attack: ⚔ ${pv.atk.toFixed(1)} vs 🛡 ${pv.def.toFixed(1)} (${unitDef(pv.defender.type).name})</span>`
-          : '<span class="warn">Undefended — capture!</span>');
+          : city && city.hp > 0
+            ? `<span class="warn">Siege: ⚔ ${g.unitStrength(u, 'atk', t).toFixed(1)} vs city ${g.cityStrength(city).toFixed(1)} · HP ${city.hp}/${g.cityMaxHp(city)}</span>`
+            : unitDef(u.type).ranged && city ? '<span class="bad">Ranged units cannot take a city</span>' : '<span class="warn">Undefended — capture!</span>');
       } else lines.push(`Path: ${g.pathTurns(u, path)} turn(s)`);
     }
     box.innerHTML = lines.map((l) => `<div>${l}</div>`).join('');

@@ -91,7 +91,7 @@ export class CityProps {
   private signature(t: number): string {
     const g = this.game;
     const u = g.use[t];
-    if (u === USE.wild) return '';
+    if (u === USE.wild) return g.ruins[t] ? 'ruins' : '';
     const city = g.cityById.get(g.tileCity[t]);
     const slots = Array.from({ length: SLOTS }, (_, k) => g.slots[t * SLOTS + k]).join(',');
     const walls = city && city.tile === t && city.buildings.has('walls') ? 'w' : '';
@@ -121,6 +121,7 @@ export class CityProps {
 
   private build(t: number): PlacedBuilding[] {
     const g = this.game;
+    if (g.use[t] === USE.wild) return g.ruins[t] ? this.ruins(t) : [];
     const city = g.cityById.get(g.tileCity[t]);
     if (!city) return [];
     const u = g.use[t];
@@ -223,6 +224,19 @@ export class CityProps {
       const [wr, wg, wb] = ERA_WALL[era];
       b.color.multiply(new THREE.Color(wr, wg, wb));
       out.push(b);
+    }
+    return out;
+  }
+
+  // What is left of a razed city's built-up tile: broken walls here and there.
+  private ruins(t: number): PlacedBuilding[] {
+    const rand = mulberry32((t + 7) * 2246822519);
+    const out: PlacedBuilding[] = [];
+    for (let tries = 0; tries < 30 && out.length < 9; tries++) {
+      const i = Math.floor(rand() * this.game.tiles[t].corners.length);
+      const s = this.sample(t, i, 0.1 + 0.6 * rand(), 0.05 + 0.3 * rand());
+      if (!standsAt('ruins', s)) continue;
+      out.push(this.make('ruins', s.dir, s.ground, rand() * Math.PI * 2, HOUSE_SCALE * (0.8 + 0.5 * rand()), buildingEntry('ruins').leaf, rand));
     }
     return out;
   }

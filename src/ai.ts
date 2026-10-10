@@ -117,6 +117,9 @@ function militaryTurn(g: Game, u: Unit, p: Player, cities: City[], garrisoned: (
     }
   }
 
+  // Burn enemy fields underfoot.
+  if (g.canPillage(u) && g.rng() < 0.6) { g.pillage(u); return; }
+
   // Otherwise wander around the empire.
   const opts = g.tilesWithin(u.tile, 3).filter((t) => !g.isWater(t) && !g.isEnemyOccupied(t, u.owner));
   const home = cities[0];

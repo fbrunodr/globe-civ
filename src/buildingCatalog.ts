@@ -263,6 +263,13 @@ export const BUILDINGS_CATALOG = {
     seg(V(0.011, 0, 0.002), V(0.011, 0.02, 0.002), 0.00035, 0.0003, 3, IRON),
     seg(V(0.011, 0.02, 0.002), V(-0.004, 0.019, 0.002), 0.00025, 0.0002, 3, IRON),
   ] },
+  // ---------- war ----------
+  ruins: { name: 'Ruins', leaf: 0x8d877c, build: (p) => [
+    walls(0.006, 0.0045, 0.0022, p.leaf),
+    ...block(0.0016, 0.0016, 0.0042, 0x9a948a, { x: 0.004, z: 0.003 }),
+    cone(0.003, 0.0014, 5, 0x7f796f, { x: -0.004, z: -0.002 }),
+    ...block(0.0035, 0.0012, 0.0012, p.leaf, { x: -0.001, z: 0.005, ry: 0.6 }),
+  ] },
   // ---------- walls (around the center) ----------
   wallSegment: { name: 'Wall segment', leaf: 0xa49c8c, build: (p) => block(0.01, 0.0016, 0.0042, p.leaf) },
   wallTower: { name: 'Wall tower', leaf: 0x6a625a, build: (p) => [

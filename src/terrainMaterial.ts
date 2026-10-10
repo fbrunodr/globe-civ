@@ -155,6 +155,8 @@ float cPlots(vec3 P, vec2 size, float salt, out vec2 f, out float edge) {
 }
 `;
 
+// A pillaged rural tile (burnt fields until repaired).
+export const BURNT_CODE = 7;
 export const IMPROVEMENT_CODE = { none: 0, farm: 1, mine: 2, camp: 3, quarry: 4, wetland: 5, boats: 6 } as const satisfies Record<ImprovementKey | 'none', number>;
 
 export interface TerrainMaterial {
@@ -359,7 +361,7 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
           // City ground (CITY_GLSL): urban ground and rural patterns.
           float urban = 0.0;
           {
-            float uS = 0.0, cS = 0.0, farmS = 0.0, mineS = 0.0, campS = 0.0, quarryS = 0.0, wetS = 0.0;
+            float uS = 0.0, cS = 0.0, farmS = 0.0, mineS = 0.0, campS = 0.0, quarryS = 0.0, wetS = 0.0, burntS = 0.0;
             for (int k = 0; k < 4; k++) {
               if (soft[k] > 0.001) {
                 vec4 r5 = tileRow(int(ids[k]), 5);
@@ -370,6 +372,7 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
                 else if (code == 3) campS += soft[k];
                 else if (code == 4) quarryS += soft[k];
                 else if (code == 5) wetS += soft[k];
+                else if (code == ${BURNT_CODE}) burntS += soft[k];
               }
             }
             float keep = dry * (1.0 - snowCover);
@@ -421,6 +424,14 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               float h = cPlots(P, vec2(0.1, 0.07), 9.0, f, edge);
               float cut = step(0.45, h) * smoothstep(0.5, 0.65, tFbm(P / (0.3 * uR0), 2) + 0.3);
               diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.7, 0.68, 0.63) * (0.9 + 0.2 * h) * vShade, quarry * cut * 0.8);
+            }
+            if (burntS > 0.02) {
+              // Pillaged: scorched ground and ash, the plots still showing faintly.
+              float burnt = smoothstep(0.35, 0.5, burntS + 0.35 * edgeN) * keep * fieldMask;
+              vec2 f; float edge;
+              float h = cPlots(P, vec2(0.38, 0.17), 0.0, f, edge);
+              vec3 ash = mix(vec3(0.13, 0.12, 0.1), vec3(0.32, 0.29, 0.25), tFbm(P / (0.06 * uR0) + 2.0, 2)) * (0.9 + 0.2 * h);
+              diffuseColor.rgb = mix(diffuseColor.rgb, ash * vShade, burnt * 0.9);
             }
             if (campS > 0.02) {
               float camp = smoothstep(0.4, 0.55, campS + 0.35 * edgeN) * keep * fieldMask;

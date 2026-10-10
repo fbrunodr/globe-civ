@@ -4,7 +4,8 @@ import { GlobeCamera } from './camera.ts';
 import type { Game, Unit, City } from './game.ts';
 import { SNOW, tileLook, type TileLook } from './look.ts';
 import { buildTerrainMesh, locate, newSample, type TerrainMesh } from './terrainMesh.ts';
-import { makeTerrainMaterial, makeTable, FAN_ROWS, TILE_ROWS, GRADE_GLSL, IMPROVEMENT_CODE, type TerrainMaterial } from './terrainMaterial.ts';
+import { makeTerrainMaterial, makeTable, FAN_ROWS, TILE_ROWS, GRADE_GLSL, IMPROVEMENT_CODE, BURNT_CODE, type TerrainMaterial } from './terrainMaterial.ts';
+import { makeSmoke, type Emitter, type Smoke } from './smoke.ts';
 import { buildPaintData, fanCoords, fanFrames, paintAt, softAt, warpAt, FAN_COORDS, FINE_MAX, FINE_WAVELENGTH, type PaintData, type FanFrame } from './paint.ts';
 import { buildRelief, CONE_RADIUS, CRATER, CRATER_DEPTH, type Relief } from './relief.ts';
 import { buildSurface, meshLevels } from './surface.ts';
@@ -150,6 +151,8 @@ export class GlobeRenderer {
   private readonly overlayGroup = new THREE.Group();
   private borders: THREE.Mesh | null = null;
   private cityProps: CityProps;
+  private readonly smoke: Smoke;
+  private groundVersion = -1;
   private roads: THREE.Mesh | null = null;
   private roadsKey = '';
   private readonly prevUse: Uint8Array;
@@ -358,6 +361,8 @@ export class GlobeRenderer {
     this.prevUse = new Uint8Array(N);
     this.cityProps = new CityProps(g, (t, i, wa, wb) => this.citySpot(t, i, wa, wb), s);
     this.scene.add(this.unitsGroup, this.citiesGroup, this.overlayGroup);
+    this.smoke = makeSmoke(s);
+    this.scene.add(this.smoke.points);
 
     this.bindInput(canvas);
     const resize = () => {
@@ -408,10 +413,11 @@ export class GlobeRenderer {
       useChanged = true;
       for (const x of [t, ...g.tiles[t].neighbors]) { this.propCache.delete(x); dirty.add(this.tileChunk[x]!); }
     }
-    if (useChanged) this.updateCityGround();
+    if (useChanged || this.groundVersion !== g.useVersion) { this.groundVersion = g.useVersion; this.updateCityGround(); }
     for (const t of this.cityProps.changed()) dirty.add(this.tileChunk[t]!);
     if (changed.length) this.updateProps(); else if (dirty.size) this.updateProps(dirty);
     this.updateRoads(changed.length > 0);
+    this.updateSmoke();
     this.updateCities();
     this.updateUnits(sel);
   }
@@ -855,10 +861,47 @@ export class GlobeRenderer {
       const u = g.use[t];
       const imp = u === USE.rural ? improvementFor(g.terrainAt(t)) : null;
       td[o] = u === USE.urban || u === USE.center ? 1 : 0;
-      td[o + 2] = imp ? IMPROVEMENT_CODE[imp] : IMPROVEMENT_CODE.none;
+      td[o + 2] = g.pillaged[t] ? BURNT_CODE : imp ? IMPROVEMENT_CODE[imp] : IMPROVEMENT_CODE.none;
       td[o + 3] = u === USE.center ? 1 : 0;
     }
     this.tileTex.needsUpdate = true;
+  }
+
+  // Smoke and fire in sight: damaged and burning cities, pillaged fields,
+  // forge chimneys.
+  private updateSmoke(): void {
+    const g = this.game, s = this.scale;
+    const out: Emitter[] = [];
+    const at = (t: number, i: number, wa: number, wb: number) => {
+      const p = this.terrain.samplePoint(t, i, wa, wb);
+      return p;
+    };
+    for (const c of g.cities) {
+      if (!g.visible[c.tile]) continue;
+      const hurt = 1 - c.hp / g.cityMaxHp(c);
+      if (hurt > 0.05 || c.razing) {
+        const columns = c.razing ? 4 : hurt > 0.5 ? 3 : 1;
+        for (let k = 0; k < columns; k++) {
+          const p = at(c.tile, (k * 2) % g.tiles[c.tile].corners.length, 0.3, 0.15);
+          out.push({ pos: p, kind: 'smoke' });
+          if (c.razing || hurt > 0.5) out.push({ pos: p.clone(), kind: 'fire' });
+        }
+      }
+      // Forges smoke from their chimneys.
+      for (const t of [c.tile, ...g.cityTiles(c, USE.urban)]) {
+        if (!g.visible[t]) continue;
+        for (const b of this.cityProps.place(t)) {
+          if (b.kind !== 'workshop' && b.kind !== 'smithy') continue;
+          const p = new THREE.Vector3().setFromMatrixPosition(b.matrix);
+          out.push({ pos: p.addScaledVector(p.clone().normalize(), 0.0045 * s), kind: 'chimney' });
+        }
+      }
+    }
+    for (let t = 0; t < g.N; t++) {
+      if (!g.pillaged[t] || !g.visible[t]) continue;
+      out.push({ pos: at(t, 0, 0.2, 0.2), kind: 'smoke' }, { pos: at(t, 3, 0.3, 0.1), kind: 'fire' });
+    }
+    this.smoke.set(out);
   }
 
   // Roads between cities (roads.ts), draped on the ground as dirt tracks
@@ -1035,8 +1078,9 @@ export class GlobeRenderer {
       const tile = g.tiles[city.tile];
       const color = g.players[city.owner].color;
       const label = `${city.pop}  ${city.name}`;
-      const key = `c|${color}|${label}`;
-      const tex = this.texture(key, 512, 96, (ctx) => drawCityLabel(ctx, color, label));
+      const hp = Math.round((10 * city.hp) / g.cityMaxHp(city)) / 10;
+      const key = `c|${color}|${label}|${hp}`;
+      const tex = this.texture(key, 512, 96, (ctx) => drawCityLabel(ctx, color, label, hp));
       const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, sizeAttenuation: false }));
       sprite.scale.set(0.13, 0.0244, 1);
       sprite.position.copy(tile.center).multiplyScalar(this.terrain.centerRadius[city.tile] + 0.03 * s);
@@ -1171,6 +1215,8 @@ export class GlobeRenderer {
     this.updateAir();
     this.cullProps();
     this.terrainMat.setTime(now / 1000);
+    this.smoke.update(now / 1000, this.renderer.domElement.height / (2 * Math.tan((this.camera.fov * Math.PI) / 360)));
+    this.smoke.points.visible = this.view === 'normal';
     this.waterMat.setTime(now / 1000);
     // Clouds show from orbit and overhead when walking, never over the board.
     const fog = this.scene.fog as THREE.FogExp2;
@@ -1251,7 +1297,8 @@ function drawUnitIcon(ctx: CanvasRenderingContext2D, color: string, icon: string
   }
 }
 
-function drawCityLabel(ctx: CanvasRenderingContext2D, color: string, label: string): void {
+// A city's banner: its size and name, with a health bar when damaged.
+function drawCityLabel(ctx: CanvasRenderingContext2D, color: string, label: string, hp = 1): void {
   ctx.font = 'bold 44px system-ui, sans-serif';
   const w = Math.min(500, ctx.measureText(label).width + 40);
   const x = (512 - w) / 2;
@@ -1266,6 +1313,12 @@ function drawCityLabel(ctx: CanvasRenderingContext2D, color: string, label: stri
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(label, 256, 50);
+  if (hp < 1) {
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(x + 18, 70, w - 36, 8);
+    ctx.fillStyle = hp > 0.5 ? '#51cf66' : hp > 0.25 ? '#fcc419' : '#fa5252';
+    ctx.fillRect(x + 18, 70, (w - 36) * Math.max(0, hp), 8);
+  }
 }
 
 // Prop material: per-vertex colors, with the leaf parts (leafMask) taking

@@ -12,6 +12,7 @@ export interface UnitDef {
   mv: number;
   cost: number;
   civilian?: boolean;
+  ranged?: boolean; // attacks without moving in (and can never take a city)
   sight?: number;
   desc?: string;
 }
@@ -21,7 +22,7 @@ export const UNITS = {
   scout:    { name: 'Scout',    icon: 'R', atk: 0, def: 1, mv: 2, cost: 10, sight: 3, desc: 'Fast explorer. Cannot attack.' },
   warrior:  { name: 'Warrior',  icon: 'W', atk: 1, def: 1, mv: 1, cost: 10 },
   spearman: { name: 'Spearman', icon: 'P', atk: 1, def: 2, mv: 1, cost: 20, desc: 'Good defender.' },
-  archer:   { name: 'Archer',   icon: 'A', atk: 3, def: 2, mv: 1, cost: 25 },
+  archer:   { name: 'Archer',   icon: 'A', atk: 3, def: 2, mv: 1, cost: 25, ranged: true, desc: 'Ranged: attacks without moving in, taking half the damage back. Cannot take cities.' },
   horseman: { name: 'Horseman', icon: 'H', atk: 2, def: 1, mv: 2, cost: 20 },
 } satisfies Record<string, UnitDef>;
 export type UnitKey = keyof typeof UNITS;
