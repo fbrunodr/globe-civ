@@ -2,8 +2,8 @@ import './style.css';
 import { Game, HUMAN, type City, type Unit } from './game.ts';
 import { GlobeRenderer, type DebugView, type Selection, type TileMark } from './render.ts';
 import { USE, quarterOf, familyOf, type GrowthKind, type FamilyKey } from './cities.ts';
-import { UI, assertNever, type Action, type Placing } from './ui.ts';
-import { MAP_SIZES, tileCount, unitDef, type MapSizeKey } from './rules.ts';
+import { UI, assertNever, wonderPicked, type Action, type Placing } from './ui.ts';
+import { MAP_SIZES, tileCount, unitDef, isWonder, type MapSizeKey } from './rules.ts';
 
 const isMapSize = (s: string): s is MapSizeKey => s in MAP_SIZES;
 
@@ -78,8 +78,8 @@ function startGame(sizeKey: MapSizeKey, seed: number): void {
   // citizen to place, the map shows where it can go (buildings first).
   let placing: Placing = null;
   const placingCity = (): City | null =>
-    (sel?.kind === 'city' && sel.city.owner === HUMAN && (sel.city.growth > 0 || sel.city.pendingBuilding) ? sel.city : null);
-  const PLACE_COLOR: Record<GrowthKind | 'building', number> = { rural: 0x8ce99a, urban: 0xe6dccb, specialist: 0xffe066, building: 0x9cc8ff };
+    (sel?.kind === 'city' && sel.city.owner === HUMAN && (sel.city.growth > 0 || sel.city.pendingBuilding || wonderPicked(placing)) ? sel.city : null);
+  const PLACE_COLOR: Record<GrowthKind | 'building' | 'wonder', number> = { rural: 0x8ce99a, urban: 0xe6dccb, specialist: 0xffe066, building: 0x9cc8ff, wonder: 0xf5d76e };
   // The quarters lens: urban tiles tinted by their buildings' family (tints
   // only ever appear in a lens, never on the map itself).
   let lens = false;
@@ -112,8 +112,16 @@ function startGame(sizeKey: MapSizeKey, seed: number): void {
         }
       }
     }
+    // The site of the wonder the selected city is building.
+    if (sel?.kind === 'city' && sel.city.wonderTile !== null && sel.city.owner === HUMAN) out.push({ tile: sel.city.wonderTile, color: PLACE_COLOR.wonder, opacity: 0.6 });
     const c = placingCity();
     if (!c || !placing) return out;
+    const w = wonderPicked(placing);
+    if (w) {
+      const pick = game.governorWonderSpot(c, w);
+      for (const t of game.wonderSpots(c, w)) out.push({ tile: t, color: PLACE_COLOR.wonder, opacity: t === pick ? 0.95 : 0.5 });
+      return out;
+    }
     if (placing === 'building' && c.pendingBuilding) {
       const k = c.pendingBuilding;
       const pick = game.governorBuildingSpot(c, k);
@@ -158,6 +166,7 @@ function startGame(sizeKey: MapSizeKey, seed: number): void {
     if (sel?.kind === 'city' && sel.city.owner !== HUMAN) sel = { kind: 'tile', tile: sel.city.tile };
     const pc = placingCity();
     if (!pc) placing = null;
+    else if (wonderPicked(placing)) { /* picking a wonder's tile */ }
     else if (pc.pendingBuilding && placing !== 'building') placing = 'building';
     else if (!pc.pendingBuilding && (placing === 'building' || placing === null)) placing = defaultPlacing(pc);
     view.syncWorld(sel);
@@ -200,9 +209,21 @@ function startGame(sizeKey: MapSizeKey, seed: number): void {
       case 'disband':
         if (unit) { game.removeUnit(unit); game.updateVisibility(); selectNextUnit(); }
         break;
-      case 'build':
-        if (sel?.kind === 'city' && sel.city.owner === HUMAN) sel.city.building = a.key;
+      case 'build': {
+        if (sel?.kind !== 'city' || sel.city.owner !== HUMAN) break;
+        const c = sel.city;
+        if (a.key !== null && isWonder(a.key)) {
+          // A wonder starts once its tile is picked (right away if only one fits).
+          const spots = game.wonderSpots(c, a.key);
+          if (c.building === a.key && c.wonderTile !== null) break;
+          if (spots.length === 1) game.startWonder(c, a.key, spots[0]!);
+          else if (spots.length > 1) placing = { wonder: a.key };
+          break;
+        }
+        c.building = a.key;
+        c.wonderTile = null;
         break;
+      }
       case 'placeKind':
         if (placingCity()?.growth) placing = a.kind;
         break;
@@ -247,7 +268,10 @@ function startGame(sizeKey: MapSizeKey, seed: number): void {
     } else if (button === 0) {
       // Placing: a click on a highlighted tile places the building or citizen there.
       const c = placingCity();
-      if (c && placing === 'building' && c.pendingBuilding) {
+      const w = wonderPicked(placing);
+      if (c && w) {
+        if (game.startWonder(c, w, t)) { placing = defaultPlacing(c); refresh(); return; }
+      } else if (c && placing === 'building' && c.pendingBuilding) {
         if (game.placeBuilding(c, c.pendingBuilding, t)) { placing = defaultPlacing(c); refresh(); return; }
       } else {
         const o = c && placing ? game.growthOptions(c).find((x) => x.tile === t && x.kind === placing) : undefined;
@@ -279,7 +303,12 @@ function startGame(sizeKey: MapSizeKey, seed: number): void {
     const a = keyActions[e.key];
     if (a) { e.preventDefault(); act(a); return; }
     if (e.key === 'n' || e.key === 'Tab') { e.preventDefault(); selectNextUnit(); refresh(); }
-    else if (e.key === 'Escape') { sel = null; placing = null; refresh(); }
+    else if (e.key === 'Escape') {
+      // Cancel picking a wonder's tile first; otherwise deselect.
+      if (wonderPicked(placing) && sel?.kind === 'city') placing = defaultPlacing(sel.city);
+      else { sel = null; placing = null; }
+      refresh();
+    }
     else if (e.key === 'c' && sel && sel.kind !== 'tile') { view.focusOn(sel.kind === 'unit' ? sel.unit.tile : sel.city.tile); }
     else if (e.key === 'l' || e.key === 'L') toggleLens();
   });

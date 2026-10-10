@@ -1,5 +1,5 @@
 import { unitDef, buildDef, type BuildKey } from './rules.ts';
-import { BUILDING_KEYS, weigh, type BuildingKey } from './cities.ts';
+import { BUILDING_KEYS, WONDER_KEYS, weigh, type BuildingKey } from './cities.ts';
 import type { Game, Player, Unit, City } from './game.ts';
 
 // Deliberately simple AI: expand with settlers, keep a garrison in every
@@ -31,6 +31,13 @@ function chooseBuild(g: Game, city: City, expansion: number, garrisoned: boolean
   if (!garrisoned) return g.turn < 30 ? 'warrior' : 'spearman';
   if (expansion < 6 && city.pop >= 2 && r < 0.6) return 'settler';
   if (!city.buildings.has('walls') && g.turn > 40 && r < 0.15 && g.canBuild(city, 'walls')) return 'walls';
+  // Now and then a grown city starts a wonder, at the governor's site.
+  if (city.pop >= 5 && r > 0.96) {
+    const options = WONDER_KEYS.filter((w) => g.canBuild(city, w) && !g.cities.some((c) => c.owner === city.owner && c.building === w));
+    const w = options[Math.floor(g.rng() * options.length)];
+    const t = w ? g.governorWonderSpot(city, w) : null;
+    if (w && t !== null && g.startWonder(city, w, t)) return w;
+  }
   if (city.pop >= 2 && (r < 0.5 || armyFull)) {
     const b = bestBuilding(g, city);
     if (b) return b;

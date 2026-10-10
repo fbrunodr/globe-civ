@@ -2,7 +2,10 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { Game, type City } from '../src/game.ts';
 import { aiTurn } from '../src/ai.ts';
 import { BIOMES, FEATURE_RULES, RELIEFS, featureAllowed, type BiomeKey, type FeatureKey, type ReliefKey, type TileTerrain } from '../src/terrain.ts';
-import { USE, MAX_SPECIALISTS, SLOTS, improvementFor, urbanAllowed, buildingFits, quarterOf, slotKey, BUILDINGS, type BuildingKey } from '../src/cities.ts';
+import {
+  USE, MAX_SPECIALISTS, SLOTS, ERAS, IMPROVEMENTS, improvementFor, urbanAllowed, buildingFits, quarterOf, slotKey, eraBonus,
+  BUILDINGS, type BuildingKey, type ImprovementKey, type EraIndex,
+} from '../src/cities.ts';
 import type { MapSizeKey } from '../src/rules.ts';
 
 // City guarantees (design doc "Cities: Feel & Play"). Like the map rules,
@@ -101,6 +104,17 @@ function checkCities(g: Game): string[] {
       placed.set(id, [...(placed.get(id) ?? []), b]);
     }
   }
+  // Wonders: once in the world, on a land urban tile with no other buildings.
+  const seenW = new Set<string>();
+  for (let t = 0; t < g.N; t++) {
+    const w = g.wonderOn(t);
+    if (!w) continue;
+    if (seenW.has(w)) out.push(`WN1 ${w} built twice`);
+    seenW.add(w);
+    if (g.use[t] !== USE.urban || g.isWater(t)) out.push(`WN1 tile ${t}: ${w} not on a land urban tile`);
+    if (g.slotKeys(t).some((k) => k !== null)) out.push(`WN1 tile ${t}: ${w} shares its tile with buildings`);
+    if (g.wondersBuilt.get(w) !== t) out.push(`WN1 ${w}: recorded on tile ${g.wondersBuilt.get(w)}, stands on ${t}`);
+  }
   for (const c of g.cities) {
     const bs = placed.get(c.id) ?? [];
     if (new Set(bs).size !== bs.length) out.push(`Q2 ${c.name}: a building twice (${bs.join(', ')})`);
@@ -186,10 +200,32 @@ describe('cities in simulated games', () => {
     expect(quarters).toBeGreaterThan(3);
   });
 
-  it('C7: a big city (size 10+) has a built-up core: at least a quarter of its citizens urban', () => {
+  it('WN2: wonders get built', () => {
+    const built = sims.reduce((n, s) => n + s.game.wondersBuilt.size, 0);
+    console.log(`wonders built ${built}`);
+    expect(built).toBeGreaterThan(2);
+  });
+
+  // Townsfolk: urban tiles and the specialists living in them (tall cities
+  // grow through specialists, design doc).
+  it('C7: a big city (size 10+) has a built-up core: at least a quarter of its citizens townsfolk', () => {
+    const townsfolk = (g: Game, c: City) => g.cityTiles(c, USE.urban).reduce((n, t) => n + 1 + g.specialists[t]!, 0);
     const thin = sims.flatMap((s) => s.game.cities
-      .filter((c) => c.pop >= 10 && s.game.cityTiles(c, USE.urban).length < Math.floor(c.pop / 4))
-      .map((c) => `${c.name} size ${c.pop}: ${s.game.cityTiles(c, USE.urban).length} urban`));
+      .filter((c) => c.pop >= 10 && townsfolk(s.game, c) < Math.floor(c.pop / 4))
+      .map((c) => `${c.name} size ${c.pop}: ${townsfolk(s.game, c)} townsfolk`));
     expect(thin).toEqual([]);
+  });
+});
+
+describe('ER1: eras only ever add to improvements', () => {
+  it('every improvement yields at least as much in a later era', () => {
+    const bad: string[] = [];
+    for (const k of Object.keys(IMPROVEMENTS) as ImprovementKey[]) {
+      for (let e = 1; e < ERAS.length; e++) {
+        const a = eraBonus(k, (e - 1) as EraIndex), b = eraBonus(k, e as EraIndex);
+        if ((Object.keys(a) as (keyof typeof a)[]).some((y) => b[y] < a[y])) bad.push(`${k} era ${e}`);
+      }
+    }
+    expect(bad).toEqual([]);
   });
 });

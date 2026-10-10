@@ -1,8 +1,8 @@
 // Units, civilizations and map sizes. Terrain rules live in terrain.ts,
 // city rules and buildings in cities.ts.
 
-import { BUILDINGS, type BuildingDef, type BuildingKey } from './cities.ts';
-export { BUILDINGS, type BuildingKey };
+import { BUILDINGS, WONDERS, type BuildingDef, type BuildingKey, type WonderDef, type WonderKey } from './cities.ts';
+export { BUILDINGS, WONDERS, type BuildingKey, type WonderKey };
 
 export interface UnitDef {
   name: string;
@@ -27,9 +27,10 @@ export const UNITS = {
 export type UnitKey = keyof typeof UNITS;
 export const unitDef = (k: UnitKey): UnitDef => UNITS[k];
 
-export type BuildKey = UnitKey | BuildingKey;
+export type BuildKey = UnitKey | BuildingKey | WonderKey;
 export const isUnitKey = (k: BuildKey): k is UnitKey => k in UNITS;
-export const buildDef = (k: BuildKey): UnitDef | BuildingDef => (isUnitKey(k) ? UNITS[k] : BUILDINGS[k]);
+export const isWonder = (k: BuildKey): k is WonderKey => k in WONDERS;
+export const buildDef = (k: BuildKey): UnitDef | BuildingDef | WonderDef => (isUnitKey(k) ? UNITS[k] : isWonder(k) ? WONDERS[k] : BUILDINGS[k]);
 
 export interface CivDef {
   name: string;

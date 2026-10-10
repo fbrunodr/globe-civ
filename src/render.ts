@@ -18,7 +18,7 @@ import { CityProps, type CitySpot } from './cityProps.ts';
 import { planRoads } from './roads.ts';
 import { Vegetation, type SpotEnv } from './vegetation.ts';
 import { mulberry32, makePerlin } from './rng.ts';
-import { USE, improvementFor, type ImprovementKey } from './cities.ts';
+import { USE, WONDERS, improvementFor, type ImprovementKey } from './cities.ts';
 
 const FOG = new THREE.Color(0x0b0e15);
 
@@ -1041,6 +1041,17 @@ export class GlobeRenderer {
       sprite.scale.set(0.13, 0.0244, 1);
       sprite.position.copy(tile.center).multiplyScalar(this.terrain.centerRadius[city.tile] + 0.03 * s);
       sprite.renderOrder = 10;
+      this.citiesGroup.add(sprite);
+    }
+    // Wonders: a small banner with the name, readable from strategic zoom.
+    for (const [w, t] of g.wondersBuilt) {
+      if (!g.explored[t]) continue;
+      const label = `★ ${WONDERS[w].name}`;
+      const tex = this.texture(`w|${label}`, 512, 96, (ctx) => drawCityLabel(ctx, '#c9a94e', label));
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, sizeAttenuation: false }));
+      sprite.scale.set(0.09, 0.017, 1);
+      sprite.position.copy(g.tiles[t].center).multiplyScalar(this.terrain.centerRadius[t] + 0.012 * s);
+      sprite.renderOrder = 9;
       this.citiesGroup.add(sprite);
     }
   }

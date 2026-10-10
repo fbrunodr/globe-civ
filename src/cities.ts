@@ -116,10 +116,10 @@ export function centerYield(t: TileTerrain, river: boolean): Output {
   return withRiver({ ...b, food: Math.max(CENTER_MIN.food, b.food), prod: Math.max(CENTER_MIN.prod, b.prod), gold: Math.max(CENTER_MIN.gold, b.gold) }, river);
 }
 
-export function ruralYield(t: TileTerrain, river: boolean): Output {
+export function ruralYield(t: TileTerrain, river: boolean, era: EraIndex = 0): Output {
   const k = improvementFor(t);
   const base = fromYields(terrainYield(t));
-  return withRiver(k ? addOut(base, IMPROVEMENTS[k].bonus) : base, river);
+  return withRiver(k ? addOut(addOut(base, IMPROVEMENTS[k].bonus), eraBonus(k, era)) : base, river);
 }
 
 export const urbanYield = (river: boolean): Output => withRiver(URBAN_YIELD, river);
@@ -236,6 +236,63 @@ export function quarterOf(keys: readonly (BuildingKey | null)[]): FamilyKey | nu
 // What a specialist living in a tile yields: its quarter's kind, else generic.
 export const specialistYield = (quarter: FamilyKey | null): Output =>
   quarter ? scaleOut(FAMILIES[quarter].unit, QUARTER_SPECIALIST) : SPECIALIST_YIELD;
+
+// ---------- wonders ----------
+
+// What a wonder's tile needs (checked on the tile and its neighbors).
+export type WonderSite = 'desertOrFloodplain' | 'coast' | 'river' | 'mountains' | 'hills' | 'flat' | 'any';
+
+export interface WonderDef {
+  readonly name: string;
+  readonly cost: number;
+  readonly site: WonderSite;
+  readonly yields: Output; // on its tile
+  readonly desc: string;
+}
+
+// Each is built once in the world, on a whole urban tile, placed explicitly.
+export const WONDERS = {
+  pyramids:        { name: 'Pyramids',         cost: 180, site: 'desertOrFloodplain', yields: out({ prod: 4, culture: 2 }), desc: 'On desert or floodplain. +4 production, +2 culture.' },
+  greatLighthouse: { name: 'Great Lighthouse', cost: 160, site: 'coast', yields: out({ food: 2, gold: 3, culture: 1 }), desc: 'On the coast. +2 food, +3 gold, +1 culture.' },
+  hangingGardens:  { name: 'Hanging Gardens',  cost: 180, site: 'river', yields: out({ food: 4, culture: 2 }), desc: 'Beside a river. +4 food, +2 culture.' },
+  machuPicchu:     { name: 'Machu Picchu',     cost: 200, site: 'mountains', yields: out({ gold: 4, faith: 2, culture: 2 }), desc: 'Next to mountains. +4 gold, +2 faith, +2 culture.' },
+  greatLibrary:    { name: 'Great Library',    cost: 200, site: 'any', yields: out({ science: 5, culture: 2 }), desc: '+5 science, +2 culture.' },
+  stonehenge:      { name: 'Stonehenge',       cost: 140, site: 'flat', yields: out({ faith: 4, culture: 1 }), desc: 'On flat open land. +4 faith, +1 culture.' },
+  colosseum:       { name: 'Colosseum',        cost: 180, site: 'any', yields: out({ culture: 5, gold: 1 }), desc: '+5 culture, +1 gold.' },
+} satisfies Record<string, WonderDef>;
+export type WonderKey = keyof typeof WONDERS;
+export const WONDER_KEYS = Object.keys(WONDERS) as WonderKey[];
+export const isWonderKey = (s: string): s is WonderKey => s in WONDERS;
+
+// ---------- eras ----------
+
+// Eras advance with a civ's accumulated science (a stand-in until the
+// science system arrives). An era upgrades every improvement of a kind at
+// once and restyles the civ's towns; nothing is rebuilt.
+export interface EraDef {
+  readonly name: string;
+  readonly science: number;            // science needed to enter it
+  readonly upgrades: Partial<Record<ImprovementKey, Output>>; // added to every improvement of the kind (cumulative)
+}
+
+export const ERAS = [
+  { name: 'Ancient',   science: 0,    upgrades: {} },
+  { name: 'Classical', science: 400,  upgrades: { farm: out({ food: 1 }), boats: out({ gold: 1 }) } },
+  { name: 'Medieval',  science: 1400, upgrades: { mine: out({ prod: 1 }), quarry: out({ prod: 1 }), camp: out({ gold: 1 }), wetland: out({ food: 1 }) } },
+] as const satisfies readonly EraDef[];
+export type EraIndex = 0 | 1 | 2;
+export const eraOf = (science: number): EraIndex => (science >= ERAS[2].science ? 2 : science >= ERAS[1].science ? 1 : 0);
+
+// What eras up to `era` add to an improvement.
+export function eraBonus(k: ImprovementKey, era: EraIndex): Output {
+  let sum = ZERO;
+  for (let e = 1; e <= era; e++) {
+    const u: Partial<Record<ImprovementKey, Output>> = ERAS[e]!.upgrades;
+    const b = u[k];
+    if (b) sum = addOut(sum, b);
+  }
+  return sum;
+}
 
 // ---------- growth placements ----------
 

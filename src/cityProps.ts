@@ -8,7 +8,7 @@
 
 import * as THREE from 'three';
 import type { Game, City } from './game.ts';
-import { USE, SLOTS, improvementFor, type ImprovementKey, type BuildingKey } from './cities.ts';
+import { USE, SLOTS, improvementFor, type ImprovementKey, type BuildingKey, type WonderKey, type EraIndex } from './cities.ts';
 import { ROOFS, buildingEntry, type BuildingKind } from './buildingCatalog.ts';
 import { mulberry32, type Rng } from './rng.ts';
 
@@ -52,6 +52,12 @@ const MODEL: Record<Exclude<BuildingKey, 'walls'>, BuildingKind> = {
   barracks: 'barracks', stable: 'stable', granary: 'granary', monument: 'monument',
   waterMill: 'waterMill', aqueduct: 'aqueduct',
 };
+const WONDER_MODEL: Record<WonderKey, BuildingKind> = {
+  pyramids: 'pyramids', greatLighthouse: 'greatLighthouse', hangingGardens: 'hangingGardens', machuPicchu: 'machuPicchu',
+  greatLibrary: 'greatLibrary', stonehenge: 'stonehenge', colosseum: 'colosseum',
+};
+const WONDER_CLEAR = 0.55; // tile radii around a wonder with no houses: a square, then the neighborhood
+
 // Where a tile's slots stand: (fan, wa, wb) near its middle, on opposite sides.
 const SLOT_SPOTS = [[0, 0.2, 0.08], [3, 0.2, 0.08]] as const;
 const CENTER_SLOT_SPOTS = [[1, 0.34, 0.1], [4, 0.34, 0.1]] as const;
@@ -61,15 +67,20 @@ const RURAL: Record<ImprovementKey, BuildingKind> = {
   farm: 'farmstead', mine: 'mineHead', camp: 'lodge', quarry: 'quarryStones', wetland: 'stiltHut', boats: 'fishingBoat',
 };
 
-// Roofs follow the climate: tiles in the warm south, slate in the cold,
-// thatch in small early towns.
-function roofOf(temp: number, pop: number, rand: Rng): number {
+// Roofs follow the era and the climate: thatch in the Ancient era and small
+// towns, then tiles in the warm south and slate in the cold.
+function roofOf(temp: number, pop: number, era: EraIndex, rand: Rng): number {
   const pick = <T>(xs: readonly T[]) => xs[Math.floor(rand() * xs.length)]!;
-  if (pop <= 3 && rand() < 0.6) return pick(ROOFS.thatch);
+  const thatch = era === 0 ? 0.7 : era === 1 ? 0.15 : 0.05;
+  if ((pop <= 3 || era === 0) && rand() < thatch + (pop <= 3 ? 0.3 : 0)) return pick(ROOFS.thatch);
   if (temp > 14) return pick(ROOFS.terracotta);
   if (temp < 4) return pick(ROOFS.slate);
-  return rand() < 0.5 ? pick(ROOFS.terracotta) : pick(ROOFS.slate);
+  return rand() < (era >= 2 ? 0.4 : 0.6) ? pick(ROOFS.terracotta) : pick(ROOFS.slate);
 }
+
+// Walls by era (multiplies the plaster): timber and mud, then white plaster,
+// then warmer stone.
+const ERA_WALL: Record<EraIndex, [number, number, number]> = { 0: [0.82, 0.72, 0.6], 1: [1, 0.99, 0.96], 2: [0.93, 0.88, 0.8] };
 
 export class CityProps {
   private readonly cache = new Map<number, { sig: string; items: PlacedBuilding[] }>();
@@ -84,7 +95,8 @@ export class CityProps {
     const city = g.cityById.get(g.tileCity[t]);
     const slots = Array.from({ length: SLOTS }, (_, k) => g.slots[t * SLOTS + k]).join(',');
     const walls = city && city.tile === t && city.buildings.has('walls') ? 'w' : '';
-    return `${u}|${city?.pop ?? 0}|${g.specialists[t]}|${city?.id ?? 0}|${slots}|${walls}`;
+    const site = city && city.wonderTile === t ? 's' : '';
+    return `${u}|${city?.pop ?? 0}|${g.specialists[t]}|${city?.id ?? 0}|${slots}|${walls}|${g.wonderAt[t]}${site}|${g.eraAt(t)}`;
   }
 
   // The tiles whose buildings changed since they were last placed.
@@ -115,7 +127,9 @@ export class CityProps {
     const rand = mulberry32((t + 1) * 2654435761 ^ city.id * 40503);
     if (u === USE.rural) {
       const k = improvementFor(g.terrainAt(t));
-      return k ? this.rural(t, RURAL[k], rand) : [];
+      const items = k ? this.rural(t, RURAL[k], rand) : [];
+      if (city.wonderTile === t) items.push(...this.landmark(t, 'scaffold', rand));
+      return items;
     }
     return this.town(t, city, rand);
   }
@@ -159,13 +173,24 @@ export class CityProps {
       out.push(this.make(kind, s.dir, Math.max(s.ground, s.water), yaw, HOUSE_SCALE, buildingEntry(kind).leaf, rand));
     });
     if (center && city.buildings.has('walls')) out.push(...this.walls(t, rand));
+    // A wonder (or its scaffolding) at the heart of its tile, a square around it.
+    const w = g.wonderOn(t);
+    const landmark = w ? WONDER_MODEL[w] : city.wonderTile === t ? 'scaffold' : null;
+    let wonderClear = 0;
+    if (landmark) {
+      const items = this.landmark(t, landmark, rand);
+      out.push(...items);
+      for (const it of items) clear.push(new THREE.Vector3().setFromMatrixPosition(it.matrix).normalize());
+      wonderClear = WONDER_CLEAR * g.globe.avgEdgeAngle / 2;
+    }
     const clearAngle = KEEP_CLEAR * g.globe.avgEdgeAngle / 2;
+    const era = g.eraAt(t);
     const cand: { s: CitySpot; score: number; r: number }[] = [];
     for (const sp of this.tileSpots(t, rows, rand)) {
       const jitter = rand();
       const s = this.sample(t, sp.i, sp.wa, sp.wb);
       if (s.water - s.ground > DRY || s.slope > MAX_SLOPE || s.urban < HOUSE_URBAN) continue;
-      if (clear.some((d) => d.angleTo(s.dir) < clearAngle)) continue;
+      if (clear.some((d, ci) => d.angleTo(s.dir) < (landmark && ci === clear.length - 1 ? wonderClear : clearAngle))) continue;
       // Keep the hall's square free on the center.
       const r = sp.wa + sp.wb;
       if (center && r < 0.3) continue;
@@ -194,9 +219,18 @@ export class CityProps {
       const toward = facing(c.s.dir, cdir);
       const yaw = toward + (rand() < 0.5 ? 0 : Math.PI / 2) + (rand() - 0.5) * 0.4;
       const size = HOUSE_SCALE * (inner ? 1.05 : 0.95) * (0.85 + 0.3 * rand());
-      out.push(this.make(kind, c.s.dir, c.s.ground, yaw, size, roofOf(temp, city.pop, rand), rand));
+      const b = this.make(kind, c.s.dir, c.s.ground, yaw, size, roofOf(temp, city.pop, era, rand), rand);
+      const [wr, wg, wb] = ERA_WALL[era];
+      b.color.multiply(new THREE.Color(wr, wg, wb));
+      out.push(b);
     }
     return out;
+  }
+
+  // A landmark (wonder or scaffolding) as close to the tile's heart as it can stand.
+  private landmark(t: number, kind: BuildingKind, rand: Rng): PlacedBuilding[] {
+    const s = this.findSpot(t, 0, 0.03, 0.03, kind, rand);
+    return s ? [this.make(kind, s.dir, s.ground, rand() * Math.PI * 2, HOUSE_SCALE, buildingEntry(kind).leaf, rand)] : [];
   }
 
   // A spot near (i, wa, wb) where the model can stand (by its water rule).
@@ -247,7 +281,7 @@ export class CityProps {
       const wa = 0.15 + 0.4 * rand(), wb = 0.1 + 0.3 * rand();
       const s = this.sample(t, i, wa, wb);
       if (!standsAt(kind, s)) continue;
-      const roof = kind === 'farmstead' ? roofOf(this.game.map.temperature[t], 6, rand) : buildingEntry(kind).leaf;
+      const roof = kind === 'farmstead' ? roofOf(this.game.map.temperature[t], 6, this.game.eraAt(t), rand) : buildingEntry(kind).leaf;
       out.push(this.make(kind, s.dir, water ? s.water : s.ground, rand() * Math.PI * 2, HOUSE_SCALE * (0.9 + 0.2 * rand()), roof, rand));
     }
     return out;

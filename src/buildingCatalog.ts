@@ -205,6 +205,64 @@ export const BUILDINGS_CATALOG = {
     ...[-0.0055, 0, 0.0055].map((x) => walls(0.0014, 0.0014, 0.0068, p.leaf, { x })),
     ...block(0.0135, 0.0018, 0.0012, p.leaf, { y: 0.0068 }),
   ] },
+  // ---------- wonders (landmarks at a believable scale: a quarter of a tile at
+  // most, no taller than ~3× the tallest building; up to 120 triangles) ----------
+  pyramids: { name: 'Pyramids', leaf: 0xd2bb8a, build: (p) => [
+    hip(0.034, 0.034, 0.022, p.leaf),
+    hip(0.019, 0.019, 0.0125, p.leaf, { x: 0.026, z: 0.016 }),
+    hip(0.012, 0.012, 0.008, 0xc9b282, { x: -0.022, z: 0.022 }),
+    ...block(0.006, 0.004, 0.003, 0xc2aa7a, { x: 0.012, z: -0.024 }),
+  ] },
+  greatLighthouse: { name: 'Great Lighthouse', leaf: 0xe2dac8, build: (p) => [
+    ...block(0.014, 0.014, 0.012, p.leaf),
+    cyl(0.0052, 0.0044, 0.012, 8, p.leaf, { y: 0.012 }),
+    cyl(0.003, 0.0027, 0.006, 8, p.leaf, { y: 0.024 }),
+    cone(0.0034, 0.004, 8, 0xf2b65a, { y: 0.03 }),
+  ] },
+  hangingGardens: { name: 'Hanging Gardens', leaf: 0x5b7a3a, build: (p) => [
+    walls(0.03, 0.024, 0.006, 0xc8b48c), flat(0.03, 0.024, p.leaf, { y: 0.006 }),
+    walls(0.022, 0.017, 0.006, 0xc8b48c, { y: 0.006 }), flat(0.022, 0.017, p.leaf, { y: 0.012 }),
+    walls(0.013, 0.01, 0.006, 0xc8b48c, { y: 0.012 }), flat(0.013, 0.01, p.leaf, { y: 0.018 }),
+    ...[[-0.012, 0.0062, 0.009], [0.012, 0.0062, -0.009], [-0.008, 0.0122, -0.006], [0.008, 0.0122, 0.006], [0, 0.0182, 0], [0.013, 0.0062, 0.009]]
+      .map(([x, y, z]) => part(new THREE.OctahedronGeometry(0.0028, 0), 0x4f7034, tf({ x, y: y! + 0.0024, z, sy: 1.3 }))),
+  ] },
+  machuPicchu: { name: 'Machu Picchu', leaf: 0x7a7468, build: (p) => [
+    ...block(0.04, 0.028, 0.004, 0x8a8a6a),
+    ...block(0.03, 0.02, 0.004, 0x8f9070, { y: 0.004, x: 0.004 }),
+    ...block(0.018, 0.012, 0.004, 0x94956f, { y: 0.008, x: 0.006 }),
+    ...[[-0.01, 0.004, 0.009], [0.002, 0.008, -0.005], [0.01, 0.012, 0.002], [-0.004, 0.004, -0.011], [0.014, 0.008, 0.007]].flatMap(([x, y, z]) => [
+      walls(0.004, 0.003, 0.0026, 0xa49e8e, { x, y, z }), hip(0.0048, 0.0036, 0.0024, p.leaf, { x, y: y! + 0.0026, z }),
+    ]),
+  ] },
+  greatLibrary: { name: 'Great Library', leaf: 0x8a8f8a, build: (p) => [
+    walls(0.03, 0.018, 0.011, MARBLE), flat(0.03, 0.018, MARBLE, { y: 0.011 }),
+    dome(0.0075, p.leaf, { y: 0.011 }),
+    ...[-0.0125, -0.0075, -0.0025, 0.0025, 0.0075, 0.0125].map((x) => column(0.011, 0.0008, MARBLE, { x, z: 0.011 })),
+    flat(0.031, 0.006, MARBLE, { y: 0.011, z: 0.011 }),
+  ] },
+  stonehenge: { name: 'Stonehenge', leaf: 0x9a958a, build: (p) => {
+    const out: THREE.BufferGeometry[] = [];
+    const n = 8, r = 0.013;
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2;
+      out.push(...block(0.0028, 0.0018, 0.0075, p.leaf, { x: Math.cos(a) * r, z: Math.sin(a) * r, ry: -a }));
+      if (i % 2 === 0) {
+        const b = a + Math.PI / n;
+        out.push(...block(0.011, 0.0018, 0.0016, p.leaf, { x: Math.cos(b) * r, y: 0.0075, z: Math.sin(b) * r, ry: -b + Math.PI / 2 }));
+      }
+    }
+    return out;
+  } },
+  colosseum: { name: 'Colosseum', leaf: 0xc9b896, build: (p) => [
+    part(new THREE.CylinderGeometry(0.018, 0.018, 0.012, 14, 1, true).scale(1, 1, 0.78).translate(0, 0.006, 0), p.leaf),
+    part(new THREE.CylinderGeometry(0.0115, 0.0155, 0.007, 12, 1, true).scale(1, 1, 0.78).translate(0, 0.0035, 0), 0xb8a888),
+    part(new THREE.CircleGeometry(0.0115, 12).rotateX(-Math.PI / 2).scale(1, 1, 0.78).translate(0, 0.0004, 0), 0xb59f74),
+  ] },
+  scaffold: { name: 'Scaffolding', leaf: TIMBER, build: (p) => [
+    ...[[-0.008, -0.008], [0.008, -0.008], [-0.008, 0.008], [0.008, 0.008]].map(([x, z]) => seg(V(x!, 0, z!), V(x! * 0.8, 0.012, z! * 0.8), 0.0003, 0.00025, 3, p.leaf)),
+    seg(V(0.011, 0, 0.002), V(0.011, 0.02, 0.002), 0.00035, 0.0003, 3, IRON),
+    seg(V(0.011, 0.02, 0.002), V(-0.004, 0.019, 0.002), 0.00025, 0.0002, 3, IRON),
+  ] },
   // ---------- walls (around the center) ----------
   wallSegment: { name: 'Wall segment', leaf: 0xa49c8c, build: (p) => block(0.01, 0.0016, 0.0042, p.leaf) },
   wallTower: { name: 'Wall tower', leaf: 0x6a625a, build: (p) => [

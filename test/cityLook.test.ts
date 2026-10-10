@@ -5,15 +5,18 @@ import { triangles } from '../src/propCatalog.ts';
 import { CityProps, housesOn, type CitySpot } from '../src/cityProps.ts';
 import { Game } from '../src/game.ts';
 import { aiTurn } from '../src/ai.ts';
-import { USE } from '../src/cities.ts';
+import { USE, WONDER_KEYS, isWonderKey } from '../src/cities.ts';
 import { planRoads } from '../src/roads.ts';
 
 // City look guarantees (design doc "Cities: Feel & Play", city look v1).
 
 describe('L1: building models', () => {
-  it('houses and rural structures stay within 40 triangles', () => {
-    const over = BUILDING_KINDS.map((k) => [k, triangles(buildBuildingGeometry(k))] as const).filter(([, t]) => t > 40);
+  it('houses, rural structures and buildings stay within 40 triangles, wonders within 120', () => {
+    const over = BUILDING_KINDS.map((k) => [k, triangles(buildBuildingGeometry(k))] as const).filter(([k, t]) => t > (isWonderKey(k) ? 120 : 40));
     expect(over).toEqual([]);
+  });
+  it('every wonder has a model', () => {
+    expect(WONDER_KEYS.filter((w) => !(BUILDING_KINDS as string[]).includes(w))).toEqual([]);
   });
 });
 
