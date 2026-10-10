@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mulberry32 } from './rng.ts';
+import type { ImprovementKey } from './cities.ts';
 
 // The terrain material: three's MeshStandardMaterial with extra shader code.
 // The look comes from the basics (the painting, the relief, the props); the
@@ -13,7 +14,8 @@ import { mulberry32 } from './rng.ts';
 //   2 patchColor.rgb, bump  (blotches drawn by detail.y: coral, kelp, tussocks, moss)
 //   3 rock.rgb, amount      (the biome's bare rock, shown where the ground is steep)
 //   4 snow.rgb, beach       (snow as this tile shows it; sandy shores)
-//   5 -, group              (tiles of one group look alike)
+//   5 urban, group, improvement, center   (city ground, see CITY_GLSL; urban:
+//                           1 on urban and center tiles; improvement: IMPROVEMENT_CODE)
 // Fan table rows (FAN_ROWS texels):
 //   0 ids (t, A, B, C)
 //   1 rounding of edges i-1, i, i+1 and A|B
@@ -116,6 +118,44 @@ vec4 paintWeights(int fan, vec3 P, vec4 ids, out vec3 sEdge, out vec4 soft) {
   return q / dot(q, vec4(1.0));
 }
 `;
+
+// City ground: urban ground with winding streets, and the rural
+// improvements painted over the biome (field patchworks, spoil, cut stone,
+// clearings, paddies). Masks come from the soft painting weights plus noise,
+// so their edges are organic like the painting's, never hexes.
+const CITY_GLSL = /* glsl */ `
+float cHash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+// Rectangular plots in a local tangent frame (size in tile radii); plots of a
+// region share one of three orientations. Returns the plot's hash; f is the
+// position inside the plot (0..1) and edge the distance to its border (tile radii).
+float cPlots(vec3 P, vec2 size, float salt, out vec2 f, out float edge) {
+  // Plane coordinates from the two world axes most across the surface here.
+  vec3 an = abs(P);
+  vec2 uv = (an.y > an.x && an.y > an.z ? P.xz : an.x > an.z ? P.yz : P.xy) / uR0;
+  float region = floor(tNoise(P / (2.5 * uR0) + salt) * 3.0);
+  float a = 0.35 + region * 0.95;
+  uv = mat2(cos(a), -sin(a), sin(a), cos(a)) * uv;
+  vec2 c = uv / size;
+  // Rows are staggered, and some plots are split into strips, so the plots
+  // never line up into a grid.
+  c.x += cHash(vec2(floor(c.y), salt + 3.0)) * 3.0;
+  vec2 id = floor(c);
+  f = c - id;
+  vec2 sz = size;
+  float h0 = cHash(id + region * 37.0 + salt);
+  if (h0 > 0.55) {
+    float k = h0 > 0.82 ? 3.0 : 2.0;
+    id = id * 4.0 + vec2(floor(f.x * k), 0.0);
+    f.x = fract(f.x * k);
+    sz.x /= k;
+  }
+  vec2 e = min(f, 1.0 - f) * sz;
+  edge = min(e.x, e.y);
+  return cHash(id + region * 37.0 + salt + 0.5);
+}
+`;
+
+export const IMPROVEMENT_CODE = { none: 0, farm: 1, mine: 2, camp: 3, quarry: 4, wetland: 5, boats: 6 } as const satisfies Record<ImprovementKey | 'none', number>;
 
 export interface TerrainMaterial {
   material: THREE.MeshStandardMaterial;
@@ -238,7 +278,8 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
         float vBump;
         ${NOISE_GLSL}
         ${GRADE_GLSL}
-        ${PAINT_GLSL}`)
+        ${PAINT_GLSL}
+        ${CITY_GLSL}`)
       .replace('#include <color_fragment>', `#include <color_fragment>
         {
           vec3 P = vObjPos;
@@ -315,6 +356,79 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
             diffuseColor.rgb = mix(diffuseColor.rgb, m2.rgb, pm);
           }
 
+          // City ground (CITY_GLSL): urban ground and rural patterns.
+          float urban = 0.0;
+          {
+            float uS = 0.0, cS = 0.0, farmS = 0.0, mineS = 0.0, campS = 0.0, quarryS = 0.0, wetS = 0.0;
+            for (int k = 0; k < 4; k++) {
+              if (soft[k] > 0.001) {
+                vec4 r5 = tileRow(int(ids[k]), 5);
+                uS += soft[k] * r5.x; cS += soft[k] * r5.w;
+                int code = int(r5.z + 0.5);
+                if (code == 1) farmS += soft[k];
+                else if (code == 2) mineS += soft[k];
+                else if (code == 3) campS += soft[k];
+                else if (code == 4) quarryS += soft[k];
+                else if (code == 5) wetS += soft[k];
+              }
+            }
+            float keep = dry * (1.0 - snowCover);
+            float edgeN = tFbm(P / (0.45 * uR0) + 4.1, 2) - 0.5;
+            if (uS > 0.02) {
+              urban = smoothstep(0.36, 0.5, uS + 0.5 * edgeN) * keep;
+              // Packed earth and paving, lighter toward the center's plaza.
+              vec3 ground = mix(vec3(0.33, 0.3, 0.26), vec3(0.42, 0.38, 0.33), tNoise(P / (0.08 * uR0)));
+              ground = mix(ground, vec3(0.5, 0.47, 0.42), smoothstep(0.5, 0.9, cS) * 0.6);
+              // Winding streets: contour lines of two noise fields (main
+              // streets and lanes), as in towns that grew without a plan.
+              float s1 = tNoise(P / (0.5 * uR0) + 7.7), s2 = tNoise(P / (0.17 * uR0) + 2.3);
+              float l1 = 1.0 - smoothstep(0.014, 0.014 + 1.5 * fwidth(s1), abs(s1 - 0.5));
+              float l2 = (1.0 - smoothstep(0.02, 0.02 + 1.5 * fwidth(s2), abs(s2 - 0.5))) * tFade(1.0 / (0.17 * uR0));
+              ground = mix(ground, vec3(0.5, 0.46, 0.4), max(l1, 0.6 * l2));
+              diffuseColor.rgb = mix(diffuseColor.rgb, ground * (0.92 + 0.12 * grain) * vShade, urban);
+            }
+            float fieldMask = 1.0 - urban;
+            if (farmS > 0.02) {
+              float farm = smoothstep(0.38, 0.52, farmS + 0.35 * edgeN) * keep * fieldMask;
+              vec2 f; float edge;
+              float h = cPlots(P, vec2(0.38, 0.17), 0.0, f, edge);
+              vec3 crop = h < 0.25 ? vec3(0.6, 0.55, 0.37) : h < 0.5 ? vec3(0.43, 0.5, 0.3) : h < 0.68 ? vec3(0.49, 0.42, 0.32) : h < 0.85 ? vec3(0.52, 0.55, 0.36) : vec3(0.56, 0.51, 0.39);
+              crop *= 0.94 + 0.12 * fract(h * 7.3);
+              // Furrows along each plot, and hedges between plots.
+              crop *= 1.0 + 0.06 * sin((h > 0.5 ? f.x : f.y) * 50.0) * tFade(50.0 / (0.15 * uR0));
+              float hedge = (1.0 - smoothstep(0.006, 0.006 + 1.5 * fwidth(edge), edge)) * tFade(1.0 / (0.05 * uR0));
+              crop = mix(crop, vec3(0.24, 0.3, 0.17), hedge * 0.8);
+              diffuseColor.rgb = mix(diffuseColor.rgb, crop * vShade, farm * 0.9);
+            }
+            if (wetS > 0.02) {
+              float wet = smoothstep(0.38, 0.52, wetS + 0.35 * edgeN) * keep * fieldMask;
+              vec2 f; float edge;
+              float h = cPlots(P, vec2(0.12, 0.09), 5.0, f, edge);
+              vec3 paddy = mix(vec3(0.33, 0.45, 0.28), vec3(0.42, 0.52, 0.32), h);
+              float bund = (1.0 - smoothstep(0.004, 0.004 + 1.5 * fwidth(edge), edge)) * tFade(1.0 / (0.04 * uR0));
+              paddy = mix(paddy, vec3(0.52, 0.5, 0.4), bund * 0.7);
+              diffuseColor.rgb = mix(diffuseColor.rgb, paddy * vShade, wet * 0.75);
+            }
+            if (mineS > 0.02) {
+              float mine = smoothstep(0.4, 0.55, mineS + 0.35 * edgeN) * keep * fieldMask;
+              float spoil = smoothstep(0.45, 0.62, tFbm(P / (0.12 * uR0) + 1.3, 2));
+              vec3 c = mix(vec3(0.42, 0.38, 0.34), vec3(0.55, 0.45, 0.32), tNoise(P / (0.05 * uR0)));
+              diffuseColor.rgb = mix(diffuseColor.rgb, c * vShade, mine * spoil * 0.8);
+            }
+            if (quarryS > 0.02) {
+              float quarry = smoothstep(0.4, 0.55, quarryS + 0.35 * edgeN) * keep * fieldMask;
+              vec2 f; float edge;
+              float h = cPlots(P, vec2(0.1, 0.07), 9.0, f, edge);
+              float cut = step(0.45, h) * smoothstep(0.5, 0.65, tFbm(P / (0.3 * uR0), 2) + 0.3);
+              diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.7, 0.68, 0.63) * (0.9 + 0.2 * h) * vShade, quarry * cut * 0.8);
+            }
+            if (campS > 0.02) {
+              float camp = smoothstep(0.4, 0.55, campS + 0.35 * edgeN) * keep * fieldMask;
+              float clearing = smoothstep(0.58, 0.7, tFbm(P / (0.2 * uR0) + 3.3, 2));
+              diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.5, 0.45, 0.34) * vShade, camp * clearing * 0.55);
+            }
+          }
+
           // Rock follows the relief, not the tiles: steep slopes show it where the
           // tile allows (vRock.a), anything high enough shows it on its slopes,
           // and mountain crests are bare whatever their slope.
@@ -324,7 +438,7 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
             float alt = length(P) - 1.0;
             float allow = max(vRock.a, smoothstep(0.0104, 0.0169, alt));
             float alpine = smoothstep(0.0169, 0.0234, alt);
-            rock = max(smoothstep(0.04, 0.09, steep) * allow, alpine) * dry * (1.0 - snowCover) * (1.0 - vBank);
+            rock = max(smoothstep(0.04, 0.09, steep) * allow, alpine) * dry * (1.0 - snowCover) * (1.0 - vBank) * (1.0 - 0.8 * urban);
             // Rock tone varies: greyer bands and lighter speckle, so faces read as stone.
             vec3 stone = mix(vRock.rgb, vec3(0.62, 0.6, 0.57), 0.45 * tNoise(P * 55.0 + 1.7)) * (0.9 + 0.3 * patchy + 0.15 * grain);
             diffuseColor.rgb = mix(diffuseColor.rgb, stone * vShade, rock * 0.95);

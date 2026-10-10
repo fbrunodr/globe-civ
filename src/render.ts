@@ -4,15 +4,18 @@ import { GlobeCamera } from './camera.ts';
 import type { Game, Unit, City } from './game.ts';
 import { SNOW, tileLook, type TileLook } from './look.ts';
 import { buildTerrainMesh, locate, newSample, type TerrainMesh } from './terrainMesh.ts';
-import { makeTerrainMaterial, makeTable, FAN_ROWS, TILE_ROWS, GRADE_GLSL, type TerrainMaterial } from './terrainMaterial.ts';
-import { buildPaintData, fanCoords, fanFrames, paintAt, warpAt, FAN_COORDS, FINE_MAX, FINE_WAVELENGTH, type PaintData, type FanFrame } from './paint.ts';
+import { makeTerrainMaterial, makeTable, FAN_ROWS, TILE_ROWS, GRADE_GLSL, IMPROVEMENT_CODE, type TerrainMaterial } from './terrainMaterial.ts';
+import { buildPaintData, fanCoords, fanFrames, paintAt, softAt, warpAt, FAN_COORDS, FINE_MAX, FINE_WAVELENGTH, type PaintData, type FanFrame } from './paint.ts';
 import { buildRelief, CONE_RADIUS, CRATER, CRATER_DEPTH, type Relief } from './relief.ts';
 import { buildSurface, meshLevels } from './surface.ts';
 import { makeWaterMaterial, type WaterMaterial } from './water.ts';
 import { WalkCamera } from './walk.ts';
 import { makeSky, makeHalo, installHaze, HAZE, HAZE_DENSITY, AIR } from './sky.ts';
 import { makeWeather, type Weather } from './weather.ts';
-import { buildPropGeometry, catalogEntry, CATALOG, CATALOG_KINDS, type CatalogKind } from './propCatalog.ts';
+import { buildPropGeometry, catalogEntry, CATALOG, CATALOG_KINDS, type CatalogKind, type Layer } from './propCatalog.ts';
+import { BUILDING_KINDS, buildBuildingGeometry, type BuildingKind } from './buildingCatalog.ts';
+import { CityProps, type CitySpot } from './cityProps.ts';
+import { planRoads } from './roads.ts';
 import { Vegetation, type SpotEnv } from './vegetation.ts';
 import { mulberry32, makePerlin } from './rng.ts';
 import { USE, improvementFor, type ImprovementKey } from './cities.ts';
@@ -37,15 +40,20 @@ const HUE_JITTER = 0.12;
 const HIDE_ABOVE = { Canopy: Infinity, Accent: Infinity, Understory: 1.6, Ground: 0.8 } as const;
 const PROP_CHUNKS = 8;
 
+// Flora and city buildings share the chunks.
+type PropKind = CatalogKind | BuildingKind;
+const PROP_KINDS: readonly PropKind[] = [...CATALOG_KINDS, ...BUILDING_KINDS];
+const isFloraKind = (k: PropKind): k is CatalogKind => k in CATALOG;
+
 interface PropChunk {
   dir: THREE.Vector3;  // chunk center
   radius: number;      // angular radius, with a margin for prop size
   tiles: number[];
-  meshes: Map<CatalogKind, THREE.InstancedMesh>;
+  meshes: Map<PropKind, THREE.InstancedMesh>;
 }
 
 interface PlacedProp {
-  kind: CatalogKind;
+  kind: PropKind;
   matrix: THREE.Matrix4;
   color: THREE.Color; // per-instance shade and slight hue shift
   leaf: THREE.Color;  // leaf color (the model's own, or a variant's tint)
@@ -56,14 +64,18 @@ const REF_EDGE = 0.07;
 
 export type DebugView = 'normal' | 'height' | 'water';
 
-// Placeholder art for city tiles (phase 1 of the city design: colored
-// tiles until urban ground and field patterns are painted). Muted, earthy
-// tones, like the ground they stand for.
-const USE_TINT = { center: 0x3d3935, urban: 0x5c5650 } as const;
-const IMPROVEMENT_TINT: Record<ImprovementKey, number> = {
-  farm: 0xc4b26a, mine: 0x6e5a48, camp: 0x5a7344, quarry: 0xaaa392, wetland: 0x6c8a6a, boats: 0x3f6f8c,
+// Flora yields to cities: the share of each layer's props that stays on a
+// developed tile (urban ground keeps a few garden trees; fields keep
+// hedgerow trees; camps keep their forest).
+const FLORA_KEEP: Record<'urban' | ImprovementKey, Record<Layer, number>> = {
+  urban:   { Canopy: 0.06, Understory: 0.04, Ground: 0, Accent: 0 },
+  farm:    { Canopy: 0.2, Understory: 0.12, Ground: 0.08, Accent: 0.3 },
+  mine:    { Canopy: 0.35, Understory: 0.35, Ground: 0.35, Accent: 0.6 },
+  quarry:  { Canopy: 0.35, Understory: 0.35, Ground: 0.35, Accent: 0.6 },
+  camp:    { Canopy: 0.85, Understory: 0.7, Ground: 0.8, Accent: 1 },
+  wetland: { Canopy: 0.6, Understory: 0.6, Ground: 0.5, Accent: 1 },
+  boats:   { Canopy: 1, Understory: 1, Ground: 1, Accent: 1 },
 };
-const USE_OPACITY = { center: 0.85, urban: 0.75, rural: 0.5 } as const;
 
 // A tile highlighted in the overlay (growth placement options).
 export interface TileMark {
@@ -121,7 +133,8 @@ export class GlobeRenderer {
   private prevOwner: Int32Array;
 
   private readonly propMat = makePropMaterial();
-  private readonly propGeo = new Map<CatalogKind, THREE.BufferGeometry>();
+  private readonly buildingMat = makePropMaterial(0.32);
+  private readonly propGeo = new Map<PropKind, THREE.BufferGeometry>();
   private readonly vegetation: Vegetation;
   // Per terrain vertex, for prop placement: ground slope, signed distance to
   // the shore and the direction away from it.
@@ -129,17 +142,18 @@ export class GlobeRenderer {
   private readonly vertCoast: Float32Array;
   private readonly vertInland: Float32Array;
   private readonly chunks: PropChunk[] = [];
+  private readonly tileChunk: PropChunk[] = [];
   private readonly propCache = new Map<number, PlacedProp[]>();
   private readonly craters = new THREE.Group();
   private readonly unitsGroup = new THREE.Group();
   private readonly citiesGroup = new THREE.Group();
   private readonly overlayGroup = new THREE.Group();
   private borders: THREE.Mesh | null = null;
-  private uses: THREE.Mesh | null = null;
-  private usesVersion = -1;
+  private cityProps: CityProps;
+  private roads: THREE.Mesh | null = null;
+  private roadsKey = '';
+  private readonly prevUse: Uint8Array;
   private readonly textures = new Map<string, THREE.CanvasTexture>();
-  private readonly cityBase: THREE.CylinderGeometry;
-  private readonly cityBlock: THREE.BoxGeometry;
 
   private pointer = { x: 0, y: 0, dirty: false };
   private downAt: { x: number; y: number } | null = null;
@@ -336,11 +350,13 @@ export class GlobeRenderer {
       for (let k = 1; k < PROP_CHUNKS; k++) if (this.chunks[k].dir.dot(tile.center) > this.chunks[best].dir.dot(tile.center)) best = k;
       const c = this.chunks[best];
       c.tiles.push(tile.id);
+      this.tileChunk[tile.id] = c;
       c.radius = Math.max(c.radius, c.dir.angleTo(tile.center) + 2 * g.globe.avgEdgeAngle);
     }
     this.scene.add(this.craters);
-    this.cityBase = new THREE.CylinderGeometry(0.026 * s, 0.03 * s, 0.006 * s, 6);
-    this.cityBlock = new THREE.BoxGeometry(0.011 * s, 0.016 * s, 0.011 * s);
+    for (const kind of BUILDING_KINDS) this.propGeo.set(kind, buildBuildingGeometry(kind).scale(s * 1.5 * PROP_SIZE, s * 1.5 * PROP_SIZE, s * 1.5 * PROP_SIZE));
+    this.prevUse = new Uint8Array(N);
+    this.cityProps = new CityProps(g, (t, i, wa, wb) => this.citySpot(t, i, wa, wb), s);
     this.scene.add(this.unitsGroup, this.citiesGroup, this.overlayGroup);
 
     this.bindInput(canvas);
@@ -380,10 +396,22 @@ export class GlobeRenderer {
     const changed = this.changedTiles();
     if (changed.length) {
       this.updateColors(changed);
-      this.updateProps();
       this.updateBorders();
     }
-    if (changed.length || this.usesVersion !== this.game.useVersion) this.updateUses();
+    // City tiles: the ground, the flora that yields to them, the buildings.
+    const dirty = new Set<PropChunk>();
+    const g = this.game;
+    let useChanged = false;
+    for (let t = 0; t < g.N; t++) {
+      if (g.use[t] === this.prevUse[t]) continue;
+      this.prevUse[t] = g.use[t];
+      useChanged = true;
+      for (const x of [t, ...g.tiles[t].neighbors]) { this.propCache.delete(x); dirty.add(this.tileChunk[x]!); }
+    }
+    if (useChanged) this.updateCityGround();
+    for (const t of this.cityProps.changed()) dirty.add(this.tileChunk[t]!);
+    if (changed.length) this.updateProps(); else if (dirty.size) this.updateProps(dirty);
+    this.updateRoads(changed.length > 0);
     this.updateCities();
     this.updateUnits(sel);
   }
@@ -638,6 +666,13 @@ export class GlobeRenderer {
             if (keep >= Math.min(1, (veg.density(env) / spots) * vary)) continue;
             const prop = veg.pick(env, mulberry32(Math.floor(seed * 4294967296)), ancient && u === t);
             if (!prop) continue;
+            // Flora yields to cities.
+            const use = g.use[u];
+            if (use !== USE.wild) {
+              const imp = use === USE.rural ? improvementFor(g.terrainAt(u)) : null;
+              const keepShare = FLORA_KEEP[use === USE.rural ? imp ?? 'urban' : 'urban'][CATALOG[prop.kind].layer];
+              if (rand() >= keepShare) continue;
+            }
             if (prop.ancient) ancient = false;
             q.setFromUnitVectors(UP, d);
             q.multiply(new THREE.Quaternion().setFromAxisAngle(UP, spin * Math.PI * 2));
@@ -678,32 +713,36 @@ export class GlobeRenderer {
     return g.boundingBox!.max.y;
   }
 
-  // Rebuilds the instanced props of explored tiles, chunk by chunk.
-  private updateProps(): void {
+  // Rebuilds the instanced props (flora and city buildings) of explored
+  // tiles, chunk by chunk (only `only` if given).
+  private updateProps(only?: Set<PropChunk>): void {
     const g = this.game;
     const color = new THREE.Color();
     for (const chunk of this.chunks) {
-      const lists = new Map<CatalogKind, { p: PlacedProp; dim: number }[]>();
+      if (only && !only.has(chunk)) continue;
+      const lists = new Map<PropKind, { p: PlacedProp; dim: number }[]>();
+      const add = (p: PlacedProp, dim: number) => {
+        let l = lists.get(p.kind);
+        if (!l) { l = []; lists.set(p.kind, l); }
+        l.push({ p, dim });
+      };
       for (const t of chunk.tiles) {
         if (!g.explored[t]) continue;
         const dim = g.visible[t] ? 1 : 0.38;
-        for (const p of this.placeProps(t)) {
-          let l = lists.get(p.kind);
-          if (!l) { l = []; lists.set(p.kind, l); }
-          l.push({ p, dim });
-        }
+        for (const p of this.placeProps(t)) add(p, dim);
+        for (const p of this.cityProps.place(t)) add(p, dim);
       }
-      for (const kind of CATALOG_KINDS) {
+      for (const kind of PROP_KINDS) {
         const items = lists.get(kind) ?? [];
         let mesh = chunk.meshes.get(kind);
         if (!mesh || mesh.instanceMatrix.count < items.length) {
           if (mesh) { this.scene.remove(mesh); mesh.dispose(); mesh.geometry.getAttribute('leafTint')?.array && mesh.geometry.deleteAttribute('leafTint'); }
           if (items.length === 0) { chunk.meshes.delete(kind); continue; }
           const cap = Math.ceil(items.length * 1.3) + 8;
-          mesh = new THREE.InstancedMesh(instanceGeometry(this.propGeo.get(kind)!, cap), this.propMat, cap);
+          mesh = new THREE.InstancedMesh(instanceGeometry(this.propGeo.get(kind)!, cap), isFloraKind(kind) ? this.propMat : this.buildingMat, cap);
           // Ground cover is too small to cast a visible shadow (and skipping it saves draw calls).
-          mesh.castShadow = CATALOG[kind].layer !== 'Ground';
-          mesh.userData['hideAbove'] = HIDE_ABOVE[CATALOG[kind].layer];
+          mesh.castShadow = !isFloraKind(kind) || CATALOG[kind].layer !== 'Ground';
+          mesh.userData['hideAbove'] = isFloraKind(kind) ? HIDE_ABOVE[CATALOG[kind].layer] : Infinity;
           chunk.meshes.set(kind, mesh);
           this.scene.add(mesh);
         }
@@ -806,39 +845,124 @@ export class GlobeRenderer {
     this.scene.add(this.borders);
   }
 
-  // City tiles: a translucent fill per developed tile, colored by its use.
-  private updateUses(): void {
+  // City ground in the tile table (row 5, see terrainMaterial.ts): urban
+  // and center tiles, and each rural tile's improvement pattern.
+  private updateCityGround(): void {
     const g = this.game;
-    this.usesVersion = g.useVersion;
-    const pos: number[] = [], col: number[] = [];
-    const c = new THREE.Color();
-    const rings = [0.88, 0.66, 0.44, 0.22, 0];
+    const td = this.tileTex.image.data as Float32Array;
     for (let t = 0; t < g.N; t++) {
+      const o = t * TILE_ROWS * 4 + 20;
       const u = g.use[t];
-      if (u === USE.wild || !g.explored[t]) continue;
-      const k = u === USE.rural ? improvementFor(g.terrainAt(t)) : null;
-      c.setHex(u === USE.center ? USE_TINT.center : u === USE.urban ? USE_TINT.urban : k ? IMPROVEMENT_TINT[k] : USE_TINT.urban);
-      const a = u === USE.center ? USE_OPACITY.center : u === USE.urban ? USE_OPACITY.urban : USE_OPACITY.rural;
-      const before = pos.length;
-      for (let i = 0; i < g.tiles[t].corners.length; i++) {
-        for (let r = 0; r + 1 < rings.length; r++) this.edgeRibbon(t, i, rings[r]!, rings[r + 1]!, 0.0012, pos);
-      }
-      for (let k2 = before; k2 < pos.length; k2 += 3) col.push(c.r, c.g, c.b, a);
+      const imp = u === USE.rural ? improvementFor(g.terrainAt(t)) : null;
+      td[o] = u === USE.urban || u === USE.center ? 1 : 0;
+      td[o + 2] = imp ? IMPROVEMENT_CODE[imp] : IMPROVEMENT_CODE.none;
+      td[o + 3] = u === USE.center ? 1 : 0;
     }
-    if (this.uses) {
-      this.scene.remove(this.uses);
-      this.uses.geometry.dispose();
-      (this.uses.material as THREE.Material).dispose();
+    this.tileTex.needsUpdate = true;
+  }
+
+  // Roads between cities (roads.ts), draped on the ground as dirt tracks
+  // with soft edges. Rebuilt when the cities change (or what is explored).
+  private updateRoads(explored: boolean): void {
+    const g = this.game;
+    const key = g.cities.map((c) => `${c.id}:${c.owner}`).join(',');
+    if (key === this.roadsKey && !explored) return;
+    this.roadsKey = key;
+    const r0 = this.paint.params.r0;
+    const halfW = 0.06 * r0, lift = 0.00025 * this.scale;
+    const pos: number[] = [], col: number[] = [];
+    let hint = 0;
+    const at = (d: THREE.Vector3) => {
+      const l = locate(g.globe, d, hint);
+      hint = l.t;
+      const lv = this.terrain.at(l.t, l.i, l.wa, l.wb);
+      return { t: l.t, h: Math.max(lv.ground, lv.water) };
+    };
+    for (const road of planRoads(g)) {
+      // Smooth the tile-center polyline (Chaikin), then resample it finely.
+      let pts = road.tiles.map((t) => g.tiles[t].center.clone());
+      for (let it = 0; it < 3; it++) {
+        const next = [pts[0]!];
+        for (let k = 0; k + 1 < pts.length; k++) {
+          next.push(pts[k]!.clone().lerp(pts[k + 1]!, 0.25).normalize(), pts[k]!.clone().lerp(pts[k + 1]!, 0.75).normalize());
+        }
+        next.push(pts[pts.length - 1]!);
+        pts = next;
+      }
+      const fine: THREE.Vector3[] = [];
+      for (let k = 0; k + 1 < pts.length; k++) {
+        const a = pts[k]!, b = pts[k + 1]!;
+        const n = Math.max(1, Math.ceil(a.angleTo(b) / (0.08 * r0)));
+        for (let j = 0; j < n; j++) fine.push(a.clone().lerp(b, j / n).normalize());
+      }
+      fine.push(pts[pts.length - 1]!);
+      // A ribbon of three vertices across: soft edge, middle, soft edge.
+      let prev: number[] | null = null;
+      for (let k = 0; k < fine.length; k++) {
+        const d = fine[k]!;
+        const tan = fine[Math.min(fine.length - 1, k + 1)]!.clone().sub(fine[Math.max(0, k - 1)]!);
+        const side = d.clone().cross(tan).normalize().multiplyScalar(halfW);
+        const here = at(d);
+        if (!g.explored[here.t]) { prev = null; continue; }
+        const row: number[] = [];
+        for (const sgn of [-1, 0, 1]) {
+          const q = d.clone().addScaledVector(side, sgn).normalize();
+          const h = sgn === 0 ? here.h : at(q).h;
+          const v = q.multiplyScalar(h + lift);
+          row.push(v.x, v.y, v.z);
+        }
+        if (prev) {
+          const quad = (a: number, b: number, alphaA: number, alphaB: number) => {
+            const p0 = prev!.slice(a * 3, a * 3 + 3), p1 = prev!.slice(b * 3, b * 3 + 3);
+            const q0 = row.slice(a * 3, a * 3 + 3), q1 = row.slice(b * 3, b * 3 + 3);
+            pos.push(...p0, ...p1, ...q1, ...p0, ...q1, ...q0);
+            for (const al of [alphaA, alphaB, alphaB, alphaA, alphaB, alphaA]) col.push(0.62, 0.55, 0.43, al);
+          };
+          quad(0, 1, 0.15, 1);
+          quad(1, 2, 1, 0.15);
+        }
+        prev = row;
+      }
+    }
+    if (this.roads) {
+      this.scene.remove(this.roads);
+      this.roads.geometry.dispose();
+      (this.roads.material as THREE.Material).dispose();
     }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 4));
-    this.uses = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
-      vertexColors: true, transparent: true, side: THREE.DoubleSide, depthWrite: false,
-      polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
+    geo.computeVertexNormals();
+    this.roads = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({
+      vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide,
+      polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
     }));
-    this.uses.renderOrder = 1;
-    this.scene.add(this.uses);
+    this.roads.receiveShadow = true;
+    this.roads.renderOrder = 1;
+    this.scene.add(this.roads);
+  }
+
+  // The ground at a spot of tile t (for city buildings).
+  private readonly spotCo = new Float32Array(FAN_COORDS);
+  private readonly spotSmp = newSample();
+  private citySpot(t: number, i: number, wa: number, wb: number): CitySpot {
+    const g = this.game;
+    const p = this.terrain.samplePoint(t, i, wa, wb);
+    const dir = p.clone().normalize();
+    const fanId = this.paint.fanStart[t] + i;
+    const fan = this.paint.fans[fanId];
+    fanCoords(this.frames[fanId], fan, warpAt(this.paint.params, dir.x, dir.y, dir.z), dir.x, dir.y, dir.z, this.spotCo);
+    const w = softAt(this.paint, fanId, this.spotCo);
+    let urban = 0;
+    for (let c = 0; c < 4; c++) {
+      const u = g.use[fan.ids[c]];
+      if (u === USE.urban || u === USE.center) urban += w[c];
+    }
+    const lv = this.terrain.at(t, i, wa, wb);
+    this.terrain.topo.sample(t, i, wa, wb, this.spotSmp);
+    let slope = 0;
+    for (let c = 0; c < 3; c++) slope += this.spotSmp.w[c] * this.vertSlope[this.spotSmp.v[c]];
+    return { dir, ground: lv.ground - 1, water: lv.water - 1, slope, urban };
   }
 
   private ring(t: number, color: number, opacity: number): THREE.Mesh {
@@ -909,26 +1033,6 @@ export class GlobeRenderer {
       if (!g.explored[city.tile]) continue;
       const tile = g.tiles[city.tile];
       const color = g.players[city.owner].color;
-      const group = new THREE.Group();
-      group.position.copy(this.surface(city.tile));
-      group.quaternion.setFromUnitVectors(UP, tile.center);
-      const base = new THREE.Mesh(this.cityBase, new THREE.MeshStandardMaterial({ color, roughness: 0.7 }));
-      base.castShadow = true;
-      base.position.y = 0.002 * s;
-      group.add(base);
-      const blockMat = new THREE.MeshStandardMaterial({ color: 0xe9e4d8, roughness: 0.8 });
-      const blocks = Math.min(6, 2 + city.pop);
-      for (let i = 0; i < blocks; i++) {
-        const a = (i / blocks) * Math.PI * 2;
-        const b = new THREE.Mesh(this.cityBlock, blockMat);
-        b.castShadow = true;
-        const hgt = 0.7 + 0.6 * fract(Math.sin((city.id * 7 + i) * 12.9898) * 43758.5453);
-        b.scale.set(1, hgt, 1);
-        b.position.set(Math.cos(a) * 0.013 * s, (0.005 + 0.008 * hgt) * s, Math.sin(a) * 0.013 * s);
-        group.add(b);
-      }
-      this.citiesGroup.add(group);
-
       const label = `${city.pop}  ${city.name}`;
       const key = `c|${color}|${label}`;
       const tex = this.texture(key, 512, 96, (ctx) => drawCityLabel(ctx, color, label));
@@ -1096,7 +1200,6 @@ function smoothstep(a: number, b: number, x: number): number {
 
 function lerp(a: number, b: number, t: number): number { return a + (b - a) * t; }
 
-function fract(x: number): number { return x - Math.floor(x); }
 
 function drawUnitIcon(ctx: CanvasRenderingContext2D, color: string, icon: string, stack: number, hp: number, selected: boolean, fortified: boolean): void {
   const cx = 64, cy = 60;
@@ -1155,7 +1258,9 @@ function drawCityLabel(ctx: CanvasRenderingContext2D, color: string, label: stri
 
 // Prop material: per-vertex colors, with the leaf parts (leafMask) taking
 // each instance's leaf color (leafTint), times the instance's color.
-function makePropMaterial(): THREE.MeshStandardMaterial {
+// `bounce`: light bounced off the ground onto walls (buildings, whose walls
+// would otherwise sit dark under a high sun).
+function makePropMaterial(bounce = 0): THREE.MeshStandardMaterial {
   const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, flatShading: true, side: THREE.DoubleSide });
   mat.onBeforeCompile = (shader) => {
     shader.vertexShader = shader.vertexShader
@@ -1169,9 +1274,12 @@ function makePropMaterial(): THREE.MeshStandardMaterial {
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
         ${GRADE_GLSL}`)
-      .replace('#include <opaque_fragment>', `outgoingLight = grade(outgoingLight, 0.6) * 0.9;
+      .replace('#include <opaque_fragment>', `outgoingLight += diffuseColor.rgb * ${bounce.toFixed(3)};
+        outgoingLight = grade(outgoingLight, 0.6) * 0.9;
         #include <opaque_fragment>`);
   };
+  // Distinct programs per bounce.
+  mat.customProgramCacheKey = () => `prop-${bounce}`;
   return mat;
 }
 

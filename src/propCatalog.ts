@@ -36,16 +36,16 @@ export interface CatalogEntry {
 }
 
 const UP = new THREE.Vector3(0, 1, 0);
-const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
+export const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 const TRUNK = 0x7a5a3c;
 
-interface Tf { x?: number; y?: number; z?: number; rx?: number; ry?: number; rz?: number; s?: number; sx?: number; sy?: number; sz?: number }
-const tf = (o: Tf) => new THREE.Matrix4().compose(
+export interface Tf { x?: number; y?: number; z?: number; rx?: number; ry?: number; rz?: number; s?: number; sx?: number; sy?: number; sz?: number }
+export const tf = (o: Tf) => new THREE.Matrix4().compose(
   V(o.x ?? 0, o.y ?? 0, o.z ?? 0),
   new THREE.Quaternion().setFromEuler(new THREE.Euler(o.rx ?? 0, o.ry ?? 0, o.rz ?? 0)),
   V(o.sx ?? o.s ?? 1, o.sy ?? o.s ?? 1, o.sz ?? o.s ?? 1));
 
-function part(geo: THREE.BufferGeometry, color: number, m?: THREE.Matrix4): THREE.BufferGeometry {
+export function part(geo: THREE.BufferGeometry, color: number, m?: THREE.Matrix4): THREE.BufferGeometry {
   const g = geo.index ? geo.toNonIndexed() : geo;
   if (m) g.applyMatrix4(m);
   if (g.getAttribute('uv')) g.deleteAttribute('uv');
@@ -59,9 +59,9 @@ function part(geo: THREE.BufferGeometry, color: number, m?: THREE.Matrix4): THRE
 }
 
 // ---- shape helpers ----
-const cyl = (r0: number, r1: number, h: number, n: number, color: number, o: Tf = {}) =>
+export const cyl = (r0: number, r1: number, h: number, n: number, color: number, o: Tf = {}) =>
   part(new THREE.CylinderGeometry(r1, r0, h, n, 1, true).translate(0, h / 2, 0), color, tf(o));
-const cone = (r: number, h: number, n: number, color: number, o: Tf = {}) =>
+export const cone = (r: number, h: number, n: number, color: number, o: Tf = {}) =>
   part(new THREE.ConeGeometry(r, h, n, 1, true).translate(0, h / 2, 0), color, tf(o));
 const ico = (r: number, color: number, o: Tf = {}) => part(new THREE.IcosahedronGeometry(r, 0), color, tf(o));
 const oct = (r: number, color: number, o: Tf = {}) => part(new THREE.OctahedronGeometry(r, 0), color, tf(o));
@@ -69,7 +69,7 @@ const tet = (r: number, color: number, o: Tf = {}) => part(new THREE.Tetrahedron
 const disc = (r: number, n: number, color: number, o: Tf = {}) => part(new THREE.CircleGeometry(r, n), color, tf(o));
 
 // A tapered cylinder from a to b (bottom radius r0, top r1).
-function seg(a: THREE.Vector3, b: THREE.Vector3, r0: number, r1: number, n: number, color: number) {
+export function seg(a: THREE.Vector3, b: THREE.Vector3, r0: number, r1: number, n: number, color: number) {
   const d = b.clone().sub(a);
   const len = d.length();
   const g = new THREE.CylinderGeometry(r1, r0, len, n, 1, true).translate(0, len / 2, 0);
@@ -457,9 +457,13 @@ export const catalogEntry = (k: CatalogKind): CatalogEntry => CATALOG[k];
 const LEAF_PROBE = new THREE.Color(0x010203);
 
 export function buildCatalogGeometry(kind: CatalogKind, palette?: Partial<Palette>): THREE.BufferGeometry {
-  const e: CatalogEntry = CATALOG[kind];
+  return buildModel(CATALOG[kind], kind, palette);
+}
+
+// Builds a model whose leaf parts are marked (leafMask) for per-instance tints.
+export function buildModel(e: Pick<CatalogEntry, 'leaf' | 'accent' | 'build'>, name: string, palette?: Partial<Palette>): THREE.BufferGeometry {
   const merged = mergeGeometries(e.build({ leaf: LEAF_PROBE.getHex(), accent: palette?.accent ?? e.accent ?? e.leaf }));
-  if (!merged) throw new Error(`Could not build prop ${kind}`);
+  if (!merged) throw new Error(`Could not build prop ${name}`);
   const leaf = new THREE.Color(palette?.leaf ?? e.leaf);
   const col = merged.getAttribute('color');
   const mask = new Float32Array(col.count);

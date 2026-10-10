@@ -2,6 +2,7 @@ import './style.css';
 import { Game, HUMAN, type City, type Unit } from './game.ts';
 import { GlobeRenderer, type DebugView, type Selection, type TileMark } from './render.ts';
 import type { GrowthKind } from './cities.ts';
+import { aiTurn } from './ai.ts';
 import { UI, assertNever, type Action } from './ui.ts';
 import { MAP_SIZES, tileCount, unitDef, type MapSizeKey } from './rules.ts';
 
@@ -238,6 +239,16 @@ function startGame(sizeKey: MapSizeKey, seed: number): void {
 
   game.log(`Welcome! ${game.players.length - 1} rival civilizations share this world of ${game.N.toLocaleString()} tiles.`);
   selectNextUnit();
+  // Debug: ?turns=N lets the AI play the human's first N turns, governors
+  // placing every citizen (to look at a grown empire).
+  const autoTurns = Number(debug.get('turns') ?? 0);
+  if (autoTurns > 0) {
+    for (let i = 0; i < autoTurns && !game.over; i++) { aiTurn(game, game.players[HUMAN]!); game.endTurn(); }
+    for (const c of game.cities) if (c.owner === HUMAN && c.building === null) c.building = 'warrior';
+    const capital = game.cities.find((c) => c.owner === HUMAN);
+    sel = null;
+    if (capital) view.lookAt(capital.tile, Number(debug.get('dist') ?? 1.35));
+  }
   refresh();
   if (lookFor) {
     const keys = lookFor.split(/[+ ]/);

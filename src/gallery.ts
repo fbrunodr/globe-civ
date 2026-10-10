@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DObject, CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
 import { CATALOG, CATALOG_KINDS, buildCatalogGeometry, triangles, type CatalogKind } from './propCatalog.ts';
+import { BUILDINGS_CATALOG, BUILDING_KINDS, buildBuildingGeometry } from './buildingCatalog.ts';
 import { BIOME_FLORA, FEATURE_FLORA, realmsLabel, type Tint, type Variant } from './floraData.ts';
 import { BIOME_LOOK, FEATURE_LOOK } from './look.ts';
 import type { BiomeKey, FeatureKey } from './terrain.ts';
@@ -248,7 +249,26 @@ function buildCatalog(): void {
       center.clone().add(new THREE.Vector3(0, 0, 4.4)), () => { state.focus = i; refreshFocus(); setCam('close'); });
     patches.push({ center, label: div, mix: '' });
   });
-  info.textContent = `${CATALOG_KINDS.length} props, enlarged per layer (×N in each label) to be visible. Budget ${BUDGET} triangles · WASD move · Q/E rotate · Z/X zoom`;
+  // City buildings (buildingCatalog.ts) after the flora.
+  BUILDING_KINDS.forEach((kind, j) => {
+    const i = CATALOG_KINDS.length + j;
+    const center = new THREE.Vector3((i % cols) * gap, 0, Math.floor(i / cols) * rowGap);
+    const e = BUILDINGS_CATALOG[kind];
+    const scale = 6;
+    world.add(hex(0xb9b39a, center, 3.2));
+    const geo = cached(`b|${kind}`, () => buildBuildingGeometry(kind));
+    const mesh = new THREE.Mesh(geo, propMat);
+    mesh.position.copy(center);
+    mesh.scale.setScalar(PROP * scale);
+    mesh.rotation.y = 0.6;
+    mesh.castShadow = true;
+    world.add(mesh);
+    const tris = triangles(geo);
+    const div = label(`<b>${e.name}</b><small>Building ×${scale} · ${tris} tris</small>`,
+      center.clone().add(new THREE.Vector3(0, 0, 4.4)), () => { state.focus = i; refreshFocus(); setCam('close'); });
+    patches.push({ center, label: div, mix: '' });
+  });
+  info.textContent = `${CATALOG_KINDS.length} props and ${BUILDING_KINDS.length} buildings, enlarged (×N in each label) to be visible. Budget ${BUDGET} triangles · WASD move · Q/E rotate · Z/X zoom`;
 }
 
 function refreshFocus(): void {
