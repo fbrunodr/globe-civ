@@ -85,3 +85,8 @@ small { color: var(--muted); font-weight: normal; }
 .focus { display: flex; align-items: center; gap: 8px; margin-top: 8px; color: var(--muted); font-size: 13px; }
 .focus span { display: flex; flex-wrap: wrap; gap: 4px; }
 .focus button { padding: 2px 7px; font-size: 12px; }
+.y.sci { color: #8ec5ff; } .y.cul { color: #e599f7; } .y.fai { color: #fff3bf; }
+#gold .y { margin-left: 10px; margin-right: 0; }
+.quarters { margin: 8px 0; padding: 6px 8px; border-radius: 8px; background: rgba(255, 255, 255, 0.04); font-size: 13px; color: var(--muted); }
+.qrow + .qrow { margin-top: 3px; }
+.qrow b { color: var(--text); font-weight: 600; margin-right: 6px; }

@@ -1,4 +1,8 @@
-// Units, buildings, civilizations and map sizes. Terrain rules live in terrain.ts.
+// Units, civilizations and map sizes. Terrain rules live in terrain.ts,
+// city rules and buildings in cities.ts.
+
+import { BUILDINGS, type BuildingDef, type BuildingKey } from './cities.ts';
+export { BUILDINGS, type BuildingKey };
 
 export interface UnitDef {
   name: string;
@@ -12,12 +16,6 @@ export interface UnitDef {
   desc?: string;
 }
 
-export interface BuildingDef {
-  name: string;
-  cost: number;
-  desc: string;
-}
-
 export const UNITS = {
   settler:  { name: 'Settler',  icon: 'S', atk: 0, def: 1, mv: 1, cost: 30, civilian: true, desc: 'Founds a city. Costs 1 population.' },
   scout:    { name: 'Scout',    icon: 'R', atk: 0, def: 1, mv: 2, cost: 10, sight: 3, desc: 'Fast explorer. Cannot attack.' },
@@ -28,12 +26,6 @@ export const UNITS = {
 } satisfies Record<string, UnitDef>;
 export type UnitKey = keyof typeof UNITS;
 export const unitDef = (k: UnitKey): UnitDef => UNITS[k];
-
-export const BUILDINGS = {
-  walls:   { name: 'Walls',   cost: 30, desc: '+100% defense for units in the city.' },
-  granary: { name: 'Granary', cost: 40, desc: 'Keeps half the food when the city grows.' },
-} satisfies Record<string, BuildingDef>;
-export type BuildingKey = keyof typeof BUILDINGS;
 
 export type BuildKey = UnitKey | BuildingKey;
 export const isUnitKey = (k: BuildKey): k is UnitKey => k in UNITS;

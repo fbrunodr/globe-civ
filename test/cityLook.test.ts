@@ -60,8 +60,9 @@ describe('L3: city buildings stand on dry, gentle ground (boats on water)', () =
       const pos = new THREE.Vector3().setFromMatrixPosition(b.matrix).normalize();
       const s = spots.get(key(pos));
       if (!s) continue;
-      const float = buildingEntry(b.kind).water === 'float';
-      if (float ? s.water - s.ground < 0.0003 : s.water > s.ground || s.slope > 0.3) bad.push(`tile ${t}: ${b.kind}`);
+      const rule = buildingEntry(b.kind).water;
+      const wet = s.water - s.ground >= 0.0003, dry = s.water <= s.ground && s.slope <= 0.3;
+      if (rule === 'float' ? !wet : rule === 'shore' ? !wet && !dry : !dry) bad.push(`tile ${t}: ${b.kind}`);
     }
   }
   it('places buildings', () => expect(count).toBeGreaterThan(200));

@@ -14,17 +14,26 @@ import {
 } from './terrain.ts';
 import { aiTurn } from './ai.ts';
 import {
-  USE, MAX_SPECIALISTS, FOOD_PER_CITIZEN, SPECIALIST_YIELD, ZERO,
-  addYields, centerYield, ruralYield, urbanYield, improvementFor, urbanAllowed, governorScore, townsfolkWanted, GROWTH_TURNS,
-  type FocusKey, type GrowthOption, type TileUse,
+  USE, MAX_SPECIALISTS, FOOD_PER_CITIZEN, SLOTS, ZERO, FAMILIES, BUILDINGS as CITY_BUILDINGS, GROWTH_TURNS,
+  addOut, scaleOut, centerYield, ruralYield, urbanYield, improvementFor, urbanAllowed, governorScore, townsfolkWanted,
+  slotsYield, quarterOf, specialistYield, slotCode, slotKey, familyOf, buildingFits, weigh,
+  type FocusKey, type GrowthOption, type TileUse, type Output, type FamilyKey, type AdjacencySource,
 } from './cities.ts';
+import { BIOME_CLASS } from './paint.ts';
 
 export const HUMAN = 0;
 
 export type Yield = Yields;
 
-export interface CityYield extends Yield {
+export interface CityYield extends Output {
   surplus: number;
+}
+
+// A reason a tile's family building gains: a neighbor (or the tile itself,
+// for a river) and what it is.
+export interface AdjacencyHit {
+  tile: number;
+  source: AdjacencySource;
 }
 
 export interface Player {
@@ -35,6 +44,9 @@ export interface Player {
   isHuman: boolean;
   alive: boolean;
   gold: number;
+  science: number; // totals so far (the science, culture and faith systems come later)
+  culture: number;
+  faith: number;
   citiesFounded: number;
   offensive: boolean; // AI only
 }
@@ -66,6 +78,7 @@ export interface City {
   founded: number;
   focus: FocusKey;
   growth: number; // citizens born but not yet placed (the human places them)
+  pendingBuilding: BuildingKey | null; // completed, waiting for the human to place it
 }
 
 export interface CombatPreview {
@@ -107,6 +120,7 @@ export class Game {
   readonly tileCity: Int32Array; // territory: owning city id, or -1
   readonly use: Uint8Array;         // TileUse of each tile (cities.ts); wild unless a city developed it
   readonly specialists: Uint8Array; // specialists living in each urban tile
+  readonly slots: Uint8Array;       // SLOTS building slots per tile (cities.ts slotCode; 0 = empty)
   useVersion = 0;                   // bumped whenever a tile's use changes (for the renderer)
   readonly explored: Uint8Array;
   readonly visible: Uint8Array;
@@ -129,12 +143,13 @@ export class Game {
     this.tileCity = new Int32Array(this.N).fill(-1);
     this.use = new Uint8Array(this.N);
     this.specialists = new Uint8Array(this.N);
+    this.slots = new Uint8Array(this.N * SLOTS);
     this.explored = new Uint8Array(this.N);
     this.visible = new Uint8Array(this.N);
 
     this.players = CIVS.slice(0, this.world.starts.length).map((civ, id) => ({
       id, name: civ.name, color: civ.color, cityNames: civ.cities,
-      isHuman: id === HUMAN, alive: true, gold: 0, citiesFounded: 0, offensive: false,
+      isHuman: id === HUMAN, alive: true, gold: 0, science: 0, culture: 0, faith: 0, citiesFounded: 0, offensive: false,
     }));
 
     this.placeUnits();
@@ -310,7 +325,7 @@ export class Game {
     if (role === 'def') {
       let mult = 1 + this.defenseBonus(tile);
       const city = this.cityByTile.get(tile);
-      if (city) mult += 0.5 + (city.buildings.has('walls') ? 1 : 0);
+      if (city) mult += 0.5 + (city.buildings.has('walls') ? 1 : 0) + 0.25 * (Number(city.buildings.has('barracks')) + Number(city.buildings.has('stable')));
       if (u.fortified) mult += 0.5;
       s *= mult;
     }
@@ -372,7 +387,7 @@ export class Game {
     const name = p.cityNames[p.citiesFounded] ?? `${p.name} ${p.citiesFounded + 1}`;
     p.citiesFounded++;
     const city: City = { id: this.nextId++, name, owner: u.owner, tile: u.tile, pop: 1, food: 0, prod: 0,
-      building: p.isHuman ? 'warrior' : null, buildings: new Set(), founded: this.turn, focus: 'balanced', growth: 0 };
+      building: p.isHuman ? 'warrior' : null, buildings: new Set(), founded: this.turn, focus: 'balanced', growth: 0, pendingBuilding: null };
     this.cities.push(city);
     this.cityById.set(city.id, city);
     this.cityByTile.set(city.tile, city);
@@ -398,6 +413,16 @@ export class Game {
     city.owner = newOwner;
     if (city.pop > 1) this.removeCitizen(city);
     city.growth = 0;
+    city.pendingBuilding = null;
+    // Temples and garrisons do not survive a conquest; the rest change hands.
+    for (const t of this.cityTiles(city, USE.urban).concat(city.tile)) {
+      for (let k = 0; k < SLOTS; k++) {
+        const b = slotKey(this.slots[t * SLOTS + k]!);
+        const f = b ? familyOf(b) : null;
+        if (b && (f === 'temple' || f === 'garrison')) { this.slots[t * SLOTS + k] = 0; city.buildings.delete(b); }
+      }
+    }
+    this.useVersion++;
     city.food = 0;
     city.prod = 0;
     city.building = p.isHuman ? 'warrior' : null;
@@ -414,19 +439,127 @@ export class Game {
     return this.tilesWithin(city.tile, 3).filter((t) => this.tileCity[t] === city.id && this.use[t] === use);
   }
 
-  // What a developed tile adds to its city (wild tiles add nothing).
-  tileOutput(t: number): Yield {
-    const terrain = this.terrainAt(t), river = this.map.riverTile[t] === 1;
-    switch (this.use[t]) {
-      case USE.center: return centerYield(terrain, river);
-      case USE.rural: return ruralYield(terrain, river);
-      case USE.urban: {
-        let out = urbanYield(river);
-        for (let k = 0; k < this.specialists[t]; k++) out = addYields(out, SPECIALIST_YIELD);
-        return out;
+  // ---------- buildings ----------
+
+  slotKeys(t: number): (BuildingKey | null)[] {
+    const out: (BuildingKey | null)[] = [];
+    for (let k = 0; k < SLOTS; k++) out.push(slotKey(this.slots[t * SLOTS + k]!));
+    return out;
+  }
+
+  // What gives family f's buildings on tile t their adjacency: each neighbor
+  // counts once, for the first source it matches (the center with walls
+  // counts twice for a Garrison); a river beside the tile counts once.
+  adjacencyHits(t: number, f: FamilyKey): AdjacencyHit[] {
+    const hits: AdjacencyHit[] = [];
+    const sources = FAMILIES[f].adjacency;
+    if (sources.includes('river') && this.map.riverTile[t]) hits.push({ tile: t, source: 'river' });
+    for (const n of this.tiles[t].neighbors) {
+      for (const src of sources) {
+        if (src === 'river') continue;
+        if (this.isSource(n, src)) {
+          hits.push({ tile: n, source: src });
+          if (src === 'center' && sources.includes('walls') && this.cityByTile.get(n)?.buildings.has('walls')) hits.push({ tile: n, source: 'walls' });
+          break;
+        }
       }
-      default: return ZERO;
     }
+    return hits;
+  }
+
+  private isSource(n: number, src: AdjacencySource): boolean {
+    switch (src) {
+      case 'mountain': return this.relief[n] === 'mountains';
+      case 'forest': return BIOME_CLASS[this.biome[n]] === 'forest' && this.relief[n] !== 'mountains' && this.use[n] !== USE.urban;
+      case 'mine': case 'quarry': case 'boats': return this.use[n] === USE.rural && improvementFor(this.terrainAt(n)) === src;
+      case 'center': return this.use[n] === USE.center;
+      case 'walls': return false; // counted with the center
+      case 'river': return false;
+      case 'wonder': return this.isWonderTile(n);
+      default: return this.slotKeys(n).some((k) => k !== null && familyOf(k) === src);
+    }
+  }
+
+  // Wonders take a whole urban tile (they come with the wonders step).
+  isWonderTile(_t: number): boolean { return false; }
+
+  // What a developed tile adds to its city (wild tiles add nothing).
+  tileOutput(t: number): Output {
+    const terrain = this.terrainAt(t), river = this.map.riverTile[t] === 1;
+    const u = this.use[t];
+    if (u === USE.rural) return ruralYield(terrain, river);
+    if (u !== USE.urban && u !== USE.center) return ZERO;
+    const keys = this.slotKeys(t);
+    const built = slotsYield(keys, (f) => this.adjacencyHits(t, f).length);
+    const base = u === USE.center ? centerYield(terrain, river) : urbanYield(river);
+    return addOut(addOut(base, built), scaleOut(specialistYield(quarterOf(keys)), this.specialists[t]!));
+  }
+
+  // Where building k could go in the city now: an urban tile (or the center)
+  // with a free slot, or a rural tile touching the core (it becomes urban;
+  // its improvement goes). Harbor buildings stand on water, all others on land.
+  buildingSpots(city: City, k: BuildingKey): number[] {
+    if (CITY_BUILDINGS[k].role === 'walls') return [];
+    const out: number[] = [];
+    for (const t of this.tilesWithin(city.tile, 3)) {
+      if (this.tileCity[t] !== city.id || this.blockedFor(city, t)) continue;
+      const u = this.use[t];
+      if (!buildingFits(k, this.isWater(t), this.map.riverTile[t] === 1)) continue;
+      if (u === USE.urban || u === USE.center) {
+        if (this.slotKeys(t).includes(null)) out.push(t);
+      } else if (u === USE.rural && urbanAllowed(this.terrainAt(t)) && this.touchesCore(city, t)) {
+        out.push(t);
+      }
+    }
+    return out;
+  }
+
+  // What placing building k on tile t would change in the city's output
+  // (including its neighbors' adjacency, and a rural tile turning urban).
+  buildingGain(city: City, k: BuildingKey, t: number): Output {
+    const before = this.cityYields(city);
+    const undo = this.putBuilding(t, k);
+    const after = this.cityYields(city);
+    undo();
+    return addOut(after, scaleOut(before, -1));
+  }
+
+  // Puts k in t's first free slot (turning a rural tile urban); returns an undo.
+  private putBuilding(t: number, k: BuildingKey): () => void {
+    const slot = this.slotKeys(t).indexOf(null);
+    const prevUse = this.use[t]!, prevSpec = this.specialists[t]!;
+    if (prevUse === USE.rural) { this.use[t] = USE.urban; this.specialists[t] = 0; }
+    this.slots[t * SLOTS + slot] = slotCode(k);
+    return () => { this.slots[t * SLOTS + slot] = 0; this.use[t] = prevUse; this.specialists[t] = prevSpec; };
+  }
+
+  // The governor's tile for building k: the most valuable for the city's focus.
+  governorBuildingSpot(city: City, k: BuildingKey): number | null {
+    let best: number | null = null, bestS = -Infinity;
+    for (const t of this.buildingSpots(city, k)) {
+      const s = weigh(city.focus, this.buildingGain(city, k, t));
+      if (s > bestS) { best = t; bestS = s; }
+    }
+    return best;
+  }
+
+  // Places a completed building on tile t. Returns false if not legal now.
+  placeBuilding(city: City, k: BuildingKey, t: number): boolean {
+    if (city.pendingBuilding !== k || !this.buildingSpots(city, k).includes(t)) return false;
+    const wasRural = this.use[t] === USE.rural;
+    this.putBuilding(t, k);
+    if (wasRural) this.setUse(t, USE.urban);
+    city.buildings.add(k);
+    city.pendingBuilding = null;
+    this.useVersion++;
+    return true;
+  }
+
+  autoPlaceBuilding(city: City): void {
+    const k = city.pendingBuilding;
+    if (!k) return;
+    const t = this.governorBuildingSpot(city, k);
+    if (t === null || !this.placeBuilding(city, k, t)) city.pendingBuilding = null;
   }
 
   // A tile an enemy unit stands on yields nothing to its city.
@@ -435,11 +568,11 @@ export class Game {
   }
 
   cityYields(city: City): CityYield {
-    let sum: Yield = ZERO;
+    let sum: Output = ZERO;
     for (const t of this.tilesWithin(city.tile, 3)) {
       if (this.tileCity[t] !== city.id || this.use[t] === USE.wild) continue;
       if (t !== city.tile && this.blockedFor(city, t)) continue;
-      sum = addYields(sum, this.tileOutput(t));
+      sum = addOut(sum, this.tileOutput(t));
     }
     return { ...sum, surplus: sum.food - FOOD_PER_CITIZEN * city.pop };
   }
@@ -471,17 +604,16 @@ export class Game {
   }
 
   // What an option adds to the city.
-  optionYield(o: GrowthOption): Yield {
+  optionYield(o: GrowthOption): Output {
     const terrain = this.terrainAt(o.tile), river = this.map.riverTile[o.tile] === 1;
     switch (o.kind) {
       case 'rural': return ruralYield(terrain, river);
       case 'urban': {
         const u = urbanYield(river);
         if (!o.over) return u;
-        const lost = ruralYield(terrain, river);
-        return addYields(addYields(u, SPECIALIST_YIELD), { food: -lost.food, prod: -lost.prod, gold: -lost.gold });
+        return addOut(addOut(u, specialistYield(null)), scaleOut(ruralYield(terrain, river), -1));
       }
-      case 'specialist': return SPECIALIST_YIELD;
+      case 'specialist': return specialistYield(quarterOf(this.slotKeys(o.tile)));
     }
   }
 
@@ -534,7 +666,7 @@ export class Game {
   // keeps the core in one piece. The center always stays.
   removeCitizen(city: City): void {
     if (city.pop <= 1) return;
-    const value = (t: number) => { const v = this.tileOutput(t); return v.food * 2.5 + v.prod * 2 + v.gold; };
+    const value = (t: number) => weigh('balanced', this.tileOutput(t));
     const cheapest = (ts: number[]) => ts.reduce((a, b) => (value(b) < value(a) ? b : a));
     const urban = this.cityTiles(city, USE.urban);
     const withSpec = urban.filter((t) => this.specialists[t] > 0);
@@ -542,9 +674,15 @@ export class Game {
     if (withSpec.length) this.specialists[withSpec[0]]--;
     else if (rural.length) this.setUse(cheapest(rural), USE.wild);
     else {
+      // An urban tile whose loss keeps the core whole; empty ones first (a
+      // tile that goes wild loses its buildings).
       const leaves = urban.filter((t) => this.coreConnectedWithout(city, t));
       if (!leaves.length) return; // cannot happen: a tree always has a leaf
-      this.setUse(cheapest(leaves), USE.wild);
+      const empty = leaves.filter((t) => this.slotKeys(t).every((k) => k === null));
+      const t = cheapest(empty.length ? empty : leaves);
+      for (const k of this.slotKeys(t)) if (k) city.buildings.delete(k);
+      this.slots.fill(0, t * SLOTS, t * SLOTS + SLOTS);
+      this.setUse(t, USE.wild);
     }
     city.pop--;
   }
@@ -569,8 +707,17 @@ export class Game {
     this.useVersion++;
   }
 
+  // A building can be queued once per city, and only while it has a place to go.
   canBuild(city: City, key: BuildKey): boolean {
-    return isUnitKey(key) || !city.buildings.has(key);
+    if (isUnitKey(key)) return true;
+    if (city.buildings.has(key) || city.pendingBuilding === key) return false;
+    return CITY_BUILDINGS[key].role === 'walls' || this.buildingSpots(city, key).length > 0;
+  }
+
+  // A finished building waiting for a slot (a tile lost since it was queued).
+  waitingForSlot(city: City): boolean {
+    const k = city.building;
+    return k !== null && !isUnitKey(k) && city.prod >= buildDef(k).cost && CITY_BUILDINGS[k].role !== 'walls' && this.buildingSpots(city, k).length === 0;
   }
 
   private processCity(city: City): void {
@@ -609,25 +756,39 @@ export class Game {
             this.createUnit(key, city.owner, city.tile);
             if (key === 'settler') this.removeCitizen(city);
             if (!p.isHuman) city.building = null;
-          } else {
+            if (p.isHuman) this.log(`${city.name} completed ${item.name}.`);
+          } else if (CITY_BUILDINGS[key].role === 'walls') {
             city.buildings.add(key);
             city.building = null;
+            if (p.isHuman) this.log(`${city.name} completed ${item.name}.`);
+          } else if (!this.buildingSpots(city, key).length) {
+            city.prod += item.cost; // nowhere to put it: it waits, production kept
+          } else {
+            city.building = null;
+            city.pendingBuilding = key;
+            if (p.isHuman) this.log(`${city.name} completed ${item.name}: place it.`);
+            else this.autoPlaceBuilding(city);
           }
-          if (p.isHuman) this.log(`${city.name} completed ${item.name}.`);
         }
       }
     } else {
       p.gold += y.prod; // nothing to build: production becomes gold
     }
     p.gold += y.gold;
+    p.science += y.science;
+    p.culture += y.culture;
+    p.faith += y.faith;
   }
 
   // ---------- turn flow ----------
 
   endTurn(): void {
     if (this.over) return;
-    // Citizens the human left unplaced: the governor places them.
-    for (const c of this.cities) if (c.growth > 0) this.autoPlace(c);
+    // Citizens and buildings the human left unplaced: the governor places them.
+    for (const c of this.cities) {
+      if (c.growth > 0) this.autoPlace(c);
+      if (c.pendingBuilding) this.autoPlaceBuilding(c);
+    }
     for (const p of this.players) {
       if (!p.isHuman && p.alive) aiTurn(this, p);
     }

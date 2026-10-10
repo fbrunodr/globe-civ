@@ -1,4 +1,5 @@
-import { unitDef, type BuildKey } from './rules.ts';
+import { unitDef, buildDef, type BuildKey } from './rules.ts';
+import { BUILDING_KEYS, weigh, type BuildingKey } from './cities.ts';
 import type { Game, Player, Unit, City } from './game.ts';
 
 // Deliberately simple AI: expand with settlers, keep a garrison in every
@@ -29,15 +30,32 @@ function chooseBuild(g: Game, city: City, expansion: number, garrisoned: boolean
   const r = g.rng();
   if (!garrisoned) return g.turn < 30 ? 'warrior' : 'spearman';
   if (expansion < 6 && city.pop >= 2 && r < 0.6) return 'settler';
-  if (!city.buildings.has('granary') && city.pop >= 3 && r < 0.25) return 'granary';
-  if (!city.buildings.has('walls') && g.turn > 40 && r < 0.2) return 'walls';
-  if (armyFull) {
-    if (!city.buildings.has('granary')) return 'granary';
-    if (!city.buildings.has('walls')) return 'walls';
-    return null; // bank the production as gold
+  if (!city.buildings.has('walls') && g.turn > 40 && r < 0.15 && g.canBuild(city, 'walls')) return 'walls';
+  if (city.pop >= 2 && (r < 0.5 || armyFull)) {
+    const b = bestBuilding(g, city);
+    if (b) return b;
   }
+  if (armyFull) return null; // bank the production as gold
   const pool: BuildKey[] = g.turn < 20 ? ['warrior', 'warrior', 'scout'] : ['archer', 'horseman', 'spearman', 'archer'];
   return pool[Math.floor(g.rng() * pool.length)];
+}
+
+// The building worth most for the city's focus per point of cost, at the
+// governor's best spot (one of the top three, so cities differ).
+function bestBuilding(g: Game, city: City): BuildingKey | null {
+  const scored: { k: BuildingKey; s: number }[] = [];
+  for (const k of BUILDING_KEYS) {
+    if (k === 'walls' || !g.canBuild(city, k)) continue;
+    const t = g.governorBuildingSpot(city, k);
+    if (t === null) continue;
+    const gain = weigh(city.focus, g.buildingGain(city, k, t));
+    const defense = k === 'barracks' || k === 'stable' ? 3 : 0;
+    if (gain + defense <= 0) continue; // e.g. it would cost a farm worth more
+    scored.push({ k, s: (gain + defense) / buildDef(k).cost });
+  }
+  scored.sort((a, b) => b.s - a.s);
+  const top = scored.slice(0, 3);
+  return top.length ? top[Math.floor(g.rng() * top.length)]!.k : null;
 }
 
 function settlerTurn(g: Game, u: Unit): void {

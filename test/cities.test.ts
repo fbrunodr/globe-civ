@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { Game, type City } from '../src/game.ts';
 import { aiTurn } from '../src/ai.ts';
 import { BIOMES, FEATURE_RULES, RELIEFS, featureAllowed, type BiomeKey, type FeatureKey, type ReliefKey, type TileTerrain } from '../src/terrain.ts';
-import { USE, MAX_SPECIALISTS, improvementFor, urbanAllowed } from '../src/cities.ts';
+import { USE, MAX_SPECIALISTS, SLOTS, improvementFor, urbanAllowed, buildingFits, quarterOf, slotKey, BUILDINGS, type BuildingKey } from '../src/cities.ts';
 import type { MapSizeKey } from '../src/rules.ts';
 
 // City guarantees (design doc "Cities: Feel & Play"). Like the map rules,
@@ -56,9 +56,10 @@ function simulate(size: MapSizeKey, seed: number, turns: number): Sim {
   const violations: string[] = [];
   const lastGrowth = new Map<number, number>();
   const growthGaps: number[] = [];
-  for (let turn = 0; turn < turns && !game.over; turn++) {
+  for (let turn = 0; turn < turns; turn++) {
     const before = new Map(game.cities.map((c) => [c.id, c.pop]));
-    aiTurn(game, game.players[0]!);
+    game.over = null; // keep watching after player 0 falls
+    if (game.players[0]!.alive) aiTurn(game, game.players[0]!);
     game.endTurn();
     for (const c of game.cities) {
       if (c.pop > (before.get(c.id) ?? 1)) {
@@ -86,6 +87,25 @@ function checkCities(g: Game): string[] {
     if (u === USE.center) { centers.set(city.id, (centers.get(city.id) ?? 0) + 1); if (city.tile !== t) out.push(`C3 tile ${t}: a center that is not ${city.name}'s`); }
     if (u === USE.rural && !improvementFor(terrain)) out.push(`C3 tile ${t}: rural on wild-only terrain`);
     if (u === USE.urban && !urbanAllowed(terrain)) out.push(`C3 tile ${t}: urban where it may not stand`);
+  }
+  // Buildings: slots only on urban tiles and centers, fitting the tile, once per city.
+  const placed = new Map<number, BuildingKey[]>();
+  for (let t = 0; t < g.N; t++) {
+    for (let k = 0; k < SLOTS; k++) {
+      const b = slotKey(g.slots[t * SLOTS + k]!);
+      if (!b) continue;
+      const u = g.use[t];
+      if (u !== USE.urban && u !== USE.center) { out.push(`Q3 tile ${t}: ${b} on a ${u === USE.rural ? 'rural' : 'wild'} tile`); continue; }
+      if (!buildingFits(b, g.isWater(t), g.map.riverTile[t] === 1)) out.push(`Q3 tile ${t}: ${b} does not fit (water ${g.isWater(t)})`);
+      const id = g.tileCity[t];
+      placed.set(id, [...(placed.get(id) ?? []), b]);
+    }
+  }
+  for (const c of g.cities) {
+    const bs = placed.get(c.id) ?? [];
+    if (new Set(bs).size !== bs.length) out.push(`Q2 ${c.name}: a building twice (${bs.join(', ')})`);
+    const inSet = [...c.buildings].filter((b) => BUILDINGS[b].role !== 'walls').sort();
+    if (inSet.join() !== [...bs].sort().join()) out.push(`Q2 ${c.name}: buildings ${inSet.join(', ')} but slots hold ${bs.join(', ')}`);
   }
   for (const c of g.cities) {
     if (centers.get(c.id) !== 1) out.push(`C3 ${c.name}: ${centers.get(c.id) ?? 0} centers`);
@@ -143,6 +163,27 @@ describe('cities in simulated games', () => {
     console.log(`sizes at turn ${TURNS}: ${sizes.join(' ')} | rural ${uses[USE.rural]} urban ${uses[USE.urban]} specialists ${spec}`);
     expect(median).toBeGreaterThanOrEqual(5);
     expect(median).toBeLessThanOrEqual(12);
+  });
+
+  it('Q1: a quarter needs two buildings of one family', () => {
+    expect(quarterOf(['library', 'academy'])).toBe('campus');
+    expect(quarterOf(['library', 'market'])).toBe(null);
+    expect(quarterOf(['library', null])).toBe(null);
+    expect(quarterOf(['granary', 'monument'])).toBe(null);
+  });
+
+  it('Q4: cities build, and some form quarters', () => {
+    let buildings = 0, quarters = 0;
+    for (const { game: g } of sims) {
+      for (let t = 0; t < g.N; t++) {
+        const keys = Array.from({ length: SLOTS }, (_, k) => slotKey(g.slots[t * SLOTS + k]!));
+        buildings += keys.filter((k) => k !== null).length;
+        if (quarterOf(keys)) quarters++;
+      }
+    }
+    console.log(`buildings ${buildings}, quarters ${quarters}`);
+    expect(buildings).toBeGreaterThan(50);
+    expect(quarters).toBeGreaterThan(3);
   });
 
   it('C7: a big city (size 10+) has a built-up core: at least a quarter of its citizens urban', () => {

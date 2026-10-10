@@ -1014,8 +1014,9 @@ export class GlobeRenderer {
       const selected = top === selUnit;
       const key = `u|${color}|${icon}|${list.length}|${hp}|${selected}|${top.fortified}`;
       const tex = this.texture(key, 128, 128, (ctx) => drawUnitIcon(ctx, color, icon, list.length, top.hp, selected, top.fortified));
-      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true }));
-      sprite.scale.setScalar(0.045 * this.scale);
+      // A fixed size on screen (about 40 px tall), whatever the zoom.
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, sizeAttenuation: false }));
+      sprite.scale.setScalar(0.036);
       const tile = g.tiles[t];
       const dir = g.cityByTile.has(t) ? tile.center.clone().lerp(g.globe.triCenters[tile.corners[0]], 0.55).normalize() : tile.center;
       sprite.position.copy(dir).multiplyScalar(this.terrain.centerRadius[t] + 0.03 * this.scale);
@@ -1036,9 +1037,9 @@ export class GlobeRenderer {
       const label = `${city.pop}  ${city.name}`;
       const key = `c|${color}|${label}`;
       const tex = this.texture(key, 512, 96, (ctx) => drawCityLabel(ctx, color, label));
-      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true }));
-      sprite.scale.set(0.16 * s, 0.03 * s, 1);
-      sprite.position.copy(tile.center).multiplyScalar(this.terrain.centerRadius[city.tile] + 0.06 * s);
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, sizeAttenuation: false }));
+      sprite.scale.set(0.13, 0.0244, 1);
+      sprite.position.copy(tile.center).multiplyScalar(this.terrain.centerRadius[city.tile] + 0.03 * s);
       sprite.renderOrder = 10;
       this.citiesGroup.add(sprite);
     }

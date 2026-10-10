@@ -1,10 +1,12 @@
 import { floraLabel } from './flora.ts';
 import { unitDef, buildDef, isUnitKey, growthCost, BUILDINGS, type BuildKey } from './rules.ts';
 import { terrainName } from './terrain.ts';
-import { HUMAN, BUILDABLE, type Game, type City, type Unit } from './game.ts';
+import { HUMAN, BUILDABLE, type Game, type City, type Unit, type AdjacencyHit } from './game.ts';
 import type { Selection } from './render.ts';
-import { USE, FOCUSES, IMPROVEMENTS, improvementFor, isFocusKey, type FocusKey, type GrowthKind, type GrowthOption } from './cities.ts';
-import type { Yields } from './terrain.ts';
+import {
+  USE, FOCUSES, FAMILIES, IMPROVEMENTS, improvementFor, isFocusKey, quarterOf, familyOf,
+  type FocusKey, type GrowthKind, type GrowthOption, type Output, type BuildingKey, type AdjacencySource,
+} from './cities.ts';
 
 export type Action =
   | { type: 'found' }
@@ -17,6 +19,10 @@ export type Action =
   | { type: 'governorPlace' }
   | { type: 'focus'; focus: FocusKey }
   | { type: 'endTurn' };
+
+// What the map shows for the selected city: where a citizen (of a kind) or
+// a completed building can go.
+export type Placing = GrowthKind | 'building' | null;
 
 export function assertNever(x: never): never {
   throw new Error(`Unexpected value: ${JSON.stringify(x)}`);
@@ -55,16 +61,34 @@ const $ = (id: string): HTMLElement => {
 };
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
+const signed = (n: number) => (n > 0 ? `+${n}` : `${n}`);
+const ICONS: Record<keyof Output, [string, string]> = {
+  food: ['food', '🌾'], prod: ['prod', '⚒'], gold: ['gold', '●'], science: ['sci', '⚗'], culture: ['cul', '♪'], faith: ['fai', '✦'],
+};
+// Food, production and gold always; science, culture and faith when nonzero.
+const outStr = (o: Output, sign = false) => (Object.keys(ICONS) as (keyof Output)[])
+  .filter((k) => k === 'food' || k === 'prod' || k === 'gold' || o[k] !== 0)
+  .map((k) => `<span class="y ${ICONS[k][0]}">${ICONS[k][1]} ${sign ? signed(o[k]) : o[k]}</span>`).join('');
 const yieldStr = (food: number, prod: number, gold: number) =>
   `<span class="y food">🌾 ${food}</span><span class="y prod">⚒ ${prod}</span><span class="y gold">● ${gold}</span>`;
-const signed = (n: number) => (n > 0 ? `+${n}` : `${n}`);
-const gainStr = (y: Yields) => `<span class="y food">🌾 ${signed(y.food)}</span><span class="y prod">⚒ ${signed(y.prod)}</span><span class="y gold">● ${signed(y.gold)}</span>`;
 
 const KIND_NAME: Record<GrowthKind, string> = { rural: 'Rural', urban: 'Urban', specialist: 'Specialist' };
 export const optionName = (o: GrowthOption): string =>
   o.kind === 'rural' ? IMPROVEMENTS[o.improvement].name
     : o.kind === 'urban' ? (o.over ? `Urban (replaces the ${IMPROVEMENTS[o.over].name.toLowerCase()}; +1 specialist)` : 'Urban')
     : 'Specialist';
+
+const SOURCE_NAME: Record<AdjacencySource, string> = {
+  mountain: 'mountain', river: 'river', forest: 'forest', mine: 'mine', quarry: 'quarry', boats: 'fishing boats',
+  center: 'city center', walls: 'walls', wonder: 'wonder',
+  campus: 'Campus', market: 'Market', forge: 'Forge', harbor: 'Harbor', temple: 'Temple', theater: 'Theater', garrison: 'Garrison',
+};
+// "+2 mountain, +1 Campus"
+export const hitsStr = (hits: readonly AdjacencyHit[]): string => {
+  const n = new Map<AdjacencySource, number>();
+  for (const h of hits) n.set(h.source, (n.get(h.source) ?? 0) + 1);
+  return [...n].map(([s, k]) => `+${k} ${SOURCE_NAME[s]}`).join(', ');
+};
 
 export class UI {
   private readonly game: Game;
@@ -82,14 +106,12 @@ export class UI {
     });
   }
 
-  // `placing`: the kind of growth placement shown on the map, if the
-  // selected city has a citizen to place.
-  render(sel: Selection, hover: number, hint: string, placing: GrowthKind | null = null): void {
+  render(sel: Selection, hover: number, hint: string, placing: Placing = null): void {
     const g = this.game;
     const me = g.players[HUMAN];
     this.el.civ.innerHTML = `<span class="swatch" style="background:${me.color}"></span>${esc(me.name)}`;
     this.el.turn.textContent = `Turn ${g.turn}`;
-    this.el.gold.textContent = `● ${me.gold} gold`;
+    this.el.gold.innerHTML = `● ${me.gold} gold <span class="y sci">⚗ ${me.science}</span><span class="y cul">♪ ${me.culture}</span><span class="y fai">✦ ${me.faith}</span>`;
     this.el.hint.textContent = hint;
     this.el.log.innerHTML = g.messages.slice(-7).map((m) => `<div><b>T${m.turn}</b> ${esc(m.text)}</div>`).join('');
     this.renderSelection(sel, placing);
@@ -103,7 +125,7 @@ export class UI {
     }
   }
 
-  private renderSelection(sel: Selection, placing: GrowthKind | null): void {
+  private renderSelection(sel: Selection, placing: Placing): void {
     const box = this.el.selection;
     if (!sel || sel.kind === 'tile') { box.classList.add('hidden'); return; }
     box.classList.remove('hidden');
@@ -134,7 +156,7 @@ export class UI {
       <div class="buttons">${buttons.join('')}</div>`;
   }
 
-  private cityHtml(c: City, placing: GrowthKind | null): string {
+  private cityHtml(c: City, placing: Placing): string {
     const g = this.game;
     const y = g.cityYields(c);
     const mine = c.owner === HUMAN;
@@ -146,7 +168,10 @@ export class UI {
     const rural = g.cityTiles(c, USE.rural).length;
     const makeup = `Center · ${urban.length} urban · ${rural} rural${specialists ? ` · ${specialists} specialist${specialists > 1 ? 's' : ''}` : ''}`;
     let place = '';
-    if (mine && c.growth > 0) {
+    if (mine && c.pendingBuilding) {
+      place = `<div class="place"><b>Place the ${esc(BUILDINGS[c.pendingBuilding].name)}</b> <small>click a highlighted tile (the bright one is the governor's pick) · <kbd>Esc</kbd> leaves it to the governor</small>
+        <div class="buttons"><button data-act="governorPlace">Governor</button></div></div>`;
+    } else if (mine && c.growth > 0) {
       const opts = g.growthOptions(c);
       const kinds = (['rural', 'urban', 'specialist'] as const).map((k) => {
         const n = opts.filter((o) => o.kind === k).length;
@@ -165,28 +190,48 @@ export class UI {
       const item = buildDef(c.building);
       current = `${item.name} ${Math.min(c.prod, item.cost)}/${item.cost} (${turnsFor(c.building)} turns)`;
       if (c.building === 'settler' && c.pop < 2) current += ' — needs size 2';
+      if (g.waitingForSlot(c)) current = `${item.name} — finished, waiting for a free slot`;
     }
+    const units = BUILDABLE.filter((k) => isUnitKey(k) && g.canBuild(c, k));
+    const blds = BUILDABLE.filter((k) => !isUnitKey(k) && g.canBuild(c, k));
+    const button = (k: BuildKey) => {
+      const d = buildDef(k);
+      const label = isUnitKey(k) ? `${d.name} <small>⚔${unitDef(k).atk} 🛡${unitDef(k).def}</small>` : `${d.name}${buildingTag(k)}`;
+      return `<button data-act="build" data-key="${k}" class="${c.building === k ? 'active' : ''}" title="${esc(d.desc ?? '')}">
+        ${label}<span class="turns">${turnsFor(k)}t</span></button>`;
+    };
     const options = mine
-      ? BUILDABLE.filter((k) => g.canBuild(c, k)).map((k) => {
-          const d = buildDef(k);
-          const label = isUnitKey(k) ? `${d.name} <small>⚔${unitDef(k).atk} 🛡${unitDef(k).def}</small>` : d.name;
-          return `<button data-act="build" data-key="${k}" class="${c.building === k ? 'active' : ''}" title="${esc(d.desc ?? '')}">
-            ${label}<span class="turns">${turnsFor(k)}t</span></button>`;
-        }).join('') + `<button data-act="build" data-key="" class="${c.building ? '' : 'active'}">Wealth<span class="turns">→ gold</span></button>`
+      ? `<div class="build">${units.map(button).join('')}<button data-act="build" data-key="" class="${c.building ? '' : 'active'}">Wealth<span class="turns">→ gold</span></button></div>
+         ${blds.length ? `<div class="desc">Buildings <small>(placed on a tile when finished)</small></div><div class="build">${blds.map(button).join('')}</div>` : ''}`
       : '';
-    const built = [...c.buildings].map((b) => BUILDINGS[b].name).join(', ') || 'none';
     return `<h3>${esc(c.name)} <small>size ${c.pop} · ${esc(g.players[c.owner].name)}</small></h3>
-      <div class="stats">${yieldStr(y.food, y.prod, y.gold)}</div>
+      <div class="stats">${outStr(y)}</div>
       <div class="desc">${makeup}</div>
       <div class="desc">Food ${c.food}/${cost} (${y.surplus >= 0 ? '+' : ''}${y.surplus}) — ${grow}</div>
       ${place}
       ${focus}
-      <div class="desc">Building: <b>${current}</b></div>
-      <div class="desc">Buildings: ${built}</div>
-      ${mine ? `<div class="build">${options}</div>` : ''}`;
+      ${this.quartersHtml(c)}
+      <div class="desc">Producing: <b>${current}</b></div>
+      ${options}`;
   }
 
-  private renderTile(sel: Selection, t: number, placing: GrowthKind | null): void {
+  // The city's built tiles: each tile's buildings, its quarter and yield.
+  private quartersHtml(c: City): string {
+    const g = this.game;
+    const rows: string[] = [];
+    for (const t of [c.tile, ...g.cityTiles(c, USE.urban)]) {
+      const keys = g.slotKeys(t);
+      if (keys.every((k) => k === null) && t !== c.tile) continue;
+      const q = quarterOf(keys);
+      const names = keys.map((k) => (k ? BUILDINGS[k].name : '<small>free slot</small>')).join(' · ');
+      const where = t === c.tile ? 'Center' : q ? `${FAMILIES[q].name} quarter` : g.isWater(t) ? 'Harbor tile' : 'Urban tile';
+      rows.push(`<div class="qrow"><b>${where}</b> ${names}</div>`);
+    }
+    if (c.buildings.has('walls')) rows.push('<div class="qrow"><b>Walls</b> around the center</div>');
+    return rows.length ? `<div class="quarters">${rows.join('')}</div>` : '';
+  }
+
+  private renderTile(sel: Selection, t: number, placing: Placing): void {
     const box = this.el.tile;
     const g = this.game;
     if (t < 0 || !g.explored[t]) { box.classList.add('hidden'); return; }
@@ -200,14 +245,34 @@ export class UI {
     if (tc) {
       const u = g.use[t];
       const k = improvementFor(g.terrainAt(t));
-      const out = g.tileOutput(t);
-      const what = u === USE.center ? 'City center' : u === USE.urban ? `Urban${g.specialists[t] ? ` · ${g.specialists[t]} specialist${g.specialists[t] > 1 ? 's' : ''}` : ''}`
+      const o = g.tileOutput(t);
+      const keys = g.slotKeys(t);
+      const q = quarterOf(keys);
+      const what = u === USE.center ? 'City center' : u === USE.urban ? `${q ? `${FAMILIES[q].name} quarter` : 'Urban'}${g.specialists[t] ? ` · ${g.specialists[t]} specialist${g.specialists[t] > 1 ? 's' : ''}` : ''}`
         : u === USE.rural && k ? IMPROVEMENTS[k].name : `Wild${k ? ` <small>(${IMPROVEMENTS[k].name.toLowerCase()} if developed)</small>` : ''}`;
-      lines.push(`${what} of ${esc(tc.name)}${u === USE.wild ? '' : ` ${yieldStr(out.food, out.prod, out.gold)}`}`);
+      lines.push(`${what} of ${esc(tc.name)}${u === USE.wild ? '' : ` ${outStr(o)}`}`);
+      const built = keys.filter((x): x is BuildingKey => x !== null);
+      if (built.length) {
+        lines.push(built.map((b) => BUILDINGS[b].name).join(', '));
+        const fams = [...new Set(built.map(familyOf).filter((f) => f !== null))];
+        for (const f of fams) {
+          const hits = g.adjacencyHits(t, f);
+          if (hits.length) lines.push(`<small>${FAMILIES[f].name} adjacency: ${hitsStr(hits)}</small>`);
+        }
+      }
     }
-    if (placing && sel?.kind === 'city') {
+    if (sel?.kind === 'city' && placing === 'building' && sel.city.pendingBuilding) {
+      const k = sel.city.pendingBuilding;
+      if (g.buildingSpots(sel.city, k).includes(t)) {
+        const f = familyOf(k);
+        const hits = f ? g.adjacencyHits(t, f) : [];
+        const conv = g.use[t] === USE.rural ? ` <small>(replaces the ${IMPROVEMENTS[improvementFor(g.terrainAt(t))!].name.toLowerCase()})</small>` : '';
+        lines.push(`<span class="warn">Click: ${BUILDINGS[k].name} here${conv}</span> ${outStr(g.buildingGain(sel.city, k, t), true)}`);
+        if (hits.length) lines.push(`<small>${hitsStr(hits)}</small>`);
+      }
+    } else if (placing && sel?.kind === 'city') {
       const opts = g.growthOptions(sel.city).filter((o) => o.tile === t);
-      for (const o of opts) lines.push(`<span class="${o.kind === placing ? 'warn' : ''}">${o.kind === placing ? 'Click: ' : ''}${optionName(o)} ${gainStr(g.optionYield(o))}</span>`);
+      for (const o of opts) lines.push(`<span class="${o.kind === placing ? 'warn' : ''}">${o.kind === placing ? 'Click: ' : ''}${optionName(o)} ${outStr(g.optionYield(o), true)}</span>`);
     }
     if (!g.isWater(t)) {
       const def = g.defenseBonus(t);
@@ -231,4 +296,10 @@ export class UI {
     }
     box.innerHTML = lines.map((l) => `<div>${l}</div>`).join('');
   }
+}
+
+// A building's family, as a small tag in the build list.
+function buildingTag(k: BuildingKey): string {
+  const f = familyOf(k);
+  return f ? ` <small>${FAMILIES[f].name}</small>` : BUILDINGS[k].role === 'civic' ? ' <small>civic</small>' : '';
 }

@@ -8,7 +8,7 @@
 
 import * as THREE from 'three';
 import type { Game, City } from './game.ts';
-import { USE, improvementFor, type ImprovementKey } from './cities.ts';
+import { USE, SLOTS, improvementFor, type ImprovementKey, type BuildingKey } from './cities.ts';
 import { ROOFS, buildingEntry, type BuildingKind } from './buildingCatalog.ts';
 import { mulberry32, type Rng } from './rng.ts';
 
@@ -30,6 +30,8 @@ export interface PlacedBuilding {
 }
 
 const UP = new THREE.Vector3(0, 1, 0);
+// render.ts draws prop models at 1.5 × PROP_SIZE of the reference size.
+const PROP_SCALE = 1.5 * 0.276;
 const DRY = -0.00008;      // like the flora: the water this far under the ground
 const MAX_SLOPE = 0.3;
 const HOUSE_URBAN = 0.5;   // houses stand where the urban weight is at least this (the ground shows urban from ~0.4)
@@ -37,9 +39,23 @@ const HOUSE_URBAN = 0.5;   // houses stand where the urban weight is at least th
 // Houses on an urban tile (×1.3 on the center): a size-3 town shows about 15,
 // a size-15 capital a couple of hundred.
 export const housesOn = (pop: number, specialists: number, center: boolean): number =>
-  Math.min(120, Math.round((8 + 3 * pop) * (center ? 1.3 : 1) + 8 * specialists));
+  Math.min(120, Math.round((10 + 3.5 * pop) * (center ? 1.3 : 1) + 8 * specialists));
 // Models are enlarged a little over true scale so towns read from afar.
 const HOUSE_SCALE = 1.5;
+
+// The model of each building that sits in a slot (walls are drawn around
+// the center instead). A Record, so a building without a model does not compile.
+const MODEL: Record<Exclude<BuildingKey, 'walls'>, BuildingKind> = {
+  library: 'library', academy: 'academy', market: 'market', countingHouse: 'countingHouse',
+  workshop: 'workshop', smithy: 'smithy', lighthouse: 'lighthouse', shipyard: 'shipyard',
+  shrine: 'shrine', temple: 'temple', amphitheater: 'amphitheater', odeon: 'odeon',
+  barracks: 'barracks', stable: 'stable', granary: 'granary', monument: 'monument',
+  waterMill: 'waterMill', aqueduct: 'aqueduct',
+};
+// Where a tile's slots stand: (fan, wa, wb) near its middle, on opposite sides.
+const SLOT_SPOTS = [[0, 0.2, 0.08], [3, 0.2, 0.08]] as const;
+const CENTER_SLOT_SPOTS = [[1, 0.34, 0.1], [4, 0.34, 0.1]] as const;
+const KEEP_CLEAR = 0.3; // tile radii around a slot building with no houses
 
 const RURAL: Record<ImprovementKey, BuildingKind> = {
   farm: 'farmstead', mine: 'mineHead', camp: 'lodge', quarry: 'quarryStones', wetland: 'stiltHut', boats: 'fishingBoat',
@@ -66,7 +82,9 @@ export class CityProps {
     const u = g.use[t];
     if (u === USE.wild) return '';
     const city = g.cityById.get(g.tileCity[t]);
-    return `${u}|${city?.pop ?? 0}|${g.specialists[t]}|${city?.id ?? 0}`;
+    const slots = Array.from({ length: SLOTS }, (_, k) => g.slots[t * SLOTS + k]).join(',');
+    const walls = city && city.tile === t && city.buildings.has('walls') ? 'w' : '';
+    return `${u}|${city?.pop ?? 0}|${g.specialists[t]}|${city?.id ?? 0}|${slots}|${walls}`;
   }
 
   // The tiles whose buildings changed since they were last placed.
@@ -124,25 +142,40 @@ export class CityProps {
     const center = t === city.tile;
     const n = housesOn(city.pop, g.specialists[t], center);
     const k = g.tiles[t].corners.length;
-    const rows = Math.max(3, Math.ceil(Math.sqrt((2 * 3 * n) / k)));
+    const rows = Math.max(3, Math.ceil(Math.sqrt((2 * 2.2 * n) / k)));
     const cdir = g.tiles[city.tile].center;
     const temp = g.map.temperature[t];
+    const out: PlacedBuilding[] = [];
+    // Slot buildings first; houses keep clear of them.
+    const clear: THREE.Vector3[] = [];
+    (center ? CENTER_SLOT_SPOTS : SLOT_SPOTS).forEach(([i, wa, wb], slot) => {
+      const b = g.slotKeys(t)[slot];
+      if (!b || b === 'walls') return;
+      const kind = MODEL[b];
+      const s = this.findSpot(t, i % k, wa, wb, kind, rand);
+      if (!s) return;
+      clear.push(s.dir);
+      const yaw = facing(s.dir, cdir) + Math.PI / 2;
+      out.push(this.make(kind, s.dir, Math.max(s.ground, s.water), yaw, HOUSE_SCALE, buildingEntry(kind).leaf, rand));
+    });
+    if (center && city.buildings.has('walls')) out.push(...this.walls(t, rand));
+    const clearAngle = KEEP_CLEAR * g.globe.avgEdgeAngle / 2;
     const cand: { s: CitySpot; score: number; r: number }[] = [];
     for (const sp of this.tileSpots(t, rows, rand)) {
       const jitter = rand();
       const s = this.sample(t, sp.i, sp.wa, sp.wb);
       if (s.water - s.ground > DRY || s.slope > MAX_SLOPE || s.urban < HOUSE_URBAN) continue;
+      if (clear.some((d) => d.angleTo(s.dir) < clearAngle)) continue;
       // Keep the hall's square free on the center.
       const r = sp.wa + sp.wb;
       if (center && r < 0.3) continue;
       const fromCenter = s.dir.angleTo(cdir) / g.globe.avgEdgeAngle; // in tiles
-      cand.push({ s, score: -fromCenter + 0.6 * jitter + 0.5 * (s.urban - HOUSE_URBAN), r: fromCenter });
+      // Houses spread over the whole tile, a little denser toward the center.
+      cand.push({ s, score: -0.25 * fromCenter + jitter + 0.8 * (s.urban - HOUSE_URBAN), r: fromCenter });
     }
     cand.sort((a, b) => b.score - a.score);
-    const out: PlacedBuilding[] = [];
     if (center) {
       // The hall at the heart of the center, or nearby if that is wet (an oasis pond).
-      const k = g.tiles[t].corners.length;
       for (let tries = 0; tries < 12; tries++) {
         const r = 0.02 + 0.04 * tries;
         const s = this.sample(t, tries % k, r, r * 0.5);
@@ -166,6 +199,44 @@ export class CityProps {
     return out;
   }
 
+  // A spot near (i, wa, wb) where the model can stand (by its water rule).
+  private findSpot(t: number, i: number, wa: number, wb: number, kind: BuildingKind, rand: Rng): CitySpot | null {
+    const k = this.game.tiles[t].corners.length;
+    for (let tries = 0; tries < 16; tries++) {
+      const s = tries === 0 ? this.sample(t, i, wa, wb)
+        : this.sample(t, (i + Math.floor(rand() * k)) % k, 0.05 + 0.6 * rand(), 0.05 + 0.3 * rand());
+      if (standsAt(kind, s)) return s;
+    }
+    return null;
+  }
+
+  // Walls along the center's edge: segments with a tower at each corner
+  // (gaps where the edge runs through water).
+  private walls(t: number, rand: Rng): PlacedBuilding[] {
+    const g = this.game;
+    const out: PlacedBuilding[] = [];
+    const k = g.tiles[t].corners.length;
+    const R = 0.86, STEPS = 4;
+    for (let i = 0; i < k; i++) {
+      for (let j = 0; j <= STEPS; j++) {
+        if (j === STEPS) continue; // the next fan's corner
+        const f = j / STEPS, f2 = (j + 0.5) / STEPS;
+        const corner = this.sample(t, i, R, 0);
+        if (j === 0 && standsAt('wallTower', corner)) out.push(this.make('wallTower', corner.dir, corner.ground, 0, HOUSE_SCALE, buildingEntry('wallTower').leaf, rand));
+        const s = this.sample(t, i, R * (1 - f2), R * f2);
+        if (!standsAt('wallSegment', s)) continue;
+        const a = this.sample(t, i, R * (1 - f), R * f).dir, b = this.sample(t, i, R * (1 - f - 1 / STEPS), R * (f + 1 / STEPS)).dir;
+        const yaw = facing(s.dir, b);
+        // Stretch the segment to the gap between its ends (model length 0.01 at prop scale).
+        const len = a.angleTo(b) / (0.01 * HOUSE_SCALE * this.scale * PROP_SCALE);
+        const seg = this.make('wallSegment', s.dir, s.ground, yaw, HOUSE_SCALE, buildingEntry('wallSegment').leaf, rand);
+        seg.matrix.multiply(new THREE.Matrix4().makeScale(Math.max(0.6, Math.min(2.5, len)), 1, 1));
+        out.push(seg);
+      }
+    }
+    return out;
+  }
+
   // One structure per rural tile (two boats on the water).
   private rural(t: number, kind: BuildingKind, rand: Rng): PlacedBuilding[] {
     const out: PlacedBuilding[] = [];
@@ -175,8 +246,7 @@ export class CityProps {
       const i = Math.floor(rand() * this.game.tiles[t].corners.length);
       const wa = 0.15 + 0.4 * rand(), wb = 0.1 + 0.3 * rand();
       const s = this.sample(t, i, wa, wb);
-      const depth = s.water - s.ground;
-      if (water ? depth < 0.0003 : depth > DRY || s.slope > MAX_SLOPE) continue;
+      if (!standsAt(kind, s)) continue;
       const roof = kind === 'farmstead' ? roofOf(this.game.map.temperature[t], 6, rand) : buildingEntry(kind).leaf;
       out.push(this.make(kind, s.dir, water ? s.water : s.ground, rand() * Math.PI * 2, HOUSE_SCALE * (0.9 + 0.2 * rand()), roof, rand));
     }
@@ -196,6 +266,15 @@ export class CityProps {
       leaf: new THREE.Color(roof),
     };
   }
+}
+
+// Whether a model may stand at a spot: on dry, gentle ground; boats on water
+// deep enough; shore buildings on either.
+export function standsAt(kind: BuildingKind, s: CitySpot): boolean {
+  const depth = s.water - s.ground, rule = buildingEntry(kind).water;
+  if (rule === 'float') return depth >= 0.0003;
+  if (rule === 'shore') return depth >= 0.0003 || (depth <= DRY && s.slope <= MAX_SLOPE);
+  return depth <= DRY && s.slope <= MAX_SLOPE;
 }
 
 // Yaw (around the local up, matching setFromUnitVectors(UP, dir)) that turns
