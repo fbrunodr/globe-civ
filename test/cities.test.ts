@@ -4,7 +4,7 @@ import { aiTurn } from '../src/ai.ts';
 import { BIOMES, FEATURE_RULES, RELIEFS, featureAllowed, type BiomeKey, type FeatureKey, type ReliefKey, type TileTerrain } from '../src/terrain.ts';
 import {
   USE, MAX_SPECIALISTS, SLOTS, ERAS, IMPROVEMENTS, improvementFor, urbanAllowed, buildingFits, quarterOf, slotKey, eraBonus,
-  BUILDINGS, type BuildingKey, type ImprovementKey, type EraIndex,
+  BUILDINGS, WONDERS, type BuildingKey, type ImprovementKey, type EraIndex,
 } from '../src/cities.ts';
 import type { MapSizeKey } from '../src/rules.ts';
 
@@ -111,7 +111,8 @@ function checkCities(g: Game): string[] {
     if (!w) continue;
     if (seenW.has(w)) out.push(`WN1 ${w} built twice`);
     seenW.add(w);
-    if (g.use[t] !== USE.urban || g.isWater(t)) out.push(`WN1 tile ${t}: ${w} not on a land urban tile`);
+    const top = WONDERS[w].site === 'mountainTop';
+    if (top ? g.relief[t] !== 'mountains' || g.use[t] !== USE.wild : g.use[t] !== USE.urban || g.isWater(t)) out.push(`WN1 tile ${t}: ${w} not on ${top ? 'a wild mountain' : 'a land urban tile'}`);
     if (g.slotKeys(t).some((k) => k !== null)) out.push(`WN1 tile ${t}: ${w} shares its tile with buildings`);
     if (g.wondersBuilt.get(w) !== t) out.push(`WN1 ${w}: recorded on tile ${g.wondersBuilt.get(w)}, stands on ${t}`);
   }

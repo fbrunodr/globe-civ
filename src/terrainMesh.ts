@@ -77,6 +77,10 @@ export interface TerrainMesh {
   at(t: number, i: number, wa: number, wb: number): { ground: number; water: number };
   // Ground point inside tile t, in fan i, at barycentric weights wa, wb.
   samplePoint(t: number, i: number, wa: number, wb: number): THREE.Vector3;
+  // Moves shared vertices to new ground heights (e.g. a summit levelled for a
+  // wonder); `up` (0..1) turns their normal toward straight up. Everything
+  // drawn and sampled follows.
+  reshape(changes: ReadonlyMap<number, { height: number; up: number }>): void;
 }
 
 const MAX_LEVEL = 4;
@@ -407,6 +411,34 @@ export function buildTerrainMesh(globe: Globe, spec: TerrainSpec, coarse: number
     return { ground: g, water: w };
   };
 
+  let splitsOf: number[][] | null = null;
+  const vertRadiusOut = pick(radii, 1);
+  const reshape = (changes: ReadonlyMap<number, { height: number; up: number }>) => {
+    if (!splitsOf) { splitsOf = Array.from({ length: Vs }, () => []); for (let v = 0; v < V; v++) splitsOf[origin[v]].push(v); }
+    const pos = geometry.getAttribute('position') as THREE.BufferAttribute;
+    const nrm = geometry.getAttribute('normal') as THREE.BufferAttribute;
+    const dep = geometry.getAttribute('depth') as THREE.BufferAttribute;
+    for (const [sv, c] of changes) {
+      height[sv] = c.height;
+      const r = 1 + c.height;
+      for (let k = 0; k < 3; k++) positions[sv * 3 + k] = sharedDir[sv * 3 + k] * r;
+      for (const v of splitsOf[sv]) {
+        pos.setXYZ(v, positions[sv * 3], positions[sv * 3 + 1], positions[sv * 3 + 2]);
+        const dx = sharedDir[sv * 3], dy = sharedDir[sv * 3 + 1], dz = sharedDir[sv * 3 + 2];
+        const nx = nrm.getX(v) + (dx - nrm.getX(v)) * c.up, ny = nrm.getY(v) + (dy - nrm.getY(v)) * c.up, nz = nrm.getZ(v) + (dz - nrm.getZ(v)) * c.up;
+        const l = Math.hypot(nx, ny, nz) || 1;
+        nrm.setXYZ(v, nx / l, ny / l, nz / l);
+        dep.setX(v, water[sv] - c.height);
+        vertRadiusOut[v] = r;
+      }
+    }
+    pos.needsUpdate = true; nrm.needsUpdate = true; dep.needsUpdate = true;
+    for (const tile of tiles) {
+      const cv = shared.get(`t${tile.id}`)!;
+      if (changes.has(cv)) centerRadius[tile.id] = 1 + Math.max(height[cv], water[cv]);
+    }
+  };
+
   return {
     geometry,
     water: waterGeo,
@@ -414,7 +446,7 @@ export function buildTerrainMesh(globe: Globe, spec: TerrainSpec, coarse: number
     triToTile: Int32Array.from(triToTile),
     vertTiles,
     vertDir,
-    vertRadius: pick(radii, 1),
+    vertRadius: vertRadiusOut,
     vertAO: pick(sharedAO, 1),
     tileVerts: lists.map((l) => Int32Array.from(l)),
     centerRadius,
@@ -424,6 +456,7 @@ export function buildTerrainMesh(globe: Globe, spec: TerrainSpec, coarse: number
     samplePoint(t, i, wa, wb) {
       return dirOf(t, i, wa, wb).multiplyScalar(at(t, i, wa, wb).ground);
     },
+    reshape,
   };
 }
 

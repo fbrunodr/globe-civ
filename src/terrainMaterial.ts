@@ -392,12 +392,7 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               // Packed earth and paving, lighter toward the center's plaza.
               vec3 ground = mix(vec3(0.33, 0.3, 0.26), vec3(0.42, 0.38, 0.33), tNoise(P / (0.08 * uR0)));
               ground = mix(ground, vec3(0.5, 0.47, 0.42), smoothstep(0.5, 0.9, cS) * 0.6);
-              // Winding streets: contour lines of two noise fields (main
-              // streets and lanes), as in towns that grew without a plan.
-              float s1 = tNoise(P / (0.5 * uR0) + 7.7), s2 = tNoise(P / (0.17 * uR0) + 2.3);
-              float l1 = 1.0 - smoothstep(0.014, 0.014 + 1.5 * fwidth(s1), abs(s1 - 0.5));
-              float l2 = (1.0 - smoothstep(0.02, 0.02 + 1.5 * fwidth(s2), abs(s2 - 0.5))) * tFade(1.0 / (0.17 * uR0));
-              ground = mix(ground, vec3(0.5, 0.46, 0.4), max(l1, 0.6 * l2));
+              // Streets are drawn over this by render.ts (cityProps.ts lays them out).
               diffuseColor.rgb = mix(diffuseColor.rgb, ground * (0.92 + 0.12 * grain) * vShade, urban);
             }
             float fieldMask = 1.0 - urban;

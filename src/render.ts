@@ -78,6 +78,11 @@ const FLORA_KEEP: Record<'urban' | ImprovementKey, Record<Layer, number>> = {
   boats:   { Canopy: 1, Understory: 1, Ground: 1, Accent: 1 },
 };
 
+// Roads between cities, and streets: dirt, then paving from the Classical era.
+const ROAD_RGB = [0.62, 0.55, 0.43] as const;
+const DIRT_RGB = [0.55, 0.49, 0.39] as const;
+const PAVED_RGB = [0.6, 0.58, 0.54] as const;
+
 // A tile highlighted in the overlay (growth placement options).
 export interface TileMark {
   tile: number;
@@ -153,6 +158,7 @@ export class GlobeRenderer {
   private cityProps: CityProps;
   private readonly smoke: Smoke;
   private groundVersion = -1;
+  private readonly levelled = new Set<number>();
   private roads: THREE.Mesh | null = null;
   private roadsKey = '';
   private readonly prevUse: Uint8Array;
@@ -359,7 +365,12 @@ export class GlobeRenderer {
     this.scene.add(this.craters);
     for (const kind of BUILDING_KINDS) this.propGeo.set(kind, buildBuildingGeometry(kind).scale(s * 1.5 * PROP_SIZE, s * 1.5 * PROP_SIZE, s * 1.5 * PROP_SIZE));
     this.prevUse = new Uint8Array(N);
-    this.cityProps = new CityProps(g, (t, i, wa, wb) => this.citySpot(t, i, wa, wb), s);
+    let hint = 0;
+    this.cityProps = new CityProps(g, (t, i, wa, wb) => this.citySpot(t, i, wa, wb), (d) => {
+      const l = locate(g.globe, d, hint);
+      hint = l.t;
+      return { ...this.citySpot(l.t, l.i, l.wa, l.wb), t: l.t };
+    }, s);
     this.scene.add(this.unitsGroup, this.citiesGroup, this.overlayGroup);
     this.smoke = makeSmoke(s);
     this.scene.add(this.smoke.points);
@@ -414,9 +425,16 @@ export class GlobeRenderer {
       for (const x of [t, ...g.tiles[t].neighbors]) { this.propCache.delete(x); dirty.add(this.tileChunk[x]!); }
     }
     if (useChanged || this.groundVersion !== g.useVersion) { this.groundVersion = g.useVersion; this.updateCityGround(); }
-    for (const t of this.cityProps.changed()) dirty.add(this.tileChunk[t]!);
+    // Summits levelled for wonders standing on them (before anything is placed there).
+    for (const [w, t] of g.wondersBuilt) {
+      if (WONDERS[w].site !== 'mountainTop' || this.levelled.has(t) || !g.wonderAt[t]) continue;
+      this.levelSummit(t);
+      for (const x of [t, ...g.tiles[t].neighbors]) { this.propCache.delete(x); dirty.add(this.tileChunk[x]!); }
+    }
+    const townChanged = this.cityProps.changed();
+    for (const t of townChanged) dirty.add(this.tileChunk[t]!);
     if (changed.length) this.updateProps(); else if (dirty.size) this.updateProps(dirty);
-    this.updateRoads(changed.length > 0);
+    this.updateRoads(changed.length > 0 || townChanged.length > 0);
     this.updateSmoke();
     this.updateCities();
     this.updateUnits(sel);
@@ -853,6 +871,32 @@ export class GlobeRenderer {
     this.scene.add(this.borders);
   }
 
+  // Levels the top of a mountain tile for a wonder: within LEVEL_R of the
+  // peak the ground is cut down to LEVEL_AT of the way up, easing back into
+  // the slopes beyond; the cut is flat (its normals straight up).
+  private levelSummit(t: number): void {
+    this.levelled.add(t);
+    const topo = this.terrain.topo, H = this.terrain.fields.height;
+    const near = new Set([t, ...this.game.tiles[t].neighbors]);
+    let peak = -1;
+    for (let v = 0; v < topo.V; v++) if (topo.tile[v] === t && (peak < 0 || H[v]! > H[peak]!)) peak = v;
+    if (peak < 0) return;
+    const r0 = this.paint.params.r0;
+    const R = 0.42 * r0, OUT = 0.75 * r0;
+    const base = this.relief.base[t]!, cut = base + 0.78 * (H[peak]! - base);
+    const px = topo.dir[peak * 3]!, py = topo.dir[peak * 3 + 1]!, pz = topo.dir[peak * 3 + 2]!;
+    const changes = new Map<number, { height: number; up: number }>();
+    for (let v = 0; v < topo.V; v++) {
+      if (!near.has(topo.tile[v]!) || H[v]! <= cut) continue;
+      const ang = Math.acos(Math.min(1, px * topo.dir[v * 3]! + py * topo.dir[v * 3 + 1]! + pz * topo.dir[v * 3 + 2]!));
+      if (ang >= OUT) continue;
+      const k = smoothstep(OUT, R, ang);
+      changes.set(v, { height: H[v]! - k * (H[v]! - cut), up: k });
+    }
+    this.terrain.reshape(changes);
+    this.shadowsDirty = true;
+  }
+
   // City ground in the tile table (row 5, see terrainMaterial.ts): urban
   // and center tiles, and each rural tile's improvement pattern.
   private updateCityGround(): void {
@@ -908,10 +952,10 @@ export class GlobeRenderer {
 
   // Roads between cities (roads.ts), draped on the ground as dirt tracks
   // with soft edges. Rebuilt when the cities change (or what is explored).
-  private updateRoads(explored: boolean): void {
+  private updateRoads(force: boolean): void {
     const g = this.game;
     const key = g.cities.map((c) => `${c.id}:${c.owner}`).join(',');
-    if (key === this.roadsKey && !explored) return;
+    if (key === this.roadsKey && !force) return;
     this.roadsKey = key;
     const r0 = this.paint.params.r0;
     const halfW = 0.06 * r0, lift = 0.00025 * this.scale;
@@ -941,34 +985,10 @@ export class GlobeRenderer {
         for (let j = 0; j < n; j++) fine.push(a.clone().lerp(b, j / n).normalize());
       }
       fine.push(pts[pts.length - 1]!);
-      // A ribbon of three vertices across: soft edge, middle, soft edge.
-      let prev: number[] | null = null;
-      for (let k = 0; k < fine.length; k++) {
-        const d = fine[k]!;
-        const tan = fine[Math.min(fine.length - 1, k + 1)]!.clone().sub(fine[Math.max(0, k - 1)]!);
-        const side = d.clone().cross(tan).normalize().multiplyScalar(halfW);
-        const here = at(d);
-        if (!g.explored[here.t]) { prev = null; continue; }
-        const row: number[] = [];
-        for (const sgn of [-1, 0, 1]) {
-          const q = d.clone().addScaledVector(side, sgn).normalize();
-          const h = sgn === 0 ? here.h : at(q).h;
-          const v = q.multiplyScalar(h + lift);
-          row.push(v.x, v.y, v.z);
-        }
-        if (prev) {
-          const quad = (a: number, b: number, alphaA: number, alphaB: number) => {
-            const p0 = prev!.slice(a * 3, a * 3 + 3), p1 = prev!.slice(b * 3, b * 3 + 3);
-            const q0 = row.slice(a * 3, a * 3 + 3), q1 = row.slice(b * 3, b * 3 + 3);
-            pos.push(...p0, ...p1, ...q1, ...p0, ...q1, ...q0);
-            for (const al of [alphaA, alphaB, alphaB, alphaA, alphaB, alphaA]) col.push(0.62, 0.55, 0.43, al);
-          };
-          quad(0, 1, 0.15, 1);
-          quad(1, 2, 1, 0.15);
-        }
-        prev = row;
-      }
+      this.drape(fine, halfW, ROAD_RGB, pos, col, at, lift);
     }
+    // Streets inside towns (cityProps.ts lays them out).
+    for (const st of this.cityProps.streets()) this.drape(st.points, st.halfWidth, st.paved ? PAVED_RGB : DIRT_RGB, pos, col, at, lift);
     if (this.roads) {
       this.scene.remove(this.roads);
       this.roads.geometry.dispose();
@@ -985,6 +1005,40 @@ export class GlobeRenderer {
     this.roads.receiveShadow = true;
     this.roads.renderOrder = 1;
     this.scene.add(this.roads);
+  }
+
+  // A ribbon along `pts` draped on the ground (or the water), three
+  // vertices across: soft edge, middle, soft edge. Skips unexplored ground.
+  private drape(pts: readonly THREE.Vector3[], halfW: number, rgb: readonly [number, number, number], pos: number[], col: number[],
+    at: (d: THREE.Vector3) => { t: number; h: number }, lift: number): void {
+    const g = this.game;
+    let prev: number[] | null = null;
+    for (let k = 0; k < pts.length; k++) {
+      const d = pts[k]!;
+      const tan = pts[Math.min(pts.length - 1, k + 1)]!.clone().sub(pts[Math.max(0, k - 1)]!);
+      if (tan.lengthSq() < 1e-14) continue;
+      const side = d.clone().cross(tan).normalize().multiplyScalar(halfW);
+      const here = at(d);
+      if (!g.explored[here.t]) { prev = null; continue; }
+      const row: number[] = [];
+      for (const sgn of [-1, 0, 1]) {
+        const q = d.clone().addScaledVector(side, sgn).normalize();
+        const h = sgn === 0 ? here.h : at(q).h;
+        const v = q.multiplyScalar(h + lift);
+        row.push(v.x, v.y, v.z);
+      }
+      if (prev) {
+        const quad = (a: number, b: number, alphaA: number, alphaB: number) => {
+          const p0 = prev!.slice(a * 3, a * 3 + 3), p1 = prev!.slice(b * 3, b * 3 + 3);
+          const q0 = row.slice(a * 3, a * 3 + 3), q1 = row.slice(b * 3, b * 3 + 3);
+          pos.push(...p0, ...p1, ...q1, ...p0, ...q1, ...q0);
+          for (const al of [alphaA, alphaB, alphaB, alphaA, alphaB, alphaA]) col.push(rgb[0], rgb[1], rgb[2], al);
+        };
+        quad(0, 1, 0.15, 1);
+        quad(1, 2, 1, 0.15);
+      }
+      prev = row;
+    }
   }
 
   // The ground at a spot of tile t (for city buildings).

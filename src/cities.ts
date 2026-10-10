@@ -240,7 +240,9 @@ export const specialistYield = (quarter: FamilyKey | null): Output =>
 // ---------- wonders ----------
 
 // What a wonder's tile needs (checked on the tile and its neighbors).
-export type WonderSite = 'desertOrFloodplain' | 'coast' | 'river' | 'mountains' | 'hills' | 'flat' | 'any';
+// mountainTop: the wonder stands on a mountain next to the city's core (the
+// tile stays wild: no citizen lives there).
+export type WonderSite = 'desertOrFloodplain' | 'coast' | 'river' | 'mountainTop' | 'hills' | 'flat' | 'any';
 
 export interface WonderDef {
   readonly name: string;
@@ -250,12 +252,13 @@ export interface WonderDef {
   readonly desc: string;
 }
 
-// Each is built once in the world, on a whole urban tile, placed explicitly.
+// Each is built once in the world, on a whole urban tile (Machu Picchu: a
+// mountain top), placed explicitly.
 export const WONDERS = {
   pyramids:        { name: 'Pyramids',         cost: 180, site: 'desertOrFloodplain', yields: out({ prod: 4, culture: 2 }), desc: 'On desert or floodplain. +4 production, +2 culture.' },
   greatLighthouse: { name: 'Great Lighthouse', cost: 160, site: 'coast', yields: out({ food: 2, gold: 3, culture: 1 }), desc: 'On the coast. +2 food, +3 gold, +1 culture.' },
   hangingGardens:  { name: 'Hanging Gardens',  cost: 180, site: 'river', yields: out({ food: 4, culture: 2 }), desc: 'Beside a river. +4 food, +2 culture.' },
-  machuPicchu:     { name: 'Machu Picchu',     cost: 200, site: 'mountains', yields: out({ gold: 4, faith: 2, culture: 2 }), desc: 'Next to mountains. +4 gold, +2 faith, +2 culture.' },
+  machuPicchu:     { name: 'Machu Picchu',     cost: 200, site: 'mountainTop', yields: out({ gold: 4, faith: 2, culture: 2 }), desc: 'On top of a mountain next to the city. +4 gold, +2 faith, +2 culture.' },
   greatLibrary:    { name: 'Great Library',    cost: 200, site: 'any', yields: out({ science: 5, culture: 2 }), desc: '+5 science, +2 culture.' },
   stonehenge:      { name: 'Stonehenge',       cost: 140, site: 'flat', yields: out({ faith: 4, culture: 1 }), desc: 'On flat open land. +4 faith, +1 culture.' },
   colosseum:       { name: 'Colosseum',        cost: 180, site: 'any', yields: out({ culture: 5, gold: 1 }), desc: '+5 culture, +1 gold.' },

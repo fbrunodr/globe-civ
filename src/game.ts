@@ -634,7 +634,7 @@ export class Game {
       case 'desertOrFloodplain': return this.biome[t] === 'hotDesert' || this.biome[t] === 'coldDesert' || this.feature[t] === 'floodplain';
       case 'coast': return this.tiles[t].neighbors.some((n) => isWorldOcean(this.biome[n]));
       case 'river': return this.map.riverTile[t] === 1;
-      case 'mountains': return this.tiles[t].neighbors.some((n) => this.relief[n] === 'mountains');
+      case 'mountainTop': return this.relief[t] === 'mountains' && this.feature[t] !== 'volcano';
       case 'hills': return this.relief[t] === 'hills';
       case 'flat': return this.relief[t] === 'flat' && this.feature[t] === null;
       case 'any': return true;
@@ -648,7 +648,8 @@ export class Game {
     for (const t of this.tilesWithin(city.tile, 3)) {
       if (this.tileCity[t] !== city.id || this.isWater(t) || this.blockedFor(city, t) || this.wonderAt[t]) continue;
       const u = this.use[t];
-      const ok = u === USE.urban ? this.slotKeys(t).every((x) => x === null)
+      const ok = WONDERS[k].site === 'mountainTop' ? u === USE.wild && this.touchesCore(city, t)
+        : u === USE.urban ? this.slotKeys(t).every((x) => x === null)
         : u === USE.rural ? urbanAllowed(this.terrainAt(t)) && this.touchesCore(city, t) : false;
       if (ok && this.siteOk(t, WONDERS[k].site)) out.push(t);
     }
@@ -721,6 +722,7 @@ export class Game {
     const terrain = this.terrainAt(t), river = this.map.riverTile[t] === 1;
     const u = this.use[t];
     if (u === USE.rural) return this.pillaged[t] ? ZERO : ruralYield(terrain, river, this.eraAt(t));
+    if (u === USE.wild) { const w = this.wonderOn(t); return w ? WONDERS[w].yields : ZERO; } // a wonder on a mountain top
     if (u !== USE.urban && u !== USE.center) return ZERO;
     const keys = this.slotKeys(t);
     const built = slotsYield(keys, (f) => this.adjacencyHits(t, f).length);
@@ -805,7 +807,7 @@ export class Game {
   cityYields(city: City): CityYield {
     let sum: Output = ZERO;
     for (const t of this.tilesWithin(city.tile, 3)) {
-      if (this.tileCity[t] !== city.id || this.use[t] === USE.wild) continue;
+      if (this.tileCity[t] !== city.id || (this.use[t] === USE.wild && !this.wonderAt[t])) continue;
       if (t !== city.tile && this.blockedFor(city, t)) continue;
       sum = addOut(sum, this.tileOutput(t));
     }

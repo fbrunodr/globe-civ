@@ -7,6 +7,7 @@ import { Game } from '../src/game.ts';
 import { aiTurn } from '../src/ai.ts';
 import { USE, WONDER_KEYS, isWonderKey } from '../src/cities.ts';
 import { planRoads } from '../src/roads.ts';
+import { locate } from '../src/terrainMesh.ts';
 
 // City look guarantees (design doc "Cities: Feel & Play", city look v1).
 
@@ -53,7 +54,15 @@ describe('L3: city buildings stand on dry, gentle ground (boats on water)', () =
     return s;
   };
   const key = (d: THREE.Vector3) => `${d.x.toFixed(6)},${d.y.toFixed(6)},${d.z.toFixed(6)}`;
-  const cp = new CityProps(g, sampler, 1);
+  // Any direction: its tile by the globe, its ground by a hash of the direction.
+  const dirSampler = (dir: THREE.Vector3) => {
+    const t = locate(g.globe, dir).t;
+    const h = Math.abs(Math.sin(dir.x * 12989.8 + dir.y * 78233.1 + dir.z * 37719.3)) * 1000 % 1;
+    const s: CitySpot = { dir, ground: 0.01, water: h < 0.2 ? 0.0105 : 0.009, slope: h > 0.93 ? 0.5 : 0.05, urban: g.use[t] === USE.urban || g.use[t] === USE.center ? 0.9 : 0.1 };
+    spots.set(key(dir), s);
+    return { ...s, t };
+  };
+  const cp = new CityProps(g, sampler, dirSampler, 1);
   const bad: string[] = [];
   let count = 0;
   for (let t = 0; t < g.N; t++) {
