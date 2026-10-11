@@ -86,7 +86,7 @@ export const MIDDLE_SKETCHES: readonly MiddleSketch[] = [
     const w = m.out(3, 0, P(-0.15, 0.01), m.on(ring, P(-0.055, 0.03)));
     m.out(4, 0, P(-0.17, -0.1), m.on(w, P(-0.15, 0.01)));
     m.out(4, 1, P(-0.03, -0.15), m.on(ring, P(0.0, -0.033)));
-    m.hallAt(0.02, 0.055, 0.04);
+    m.hallAt(0.02, 0.05, 0.04);
     m.decor('well', 0.02, 0.005);
     m.spot(0.2, -0.12);
     m.spot(-0.17, 0.17);
@@ -99,7 +99,7 @@ export const MIDDLE_SKETCHES: readonly MiddleSketch[] = [
     m.out(1, 0, m.on(ring, P(0.02, 0.062)));
     m.out(3, 0, m.on(ring, P(-0.064, -0.011)));
     m.out(3, 1, m.on(ring, P(-0.032, -0.056)));
-    m.hallAt(0, 0.015, 0.033);
+    m.hallAt(0, 0.01, 0.033);
     m.spot(0.12, -0.1, 0.044);
     m.spot(-0.1, 0.12, 0.044);
   }),
@@ -112,14 +112,14 @@ export const MIDDLE_SKETCHES: readonly MiddleSketch[] = [
       m.out(0, 0, m.on(ring, P(0.2, 0)));
       m.out(2, 0, m.on(ring, P(-0.1, 0.173)));
       m.out(4, 0, m.on(ring, P(-0.1, -0.173)));
-      m.wonderAt(0, 0, 0.17);
+      m.wonderAt(0, 0, 0.16);
     }),
     sketchMiddle(D(d, 'wonder-pent'), `${d[0]!.toUpperCase()}${d.slice(1)} wonder square (pentagon)`, 5, d, 'wonder', ['single', 'closed', 'single', 'closed', 'closed'], (m) => {
       const ring = m.ring(P(0, 0), 0.135, 'street');
       m.round(P(0, 0), 0.12, false);
       m.out(0, 0, m.on(ring, P(0.135, 0)));
       m.out(2, 0, m.on(ring, P(-0.109, 0.079)));
-      m.wonderAt(0, 0, 0.11);
+      m.wonderAt(0, 0, 0.098);
     }),
   ]),
 
@@ -152,8 +152,8 @@ export const MIDDLE_SKETCHES: readonly MiddleSketch[] = [
     m.street('street', [m.stub(4, 1), P(-0.0896, -0.0813)], false);
     m.street('lane', [P(0.0896, 0.0813), P(0.0896, -0.0813)], false);
     m.street('lane', [P(-0.0896, 0.0813), P(-0.0896, -0.0813)], false);
-    m.spot(0, 0);
-    m.spot(-0.2, 0);
+    m.spot(0, 0, 0.058);
+    m.spot(-0.2, 0, 0.058);
   }),
 
   // A high street: the main street through, back streets behind both sides.
@@ -167,8 +167,8 @@ export const MIDDLE_SKETCHES: readonly MiddleSketch[] = [
     m.out(5, 0, m.on(south, P(0.08, -0.183)));
     m.out(5, 1, m.on(south, P(0.22, -0.177)));
     m.street('lane', [m.on(south, P(-0.08, -0.18)), m.on(main, P(-0.08, 0.02))], false);
-    m.spot(-0.02, 0.1);
-    m.spot(0.02, -0.1);
+    m.spot(0.005, 0.095, 0.06);
+    m.spot(0.015, -0.095, 0.06);
   }),
 
   // A crescent: a street bows round a green in the north; an arc of streets in the south.
@@ -204,7 +204,7 @@ export const MIDDLE_SKETCHES: readonly MiddleSketch[] = [
     m.out(1, 0, P(0.07, 0.1), m.on(main, P(0.05, 0.01)));
     m.out(1, 1, P(-0.03, 0.12), m.on(main, P(-0.05, -0.02)));
     m.spot(0.1, -0.1, 0.044);
-    m.spot(-0.1, 0.06, 0.04);
+    m.spot(-0.105, 0.06, 0.04);
   }),
 
   // A town center: a paved square framed by streets, the hall on its north side.
@@ -219,10 +219,10 @@ export const MIDDLE_SKETCHES: readonly MiddleSketch[] = [
     const sw = m.out(3, 1, P(-0.2, -0.08), P(-0.09, -0.07));
     m.out(4, 0, P(-0.1, -0.16), m.on(frame, P(-0.03, -0.07)));
     void sw;
-    m.hallAt(0.005, 0.035, 0.045);
+    m.hallAt(0.005, 0.03, 0.045);
     m.decor('fountain', 0.005, -0.025);
     m.spot(0.21, -0.1);
-    m.spot(0.23, 0.085);
+    m.spot(0.23, 0.09);
   }),
 
   sketchMiddle('medium-center-pent', 'Medium center (pentagon)', 5, 'medium', 'center', ['single', 'single', 'double', 'closed', 'single'], (m) => {
@@ -233,7 +233,7 @@ export const MIDDLE_SKETCHES: readonly MiddleSketch[] = [
     m.out(2, 0, m.on(ring, P(-0.04, 0.057)));
     m.out(2, 1, m.on(ring, P(-0.066, 0.02)));
     m.out(4, 0, m.on(ring, P(0.022, -0.067)));
-    m.hallAt(0, 0.012, 0.035);
+    m.hallAt(-0.005, 0.012, 0.035);
     m.spot(-0.11, -0.09, 0.042);
     m.spot(0.13, 0.08, 0.04);
   }),
@@ -254,9 +254,9 @@ export const MIDDLE_SKETCHES: readonly MiddleSketch[] = [
     const s5 = m.out(5, 0, m.on(frame, P(0.06, -0.055)));
     m.out(5, 1, P(0.17, -0.2), m.on(s5, P(0.08, -0.17)));
     m.decor('fountain', 0.03, 0.02);
-    m.decor('tree', -0.03, 0.06); m.decor('tree', 0.09, 0.06); m.decor('tree', -0.03, -0.02); m.decor('tree', 0.09, -0.02);
+    m.decor('tree', -0.03, 0.06); m.decor('tree', 0.08, 0.06); m.decor('tree', -0.03, -0.02); m.decor('tree', 0.08, -0.02);
     m.spot(0.21, -0.1);
-    m.spot(-0.2, -0.005);
+    m.spot(-0.2, -0.005, 0.055);
   }),
 
   // Superblocks: two long streets, a park between, towers north and south.
@@ -285,10 +285,10 @@ export const MIDDLE_SKETCHES: readonly MiddleSketch[] = [
     const north = m.street('street', [P(-0.25, 0.18), P(0.25, 0.18)], false);
     m.street('street', [m.on(north, P(-0.06, 0.18)), P(-0.06, 0)], false);
     m.street('street', [m.on(north, P(0.06, 0.18)), P(0.06, 0)], false);
-    for (const x of [-0.27, 0.27]) m.decor('tree', x, 0.034);
-    for (const x of [-0.29, -0.16, -0.025, 0.025, 0.16, 0.29]) m.decor('tree', x, -0.034);
-    m.spot(0.19, 0.09);
-    m.spot(-0.19, 0.09);
+    for (const x of [-0.26, 0.26]) m.decor('tree', x, 0.044);
+    for (const x of [-0.28, -0.16, -0.025, 0.025, 0.16, 0.28]) m.decor('tree', x, -0.044);
+    m.spot(0.19, 0.092, 0.058);
+    m.spot(-0.19, 0.092, 0.058);
   }),
 
   // A park: a park in the middle, a street round it, towers outside.
@@ -303,7 +303,7 @@ export const MIDDLE_SKETCHES: readonly MiddleSketch[] = [
     m.out(3, 1, P(-0.22, -0.07), P(-0.145, -0.06));
     m.out(4, 0, P(-0.1, -0.15), m.on(ring, P(-0.06, -0.06)));
     m.spot(0.18, -0.165);
-    m.spot(0.2, 0.165);
+    m.spot(0.2, 0.165, 0.055);
   }),
 
   // A diagonal: an avenue straight across from north-east to south-west.
@@ -340,10 +340,10 @@ export const MIDDLE_SKETCHES: readonly MiddleSketch[] = [
     m.out(3, 1, m.on(s4, P(-0.115, -0.12)));
     const s5 = m.out(5, 0, m.on(frame, P(0.07, -0.08)));
     m.out(5, 1, P(0.17, -0.21), m.on(s5, P(0.08, -0.19)));
-    m.hallAt(0.005, 0.03, 0.045);
+    m.hallAt(0.005, 0.02, 0.045);
     m.decor('fountain', 0.005, -0.03);
     m.spot(0.21, -0.11);
-    m.spot(-0.21, -0.005);
+    m.spot(-0.21, -0.01);
   }),
 
   sketchMiddle('high-center-pent', 'High center (pentagon)', 5, 'high', 'center', ['single', 'double', 'single', 'single', 'double'], (m) => {
@@ -357,7 +357,7 @@ export const MIDDLE_SKETCHES: readonly MiddleSketch[] = [
     m.out(4, 0, m.on(ring, P(-0.005, -0.075)));
     m.out(4, 1, m.on(ring, P(0.05, -0.055)));
     m.hallAt(0, 0.012, 0.035);
-    m.spot(0.135, 0.085, 0.035);
-    m.spot(-0.09, 0.14, 0.035);
+    m.spot(0.14, 0.08, 0.035);
+    m.spot(-0.085, 0.145, 0.035);
   }),
 ];

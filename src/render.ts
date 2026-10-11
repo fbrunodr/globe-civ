@@ -84,8 +84,16 @@ const FLORA_KEEP: Record<'urban' | ImprovementKey, Record<Layer, number>> = {
 // Roads between cities, and streets: dirt, then paving from the Classical era.
 const ROAD_RGB = [0.62, 0.55, 0.43] as const;
 const DIRT_RGB = [0.55, 0.49, 0.39] as const;
-const PAVED_RGB = [0.55, 0.53, 0.49] as const;
+const PAVED_RGB = [0.5, 0.46, 0.41] as const;
 const PLAZA_RGB = [0.6, 0.57, 0.52] as const;
+// Road surfaces: points across the width (shares of the half width: edges,
+// kerbs or worn edges, ruts, the middle), and points along at least every
+// ROAD_STEP tile steps.
+const ROAD_ACROSS = [-1, -0.88, -0.45, 0, 0.45, 0.88, 1] as const;
+const ROAD_MID = 3;
+const ROAD_STEP = 0.012;
+const ROAD_LIFT = 0.00004; // nearly flush with the ground
+const SHADOW_NORMAL_TEXELS = 1.5;
 // Bridges (heights × the world scale; spans in tile steps): the deck stands
 // at least BRIDGE_CLEAR over the water and arches up to BRIDGE_ARCH more on
 // a long span; parapets rise BRIDGE_PARAPET over the deck, the slab is
@@ -1047,7 +1055,7 @@ export class GlobeRenderer {
     if (key === this.roadsKey && !force) return;
     this.roadsKey = key;
     const r0 = this.paint.params.r0;
-    const halfW = 0.06 * r0, lift = 0.00025 * this.scale;
+    const halfW = 0.06 * r0, lift = ROAD_LIFT * this.scale;
     const pos: number[] = [], col: number[] = [];
     let hint = 0;
     const smp = newSample(), pre = this.layers.preRiver;
@@ -1092,10 +1100,11 @@ export class GlobeRenderer {
     }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 4));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    windOutward(geo);
     geo.computeVertexNormals();
     this.roads = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({
-      vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide,
+      vertexColors: true, side: THREE.DoubleSide,
       polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
     }));
     this.roads.receiveShadow = true;
@@ -1108,6 +1117,7 @@ export class GlobeRenderer {
     const bgeo = new THREE.BufferGeometry();
     bgeo.setAttribute('position', new THREE.Float32BufferAttribute(bridges.pos, 3));
     bgeo.setAttribute('color', new THREE.Float32BufferAttribute(bridges.col, 3));
+    windOutward(bgeo);
     bgeo.computeVertexNormals();
     this.bridges = new THREE.Mesh(bgeo, this.bridgeMat);
     this.bridges.castShadow = true;
@@ -1130,7 +1140,7 @@ export class GlobeRenderer {
       const a = on(p), b = on(q), am = on(p.clone().lerp(mid, 0.5).normalize()), bm = on(q.clone().lerp(mid, 0.5).normalize());
       pos.push(a.x, a.y, a.z, b.x, b.y, b.z, bm.x, bm.y, bm.z, a.x, a.y, a.z, bm.x, bm.y, bm.z, am.x, am.y, am.z);
       pos.push(am.x, am.y, am.z, bm.x, bm.y, bm.z, m.x, m.y, m.z);
-      for (let n = 0; n < 9; n++) col.push(rgb[0], rgb[1], rgb[2], n < 6 && (n === 0 || n === 1 || n === 3) ? 0.6 : 0.95);
+      for (let n = 0; n < 9; n++) { const c = n < 6 && (n === 0 || n === 1 || n === 3) ? 1.12 : 1; col.push(rgb[0] * c, rgb[1] * c, rgb[2] * c); }
     });
   }
 
@@ -1142,8 +1152,21 @@ export class GlobeRenderer {
   private drape(pts: readonly THREE.Vector3[], halfWidth: number | readonly number[], rgb: readonly [number, number, number], pos: number[], col: number[],
     at: Ground, lift: number, bridges?: Bridges, stone = false): void {
     const g = this.game, s = this.scale;
+    // Points close enough that the surface follows the ground between them.
+    const step = ROAD_STEP * g.globe.avgEdgeAngle;
+    const fine: THREE.Vector3[] = [], fineW: number[] = [];
+    pts.forEach((p, k) => {
+      const w = typeof halfWidth === 'number' ? halfWidth : halfWidth[k]!;
+      if (k > 0) {
+        const q = pts[k - 1]!, m = Math.floor(q.angleTo(p) / step);
+        const wq = typeof halfWidth === 'number' ? halfWidth : halfWidth[k - 1]!;
+        for (let i = 1; i <= m; i++) { const t = i / (m + 1); fine.push(q.clone().lerp(p, t).normalize()); fineW.push(wq + (w - wq) * t); }
+      }
+      fine.push(p); fineW.push(w);
+    });
+    pts = fine;
     const n = pts.length;
-    const hwAt = (k: number) => (typeof halfWidth === 'number' ? halfWidth : halfWidth[k]!);
+    const hwAt = (k: number) => fineW[k]!;
     const here = pts.map((d) => at(d));
     // Bridge decks over the wet stretches: from the last dry point before to the first after.
     const deck: (number | null)[] = here.map(() => null);
@@ -1170,34 +1193,61 @@ export class GlobeRenderer {
       if (bridges && g.explored[here[k]!.t]) this.bridge(pts, deck, here, a, b, Math.max(hwAt(a), hwAt(b)), stone, bridges);
       k = e;
     }
-    let prev: number[] | null = null;
+    // The surface: a solid strip across the street's width, sampled at
+    // several points across so it hugs the ground (nearly flush with it);
+    // kerbs (paved) or worn edges and ruts (dirt); round ends where streets
+    // meet, so junctions overlap cleanly.
+    const paved = rgb === PAVED_RGB;
+    const lane = lift + hwAt(0) * 0.03; // wider streets sit a hair higher where they cross narrower ones
+    let prev: THREE.Vector3[] | null = null;
+    const shadeAt = (j: number, p: THREE.Vector3) => {
+      const noise = 1 + 0.07 * Math.sin(p.x * 9137.1 + p.y * 4721.3) * Math.cos(p.z * 6143.7 - p.x * 2311.9);
+      const edge = Math.abs(ROAD_ACROSS[j]!);
+      return noise * (paved ? (edge > 0.8 ? 1.18 : 1) : edge > 0.95 ? 0.8 : edge > 0.8 ? 0.88 : edge > 0.3 && edge < 0.6 ? 0.93 : 1);
+    };
+    const tri = (p0: THREE.Vector3, p1: THREE.Vector3, p2: THREE.Vector3, c0: number, c1: number, c2: number) => {
+      pos.push(p0.x, p0.y, p0.z, p1.x, p1.y, p1.z, p2.x, p2.y, p2.z);
+      for (const c of [c0, c1, c2]) col.push(rgb[0] * c, rgb[1] * c, rgb[2] * c);
+    };
+    const heightAt = (k: number, q: THREE.Vector3, center: boolean) => {
+      if (deck[k] !== null) return deck[k]!;
+      const o = center ? here[k]! : at(q);
+      return Math.max(o.ground, o.water);
+    };
+    const cap = (k: number, row: THREE.Vector3[], dir: number) => {
+      // A half disc beyond the end, at the end's height.
+      const d = pts[k]!, mid = row[ROAD_MID]!, r = mid.length();
+      const tan = pts[Math.min(n - 1, k + 1)]!.clone().sub(pts[Math.max(0, k - 1)]!).normalize().multiplyScalar(dir * hwAt(k));
+      const side = d.clone().cross(tan).normalize().multiplyScalar(hwAt(k));
+      const ring: THREE.Vector3[] = [];
+      for (let i = 0; i <= 6; i++) {
+        const t = (i / 6) * Math.PI;
+        ring.push(d.clone().addScaledVector(side, Math.cos(t)).addScaledVector(tan, Math.sin(t)).normalize().multiplyScalar(r));
+      }
+      for (let i = 0; i < 6; i++) tri(mid, ring[i]!, ring[i + 1]!, 1, 0.85, 0.85);
+    };
+    let first = true;
     for (let k = 0; k < n; k++) {
       const d = pts[k]!;
       const tan = pts[Math.min(n - 1, k + 1)]!.clone().sub(pts[Math.max(0, k - 1)]!);
       if (tan.lengthSq() < 1e-14) continue;
       const side = d.clone().cross(tan).normalize().multiplyScalar(hwAt(k));
-      if (!g.explored[here[k]!.t]) { prev = null; continue; }
-      const row: number[] = [];
-      for (const sgn of [-1, 0, 1]) {
-        const q = d.clone().addScaledVector(side, sgn).normalize();
-        let h: number;
-        if (deck[k] !== null) h = deck[k]!;
-        else { const o = sgn === 0 ? here[k]! : at(q); h = Math.max(o.ground, o.water); }
-        const v = q.multiplyScalar(h + lift);
-        row.push(v.x, v.y, v.z);
-      }
+      if (!g.explored[here[k]!.t]) { if (prev) cap(k - 1, prev, 1); prev = null; continue; }
+      const row = ROAD_ACROSS.map((u, j) => {
+        const q = d.clone().addScaledVector(side, u).normalize();
+        return q.multiplyScalar(heightAt(k, q, j === ROAD_MID) + lane);
+      });
+      if (first || !prev) { cap(k, row, -1); first = false; }
       if (prev) {
-        const quad = (a: number, b: number, alphaA: number, alphaB: number) => {
-          const p0 = prev!.slice(a * 3, a * 3 + 3), p1 = prev!.slice(b * 3, b * 3 + 3);
-          const q0 = row.slice(a * 3, a * 3 + 3), q1 = row.slice(b * 3, b * 3 + 3);
-          pos.push(...p0, ...p1, ...q1, ...p0, ...q1, ...q0);
-          for (const al of [alphaA, alphaB, alphaB, alphaA, alphaB, alphaA]) col.push(rgb[0], rgb[1], rgb[2], al);
-        };
-        quad(0, 1, 0.15, 1);
-        quad(1, 2, 1, 0.15);
+        for (let j = 0; j + 1 < row.length; j++) {
+          const ca = shadeAt(j, prev[j]!), cb = shadeAt(j + 1, prev[j + 1]!), cc = shadeAt(j + 1, row[j + 1]!), cd = shadeAt(j, row[j]!);
+          tri(prev[j]!, prev[j + 1]!, row[j + 1]!, ca, cb, cc);
+          tri(prev[j]!, row[j + 1]!, row[j]!, ca, cc, cd);
+        }
       }
       prev = row;
     }
+    if (prev) cap(n - 1, prev, 1);
   }
 
   // The solid part of a bridge over points a..b of a street (a and b on
@@ -1451,6 +1501,10 @@ export class GlobeRenderer {
     sc.left = -half; sc.right = half; sc.top = half; sc.bottom = -half;
     sc.near = 1; sc.far = 5;
     sc.updateProjectionMatrix();
+    // The normal offset follows the shadow map's texel size: enough to keep
+    // slopes free of acne, small enough up close for houses to shadow the
+    // ground beside them (a fixed offset was taller than a house).
+    this.sun.shadow.normalBias = SHADOW_NORMAL_TEXELS * (2 * half) / this.sun.shadow.mapSize.x;
     this.renderer.shadowMap.needsUpdate = true;
   }
 
@@ -1654,4 +1708,28 @@ function slopeAndShore(terrain: TerrainMesh, coast: Float32Array): [Float32Array
     if (gl > 1e-9) { inland[v * 3] = gx / gl; inland[v * 3 + 1] = gy / gl; inland[v * 3 + 2] = gz / gl; }
   }
   return [slope, coast, inland];
+}
+
+// Triangles of a ground overlay (roads, bridges) wound to face away from
+// the globe's center (they are built either way round): then their
+// normals point up, for the light and for the shadow lookups alike.
+// Walls (no clear outside) are left as they are.
+function windOutward(geo: THREE.BufferGeometry): void {
+  const p = geo.getAttribute('position') as THREE.BufferAttribute;
+  const c = geo.getAttribute('color') as THREE.BufferAttribute;
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), d = new THREE.Vector3(), n = new THREE.Vector3();
+  for (let i = 0; i + 2 < p.count; i += 3) {
+    a.fromBufferAttribute(p, i); b.fromBufferAttribute(p, i + 1); d.fromBufferAttribute(p, i + 2);
+    n.subVectors(b, a).cross(d.clone().sub(a));
+    const up = n.dot(a) / (n.length() * a.length() || 1);
+    if (up >= -0.3) continue;
+    // Swap the last two vertices (and their colors).
+    for (const attr of [p, c]) {
+      for (let k = 0; k < attr.itemSize; k++) {
+        const t = attr.getComponent(i + 1, k);
+        attr.setComponent(i + 1, k, attr.getComponent(i + 2, k));
+        attr.setComponent(i + 2, k, t);
+      }
+    }
+  }
 }

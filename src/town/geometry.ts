@@ -18,7 +18,7 @@ export const sideLength = (k: Sides) => 2 * INR[k] * Math.tan(Math.PI / k);
 
 export type StreetClass = 'lane' | 'street' | 'main' | 'avenue';
 // Half widths.
-export const HALF_WIDTH: Record<StreetClass, number> = { lane: 0.009, street: 0.012, main: 0.015, avenue: 0.02 };
+export const HALF_WIDTH: Record<StreetClass, number> = { lane: 0.013, street: 0.017, main: 0.021, avenue: 0.027 };
 
 // What stands on a lot. Houses, rows, blocks and towers are homes (their
 // model follows the era and climate); the rest is garden and street
