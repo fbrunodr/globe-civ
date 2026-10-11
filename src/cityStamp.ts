@@ -52,7 +52,8 @@ export interface Stamp {
 }
 
 const FACE = 0.01; // how far ahead the facing point is (tile steps)
-const STEP = 0.02; // street points every this far
+export const STAMP_STEP = 0.02; // street points every this far (tile steps, as drawn)
+const STEP = STAMP_STEP;
 // Walls stand this far outside the middle (strips keep their lots clear of it).
 export const WALL_AT = 0.012;
 
@@ -150,7 +151,7 @@ export function stamp(tiles: readonly StampTile[]): Stamp {
 
 // Walls just outside the middle, all the way round, with a gate wherever a
 // street leaves the middle (closed sides have none).
-const GATE = 0.03; // half width of a gate (tile steps)
+const GATE = 0.048; // half width of a gate (tile steps): the widest street and a tower beside it
 function wallRuns(s: StampTile): StampedWall[] {
   const k = s.sides;
   const rho = RC + WALL_AT / INR[6];

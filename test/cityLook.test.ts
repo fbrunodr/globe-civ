@@ -1,13 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { BUILDING_KINDS, buildBuildingGeometry, buildingEntry } from '../src/buildingCatalog.ts';
+import { BUILDING_KINDS, buildBuildingGeometry, buildingEntry, type BuildingKind } from '../src/buildingCatalog.ts';
 import { triangles } from '../src/propCatalog.ts';
 import { CityProps, type CitySpot } from '../src/cityProps.ts';
 import { stamp, type StampTile } from '../src/cityStamp.ts';
 import { Game } from '../src/game.ts';
 import { aiTurn } from '../src/ai.ts';
 import { USE, WONDER_KEYS, isWonderKey } from '../src/cities.ts';
-import { planRoads } from '../src/roads.ts';
+import { planRoads, roadLines, ROAD_HALF_WIDTH } from '../src/roads.ts';
 import { locate } from '../src/terrainMesh.ts';
 
 // City look guarantees (design doc "Cities: Feel & Play", city look v1).
@@ -154,4 +154,60 @@ describe('L5: on slopes, buildings stand level on a foundation', () => {
   it('houses still stand on the slope', () => expect(homes).toBeGreaterThan(200));
   it('they get foundations', () => expect(foundations).toBeGreaterThanOrEqual(homes));
   it('no building sinks below the ground under it (it stands at its highest corner)', () => expect(sunk.slice(0, 5)).toEqual([]));
+});
+
+describe('L6: no building stands on a street or a road', () => {
+  const g = grownGame();
+  // Flat dry ground (so every lot is used and nothing gets a foundation).
+  const at = (d: THREE.Vector3): CitySpot => ({ dir: d, ground: 0.01, water: 0, slope: 0, urban: 1 });
+  const sampler = (t: number, i: number, wa: number, wb: number): CitySpot => {
+    const tl = g.tiles[t]!, k = tl.corners.length;
+    const A = g.globe.triCenters[tl.corners[i]!]!, B = g.globe.triCenters[tl.corners[(i + 1) % k]!]!;
+    return at(tl.center.clone().multiplyScalar(1 - wa - wb).addScaledVector(A, wa).addScaledVector(B, wb).normalize());
+  };
+  // The world scale render.ts uses: the tile size against its reference edge of 0.07.
+  const scale = g.globe.avgEdgeAngle / 0.07;
+  const cp = new CityProps(g, sampler, (d) => ({ ...at(d), t: locate(g.globe, d).t }), scale);
+  const PROP = 1.5 * 0.276 * scale; // render.ts draws building models at this scale
+  const box = new Map<string, THREE.Box3>();
+  const footprint = (kind: BuildingKind) => {
+    let b = box.get(kind);
+    if (!b) { const geo = buildBuildingGeometry(kind); geo.computeBoundingBox(); b = geo.boundingBox!; box.set(kind, b); }
+    return b;
+  };
+  const FURNITURE = new Set<string>(['gardenTree', 'well', 'fountain', 'stall', 'shed', 'foundation']);
+  for (let t = 0; t < g.N; t++) cp.place(t);
+  const streets = [
+    ...cp.streets().map((s) => ({ pts: s.points, hw: s.halfWidth })),
+    ...roadLines(g).map((r) => ({ pts: r.points, hw: r.points.map(() => ROAD_HALF_WIDTH * g.globe.avgEdgeAngle) })),
+  ];
+  // Distance (radians) from a direction to a street's middle line, and its half width there.
+  const near = (d: THREE.Vector3, s: { pts: THREE.Vector3[]; hw: number[] }) => {
+    let best = Infinity, w = 0;
+    for (let i = 0; i + 1 < s.pts.length; i++) {
+      const a = s.pts[i]!, b = s.pts[i + 1]!, ab = b.clone().sub(a), l2 = ab.lengthSq();
+      const u = l2 > 0 ? Math.max(0, Math.min(1, d.clone().sub(a).dot(ab) / l2)) : 0;
+      const dist = a.clone().addScaledVector(ab, u).distanceTo(d);
+      if (dist < best) { best = dist; w = s.hw[i]! + (s.hw[i + 1]! - s.hw[i]!) * u; }
+    }
+    return best - w;
+  };
+  const bad = new Map<string, number>();
+  let checked = 0;
+  for (let t = 0; t < g.N; t++) {
+    if (g.use[t] === USE.wild) continue;
+    for (const b of cp.place(t)) {
+      if (FURNITURE.has(b.kind)) continue;
+      checked++;
+      const fb = footprint(b.kind);
+      const pts: THREE.Vector3[] = [];
+      for (const [x, z] of [[fb.min.x, fb.min.z], [fb.max.x, fb.min.z], [fb.max.x, fb.max.z], [fb.min.x, fb.max.z], [(fb.min.x + fb.max.x) / 2, fb.min.z], [(fb.min.x + fb.max.x) / 2, fb.max.z], [fb.min.x, (fb.min.z + fb.max.z) / 2], [fb.max.x, (fb.min.z + fb.max.z) / 2]] as const) {
+        pts.push(new THREE.Vector3(x * PROP, 0, z * PROP).applyMatrix4(b.matrix).normalize());
+      }
+      const c = new THREE.Vector3().setFromMatrixPosition(b.matrix).normalize();
+      if (streets.some((s) => s.pts.length > 1 && c.distanceTo(s.pts[0]!) < 0.1 && pts.some((p) => near(p, s) < 0))) bad.set(b.kind, (bad.get(b.kind) ?? 0) + 1);
+    }
+  }
+  it('checks the buildings of a grown world', () => expect(checked).toBeGreaterThan(500));
+  it('no footprint touches a street or road', () => expect(Object.fromEntries(bad)).toEqual({}));
 });

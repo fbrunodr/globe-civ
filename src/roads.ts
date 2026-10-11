@@ -5,9 +5,12 @@
 // crossed except by a short bridge over a river (rivers run on tile edges, so
 // they never block a route). Pure: the same cities always give the same roads.
 
+import * as THREE from 'three';
 import type { Game } from './game.ts';
+import { USE } from './cities.ts';
 
 export const NEAR = 5;        // tiles: cities this close are always joined
+export const ROAD_HALF_WIDTH = 0.03; // half width of a road between cities (tile steps)
 const MAX_ROUTE = 14;         // tiles: no road longer than this (as the crow flies)
 
 export interface Road {
@@ -78,4 +81,56 @@ function route(g: Game, from: number, to: number): number[] | null {
   const path = [to];
   for (let t = to; t !== from; ) { t = came.get(t)!; path.push(t); }
   return path.reverse();
+}
+
+// A road as drawn: smooth lines between towns. Roads stay out of built-up
+// tiles (they would run over the houses): each stretch outside the towns
+// ends at the middle of the edge where it reaches a town, which is where
+// the town's own streets come out to open land (src/town: outskirts strips).
+export interface RoadLine { a: number; b: number; points: THREE.Vector3[] }
+
+export function roadLines(g: Game): RoadLine[] {
+  const built = (t: number) => g.use[t] === USE.urban || g.use[t] === USE.center;
+  const edgeMid = (a: number, b: number) => {
+    const tl = g.tiles[a]!, i = tl.neighbors.indexOf(b), k = tl.corners.length;
+    return g.globe.triCenters[tl.corners[i]!]!.clone().add(g.globe.triCenters[tl.corners[(i + 1) % k]!]!).normalize();
+  };
+  const step = 0.04 * g.globe.avgEdgeAngle;
+  const out: RoadLine[] = [];
+  for (const road of planRoads(g)) {
+    const t = road.tiles;
+    let run: THREE.Vector3[] = [];
+    const flush = () => { if (run.length > 1) out.push({ a: road.a, b: road.b, points: smooth(run, step) }); run = []; };
+    for (let k = 0; k < t.length; k++) {
+      if (built(t[k]!)) {
+        if (run.length) { run.push(edgeMid(t[k - 1]!, t[k]!)); flush(); }
+        continue;
+      }
+      if (!run.length && k > 0 && built(t[k - 1]!)) run.push(edgeMid(t[k - 1]!, t[k]!));
+      run.push(g.tiles[t[k]!]!.center.clone());
+    }
+    flush();
+  }
+  return out;
+}
+
+// Chaikin smoothing (ends kept), then points every `step` radians.
+function smooth(pts0: THREE.Vector3[], step: number): THREE.Vector3[] {
+  let pts = pts0;
+  for (let it = 0; it < 3; it++) {
+    const next = [pts[0]!];
+    for (let k = 0; k + 1 < pts.length; k++) {
+      next.push(pts[k]!.clone().lerp(pts[k + 1]!, 0.25).normalize(), pts[k]!.clone().lerp(pts[k + 1]!, 0.75).normalize());
+    }
+    next.push(pts[pts.length - 1]!);
+    pts = next;
+  }
+  const fine: THREE.Vector3[] = [];
+  for (let k = 0; k + 1 < pts.length; k++) {
+    const a = pts[k]!, b = pts[k + 1]!;
+    const n = Math.max(1, Math.ceil(a.angleTo(b) / step));
+    for (let j = 0; j < n; j++) fine.push(a.clone().lerp(b, j / n).normalize());
+  }
+  fine.push(pts[pts.length - 1]!);
+  return fine;
 }
