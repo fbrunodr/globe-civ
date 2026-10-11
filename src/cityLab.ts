@@ -315,13 +315,6 @@ document.body.addEventListener('click', (e) => {
   refresh();
 });
 document.body.addEventListener('input', (e) => {
-  if (e.target instanceof HTMLInputElement && e.target.id === 'hills') {
-    const k = Number(e.target.value);
-    view.setHillKeep(k);
-    view.syncWorld(null);
-    $('hillsVal').textContent = `${Math.round(k * 100)}%`;
-    return;
-  }
   if (!(e.target instanceof HTMLInputElement) || e.target.id !== 'hp' || !city) return;
   city.hp = Number(e.target.value);
   view.syncWorld(null);

@@ -31,6 +31,11 @@ const EASE = 10; // per second: how fast the view follows input
 const GROUND = 1.008; // sphere used for cursor hits
 const CLEARANCE = 0.015; // the camera stays this far above the terrain below it
 
+// The lens the distances are tuned for: a narrower lens stands further
+// back (by `reach`), so what is in view at the look point stays the same
+// while the perspective flattens (less of a small-planet look).
+const REF_FOV = 40;
+
 const smoothstep = (a: number, b: number, x: number) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
@@ -54,6 +59,8 @@ export class GlobeCamera {
   private ground = GROUND; // eased terrain radius at the look point
   // Off while another controller (walk mode) drives the camera.
   enabled = true;
+  // How much further back than the reference lens the camera stands.
+  reach = 1;
 
   // surface(dir, highest): terrain radius at a direction, or the highest
   // terrain around it (keeps the camera above hills and mountains).
@@ -64,6 +71,15 @@ export class GlobeCamera {
     this.cur = { target, forward: northAt(target), dist: 2.4, tilt: 0 };
     this.goal = cloneView(this.cur);
     this.bind(canvas);
+    this.apply();
+  }
+
+  // Sets the lens (vertical field of view, degrees).
+  setLens(fov: number): void {
+    this.camera.fov = fov;
+    this.camera.updateProjectionMatrix();
+    this.reach = Math.tan((REF_FOV * DEG) / 2) / Math.tan((fov * DEG) / 2);
+    this.changed = true;
     this.apply();
   }
 
@@ -161,7 +177,7 @@ export class GlobeCamera {
     const tilt = this.tiltAt(c);
     const look = c.target.clone().multiplyScalar(this.ground);
     const back = c.target.clone().multiplyScalar(Math.cos(tilt)).addScaledVector(c.forward, -Math.sin(tilt));
-    const pos = look.clone().addScaledVector(back, c.dist);
+    const pos = look.clone().addScaledVector(back, c.dist * this.reach);
     // Never dip into the terrain.
     const floor = Math.max(this.ground, this.surface(pos.clone().normalize(), true)) + CLEARANCE;
     if (pos.length() < floor) pos.setLength(floor);
@@ -172,8 +188,7 @@ export class GlobeCamera {
 
   // Ground angle (radians) covered by one pixel of screen height, roughly.
   private radiansPerPixel(el: HTMLElement): number {
-    const fov = this.camera.fov * DEG;
-    return (2 * this.cur.dist * Math.tan(fov / 2)) / Math.max(1, el.clientHeight);
+    return (2 * this.cur.dist * Math.tan((REF_FOV * DEG) / 2)) / Math.max(1, el.clientHeight);
   }
 
   private bind(el: HTMLElement): void {

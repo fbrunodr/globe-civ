@@ -97,6 +97,14 @@ const ROAD_LAYER = 0.00002; // how far the surface sits above the edges
 const ROAD_KERB = [0.62, 0.59, 0.54] as const;
 const SQUARE_GROW = 0.022; // squares reach this far (tile steps) under the streets round them
 const SHADOW_NORMAL_TEXELS = 1.5;
+const WALK_FOV = 55;
+// The look (chosen by comparing in a now-removed panel): a 30° lens from
+// further back (flatter perspective, less of a small planet); a white sun
+// fairly low in the sky over an even, cool sky fill; the sun cooler toward
+// the poles.
+const LENS = 30;
+const LIGHT = { sunColor: 0xffffff, sun: 2.5, sunHeight: 35, fill: 1.0, fillSky: 0xb9cdea, fillGround: 0x4f4232, exposure: 1.0, cool: 2 / 3 };
+const SUN_COOL = new THREE.Color(0xe4edff);
 // Bridges (heights × the world scale; spans in tile steps): the deck stands
 // at least BRIDGE_CLEAR over the water and arches up to BRIDGE_ARCH more on
 // a long span; parapets rise BRIDGE_PARAPET over the deck, the slab is
@@ -141,6 +149,8 @@ export class GlobeRenderer {
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.PerspectiveCamera;
   private readonly sun: THREE.DirectionalLight;
+  // The sky fill: light from every direction (cool sky above, dark earth below).
+  private readonly fill = new THREE.HemisphereLight(LIGHT.fillSky, LIGHT.fillGround, LIGHT.fill);
   private readonly lastView = { pos: new THREE.Vector3(), quat: new THREE.Quaternion() };
   private shadowsDirty = true;
   private readonly cam: GlobeCamera;
@@ -206,7 +216,6 @@ export class GlobeRenderer {
   private readonly origHeight: Float32Array;
   private reshaped = new Set<number>();
   private groundKey = '';
-  private hillKeep = 1;
   private readonly textures = new Map<string, THREE.CanvasTexture>();
 
   private pointer = { x: 0, y: 0, dirty: false };
@@ -229,7 +238,7 @@ export class GlobeRenderer {
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
     // Neutral tone mapping keeps the pastel palette saturated (ACES washes it out).
     this.renderer.toneMapping = THREE.NeutralToneMapping;
-    this.renderer.toneMappingExposure = 1.0;
+    this.renderer.toneMappingExposure = LIGHT.exposure;
     this.scene.background = new THREE.Color(0x04050a);
 
     this.camera = new THREE.PerspectiveCamera(40, 1, 0.005, 200);
@@ -243,14 +252,14 @@ export class GlobeRenderer {
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     // Shadows re-render only when the view or the world changes (laptops).
     this.renderer.shadowMap.autoUpdate = false;
-    this.sun = new THREE.DirectionalLight(0xffefd2, 2.3);
+    this.sun = new THREE.DirectionalLight(LIGHT.sunColor, LIGHT.sun);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(2048, 2048);
     this.sun.shadow.bias = -0.0004;
     this.sun.shadow.normalBias = 0.003;
     this.sun.shadow.radius = 3;
     this.scene.add(this.sun, this.sun.target);
-    this.scene.add(new THREE.HemisphereLight(0xcfe3ff, 0x6b5a3e, 1.05));
+    this.scene.add(this.fill);
 
     // Terrain radius at a direction (the tile under it), or the highest tile
     // center around it (for the camera's clearance).
@@ -432,6 +441,7 @@ export class GlobeRenderer {
     };
     addEventListener('resize', resize, { signal: this.abort.signal });
     resize();
+    this.cam.setLens(LENS);
     this.renderer.setAnimationLoop(() => this.frame());
   }
 
@@ -445,12 +455,6 @@ export class GlobeRenderer {
     this.renderer.forceContextLoss();
   }
 
-  // How much of the hills built-up tiles keep (1: all; the City Lab).
-  setHillKeep(k: number): void {
-    if (k === this.hillKeep) return;
-    this.hillKeep = k;
-    this.cityProps.invalidate();
-  }
   // A density set by hand for a built-up tile (null: the rules decide).
   setDensity(t: number, d: Density | null): void {
     this.cityProps.setDensity(t, d);
@@ -488,7 +492,7 @@ export class GlobeRenderer {
       for (const x of [t, ...g.tiles[t].neighbors]) { this.propCache.delete(x); dirty.add(this.tileChunk[x]!); }
     }
     if (useChanged || this.groundVersion !== g.useVersion) { this.groundVersion = g.useVersion; this.updateCityGround(); }
-    // Built-up ground is drained and its hills softened (before anything is placed there).
+    // Built-up ground is drained (before anything is placed there).
     for (const t of this.terraform()) { this.propCache.delete(t); dirty.add(this.tileChunk[t]!); }
     // Summits levelled for wonders standing on them (before anything is placed there).
     for (const [w, t] of g.wondersBuilt) {
@@ -571,10 +575,12 @@ export class GlobeRenderer {
       const up = this.camera.up.clone();
       this.walk.enter(this.cam.target, up.addScaledVector(this.cam.target, -up.dot(this.cam.target)));
       this.camera.near = 0.00008;
+      this.camera.fov = WALK_FOV; // at eye level, a natural field of view whatever the map's lens
     } else {
       this.walk.exit();
       this.cam.place(this.walk.position, this.walk.facing, 0.1);
       this.camera.near = 0.005;
+      this.camera.fov = LENS;
     }
     this.cam.enabled = !on;
     this.camera.updateProjectionMatrix();
@@ -938,17 +944,17 @@ export class GlobeRenderer {
     this.scene.add(this.borders);
   }
 
-  // Reshapes built-up ground (terraform.ts) when what is built up, or how
-  // much of the hills it keeps, changed. Returns the tiles whose ground moved.
+  // Reshapes built-up ground (terraform.ts: drained wetlands; hills kept
+  // whole) when what is built up changed. Returns the tiles whose ground moved.
   private terraform(): number[] {
     const g = this.game;
     const built = (t: number) => g.use[t] === USE.urban || g.use[t] === USE.center || g.ruins[t] === 1;
-    let key = `${this.hillKeep}|`;
+    let key = '';
     for (let t = 0; t < g.N; t++) if (built(t)) key += `${t},`;
     if (key === this.groundKey) return [];
     this.groundKey = key;
     const topo = this.terrain.topo;
-    const target = cityGround(g.globe, topo, this.layers, this.origHeight, this.terrain.fields.water, built, this.hillKeep);
+    const target = cityGround(g.globe, topo, this.layers, this.origHeight, this.terrain.fields.water, built, 1);
     const changes = new Map(target);
     for (const v of this.reshaped) if (!target.has(v)) changes.set(v, { height: this.origHeight[v]!, up: 0 });
     for (const [v, c] of [...changes]) if (this.terrain.fields.height[v] === c.height) changes.delete(v);
@@ -1479,8 +1485,15 @@ export class GlobeRenderer {
     const focus = (walking ? this.walk.position : this.cam.target).clone();
     const up = walking ? northAt(focus) : cam.up.clone().addScaledVector(focus, -cam.up.dot(focus)).normalize();
     const right = up.clone().cross(focus);
-    const dir = focus.clone().multiplyScalar(2.3).addScaledVector(up, 1.4).addScaledVector(right, -1.0).normalize();
+    // LIGHT.sunHeight above the horizon (fairly low: long shadows).
+    const side = up.clone().multiplyScalar(1.4).addScaledVector(right, -1.0);
+    const dir = focus.clone().multiplyScalar(Math.tan((LIGHT.sunHeight * Math.PI) / 180) * side.length()).add(side).normalize();
     this.sunDir.copy(dir);
+    // The sun cools toward the poles: white at the equator, LIGHT.cool cool
+    // white at the poles, smoothly between (sin²φ of the latitude looked
+    // at; the poles are on y).
+    const lat = focus.clone().normalize().y;
+    this.sun.color.set(LIGHT.sunColor).lerp(SUN_COOL, LIGHT.cool * lat * lat);
     this.sun.position.copy(focus).addScaledVector(dir, 3);
     this.sun.target.position.copy(focus);
     this.sun.target.updateMatrixWorld();
@@ -1498,10 +1511,16 @@ export class GlobeRenderer {
     this.renderer.shadowMap.needsUpdate = true;
   }
 
+  // The camera's height above sea level as the reference lens would have
+  // it (a narrower lens stands further back for the same view).
+  private viewAltitude(): number {
+    return this.walk.active ? this.camera.position.length() - 1 : (this.camera.position.length() - 1) / this.cam.reach;
+  }
+
   // Sky and haze come in as the camera nears the ground: black space from
   // orbit, a blue sky and hazy distance when low over the land or walking.
   private updateAir(): void {
-    const alt = this.camera.position.length() - 1;
+    const alt = this.viewAltitude();
     this.sky.update(this.camera, this.sunDir, alt);
     this.halo.update(this.sunDir, smoothstep(0.1, 0.6, alt / AIR.height));
     this.stars.opacity = smoothstep(0.02, 0.3, alt / AIR.height);
@@ -1571,7 +1590,7 @@ export class GlobeRenderer {
     this.waterMat.setTime(now / 1000);
     // Clouds show from orbit and overhead when walking, never over the board.
     const fog = this.scene.fog as THREE.FogExp2;
-    const alt = this.camera.position.length() - 1;
+    const alt = this.viewAltitude();
     this.weather.update(now / 1000, this.sunDir, this.walk.active ? [0, 0] : [0.15, 0.6],
       this.walk.active ? 1 : smoothstep(0.2, 0.55, alt / AIR.height), { color: fog.color, density: fog.density });
     const t0 = performance.now();
