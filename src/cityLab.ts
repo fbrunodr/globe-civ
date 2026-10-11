@@ -14,7 +14,7 @@ import {
   quarterOf, familyOf, improvementFor, type BuildingKey, type WonderKey, type GrowthKind, type EraIndex, type FamilyKey, type FocusKey, type Output,
 } from './cities.ts';
 import { buildPresets, foundCity, grow, shrink, setEra, addBuilding, addWonder } from './sandbox.ts';
-import { DENSITIES, type Density } from './cityDesigns.ts';
+import { DENSITIES, type Density } from './town/geometry.ts';
 
 const isMapSize = (s: string): s is MapSizeKey => s in MAP_SIZES;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;

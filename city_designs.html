@@ -8,8 +8,8 @@
       #labels { position: fixed; inset: 0; pointer-events: none; }
       .lbl { background: rgba(14,17,26,0.78); color: #e8ecf3; padding: 2px 7px; border-radius: 6px; font: 12px system-ui, sans-serif; white-space: nowrap; }
       body.far .lbl { display: none; }
-      #groups { display: flex; gap: 10px; }
-      #groups label, #topbar label { display: flex; align-items: center; gap: 4px; }
+      #topbar label { display: flex; align-items: center; gap: 4px; }
+      body:not([data-view="towns"]) .towns-only { display: none !important; }
     </style>
   </head>
   <body>
@@ -19,12 +19,17 @@
       <div id="topbar">
         <span id="civ">Town designs</span>
         <nav class="devnav"><a href="/">Game</a><a href="/gallery.html">Gallery</a><a href="/city_lab.html">City lab</a><a class="active" href="/city_designs.html">Town designs</a><a href="/world_view.html">World view</a></nav>
-        <span id="groups"></span>
+        <button data-view="borders" class="active">Borders</button>
+        <button data-view="middles">Middles</button>
+        <button data-view="towns">Sample towns</button>
         <label>Density <select id="density"><option value="all">all</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></label>
+        <label class="towns-only">Town <select id="townDensity"><option value="low">low</option><option value="medium" selected>medium</option><option value="high">high</option><option value="mixed">mixed</option></select></label>
+        <button id="reroll" class="towns-only">Another town</button>
+        <label><input type="checkbox" id="walls" /> walls</label>
         <label><input type="checkbox" id="buildings" checked /> buildings in spots</label>
         <button id="fit">Whole sheet</button>
         <span class="spacer"></span>
-        <span id="hint"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Q</kbd>/<kbd>E</kbd> rotate · <kbd>Z</kbd>/<kbd>X</kbd> zoom · double-click a cell to look closer · row = left tile, column = right tile</span>
+        <span id="hint"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Q</kbd>/<kbd>E</kbd> rotate · <kbd>Z</kbd>/<kbd>X</kbd> zoom</span>
         <span id="info"></span>
       </div>
     </div>

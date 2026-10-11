@@ -10,7 +10,7 @@ import { buildPaintData, fanCoords, fanFrames, paintAt, softAt, warpAt, FAN_COOR
 import { buildRelief, CONE_RADIUS, CRATER, CRATER_DEPTH, type Relief } from './relief.ts';
 import { buildSurface, meshLevels, type SurfaceLayers } from './surface.ts';
 import { cityGround } from './terraform.ts';
-import type { Density } from './cityDesigns.ts';
+import type { Density } from './town/geometry.ts';
 import { makeWaterMaterial, type WaterMaterial } from './water.ts';
 import { WalkCamera } from './walk.ts';
 import { makeSky, makeHalo, installHaze, HAZE, HAZE_DENSITY, AIR } from './sky.ts';

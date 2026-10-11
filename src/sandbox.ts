@@ -5,7 +5,7 @@
 
 import type { Game, City } from './game.ts';
 import { ERAS, BUILDINGS, type BuildingKey, type WonderKey, type FocusKey, type EraIndex } from './cities.ts';
-import type { Density } from './cityDesigns.ts';
+import type { Density } from './town/geometry.ts';
 
 export function foundCity(g: Game, tile: number, owner: number): City | null {
   const settler = g.createUnit('settler', owner, tile);

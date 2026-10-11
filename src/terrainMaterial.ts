@@ -391,7 +391,7 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               urban = smoothstep(0.36, 0.5, uS + 0.5 * edgeN) * keep;
               // No paving: the town keeps its own ground (gardens and yards
               // between the houses), just a little trodden. Streets and
-              // squares are drawn over it by render.ts (cityDesigns.ts).
+              // squares are drawn over it by render.ts (src/town).
               vec3 trodden = diffuseColor.rgb * vec3(0.97, 0.95, 0.9);
               diffuseColor.rgb = mix(diffuseColor.rgb, trodden, 0.35 * urban);
             }

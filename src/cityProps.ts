@@ -1,9 +1,10 @@
 // What stands on a city's tiles. Built-up tiles (the center and urban
-// tiles) are stamped with hand-drawn layouts (cityDesigns.ts, laid onto the
-// tiles by cityStamp.ts): each tile gets a drawing by its density and role
-// (center, wonder square, or an ordinary block in one of five variants,
-// turned by a fixed rotation), and every edge gets the strip that joins
-// the two drawings, or the town's outskirts toward open land and water.
+// tiles) are stamped with hand-drawn town drawings (src/town, laid onto the
+// tiles by cityStamp.ts): each tile gets a middle by its density and role
+// (center, wonder square, or an ordinary block in one of five variants),
+// turned so its open sides face the town; every edge gets the strip drawn
+// for the two border types meeting there, or the town's outskirts toward
+// open land and its waterfront toward water.
 // The drawings fix the skeleton (streets, lots, building spots); the era
 // and climate only pick the models (houses, roofs, wall colors).
 //
@@ -18,8 +19,9 @@ import * as THREE from 'three';
 import type { Game, City } from './game.ts';
 import { USE, SLOTS, improvementFor, type ImprovementKey, type BuildingKey, type WonderKey, type EraIndex } from './cities.ts';
 import { ROOFS, buildingEntry, buildBuildingGeometry, type BuildingKind } from './buildingCatalog.ts';
-import { HALF_WIDTH, designFor, type Density, type LotKind, type Role, type Sides } from './cityDesigns.ts';
-import { stamp, type FanPt, type Stamp, type StampTile, type StampedSpot } from './cityStamp.ts';
+import { HALF_WIDTH, type Density, type LotKind, type Sides } from './town/geometry.ts';
+import { middlesFor, type Role } from './town/index.ts';
+import { stamp, bestTurn, type FanPt, type Stamp, type StampTile, type StampedSpot } from './cityStamp.ts';
 import { mulberry32, type Rng } from './rng.ts';
 
 // The ground at a spot of a tile (render.ts samples the terrain).
@@ -94,7 +96,7 @@ const RURAL: Record<ImprovementKey, BuildingKind> = {
 
 // Street furniture: one model each.
 const DECOR: Record<Exclude<LotKind, 'house' | 'row' | 'block' | 'tower'>, BuildingKind> = {
-  tree: 'gardenTree', well: 'well', fountain: 'fountain', stall: 'stall',
+  tree: 'gardenTree', well: 'well', fountain: 'fountain', stall: 'stall', shed: 'shed',
 };
 
 // Roofs follow the era and the climate: thatch in the Ancient era and small
@@ -245,7 +247,9 @@ export class CityProps {
 
   // ---------- the town ----------
 
-  // The tiles to stamp: each built tile's drawing, rotation and neighbors.
+  // The tiles to stamp: each built tile's middle (by density and role, a
+  // variant by the tile), turned so its open sides face the town's other
+  // tiles and its closed sides open land; and its neighbors.
   stampTiles(tiles: readonly number[], walledCenter: number | null): StampTile[] {
     const g = this.game;
     const mine = new Set(tiles);
@@ -255,15 +259,14 @@ export class CityProps {
       const city = g.cityById.get(g.tileCity[t]!);
       const role: Role = g.use[t] === USE.center ? 'center'
         : g.wonderAt[t] || city?.wonderTile === t ? 'wonder' : 'block';
+      const across = tile.neighbors.map((n) => ({
+        tile: n, back: g.tiles[n].neighbors.indexOf(t),
+        kind: mine.has(n) ? 'town' as const : g.isWater(n) ? 'water' as const : 'land' as const,
+      }));
       const h = mix(t, 0x51ab);
-      return {
-        tile: t, sides: k, design: designFor(k, role, this.densityOf(t), h % 5), rot: (h >>> 8) % k,
-        walled: t === walledCenter,
-        across: tile.neighbors.map((n) => ({
-          tile: n, back: g.tiles[n].neighbors.indexOf(t),
-          kind: mine.has(n) ? 'town' as const : g.isWater(n) ? 'water' as const : 'land' as const,
-        })),
-      };
+      const options = middlesFor(k, role, this.densityOf(t));
+      const middle = options[h % options.length]!;
+      return { tile: t, sides: k, middle, rot: bestTurn(middle, k, across, h >>> 8), walled: t === walledCenter, across };
     });
   }
 
@@ -309,7 +312,7 @@ export class CityProps {
       placeAt(sp, kind, buildingEntry(kind).leaf, mulberry32(mix(sp.tile, sp.k + 11)), true);
     }
     for (const sp of st.halls) placeAt(sp, 'hall', 0x5f5650, mulberry32(mix(sp.tile, 7)), true);
-    for (const sp of st.middles) {
+    for (const sp of st.wonders) {
       const w = g.wonderOn(sp.tile);
       const kind = w ? WONDER_MODEL[w] : city.wonderTile === sp.tile ? 'scaffold' : null;
       if (kind) placeAt(sp, kind, buildingEntry(kind).leaf, mulberry32(mix(sp.tile, 9)), false);
@@ -327,7 +330,7 @@ export class CityProps {
       const rand = mulberry32(l.seed);
       const sc = local(s.dir, f);
       const yaw = facing(s.dir, f) + Math.PI / 2;
-      if (l.kind === 'tree' || l.kind === 'well' || l.kind === 'fountain' || l.kind === 'stall') {
+      if (l.kind === 'tree' || l.kind === 'well' || l.kind === 'fountain' || l.kind === 'stall' || l.kind === 'shed') {
         const kind = DECOR[l.kind];
         put(l.tile, this.make(kind, s.dir, s.ground, yaw + (l.kind === 'tree' ? rand() * 6.28 : 0), HOUSE_SCALE * sc * (l.kind === 'tree' ? 0.8 + 0.4 * rand() : 1), buildingEntry(kind).leaf, rand));
         continue;
@@ -360,8 +363,9 @@ export class CityProps {
     for (const w of st.walls) {
       const pts = w.pts.map(at);
       pts.forEach((s, n) => {
-        if ((n === 0 || n === pts.length - 1 || n === 2) && standsAt('wallTower', s)) {
-          put(w.tile, ...this.stand('wallTower', s.dir, 0, HOUSE_SCALE * (n === 2 ? 1 : 0.85), buildingEntry('wallTower').leaf, rand, city.owner));
+        const corner = w.pts[n]!.wb === 0;
+        if ((n === 0 || n === pts.length - 1 || corner) && standsAt('wallTower', s)) {
+          put(w.tile, ...this.stand('wallTower', s.dir, 0, HOUSE_SCALE * (corner ? 1 : 0.85), buildingEntry('wallTower').leaf, rand, city.owner));
         }
         const nx = pts[n + 1];
         if (!nx) return;
@@ -451,8 +455,9 @@ export class CityProps {
     const g = this.game, rand = mulberry32((t + 7) * 2246822519);
     const k = g.tiles[t].corners.length as Sides;
     const h = mix(t, 0x51ab);
+    const options = middlesFor(k, 'block', 'low');
     const { lots } = stamp([{
-      tile: t, sides: k, design: designFor(k, 'block', 'low', h % 5), rot: (h >>> 8) % k, walled: false,
+      tile: t, sides: k, middle: options[h % options.length]!, rot: (h >>> 8) % k, walled: false,
       across: g.tiles[t].neighbors.map((n) => ({ tile: n, back: g.tiles[n].neighbors.indexOf(t), kind: 'land' as const })),
     }]);
     const out: PlacedBuilding[] = [];

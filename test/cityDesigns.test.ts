@@ -1,15 +1,14 @@
-// Guarantees of the hand-drawn town tiles (cityDesigns.ts), how they are
-// laid onto the globe (cityStamp.ts) and the ground cities reshape
+// Guarantees of the hand-drawn town tiles (src/town), how they are laid
+// onto the globe (cityStamp.ts) and the ground cities reshape
 // (terraform.ts).
 
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import {
-  ALL_DESIGNS, BLOCKS, PENT_BLOCK, CENTER, WONDER_SQUARE, DENSITIES, DESIGN_ERRORS, VARIANTS,
-  connection, connected, coreRegion, halfRegion, layoutProblems, port, stripDepth, rhoOf, RC,
-  type Across, type Design, type Pt,
-} from '../src/cityDesigns.ts';
-import { stamp, coreToFan, stripToFan, type FanPt } from '../src/cityStamp.ts';
+import { MIDDLES, STRIPS, WANTED_STRIPS, middlesFor, stripFor } from '../src/town/index.ts';
+import { BORDER_TYPES, STUB_CLASS, middleStubs, stripStubs, shapeOfType, stubClass } from '../src/town/borders.ts';
+import { storedLots } from '../src/town/drawings.ts';
+import { DENSITIES, HALF_WIDTH, INR, RC, STRIP_DEPTH, distToLine, inStrip, layoutProblems, pointInPoly, reaches, rhoOf, type Pt } from '../src/town/geometry.ts';
+import { stamp, coreToFan, stripToFan, drawingSide, type FanPt } from '../src/cityStamp.ts';
 import { builtMask, cityGround } from '../src/terraform.ts';
 import { CityProps, tileDensity, allowedDensity, type CitySpot } from '../src/cityProps.ts';
 import { Game } from '../src/game.ts';
@@ -18,64 +17,80 @@ import { USE } from '../src/cities.ts';
 import { locate } from '../src/terrainMesh.ts';
 import type { Globe } from '../src/goldberg.ts';
 
-const homes = (d: Design) => d.lots.filter((l) => l.kind === 'house' || l.kind === 'row' || l.kind === 'block' || l.kind === 'tower').length;
+const endsAt = (pts: readonly Pt[], p: Pt) => [pts[0]!, pts[pts.length - 1]!].some((q) => Math.hypot(q.x - p.x, q.y - p.y) < 1e-6);
 
 describe('DS1: the catalogue', () => {
-  it('every drawing draws as written (each spot found room)', () => expect(DESIGN_ERRORS).toEqual([]));
-  it('five hex drawings and one pentagon drawing per density, a center and a wonder square per density and shape', () => {
+  it('three border types per density', () => expect(BORDER_TYPES.length).toBe(9));
+  it('five hex middles and one pentagon middle per density, a center and a wonder square per density and shape', () => {
     for (const d of DENSITIES) {
-      expect(BLOCKS[d].length).toBe(VARIANTS);
-      expect(BLOCKS[d].every((x) => x.sides === 6 && x.density === d && x.role === 'block')).toBe(true);
-      expect(PENT_BLOCK[d].sides).toBe(5);
+      expect(middlesFor(6, 'block', d).length, d).toBe(5);
+      expect(middlesFor(5, 'block', d).length, d).toBe(1);
       for (const k of [5, 6] as const) {
-        expect(CENTER[k][d].hall).not.toBeNull();
-        expect(WONDER_SQUARE[k][d].middle).not.toBeNull();
+        expect(middlesFor(k, 'center', d).length).toBeGreaterThanOrEqual(1);
+        expect(middlesFor(k, 'wonder', d).length).toBeGreaterThanOrEqual(1);
       }
     }
-    expect(new Set(ALL_DESIGNS.map((d) => d.id)).size).toBe(ALL_DESIGNS.length);
+    expect(new Set(MIDDLES.map((m) => m.id)).size).toBe(MIDDLES.length);
   });
-  it('low density has one building spot; medium and high two (centers: two plus the hall; wonder squares none)', () => {
-    for (const d of ALL_DESIGNS) {
-      const want = d.role === 'wonder' ? 0 : d.role === 'center' ? 2 : d.density === 'low' ? 1 : 2;
-      expect(d.spots.length, d.id).toBe(want);
+  it('low middles have one building spot, medium and high two; centers two and the hall; wonder squares the wonder', () => {
+    for (const m of MIDDLES) {
+      const want = m.role === 'wonder' ? 0 : m.role === 'center' ? 2 : m.density === 'low' ? 1 : 2;
+      expect(m.spots.length, m.id).toBe(want);
+      expect(m.hall !== null, m.id).toBe(m.role === 'center');
+      expect(m.wonder !== null, m.id).toBe(m.role === 'wonder');
     }
   });
-  it('denser drawings hold more homes: low < medium on average', () => {
-    const avg = (xs: readonly Design[]) => xs.reduce((a, d) => a + homes(d), 0) / xs.length;
-    expect(avg(BLOCKS.medium)).toBeGreaterThan(avg(BLOCKS.low) * 1.5);
-    for (const d of BLOCKS.low) expect(homes(d), d.id).toBeGreaterThanOrEqual(15);
-    for (const d of BLOCKS.high) expect(homes(d), d.id).toBeGreaterThanOrEqual(15);
+  it('a strip for every pair of border types, and every type toward open land and water', () => {
+    const missing = WANTED_STRIPS.filter(({ a, b }) => !stripFor(a, b)).map(({ a, b }) => `${a}|${b}`);
+    expect(missing).toEqual([]);
+    for (const a of BORDER_TYPES) for (const b of BORDER_TYPES) expect(stripFor(a, b), `${a}|${b}`).not.toBeNull();
+  });
+  it('every drawing has its houses stored (lots.json), drawn by hand, not generated', () => {
+    expect([...MIDDLES, ...STRIPS].filter((d) => storedLots(d.id) === null).map((d) => d.id)).toEqual([]);
+  });
+  it('middles are not all alike: no middle is open on all sides the same way', () => {
+    for (const m of MIDDLES.filter((x) => x.role === 'block')) expect(new Set(m.borders).size, m.id).toBeGreaterThan(1);
   });
 });
 
-describe('DS2: every drawing is sound', () => {
-  for (const d of ALL_DESIGNS) {
-    it(`${d.id}: lots inside the core, clear of streets, squares, spots and each other; streets reach every port`, () => {
-      expect(layoutProblems(coreRegion(d.sides), d.streets, d.lots, d.spots, d.squares)).toEqual([]);
-      const ports = Array.from({ length: d.sides }, (_, j) => port(d.sides, j));
-      expect(connected(d.streets, ports)).toBe(true);
-      // Only port streets touch the core's edge.
-      for (const s of d.streets) for (const p of s.pts) expect(rhoOf(d.sides, p)).toBeLessThanOrEqual(RC + 1e-9);
+describe('DS2: every middle is sound', () => {
+  for (const m of MIDDLES) {
+    it(`${m.id}: streets start at its border stubs at the border's width and form one network; lots clear of everything`, () => {
+      m.borders.forEach((s, j) => {
+        if (s === 'closed') return;
+        for (const p of middleStubs(m.sides, j, s)) {
+          const hit = m.streets.find((st) => endsAt(st.pts, p));
+          expect(hit, `side ${j}`).toBeDefined();
+          expect(hit!.cls, `side ${j}`).toBe(STUB_CLASS[m.density][s]);
+        }
+      });
+      expect(reaches(m.streets, [])).toBe(true);
+      for (const st of m.streets) for (const p of st.pts) expect(rhoOf(m.sides, p)).toBeLessThanOrEqual(RC + 1e-9);
+      expect(layoutProblems((p) => rhoOf(m.sides, p) <= RC - 0.012 / INR[m.sides], m.streets, m.lots, m.spots, m.squares)).toEqual([]);
+      for (const sp of [...m.spots, ...(m.hall ? [m.hall] : [])]) {
+        for (const st of m.streets) expect(distToLine(sp, st.pts)).toBeGreaterThanOrEqual(sp.r + HALF_WIDTH[st.cls]);
+      }
+      for (const sp of m.spots) for (const q of m.squares) if (q.paved) expect(pointInPoly(sp, q.pts)).toBe(false);
     });
   }
 });
 
-describe('DS3: every connection is sound', () => {
-  it('for every pair of drawings (and toward land and water, with and without walls): lots inside their half, clear of everything; the street joins both ports', () => {
-    const bad: string[] = [];
-    const fars: Across[] = [...ALL_DESIGNS, 'land', 'water'];
-    for (const a of ALL_DESIGNS) {
-      for (const b of fars) {
-        for (const walls of [false, true]) {
-          const s = connection(a, b, { wallA: walls, wallB: walls });
-          const region = (p: Pt) => halfRegion(a.sides, -1)(p) || (typeof b !== 'string' && halfRegion(b.sides, 1)(p));
-          const pr = layoutProblems(region, s.streets, s.lots, []);
-          const reach = [{ x: 0, y: -stripDepth(a.sides) }, ...(typeof b !== 'string' ? [{ x: 0, y: stripDepth(b.sides) }] : [])];
-          if (pr.length || !connected(s.streets, reach)) bad.push(`${a.id}|${typeof b === 'string' ? b : b.id}|${walls}: ${pr.slice(0, 2).join('; ')}`);
-        }
-      }
+describe('DS3: every strip is sound', () => {
+  for (const s of STRIPS) {
+    it(`${s.id}: streets start at both sides' stubs at their widths; lots inside the strip, clear of everything`, () => {
+      const one = s.b === 'land' || s.b === 'water';
+      for (const p of stripStubs(shapeOfType(s.a), -1)) expect(s.streets.find((st) => endsAt(st.pts, p))?.cls).toBe(stubClass(s.a));
+      if (!one) for (const p of stripStubs(shapeOfType(s.b as typeof s.a), 1)) expect(s.streets.find((st) => endsAt(st.pts, p))?.cls).toBe(stubClass(s.b as typeof s.a));
+      for (const st of s.streets) for (const p of st.pts) expect(inStrip(p, -1e-9)).toBe(true);
+      expect(layoutProblems((p) => inStrip(p, 0.004, one) && Math.abs(p.y) <= STRIP_DEPTH - 0.022, s.streets, s.lots, [], s.squares)).toEqual([]);
+    });
+  }
+  it('a strip used the other way round is mirrored: each side still meets its own stubs', () => {
+    for (const a of BORDER_TYPES) for (const b of BORDER_TYPES) {
+      const s = stripFor(a, b)!;
+      for (const p of stripStubs(shapeOfType(a), -1)) expect(s.streets.some((st) => endsAt(st.pts, p)), `${a}|${b}`).toBe(true);
+      for (const p of stripStubs(shapeOfType(b), 1)) expect(s.streets.some((st) => endsAt(st.pts, p)), `${a}|${b}`).toBe(true);
     }
-    expect(bad).toEqual([]);
   });
 });
 
@@ -102,7 +117,7 @@ describe('DS4: drawings meet on the globe', () => {
   const cities = g.cities.filter((c) => g.cityTiles(c, USE.urban).length > 0);
   it('the game has towns with urban tiles to test', () => expect(cities.length).toBeGreaterThan(0));
 
-  it('a strip point on an edge is the same point seen from either tile; a core port is where its strip starts', () => {
+  it("a strip point on an edge is the same point from either tile; a middle's stubs are where its strips' streets start", () => {
     let worst = 0;
     for (const c of cities) {
       const tiles = cp.stampTiles([c.tile, ...g.cityTiles(c, USE.urban)], null);
@@ -110,16 +125,18 @@ describe('DS4: drawings meet on the globe', () => {
         for (let i = 0; i < s.sides; i++) {
           const x = s.across[i]!;
           const nb = tiles.find((o) => o.tile === x.tile);
-          // Port j of the drawing lies on tile side (j + rot) % k, where the strip starts.
-          const j = (i - s.rot + s.sides) % s.sides;
-          const viaCore = dirOf(g.globe, coreToFan(s, port(s.sides, j)));
-          const viaStrip = dirOf(g.globe, stripToFan(s, i, null, { x: 0, y: -stripDepth(s.sides) }));
-          worst = Math.max(worst, viaCore.angleTo(viaStrip) / D);
+          const shape = s.middle.borders[drawingSide(s, i)]!;
+          middleStubs(s.sides, drawingSide(s, i), shape).forEach((p, n) => {
+            // The stub as the middle has it, and as the strip has it (side A, stubs in order along the edge).
+            const viaCore = dirOf(g.globe, coreToFan(s, p));
+            const viaStrip = dirOf(g.globe, stripToFan(s.tile, i, null, stripStubs(shape, -1)[n]!, -1));
+            worst = Math.max(worst, viaCore.angleTo(viaStrip) / D);
+          });
           if (!nb) continue;
           for (const ex of [-0.2, -0.05, 0.1, 0.25]) {
-            const b = { tile: nb.tile, sides: nb.sides, back: x.back };
-            const fromA = dirOf(g.globe, stripToFan(s, i, b, { x: ex, y: 0 }, -1));
-            const fromB = dirOf(g.globe, stripToFan(s, i, b, { x: ex, y: 0 }, 1));
+            const b = { tile: nb.tile, back: x.back };
+            const fromA = dirOf(g.globe, stripToFan(s.tile, i, b, { x: ex, y: 0 }, -1));
+            const fromB = dirOf(g.globe, stripToFan(s.tile, i, b, { x: ex, y: 0 }, 1));
             worst = Math.max(worst, fromA.angleTo(fromB) / D);
           }
         }
@@ -128,16 +145,16 @@ describe('DS4: drawings meet on the globe', () => {
     expect(worst).toBeLessThan(1e-6);
   });
 
-  it('lots from different drawings and strips never stand on each other', () => {
+  it('no strip is missing, and lots from different drawings never stand on each other', () => {
     const bad: string[] = [];
     for (const c of cities) {
-      const tiles = cp.stampTiles([c.tile, ...g.cityTiles(c, USE.urban)], c.buildings.has('walls') ? c.tile : null);
-      const st = stamp(tiles);
-      const pts = st.lots.map((l) => ({ d: dirOf(g.globe, l.at), src: `${l.tile}`, l }));
+      const st = stamp(cp.stampTiles([c.tile, ...g.cityTiles(c, USE.urban)], c.buildings.has('walls') ? c.tile : null));
+      expect(st.missing).toEqual([]);
+      const pts = st.lots.map((l) => ({ d: dirOf(g.globe, l.at), l }));
       for (let a = 0; a < pts.length; a++) {
         for (let b = a + 1; b < pts.length; b++) {
-          // Footprints are at least 0.016 tile steps from their middle to their side.
-          if (pts[a]!.d.angleTo(pts[b]!.d) / D < 0.016) bad.push(`city ${c.name}: lots ${a} (${pts[a]!.l.kind}) and ${b} (${pts[b]!.l.kind})`);
+          // Footprints are at least 0.008 tile steps from their middle to their side (wells).
+          if (pts[a]!.d.angleTo(pts[b]!.d) / D < 0.012) bad.push(`city ${c.name}: lots ${a} (${pts[a]!.l.kind}) and ${b} (${pts[b]!.l.kind})`);
         }
       }
     }

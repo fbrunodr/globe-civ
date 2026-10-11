@@ -120,6 +120,7 @@ export const BUILDINGS_CATALOG = {
     flat(0.0036, 0.0036, p.leaf, { y: 0.00055, ry: Math.PI / 8 }),
     column(0.0026, 0.00035, MARBLE),
   ] },
+  shed: { name: 'Garden shed', leaf: 0x6a5a48, build: (p) => house(0.0022, 0.0016, 0.0013, 0.0008, TIMBER, p.leaf) },
   stall: { name: 'Market stall', leaf: 0xa86a4a, build: (p) => [
     ...[[-0.0009, -0.0006], [0.0009, -0.0006], [-0.0009, 0.0006], [0.0009, 0.0006]].map(([x, z]) => column(0.0016, 0.0001, TIMBER, { x, z })),
     gable(0.0024, 0.0018, 0.0007, p.leaf, { y: 0.0016 }),
