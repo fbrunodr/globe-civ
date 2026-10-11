@@ -56,11 +56,13 @@ export interface RiverCourse {
   tributary: boolean;
 }
 
-// Layers kept so cities can reshape their ground later (render.ts): what
-// hills add to the height, and wetland pools as dug (the ground before
-// the dig and the pool's water level; NaN where there is no pool).
+// Layers kept for what is built on the ground later (render.ts): what
+// hills add to the height, the ground before rivers were cut (bridges),
+// and wetland pools as dug (the ground before the dig and the pool's water
+// level; NaN where there is no pool).
 export interface SurfaceLayers {
   hill: Float32Array;
+  preRiver: Float32Array; // the ground before rivers cut their channels and valleys (bridges span at this level)
   preDig: Float32Array;
   poolLevel: Float32Array;
 }
@@ -342,6 +344,7 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
   const source = new Uint8Array(V); // 0 open water, 1 river, 2 pool
 
   // ---- 3. rivers ----
+  const preRiver = height.slice();
   const smp = newSample();
   let hint = 0;
   const sampleField = (f: Float32Array, p: THREE.Vector3): number => {
@@ -688,7 +691,7 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
       water3d: [{ name: 'tint', itemSize: 4, data: tint }, { name: 'flow', itemSize: 3, data: flowVec },
         { name: 'wsrc', itemSize: 1, data: Float32Array.from(source) }, { name: 'wstep', itemSize: 1, data: waterSteps(topo, height, water, fall) }],
     },
-    layers: { hill, preDig, poolLevel },
+    layers: { hill, preRiver, preDig, poolLevel },
     coast,
     source,
     fall,

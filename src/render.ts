@@ -86,6 +86,23 @@ const ROAD_RGB = [0.62, 0.55, 0.43] as const;
 const DIRT_RGB = [0.55, 0.49, 0.39] as const;
 const PAVED_RGB = [0.55, 0.53, 0.49] as const;
 const PLAZA_RGB = [0.6, 0.57, 0.52] as const;
+// Bridges (heights × the world scale; spans in tile steps): the deck stands
+// at least BRIDGE_CLEAR over the water and arches up to BRIDGE_ARCH more on
+// a long span; parapets rise BRIDGE_PARAPET over the deck, the slab is
+// BRIDGE_THICK deep; piers stand about every BRIDGE_PIER_STEP.
+const BRIDGE_CLEAR = 0.0004;
+const BRIDGE_ARCH = 0.0002;
+const BRIDGE_PARAPET = 0.0002;
+const BRIDGE_THICK = 0.00015;
+const BRIDGE_PIER_STEP = 0.05;
+const BRIDGE_DEPTH = 0.00015; // water at least this deep gets a bridge
+const BRIDGE_SPANDREL = 0.0003; // stone arches: how far the sides reach down at the piers
+const BRIDGE_TIMBER = 0x7a5f45;
+const BRIDGE_STONE = 0xa49c8c;
+// The ground under a direction: its tile, the ground and water as drawn,
+// and the land before rivers cut into it (radii).
+type Ground = (d: THREE.Vector3) => { t: number; ground: number; water: number; land: number };
+interface Bridges { pos: number[]; col: number[] }
 
 // A tile highlighted in the overlay (growth placement options).
 export interface TileMark {
@@ -164,6 +181,8 @@ export class GlobeRenderer {
   private groundVersion = -1;
   private readonly levelled = new Set<number>();
   private roads: THREE.Mesh | null = null;
+  private bridges: THREE.Mesh | null = null;
+  private readonly bridgeMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
   private roadsKey = '';
   private readonly prevUse: Uint8Array;
   // City ground (terraform.ts): the surface's layers, the heights as built,
@@ -1031,12 +1050,16 @@ export class GlobeRenderer {
     const halfW = 0.06 * r0, lift = 0.00025 * this.scale;
     const pos: number[] = [], col: number[] = [];
     let hint = 0;
-    const at = (d: THREE.Vector3) => {
+    const smp = newSample(), pre = this.layers.preRiver;
+    const at: Ground = (d: THREE.Vector3) => {
       const l = locate(g.globe, d, hint);
       hint = l.t;
       const lv = this.terrain.at(l.t, l.i, l.wa, l.wb);
-      return { t: l.t, h: Math.max(lv.ground, lv.water) };
+      this.terrain.topo.sample(l.t, l.i, l.wa, l.wb, smp);
+      const land = 1 + smp.w[0] * pre[smp.v[0]]! + smp.w[1] * pre[smp.v[1]]! + smp.w[2] * pre[smp.v[2]]!;
+      return { t: l.t, ground: lv.ground, water: lv.water, land };
     };
+    const bridges: Bridges = { pos: [], col: [] };
     for (const road of planRoads(g)) {
       // Smooth the tile-center polyline (Chaikin), then resample it finely.
       let pts = road.tiles.map((t) => g.tiles[t].center.clone());
@@ -1055,10 +1078,12 @@ export class GlobeRenderer {
         for (let j = 0; j < n; j++) fine.push(a.clone().lerp(b, j / n).normalize());
       }
       fine.push(pts[pts.length - 1]!);
-      this.drape(fine, halfW, ROAD_RGB, pos, col, at, lift);
+      // Stone bridges once either end has left the Ancient era.
+      const stone = [road.a, road.b].some((id) => { const c = g.cityById.get(id); return c !== undefined && g.players[c.owner]!.era > 0; });
+      this.drape(fine, halfW, ROAD_RGB, pos, col, at, lift, bridges, stone);
     }
     // Streets and squares inside towns (cityProps.ts lays them out).
-    for (const st of this.cityProps.streets()) this.drape(st.points, st.halfWidth, st.paved ? PAVED_RGB : DIRT_RGB, pos, col, at, lift);
+    for (const st of this.cityProps.streets()) this.drape(st.points, st.halfWidth, st.paved ? PAVED_RGB : DIRT_RGB, pos, col, at, lift, bridges, st.paved);
     for (const pv of this.cityProps.pavings()) this.pave(pv.points, at, lift, pos, col);
     if (this.roads) {
       this.scene.remove(this.roads);
@@ -1076,13 +1101,25 @@ export class GlobeRenderer {
     this.roads.receiveShadow = true;
     this.roads.renderOrder = 1;
     this.scene.add(this.roads);
+    if (this.bridges) {
+      this.scene.remove(this.bridges);
+      this.bridges.geometry.dispose();
+    }
+    const bgeo = new THREE.BufferGeometry();
+    bgeo.setAttribute('position', new THREE.Float32BufferAttribute(bridges.pos, 3));
+    bgeo.setAttribute('color', new THREE.Float32BufferAttribute(bridges.col, 3));
+    bgeo.computeVertexNormals();
+    this.bridges = new THREE.Mesh(bgeo, this.bridgeMat);
+    this.bridges.castShadow = true;
+    this.bridges.receiveShadow = true;
+    this.scene.add(this.bridges);
   }
 
   // A paved square: a fan from its middle, each point on the ground.
-  private pave(pts: readonly THREE.Vector3[], at: (d: THREE.Vector3) => { t: number; h: number }, lift: number, pos: number[], col: number[]): void {
+  private pave(pts: readonly THREE.Vector3[], at: Ground, lift: number, pos: number[], col: number[]): void {
     if (pts.length < 3 || !this.game.explored[at(pts[0]!).t]) return;
     const mid = pts.reduce((a, p) => a.add(p), new THREE.Vector3()).normalize();
-    const on = (d: THREE.Vector3) => d.clone().multiplyScalar(at(d).h + lift);
+    const on = (d: THREE.Vector3) => { const h = at(d); return d.clone().multiplyScalar(Math.max(h.ground, h.water) + lift); };
     // Edges subdivided so the paving follows the ground.
     const ring: THREE.Vector3[] = [];
     pts.forEach((p, k) => { const q = pts[(k + 1) % pts.length]!; for (let s = 0; s < 3; s++) ring.push(p.clone().lerp(q, s / 3).normalize()); });
@@ -1097,23 +1134,55 @@ export class GlobeRenderer {
     });
   }
 
-  // A ribbon along `pts` draped on the ground (or the water), three
-  // vertices across: soft edge, middle, soft edge. Skips unexplored ground.
-  private drape(pts: readonly THREE.Vector3[], halfW: number, rgb: readonly [number, number, number], pos: number[], col: number[],
-    at: (d: THREE.Vector3) => { t: number; h: number }, lift: number): void {
-    const g = this.game;
+  // A ribbon along `pts` draped on the ground, three vertices across: soft
+  // edge, middle, soft edge. Where it crosses water it goes over a bridge:
+  // a deck arching gently from bank to bank, always clear of the water,
+  // with parapets along it and piers down to the bed (timber, or stone).
+  // Skips unexplored ground.
+  private drape(pts: readonly THREE.Vector3[], halfWidth: number | readonly number[], rgb: readonly [number, number, number], pos: number[], col: number[],
+    at: Ground, lift: number, bridges?: Bridges, stone = false): void {
+    const g = this.game, s = this.scale;
+    const n = pts.length;
+    const hwAt = (k: number) => (typeof halfWidth === 'number' ? halfWidth : halfWidth[k]!);
+    const here = pts.map((d) => at(d));
+    // Bridge decks over the wet stretches: from the last dry point before to the first after.
+    const deck: (number | null)[] = here.map(() => null);
+    // (Only real water: shallow wet ground, a marsh's rim, is walked over.)
+    const wet = here.map((h) => h.water > h.ground + BRIDGE_DEPTH * s);
+    for (let k = 0; k < n; k++) {
+      if (!wet[k] || (k > 0 && wet[k - 1])) continue;
+      let e = k;
+      while (e + 1 < n && wet[e + 1]) e++;
+      const a = Math.max(0, k - 1), b = Math.min(n - 1, e + 1);
+      const ha = wet[a] ? here[a]!.water : here[a]!.ground, hb = wet[b] ? here[b]!.water : here[b]!.ground;
+      // Over the water, and no lower than the land was before the river cut its valley.
+      let water = -Infinity, land = 0;
+      for (let i = k; i <= e; i++) { water = Math.max(water, here[i]!.water); land += here[i]!.land; }
+      land /= e - k + 1;
+      const span = pts[a]!.angleTo(pts[b]!) / g.globe.avgEdgeAngle;
+      const arch = BRIDGE_ARCH * s * Math.min(1, span / 0.12);
+      for (let i = a; i <= b; i++) {
+        const t = b > a ? (i - a) / (b - a) : 0.5;
+        const line = ha + (hb - ha) * t + arch * Math.sin(Math.PI * t);
+        // Clear of the water in the middle, easing onto the banks at the ends.
+        deck[i] = i === a || i === b ? line : Math.max(line, water + BRIDGE_CLEAR * s, Math.min(land, Math.max(ha, hb) + arch));
+      }
+      if (bridges && g.explored[here[k]!.t]) this.bridge(pts, deck, here, a, b, Math.max(hwAt(a), hwAt(b)), stone, bridges);
+      k = e;
+    }
     let prev: number[] | null = null;
-    for (let k = 0; k < pts.length; k++) {
+    for (let k = 0; k < n; k++) {
       const d = pts[k]!;
-      const tan = pts[Math.min(pts.length - 1, k + 1)]!.clone().sub(pts[Math.max(0, k - 1)]!);
+      const tan = pts[Math.min(n - 1, k + 1)]!.clone().sub(pts[Math.max(0, k - 1)]!);
       if (tan.lengthSq() < 1e-14) continue;
-      const side = d.clone().cross(tan).normalize().multiplyScalar(halfW);
-      const here = at(d);
-      if (!g.explored[here.t]) { prev = null; continue; }
+      const side = d.clone().cross(tan).normalize().multiplyScalar(hwAt(k));
+      if (!g.explored[here[k]!.t]) { prev = null; continue; }
       const row: number[] = [];
       for (const sgn of [-1, 0, 1]) {
         const q = d.clone().addScaledVector(side, sgn).normalize();
-        const h = sgn === 0 ? here.h : at(q).h;
+        let h: number;
+        if (deck[k] !== null) h = deck[k]!;
+        else { const o = sgn === 0 ? here[k]! : at(q); h = Math.max(o.ground, o.water); }
         const v = q.multiplyScalar(h + lift);
         row.push(v.x, v.y, v.z);
       }
@@ -1128,6 +1197,98 @@ export class GlobeRenderer {
         quad(1, 2, 1, 0.15);
       }
       prev = row;
+    }
+  }
+
+  // The solid part of a bridge over points a..b of a street (a and b on
+  // the banks), on the deck heights given (radii). Stone: a deck with
+  // parapet walls, arches springing from piers, abutments on the banks.
+  // Timber: a plank deck with rails on posts, trestles down to the bed.
+  private bridge(pts: readonly THREE.Vector3[], deck: readonly (number | null)[], here: readonly { ground: number; water: number }[],
+    a: number, b: number, halfW: number, stone: boolean, out: Bridges): void {
+    const s = this.scale, D = this.game.globe.avgEdgeAngle;
+    const base = new THREE.Color(stone ? BRIDGE_STONE : BRIDGE_TIMBER);
+    const W = halfW * 1.15;
+    const quad = (p0: THREE.Vector3, p1: THREE.Vector3, p2: THREE.Vector3, p3: THREE.Vector3, shade = 1) => {
+      for (const p of [p0, p1, p2, p0, p2, p3]) out.pos.push(p.x, p.y, p.z);
+      for (let i = 0; i < 6; i++) out.col.push(base.r * shade, base.g * shade, base.b * shade);
+    };
+    // A box around point k: `along` and `across` half sizes (radians), from radius lo to hi.
+    const box = (k: number, along: number, across: number, lo: number, hi: number, shade: number) => {
+      const t = pts[Math.min(pts.length - 1, k + 1)]!.clone().sub(pts[Math.max(0, k - 1)]!).normalize().multiplyScalar(along);
+      const sd = sideOf(k).multiplyScalar(across);
+      const c = (u: number, v: number, r: number) => pts[k]!.clone().addScaledVector(t, u).addScaledVector(sd, v).normalize().multiplyScalar(r);
+      const cs = [[-1, -1], [1, -1], [1, 1], [-1, 1]] as const;
+      for (let i = 0; i < 4; i++) {
+        const [u0, v0] = cs[i]!, [u1, v1] = cs[(i + 1) % 4]!;
+        quad(c(u0, v0, lo), c(u1, v1, lo), c(u1, v1, hi), c(u0, v0, hi), shade * (i % 2 ? 0.9 : 1));
+      }
+      quad(c(-1, -1, hi), c(1, -1, hi), c(1, 1, hi), c(-1, 1, hi), shade * 1.05);
+    };
+    const sideOf = (k: number) => {
+      const tan = pts[Math.min(pts.length - 1, k + 1)]!.clone().sub(pts[Math.max(0, k - 1)]!);
+      return pts[k]!.clone().cross(tan).normalize();
+    };
+    const at = (k: number, v: number, r: number) => pts[k]!.clone().addScaledVector(sideOf(k), v).normalize().multiplyScalar(r);
+    // Supports: the banks, and piers about every BRIDGE_PIER_STEP over the water.
+    const supports = [a];
+    let run = 0;
+    for (let k = a + 1; k < b; k++) {
+      run += pts[k]!.angleTo(pts[k - 1]!) / D;
+      if (run >= BRIDGE_PIER_STEP && pts[k]!.angleTo(pts[b]!) / D >= BRIDGE_PIER_STEP * 0.6) { supports.push(k); run = 0; }
+    }
+    supports.push(b);
+    // How far point k is between its two supports (0 at a support, 1 mid-span).
+    const mid = (k: number) => {
+      let i = 0;
+      while (i + 1 < supports.length && supports[i + 1]! < k) i++;
+      const s0 = supports[i]!, s1 = supports[Math.min(supports.length - 1, i + 1)]!;
+      return s1 > s0 ? Math.sin((Math.PI * (k - s0)) / (s1 - s0)) : 0;
+    };
+    const thick = BRIDGE_THICK * s, top = BRIDGE_PARAPET * s;
+    for (let k = a; k < b; k++) {
+      const h0 = deck[k]!, h1 = deck[k + 1]!;
+      // Stone: the sides reach down between supports as arches (deep at the
+      // piers, thin at mid-span); timber: a straight beam.
+      const lo0 = stone ? h0 - thick - BRIDGE_SPANDREL * s * (1 - mid(k)) : h0 - thick;
+      const lo1 = stone ? h1 - thick - BRIDGE_SPANDREL * s * (1 - mid(k + 1)) : h1 - thick;
+      const wallTop = stone ? top : 0;
+      for (const sgn of [-1, 1]) quad(at(k, sgn * W, lo0), at(k + 1, sgn * W, lo1), at(k + 1, sgn * W, h1 + wallTop), at(k, sgn * W, h0 + wallTop), 0.95);
+      quad(at(k, -W, lo0), at(k + 1, -W, lo1), at(k + 1, W, lo1), at(k, W, lo0), 0.7);
+      if (stone) for (const sgn of [-1, 1]) {
+        // The parapet's inner face and its top.
+        const inner = sgn * (W - halfW * 0.18);
+        quad(at(k, inner, h0), at(k + 1, inner, h1), at(k + 1, inner, h1 + wallTop), at(k, inner, h0 + wallTop), 0.85);
+        quad(at(k, inner, h0 + wallTop), at(k + 1, inner, h1 + wallTop), at(k + 1, sgn * W, h1 + wallTop), at(k, sgn * W, h0 + wallTop), 1.08);
+      }
+    }
+    // Timber rails: a beam along each side on posts.
+    if (!stone) {
+      // Posts at every point, on both sides.
+      for (let k = a; k <= b; k++) for (const sgn of [-1, 1]) {
+        const save = pts[k]!;
+        (pts as THREE.Vector3[])[k] = save.clone().addScaledVector(sideOf(k), sgn * W).normalize();
+        box(k, halfW * 0.08, halfW * 0.08, deck[k]!, deck[k]! + top * 1.3, 0.8);
+        (pts as THREE.Vector3[])[k] = save;
+      }
+      for (let k = a; k < b; k++) for (const sgn of [-1, 1]) {
+        const h0 = deck[k]! + top * 1.2, h1 = deck[k + 1]! + top * 1.2;
+        quad(at(k, sgn * W, h0 - top * 0.25), at(k + 1, sgn * W, h1 - top * 0.25), at(k + 1, sgn * W, h1), at(k, sgn * W, h0), 0.85);
+      }
+    }
+    // Piers down to the bed (stone: one wide pier; timber: a pair of posts), and abutments on the banks.
+    for (const k of supports) {
+      const bank = k === a || k === b;
+      const lo = here[k]!.ground - 0.0003 * s, hi = deck[k]! - thick;
+      if (bank) { if (stone) box(k, halfW * 0.5, W, lo, hi, 0.9); continue; }
+      if (stone) box(k, halfW * 0.4, W * 0.95, lo, hi, 0.88);
+      else for (const sgn of [-1, 1]) {
+        const off = sideOf(k).multiplyScalar(sgn * W * 0.75);
+        const save = pts[k]!;
+        (pts as THREE.Vector3[])[k] = save.clone().add(off).normalize();
+        box(k, halfW * 0.12, halfW * 0.12, lo, hi, 0.8);
+        (pts as THREE.Vector3[])[k] = save;
+      }
     }
   }
 

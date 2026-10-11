@@ -39,7 +39,7 @@ export type DirSampler = (dir: THREE.Vector3) => CitySpot & { t: number };
 // A street, drawn by render.ts as a ribbon on the ground.
 export interface Street {
   points: THREE.Vector3[]; // unit directions along it
-  halfWidth: number;       // radians
+  halfWidth: number[];     // radians, per point (a street may widen where it crosses an edge)
   paved: boolean;
 }
 // A square, drawn by render.ts as paving on the ground.
@@ -73,8 +73,8 @@ const FOUNDATION_UNIT = 0.01;
 const FOUNDATION_STYLE = [0x8d877c, 0xb59a72, 0x9a6a55, 0x5f5a55, 0x7a5f45, 0xd2ccbe, 0xb08a5a, 0x6f7a62] as const;
 // render.ts draws prop models at 1.5 × PROP_SIZE of the reference size.
 const PROP_SCALE = 1.5 * 0.276;
-// Streets may bridge water this long (tile steps): a river, an inlet.
-const BRIDGE = 0.07;
+// The longest bridge a street gets (tile steps): rivers, inlets, pools.
+const BRIDGE = 0.4;
 
 // The model of each building that sits in a slot (walls are drawn around
 // the center instead). A Record, so a building without a model does not compile.
@@ -377,27 +377,24 @@ export class CityProps {
       });
     }
 
-    // Streets: stop at water, except short crossings (bridges) on the
-    // bigger streets.
+    // Streets: where they cross water with land on both sides (a river, an
+    // inlet, a pool) they go on as bridges (render.ts builds them); where
+    // they run into water they stop at the shore.
     const streets: Street[] = [];
     const paved = era > 0;
-    for (const s of st.streets) {
-      const pts = s.pts.map(dirAt);
-      const dry = s.pts.map((p) => !wet(at(p)));
-      const hw = HALF_WIDTH[s.cls] * D;
-      const canBridge = s.cls !== 'lane';
-      let run: THREE.Vector3[] = [];
-      let gap: THREE.Vector3[] = [];
-      const flush = () => { if (run.length > 1) streets.push({ points: run, halfWidth: hw, paved }); run = []; };
-      for (let n = 0; n < pts.length; n++) {
+    for (const s of joinStreets(st.streets.map((x) => ({ pts: x.pts.map(dirAt), hw: x.pts.map(() => HALF_WIDTH[x.cls] * D) })))) {
+      const dry = s.pts.map((d) => !wet(this.sampleDir(d)));
+      let run: number[] = [], gap: number[] = [];
+      const flush = () => { if (run.length > 1) streets.push({ points: run.map((i) => s.pts[i]!), halfWidth: run.map((i) => s.hw[i]!), paved }); run = []; };
+      for (let n = 0; n < s.pts.length; n++) {
         if (dry[n]) {
           if (gap.length) {
-            const span = gap.length ? gap[0]!.angleTo(gap[gap.length - 1]!) / D : 0;
-            if (canBridge && run.length && span <= BRIDGE) run.push(...gap); else flush();
+            const span = s.pts[gap[0]!]!.angleTo(s.pts[gap[gap.length - 1]!]!) / D;
+            if (run.length && span <= BRIDGE) run.push(...gap); else flush();
             gap = [];
           }
-          run.push(pts[n]!);
-        } else gap.push(pts[n]!);
+          run.push(n);
+        } else gap.push(n);
       }
       flush();
     }
@@ -556,6 +553,47 @@ export class CityProps {
 // Whether a model may stand at a spot: on dry ground (any slope: a
 // foundation makes up the difference); boats on water deep enough; shore
 // buildings on either.
+// Streets joined end to end where exactly two meet (a middle's street and
+// the strip's that goes on from it, the two halves of a strip's street),
+// so a street is judged as a whole where it crosses water.
+function joinStreets(list: { pts: THREE.Vector3[]; hw: number[] }[]): { pts: THREE.Vector3[]; hw: number[] }[] {
+  const key = (d: THREE.Vector3) => `${Math.round(d.x * 1e6)},${Math.round(d.y * 1e6)},${Math.round(d.z * 1e6)}`;
+  const ends = new Map<string, number[]>();
+  list.forEach((s, i) => {
+    if (s.pts.length < 2) return;
+    for (const d of [s.pts[0]!, s.pts[s.pts.length - 1]!]) { const k = key(d); const l = ends.get(k); if (l) l.push(i); else ends.set(k, [i]); }
+  });
+  const used = new Uint8Array(list.length);
+  const out: { pts: THREE.Vector3[]; hw: number[] }[] = [];
+  // The other street at a joint where exactly two meet.
+  const next = (d: THREE.Vector3, from: number) => {
+    const l = ends.get(key(d));
+    if (!l || l.length !== 2) return -1;
+    const o = l[0] === from ? l[1]! : l[0]!;
+    return o === from || used[o] ? -1 : o;
+  };
+  list.forEach((s, i) => {
+    if (used[i] || s.pts.length < 2) return;
+    used[i] = 1;
+    let pts = [...s.pts], hw = [...s.hw];
+    for (const atEnd of [true, false]) {
+      for (;;) {
+        const tip = atEnd ? pts[pts.length - 1]! : pts[0]!;
+        const o = next(tip, i);
+        if (o < 0) break;
+        used[o] = 1;
+        let op = [...list[o]!.pts], ow = [...list[o]!.hw];
+        // Orient the other street to continue from the tip.
+        if (key(op[0]!) !== key(tip)) { op = op.reverse(); ow = ow.reverse(); }
+        if (atEnd) { pts = [...pts, ...op.slice(1)]; hw = [...hw, ...ow.slice(1)]; }
+        else { op.reverse(); ow.reverse(); pts = [...op.slice(0, -1), ...pts]; hw = [...ow.slice(0, -1), ...hw]; }
+      }
+    }
+    out.push({ pts, hw });
+  });
+  return out;
+}
+
 export function standsAt(kind: BuildingKind, s: CitySpot): boolean {
   const depth = s.water - s.ground, rule = buildingEntry(kind).water;
   if (rule === 'float') return depth >= 0.0003;

@@ -135,12 +135,9 @@ export function stamp(tiles: readonly StampTile[]): Stamp {
           face: place({ x: l.x + FACE * Math.cos(l.yaw), y: l.y + FACE * Math.sin(l.yaw) }, side),
         });
       });
+      // Whole streets: each point on the side of the edge it lies on.
       for (const st of strip.streets) {
-        // Split where a street crosses the edge, so each part lies on one tile.
-        const pts = densify(st.pts, STEP);
-        const neg = pts.filter((p) => p.y <= 0), pos = pts.filter((p) => p.y >= 0);
-        if (neg.length > 1) out.streets.push({ tile: s.tile, pts: neg.map((p) => place(p, -1)), cls: st.cls });
-        if (b && pos.length > 1) out.streets.push({ tile: b.tile, pts: pos.map((p) => place(p, 1)), cls: st.cls });
+        out.streets.push({ tile: s.tile, pts: densify(st.pts, STEP).map((p) => place(p, p.y <= 0 || !b ? -1 : 1)), cls: st.cls });
       }
       for (const q of strip.squares) {
         const side: -1 | 1 = q.pts.reduce((a, p) => a + p.y, 0) <= 0 || !b ? -1 : 1;
