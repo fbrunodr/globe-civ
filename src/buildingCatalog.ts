@@ -297,6 +297,11 @@ export const BUILDINGS_CATALOG = {
     seg(V(0.011, 0, 0.002), V(0.011, 0.02, 0.002), 0.00035, 0.0003, 3, IRON),
     seg(V(0.011, 0.02, 0.002), V(-0.004, 0.019, 0.002), 0.00025, 0.0002, 3, IRON),
   ] },
+  // ---------- foundations (under buildings on slopes; stretched per instance, colored by civ) ----------
+  foundation: { name: 'Foundation', leaf: 0x8d877c, build: (p) => [
+    part(new THREE.CylinderGeometry(Math.SQRT1_2, Math.SQRT1_2 * 1.06, 1, 4, 1, true).rotateY(Math.PI / 4).translate(0, 0.5, 0).scale(0.01, 0.01, 0.01), p.leaf),
+    flat(0.01, 0.01, p.leaf, { y: 0.01 }),
+  ] },
   // ---------- war ----------
   ruins: { name: 'Ruins', leaf: 0x8d877c, build: (p) => [
     walls(0.006, 0.0045, 0.0022, p.leaf),

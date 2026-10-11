@@ -58,7 +58,9 @@ function grownGame(): Game {
   return g;
 }
 
-describe('L3: city buildings stand on dry, gentle ground (boats on water)', () => {
+// (Was: dry and gentle ground, slope <= 0.3. Slopes are allowed now: a
+// foundation fills under the building, see L5.)
+describe('L3: city buildings stand on dry ground (boats on water)', () => {
   const g = grownGame();
   const spots = new Map<string, CitySpot>();
   const sampler = (t: number, i: number, wa: number, wb: number): CitySpot => {
@@ -74,7 +76,8 @@ describe('L3: city buildings stand on dry, gentle ground (boats on water)', () =
     const t = locate(g.globe, dir).t;
     const h = Math.abs(Math.sin(dir.x * 12989.8 + dir.y * 78233.1 + dir.z * 37719.3)) * 1000 % 1;
     const s: CitySpot = { dir, ground: 0.01, water: h < 0.2 ? 0.0105 : 0.009, slope: h > 0.93 ? 0.5 : 0.05, urban: g.use[t] === USE.urban || g.use[t] === USE.center ? 0.9 : 0.1 };
-    spots.set(key(dir), s);
+    // (The two fake samplers disagree at the same point; keep the one placement used.)
+    if (!spots.has(key(dir))) spots.set(key(dir), s);
     return { ...s, t };
   };
   const cp = new CityProps(g, sampler, dirSampler, 1);
@@ -88,12 +91,12 @@ describe('L3: city buildings stand on dry, gentle ground (boats on water)', () =
       const s = spots.get(key(pos));
       if (!s) continue;
       const rule = buildingEntry(b.kind).water;
-      const wet = s.water - s.ground >= 0.0003, dry = s.water <= s.ground && s.slope <= 0.3;
+      const wet = s.water - s.ground >= 0.0003, dry = s.water <= s.ground;
       if (rule === 'float' ? !wet : rule === 'shore' ? !wet && !dry : !dry) bad.push(`tile ${t}: ${b.kind}`);
     }
   }
   it('places buildings', () => expect(count).toBeGreaterThan(200));
-  it('none in water or on steep ground, boats only on water', () => expect(bad).toEqual([]));
+  it('none in water, boats only on water', () => expect(bad).toEqual([]));
   it('roads join cities over land', () => {
     const roads = planRoads(g);
     expect(roads.length).toBeGreaterThan(0);
@@ -123,4 +126,32 @@ describe('L4: City Lab presets build as described', () => {
     }
     expect(bad).toEqual([]);
   });
+});
+
+describe('L5: on slopes, buildings stand level on a foundation', () => {
+  const g = grownGame();
+  // A tilted world: the ground rises steadily along x (far steeper than any hill).
+  const ground = (d: THREE.Vector3) => 0.01 + 0.08 * d.x;
+  const at = (d: THREE.Vector3): CitySpot => ({ dir: d, ground: ground(d), water: 0, slope: 0.6, urban: 1 });
+  const sampler = (t: number, i: number, wa: number, wb: number): CitySpot => {
+    const tl = g.tiles[t]!, k = tl.corners.length;
+    const A = g.globe.triCenters[tl.corners[i]!]!, B = g.globe.triCenters[tl.corners[(i + 1) % k]!]!;
+    return at(tl.center.clone().multiplyScalar(1 - wa - wb).addScaledVector(A, wa).addScaledVector(B, wb).normalize());
+  };
+  const cp = new CityProps(g, sampler, (d) => ({ ...at(d), t: locate(g.globe, d).t }), 1);
+  let homes = 0, foundations = 0;
+  const sunk: string[] = [];
+  for (let t = 0; t < g.N; t++) {
+    if (g.use[t] !== USE.urban && g.use[t] !== USE.center) continue;
+    for (const b of cp.place(t)) {
+      if (b.kind === 'foundation') { foundations++; continue; }
+      if (['cottage', 'townhouse', 'cornerHouse', 'longhouse', 'hut'].includes(b.kind)) homes++;
+      if (['gardenTree', 'well', 'fountain', 'stall'].includes(b.kind)) continue;
+      const p = new THREE.Vector3().setFromMatrixPosition(b.matrix);
+      if (p.length() - 1 < ground(p.clone().normalize()) - 0.0003) sunk.push(`tile ${t}: ${b.kind}`);
+    }
+  }
+  it('houses still stand on the slope', () => expect(homes).toBeGreaterThan(200));
+  it('they get foundations', () => expect(foundations).toBeGreaterThanOrEqual(homes));
+  it('no building sinks below the ground under it (it stands at its highest corner)', () => expect(sunk.slice(0, 5)).toEqual([]));
 });

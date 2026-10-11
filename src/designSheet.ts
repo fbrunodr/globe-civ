@@ -293,6 +293,43 @@ canvas.addEventListener('dblclick', (e) => {
   closeUp(Math.floor(p.z / CELL_H), Math.floor(p.x / CELL_W));
 });
 
+// Keyboard: W A S D move (speed grows with the distance), Q E rotate, Z X zoom.
+const keys = new Set<string>();
+addEventListener('keydown', (e) => { if (!(e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement)) keys.add(e.key.toLowerCase()); });
+addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
+addEventListener('blur', () => keys.clear());
+let lastT = performance.now();
+function keyboard(): void {
+  const now = performance.now(), dt = Math.min(0.1, (now - lastT) / 1000);
+  lastT = now;
+  if (!keys.size) return;
+  const dist = camera.position.distanceTo(controls.target);
+  const fwd = controls.target.clone().sub(camera.position).setY(0);
+  if (fwd.lengthSq() < 1e-9) fwd.set(0, 0, -1);
+  fwd.normalize();
+  const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
+  const move = new THREE.Vector3();
+  if (keys.has('w')) move.add(fwd);
+  if (keys.has('s')) move.sub(fwd);
+  if (keys.has('d')) move.add(right);
+  if (keys.has('a')) move.sub(right);
+  if (move.lengthSq()) {
+    move.normalize().multiplyScalar(dist * 0.9 * dt);
+    camera.position.add(move);
+    controls.target.add(move);
+  }
+  const turn = (keys.has('q') ? 1 : 0) - (keys.has('e') ? 1 : 0);
+  if (turn) {
+    const off = camera.position.clone().sub(controls.target).applyAxisAngle(new THREE.Vector3(0, 1, 0), turn * 1.2 * dt);
+    camera.position.copy(controls.target).add(off);
+  }
+  const zoom = (keys.has('x') ? 1 : 0) - (keys.has('z') ? 1 : 0);
+  if (zoom) {
+    const off = camera.position.clone().sub(controls.target).multiplyScalar(Math.exp(zoom * 1.5 * dt));
+    camera.position.copy(controls.target).add(off);
+  }
+}
+
 const resize = () => {
   renderer.setSize(innerWidth, innerHeight);
   labels.setSize(innerWidth, innerHeight);
@@ -303,6 +340,7 @@ addEventListener('resize', resize);
 resize();
 build();
 renderer.setAnimationLoop(() => {
+  keyboard();
   controls.update();
   // Labels only when close enough to read them.
   const far = camera.position.distanceTo(controls.target);
@@ -310,4 +348,4 @@ renderer.setAnimationLoop(() => {
   renderer.render(scene, camera);
   labels.render(scene, camera);
 });
-if (import.meta.env.DEV) Object.assign(window, { __sheet: { closeUp, fit, camera, controls } });
+if (import.meta.env.DEV) Object.assign(window, { __sheet: { closeUp, fit, camera, controls, keyboard } });
