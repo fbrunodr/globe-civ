@@ -28,7 +28,8 @@ export interface MapLimits {
   readonly lakes: Range;                   // G6
   readonly lakeMaxTiles: number;
   // Climate
-  readonly polarIceMinShareAbove78: number;   // C1
+  readonly polarIceMinLat: number;            // C1
+  readonly polarIceMinShare: number;
   readonly iceGlobeShare: Range;              // C2
   readonly iceMaxShare60to68: number;
   readonly tropicsMaxLat: number;             // C3
@@ -76,8 +77,9 @@ const BASE = {
   continentDeepGap: 4,
   landShare: r(0.35, 0.4),
   islands: r(3),
-  polarIceMinShareAbove78: 0.95,
-  iceGlobeShare: r(0.03, 0.075),
+  polarIceMinLat: 82,
+  polarIceMinShare: 0.95,
+  iceGlobeShare: r(0.015, 0.035),
   iceMaxShare60to68: 0.3,
   tropicsMaxLat: 35,
   iceMinLat: 45,

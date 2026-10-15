@@ -148,12 +148,12 @@ export const CHECKS: Record<CheckId, Guarantee> = {
   // ----- climate -----
   C1: {
     title: 'Solid polar caps',
-    rule: (l) => `At least ${pct(l.polarIceMinShareAbove78)} of tiles above 78° latitude are ice`,
+    rule: (l) => `At least ${pct(l.polarIceMinShare)} of tiles above ${l.polarIceMinLat}° latitude are ice`,
     check: (w) => {
-      const polar = tilesWhere(w, (t) => latDeg(w.globe, t) >= 78);
+      const polar = tilesWhere(w, (t) => latDeg(w.globe, t) >= w.limits.polarIceMinLat);
       const ice = polar.filter((t) => w.map.biome[t] === 'iceSheet' || w.map.biome[t] === 'seaIce').length;
       const share = ice / polar.length;
-      return share >= w.limits.polarIceMinShareAbove78 ? null : `only ${pct(share)} of tiles above 78° are ice`;
+      return share >= w.limits.polarIceMinShare ? null : `only ${pct(share)} of tiles above ${w.limits.polarIceMinLat}° are ice`;
     },
   },
   C2: {

@@ -29,8 +29,8 @@ const LAND_SHARE = 0.375;
 const PEAK_KM = 5;
 const LAPSE_PER_KM = 6.5;
 // Annual mean temperatures below which the sea freezes / land is buried in ice.
-const SEA_ICE_TEMP = -9;
-const ICE_SHEET_TEMP = -13;
+const SEA_ICE_TEMP = -13;
+const ICE_SHEET_TEMP = -17;
 
 const smoothstep = (a: number, b: number, x: number): number => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
