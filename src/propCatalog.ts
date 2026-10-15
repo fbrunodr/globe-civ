@@ -222,12 +222,12 @@ export const CATALOG = {
   ] },
 
   // ---------- tropical ----------
-  jungleTree: { name: 'Jungle tree', layer: 'Canopy', leaf: 0x3a8a34, water: wade(0.00025), build: (p) => [
+  jungleTree: { name: 'Jungle tree', layer: 'Canopy', leaf: 0x78bc34, water: wade(0.00025), build: (p) => [
     cyl(0.001, 0.0006, 0.007, 4, TRUNK),
     ico(0.0058, p.leaf, { y: 0.009, sy: 0.7 }),
     oct(0.0036, p.leaf, { x: 0.0025, y: 0.0118, z: 0.001, sy: 0.75 }),
   ] },
-  kapok: { name: 'Kapok emergent', layer: 'Canopy', leaf: 0x3f8a3c, build: (p) => [
+  kapok: { name: 'Kapok emergent', layer: 'Canopy', leaf: 0x92c044, build: (p) => [
     cyl(0.001, 0.0007, 0.0165, 4, 0x9a8a78),
     tet(0.0022, 0x9a8a78, { y: 0.0008, sx: 1.4, sz: 0.4 }),
     ico(0.0075, p.leaf, { y: 0.0168, sy: 0.3 }),

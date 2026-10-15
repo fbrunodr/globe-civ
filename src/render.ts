@@ -182,8 +182,8 @@ export class GlobeRenderer {
   private prevVisible: Uint8Array;
   private prevOwner: Int32Array;
 
-  private readonly propMat = makePropMaterial();
-  private readonly buildingMat = makePropMaterial(0.32);
+  private readonly propMat = makePropMaterial(0, 0.85, this.sunDir);
+  private readonly buildingMat = makePropMaterial(0.32, 0.6, this.sunDir);
   private readonly propGeo = new Map<PropKind, THREE.BufferGeometry>();
   private readonly vegetation: Vegetation;
   // Per terrain vertex, for prop placement: ground slope, signed distance to

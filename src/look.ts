@@ -41,7 +41,7 @@ export const BIOME_LOOK: Record<BiomeKey, BiomeLook> = {
   hotDesert:           { color: 0xd9c5a0, rock: 0xc68d5c, detail: d(0.5, 0, 0, 1, 0.7), wet: 0 },
   savanna:             { color: 0xa99b69, rock: 0xb3845a, detail: d(0.85, 0, 0, 0, 0.5), wet: 0 },
   monsoonForest:       { color: 0x6c803f, rock: 0x9b7f62, detail: d(0.7, 0, 0, 0, 0.6), wet: 0 },
-  jungle:              { color: 0x3e6c36, rock: 0x87735e, detail: d(0.6, 0, 0, 0, 0.6), wet: 0 },
+  jungle:              { color: 0x5e8a36, rock: 0x87735e, detail: d(0.6, 0, 0, 0, 0.6), wet: 0 },
 };
 
 export interface ReliefLook {

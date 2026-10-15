@@ -37,6 +37,8 @@ export interface Variant {
 export interface FloraSet { variants: readonly Variant[] }
 
 const MOSS = 0x6a9a3a;
+// A rainforest canopy is a mosaic of yellow- and blue-greens, not one green.
+const RAINFOREST = [0x78bc34, 0x8ec83e, 0x62aa3a, 0xa2cc44, 0x6cb04e, 0x58a032] as const;
 const LAUREL = 0x3f6a35;
 const AUTUMN = [0xd2602a, 0xe0a030, 0xb8382a, 0xc8b040] as const;
 const DRY = [0x9a9a40, 0xb08a3a, 0x8a9a45] as const;
@@ -128,9 +130,9 @@ export const BIOME_FLORA: Record<BiomeKey, FloraSet> = {
     v('Thorn forest', W, 95, [['beechMaple', 20, DRY], ['acacia', 15], ['pricklyPear', 15], ['shrub', 30], ['tallGrass', 12], ['termiteMound', 3], ['boulder', 5]], { wet: -0.6 }),
   ] },
   jungle: { variants: [
-    v('Lowland', 'any', 200, [['jungleTree', 40], ['kapok', 6], ['palm', 10], ['banana', 14], ['shrub', 7], ['fernClump', 18], ['fallenLog', 5]]),
-    v('Várzea', W, 190, [['jungleTree', 30], ['kapok', 4], ['palm', 6], ['fanPalm', 25], ['banana', 10], ['fernClump', 18], ['fallenLog', 7]], { wet: 0.5 }),
-    v('Dipterocarp', O, 190, [['jungleTree', 35], ['kapok', 15], ['palm', 8], ['banana', 8], ['bamboo', 6], ['shrub', 5], ['fernClump', 18], ['fallenLog', 5]]),
+    v('Lowland', 'any', 200, [['jungleTree', 40, RAINFOREST], ['kapok', 6], ['palm', 10], ['banana', 14], ['shrub', 7], ['fernClump', 18], ['fallenLog', 5]]),
+    v('Várzea', W, 190, [['jungleTree', 30, RAINFOREST], ['kapok', 4], ['palm', 6], ['fanPalm', 25], ['banana', 10], ['fernClump', 18], ['fallenLog', 7]], { wet: 0.5 }),
+    v('Dipterocarp', O, 190, [['jungleTree', 35, RAINFOREST], ['kapok', 15], ['palm', 8], ['banana', 8], ['bamboo', 6], ['shrub', 5], ['fernClump', 18], ['fallenLog', 5]]),
   ] },
 };
 
@@ -141,7 +143,7 @@ export const FEATURE_FLORA: Record<FeatureKey, FloraSet> = {
     v('Temperate marsh', 'any', 105, [['reeds', 40], ['cattail', 25], ['grassTuft', 20], ['lilyPads', 10], ['willow', 5]]),
   ] },
   swamp: { variants: [
-    v('Swamp forest', 'any', 130, [['jungleTree', 30], ['fanPalm', 20], ['reeds', 15], ['lilyPads', 15], ['fernClump', 15], ['fallenLog', 5]], { biomes: ['jungle'] }),
+    v('Swamp forest', 'any', 130, [['jungleTree', 30, RAINFOREST], ['fanPalm', 20], ['reeds', 15], ['lilyPads', 15], ['fernClump', 15], ['fallenLog', 5]], { biomes: ['jungle'] }),
     v('Cypress swamp', 'any', 120, [['baldCypress', 40], ['reeds', 15], ['lilyPads', 15], ['fernClump', 10], ['stump', 10], ['snag', 5], ['fallenLog', 5]]),
   ] },
   mangrove: { variants: [v('Mangrove', 'any', 120, [['mangrove', 75], ['reeds', 10], ['coconutPalm', 8], ['stump', 7]])] },
