@@ -244,7 +244,7 @@ export class GlobeRenderer {
     this.camera = new THREE.PerspectiveCamera(40, 1, 0.005, 200);
     this.camera.position.set(0, 0, 3.4);
     this.scene.add(this.camera);
-    // The sun keeps a fixed angle to the camera (from the upper left) so the
+    // The sun keeps a fixed angle to the camera (behind it, a little to the left) so the
     // visible side is always lit; it is repositioned every frame (see
     // updateSun) so its shadow map only covers what is on screen. The
     // hemisphere light fills shadows with a cool sky tone.
@@ -1479,14 +1479,15 @@ export class GlobeRenderer {
     this.lastView.pos.copy(cam.position);
     this.lastView.quat.copy(cam.quaternion);
     this.shadowsDirty = false;
-    // The sun shines from the upper left of the map view, high in the sky,
+    // The sun shines from behind the camera, a little to the left (we see the
+    // lit faces, shadows fall away from us, and a slant keeps faces modelled),
     // whatever the camera's tilt. Walking, it stays put in the sky (north-west).
     const walking = this.walk.active;
     const focus = (walking ? this.walk.position : this.cam.target).clone();
     const up = walking ? northAt(focus) : cam.up.clone().addScaledVector(focus, -cam.up.dot(focus)).normalize();
     const right = up.clone().cross(focus);
     // LIGHT.sunHeight above the horizon (fairly low: long shadows).
-    const side = up.clone().multiplyScalar(1.4).addScaledVector(right, -1.0);
+    const side = walking ? up.clone().multiplyScalar(1.4).addScaledVector(right, -1.0) : up.clone().multiplyScalar(-1.4).addScaledVector(right, -0.6);
     const dir = focus.clone().multiplyScalar(Math.tan((LIGHT.sunHeight * Math.PI) / 180) * side.length()).add(side).normalize();
     this.sunDir.copy(dir);
     // The sun cools toward the poles: white at the equator, LIGHT.cool cool
