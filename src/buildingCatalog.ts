@@ -299,6 +299,15 @@ export const BUILDINGS_CATALOG = {
     seg(V(0.011, 0.02, 0.002), V(-0.004, 0.019, 0.002), 0.00025, 0.0002, 3, IRON),
   ] },
   // ---------- foundations (under buildings on slopes; stretched per instance, colored by civ) ----------
+  // ---------- massing models (town drawings: a footprint and a height) ----------
+  // Unit blocks (0.01 a side, like the foundation), stretched to a lot's
+  // footprint and floors: walls with a gable roof for low buildings, a
+  // flat-topped block for tall ones. Stand-ins until each size has its models.
+  massWalls: { name: 'Massing: walls', leaf: 0x8a5a44, build: () => [walls(0.01, 0.01, 0.01, PLASTER)] },
+  massGable: { name: 'Massing: gable roof', leaf: 0x8a5a44, build: (p) => [gable(0.0108, 0.0116, 0.01, p.leaf)] },
+  // The front door (a building's front faces its street).
+  massDoor: { name: 'Massing: door', leaf: 0x5a4030, build: (p) => block(0.01, 0.01, 0.01, p.leaf) },
+  massTower: { name: 'Massing: tall block', leaf: 0x6a6460, build: (p) => [walls(0.01, 0.01, 0.01, 0xb9ad9a), flat(0.01, 0.01, p.leaf, { y: 0.01 })] },
   foundation: { name: 'Foundation', leaf: 0x8d877c, build: (p) => [
     part(new THREE.CylinderGeometry(Math.SQRT1_2, Math.SQRT1_2 * 1.06, 1, 4, 1, true).rotateY(Math.PI / 4).translate(0, 0.5, 0).scale(0.01, 0.01, 0.01), p.leaf),
     flat(0.01, 0.01, p.leaf, { y: 0.01 }),

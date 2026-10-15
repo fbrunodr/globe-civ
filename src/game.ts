@@ -236,7 +236,13 @@ export class Game {
     return this.tiles[a].center.angleTo(this.tiles[b].center) / this.globe.avgEdgeAngle;
   }
 
+  // Pentagons (12 on the globe) are never built up: no city, no urban tile
+  // (town drawings are hexes; town/edges.ts). Farms are fine.
+  isPentagon(t: number): boolean { return this.tiles[t].corners.length !== 6; }
+  canBeUrban(t: number): boolean { return !this.isPentagon(t) && urbanAllowed(this.terrainAt(t)); }
+
   canFoundCity(t: number, owner: number): boolean {
+    if (this.isPentagon(t)) return false;
     if (this.isWater(t) || this.relief[t] === 'mountains' || this.biome[t] === 'iceSheet') return false;
     const f = this.feature[t];
     if (f === 'volcano' || f === 'glacier') return false;
@@ -650,7 +656,7 @@ export class Game {
       const u = this.use[t];
       const ok = WONDERS[k].site === 'mountainTop' ? u === USE.wild && this.touchesCore(city, t)
         : u === USE.urban ? this.slotKeys(t).every((x) => x === null)
-        : u === USE.rural ? urbanAllowed(this.terrainAt(t)) && this.touchesCore(city, t) : false;
+        : u === USE.rural ? this.canBeUrban(t) && this.touchesCore(city, t) : false;
       if (ok && this.siteOk(t, WONDERS[k].site)) out.push(t);
     }
     return out;
@@ -744,7 +750,7 @@ export class Game {
       if (!buildingFits(k, this.isWater(t), this.map.riverTile[t] === 1)) continue;
       if (u === USE.urban || u === USE.center) {
         if (this.slotKeys(t).includes(null)) out.push(t);
-      } else if (u === USE.rural && urbanAllowed(this.terrainAt(t)) && this.touchesCore(city, t)) {
+      } else if (u === USE.rural && this.canBeUrban(t) && this.touchesCore(city, t)) {
         out.push(t);
       }
     }
@@ -827,7 +833,7 @@ export class Game {
       }
       const terrain = this.terrainAt(t);
       const improvement = improvementFor(terrain);
-      const core = urbanAllowed(terrain) && this.touchesCore(city, t);
+      const core = !this.isPentagon(t) && urbanAllowed(terrain) && this.touchesCore(city, t);
       if (this.use[t] === USE.rural && core) out.push({ kind: 'urban', tile: t, over: improvement });
       if (this.use[t] !== USE.wild) continue;
       if (improvement) out.push({ kind: 'rural', tile: t, improvement });

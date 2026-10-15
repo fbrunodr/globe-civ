@@ -205,7 +205,11 @@ export class GlobeRenderer {
   private readonly levelled = new Set<number>();
   private roads: THREE.Mesh[] = [];
   // The road layers' materials: edges below, the surface above (see drape).
-  private readonly roadMats = [makeRoadMaterial(-2), makeRoadMaterial(-4)];
+  // Edges (kerbs) and surfaces. Kerbs draw first and leave the depth alone,
+  // so any surface covers any kerb where they overlap (a street running
+  // into a square or another street): kerbs show only round the outside of
+  // the joined network, never as lines across it.
+  private readonly roadMats = [makeRoadMaterial(-2, false), makeRoadMaterial(-4, true)];
   private bridges: THREE.Mesh | null = null;
   private readonly bridgeMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
   private roadsKey = '';
@@ -1097,7 +1101,7 @@ export class GlobeRenderer {
       geo.computeVertexNormals();
       const mesh = new THREE.Mesh(geo, this.roadMats[i]!);
       mesh.receiveShadow = true;
-      mesh.renderOrder = 1;
+      mesh.renderOrder = 1 + i;
       this.scene.add(mesh);
       return mesh;
     });
@@ -1125,16 +1129,21 @@ export class GlobeRenderer {
     const grow = SQUARE_GROW * this.game.globe.avgEdgeAngle;
     const pts = corners.map((p) => { const out = p.clone().sub(mid); return p.clone().addScaledVector(out, grow / Math.max(1e-9, out.length())).normalize(); });
     const on = (d: THREE.Vector3) => { const h = at(d); return d.clone().multiplyScalar(Math.max(h.ground, h.water) + lift); };
-    // Edges subdivided so the paving follows the ground.
+    // A fine fan (rings in from the edge, the edge subdivided) so the paving
+    // follows the ground: big flat triangles would dip under bumps and let
+    // the kerbs of the streets under them show through.
     const ring: THREE.Vector3[] = [];
-    pts.forEach((p, k) => { const q = pts[(k + 1) % pts.length]!; for (let s = 0; s < 3; s++) ring.push(p.clone().lerp(q, s / 3).normalize()); });
-    const m = on(mid);
+    pts.forEach((p, k) => { const q = pts[(k + 1) % pts.length]!; for (let s = 0; s < 4; s++) ring.push(p.clone().lerp(q, s / 4).normalize()); });
+    const RINGS = 4;
+    const inner = (p: THREE.Vector3, r: number) => (r === 0 ? on(mid) : on(mid.clone().lerp(p, r / RINGS).normalize()));
     ring.forEach((p, k) => {
       const q = ring[(k + 1) % ring.length]!;
-      const a = on(p), b = on(q), am = on(p.clone().lerp(mid, 0.5).normalize()), bm = on(q.clone().lerp(mid, 0.5).normalize());
-      pos.push(a.x, a.y, a.z, b.x, b.y, b.z, bm.x, bm.y, bm.z, a.x, a.y, a.z, bm.x, bm.y, bm.z, am.x, am.y, am.z);
-      pos.push(am.x, am.y, am.z, bm.x, bm.y, bm.z, m.x, m.y, m.z);
-      for (let n = 0; n < 9; n++) col.push(rgb[0], rgb[1], rgb[2]);
+      for (let r = 0; r < RINGS; r++) {
+        const a0 = inner(p, r), b0 = inner(q, r), a1 = inner(p, r + 1), b1 = inner(q, r + 1);
+        if (r === 0) pos.push(a0.x, a0.y, a0.z, a1.x, a1.y, a1.z, b1.x, b1.y, b1.z);
+        else pos.push(a0.x, a0.y, a0.z, a1.x, a1.y, a1.z, b1.x, b1.y, b1.z, a0.x, a0.y, a0.z, b1.x, b1.y, b1.z, b0.x, b0.y, b0.z);
+        for (let n = 0; n < (r === 0 ? 3 : 6); n++) col.push(rgb[0], rgb[1], rgb[2]);
+      }
     });
   }
 
@@ -1747,8 +1756,8 @@ function windOutward(geo: THREE.BufferGeometry): void {
 // Road material: vertex colors, with a fine grain from the world position
 // (the same wherever streets overlap, so joins never show); polygon offset
 // keeps it over the ground (the surface layer over the edges).
-function makeRoadMaterial(offset: number): THREE.MeshLambertMaterial {
-  const mat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: offset, polygonOffsetUnits: offset });
+function makeRoadMaterial(offset: number, depthWrite: boolean): THREE.MeshLambertMaterial {
+  const mat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: offset, polygonOffsetUnits: offset, depthWrite });
   mat.onBeforeCompile = (shader) => {
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vRoadPos;')

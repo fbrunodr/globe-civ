@@ -1,34 +1,50 @@
-// Plain 2D geometry for the town drawings (see drawings.ts): the canonical
-// tile shapes, the strip frame, street widths, lot footprints, and small
-// helpers to draw with. Distances are in tile steps (neighboring tile
-// centers are 1 apart).
+// Plain 2D geometry for the town drawings (see index.ts): the canonical
+// hex, street widths, lot footprints, and small helpers to draw with.
+// Distances are in tile steps (neighboring tile centers are 1 apart).
 
 export interface Pt { readonly x: number; readonly y: number }
 export type Sides = 5 | 6;
-export const DENSITIES = ['low', 'medium', 'high'] as const;
+// low: mostly single storeys (a village); medium: double (a town); high:
+// quads, Industrial blocks (Haussmann's Paris); metropolitan: skyscrapers
+// among quads (a modern downtown).
+export const DENSITIES = ['low', 'medium', 'high', 'metropolitan'] as const;
 export type Density = (typeof DENSITIES)[number];
 
 // Canonical shapes: inradius per shape, as on the globe (hexes 0.5 on
-// average, pentagons smaller).
+// average, pentagons smaller). Only hexes are built up.
 export const INR: Record<Sides, number> = { 5: 0.34, 6: 0.5 };
-// The middle of a tile reaches this share of the hex radius; the rest, the
-// rim, belongs to the strips along its edges.
-export const RC = 0.64;
 export const sideLength = (k: Sides) => 2 * INR[k] * Math.tan(Math.PI / k);
 
 export type StreetClass = 'lane' | 'street' | 'main' | 'avenue';
 // Half widths.
 export const HALF_WIDTH: Record<StreetClass, number> = { lane: 0.013, street: 0.017, main: 0.021, avenue: 0.027 };
 
-// What stands on a lot. Houses, rows, blocks and towers are homes (their
-// model follows the era and climate); the rest is garden and street
-// furniture.
-export type LotKind = 'house' | 'row' | 'block' | 'tower' | 'tree' | 'well' | 'fountain' | 'stall' | 'shed';
-export const LOT_KINDS: readonly LotKind[] = ['house', 'row', 'block', 'tower', 'tree', 'well', 'fountain', 'stall', 'shed'];
-export const HOMES: ReadonlySet<LotKind> = new Set(['house', 'row', 'block', 'tower']);
+// What stands on a lot. Buildings are measured on the terrain grid, as in
+// SimCity: a footprint of whole cells (front × depth: b23 is 2 cells along
+// its street and 3 deep) and a height in floors. The rest is garden and
+// street furniture.
+export const CELL = 0.025; // tile steps
+export const FOOTPRINTS = ['b22', 'b23', 'b32', 'b33', 'b44'] as const;
+export type Footprint = (typeof FOOTPRINTS)[number];
+export const FOOTPRINT_CELLS: Record<Footprint, readonly [number, number]> = { b22: [2, 2], b23: [2, 3], b32: [3, 2], b33: [3, 3], b44: [4, 4] };
+export type LotKind = Footprint | 'tree' | 'well' | 'fountain' | 'stall' | 'shed';
+export const LOT_KINDS: readonly LotKind[] = [...FOOTPRINTS, 'tree', 'well', 'fountain', 'stall', 'shed'];
+export const HOMES: ReadonlySet<LotKind> = new Set(FOOTPRINTS);
+export const isBuilding = (k: LotKind): k is Footprint => HOMES.has(k);
+// Heights: single, double, quad, skyscraper.
+export const FLOORS = [1, 2, 4, 12] as const;
+export type Floors = (typeof FLOORS)[number];
+export const FLOOR_NAME: Record<Floors, string> = { 1: 'single', 2: 'double', 4: 'quad', 12: 'skyscraper' };
+export const FLOOR_HEIGHT = 0.9 * CELL; // tile steps per floor (a single storey as tall as a cottage's walls)
+// A building's front door (tile steps: width, height), on the side facing
+// its street; tall buildings get a wider entrance.
+export function doorSize(kind: Footprint, floors: Floors): readonly [number, number] {
+  const w = FOOTPRINT_CELLS[kind][0] * CELL;
+  return floors > 2 ? [Math.min(0.018, 0.4 * w), 0.75 * FLOOR_HEIGHT] : [Math.min(0.01, 0.35 * w), 0.6 * FLOOR_HEIGHT];
+}
 // Footprint half extents: along its front, and in depth.
 export const LOT_SIZE: Record<LotKind, readonly [number, number]> = {
-  house: [0.022, 0.017], row: [0.017, 0.02], block: [0.031, 0.027], tower: [0.03, 0.03],
+  ...Object.fromEntries(FOOTPRINTS.map((f) => [f, [FOOTPRINT_CELLS[f][0] * CELL / 2, FOOTPRINT_CELLS[f][1] * CELL / 2] as const])) as Record<Footprint, readonly [number, number]>,
   tree: [0.012, 0.012], well: [0.008, 0.008], fountain: [0.02, 0.02], stall: [0.011, 0.009], shed: [0.012, 0.009],
 };
 
@@ -36,6 +52,7 @@ export interface Lot {
   readonly x: number; readonly y: number;
   readonly yaw: number;   // the way its front faces (radians)
   readonly kind: LotKind;
+  readonly floors?: Floors; // buildings
   readonly spot?: number; // stands on building spot k (gone once a building is there)
 }
 // A round place for a building (the slots, the hall, a wonder): its middle,
@@ -54,11 +71,6 @@ export const DEG = Math.PI / 180;
 // and faces angle 2πj/k.
 export function corner(k: Sides, j: number): Pt {
   return polar(INR[k] / Math.cos(Math.PI / k), ((2 * j - 1) * Math.PI) / k);
-}
-// A point on the middle's edge along side j, a share u of the way from corner j.
-export function coreEdge(k: Sides, j: number, u: number): Pt {
-  const a = corner(k, j), b = corner(k, j + 1);
-  return { x: RC * (a.x + (b.x - a.x) * u), y: RC * (a.y + (b.y - a.y) * u) };
 }
 // Hex radius of a point: 1 on the tile's edge.
 export function rhoOf(k: Sides, p: Pt): number {
@@ -79,29 +91,6 @@ export function toFan(k: Sides, p: Pt): { j: number; wa: number; wb: number } {
   const A = corner(k, j), B = corner(k, j + 1);
   const det = A.x * B.y - A.y * B.x;
   return { j, wa: (p.x * B.y - p.y * B.x) / det, wb: (A.x * p.y - A.y * p.x) / det };
-}
-
-// ---------- the strip frame ----------
-//
-// A strip is drawn in the frame of a hexagon's edge: x along the edge (0 at
-// its middle, positive toward corner j+1 of side A), y across it (negative
-// in A, positive in B). Each half runs from the edge (y = 0) to its tile's
-// middle (|y| = STRIP_DEPTH). On a pentagon's side the same drawing is laid
-// by its share of the way along and across, so it fits any side.
-export const STRIP_DEPTH = (1 - RC) * INR[6];
-export const STRIP_SIDE = sideLength(6);
-// Half the strip's width at height y (its trapezoids narrow toward the middles).
-export const stripHalfWidth = (y: number) => (STRIP_SIDE / 2) * (1 - Math.abs(y) / INR[6]);
-// Strip point -> (rho, u) on the side it lies on.
-export function stripToRhoU(p: Pt): { rho: number; u: number } {
-  const rho = 1 - Math.abs(p.y) / INR[6];
-  return { rho, u: 0.5 + p.x / (STRIP_SIDE * rho) };
-}
-// Whether a strip point lies inside the strip, `margin` in from its sides
-// and from the middles.
-export function inStrip(p: Pt, margin: number, oneSided = false): boolean {
-  if (oneSided && p.y > 0) return false;
-  return Math.abs(p.y) <= STRIP_DEPTH - margin && Math.abs(p.x) <= stripHalfWidth(p.y) - margin;
 }
 
 // ---------- 2D helpers ----------

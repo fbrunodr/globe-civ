@@ -8,6 +8,7 @@ import { Game } from '../src/game.ts';
 import { aiTurn } from '../src/ai.ts';
 import { USE, WONDER_KEYS, isWonderKey } from '../src/cities.ts';
 import { planRoads, roadLines, ROAD_HALF_WIDTH } from '../src/roads.ts';
+import { HOMES } from '../src/town/geometry.ts';
 import { locate } from '../src/terrainMesh.ts';
 
 // City look guarantees (design doc "Cities: Feel & Play", city look v1).
@@ -25,7 +26,7 @@ describe('L1: building models', () => {
 // (Was a housesOn(pop) bound on houses per tile; houses now come from the
 // hand-drawn tiles, so the bound is on what the drawings stamp.)
 describe('L2: houses grow with the city', () => {
-  const count = (tiles: StampTile[]) => stamp(tiles).lots.filter((l) => l.kind === 'house' || l.kind === 'row' || l.kind === 'block' || l.kind === 'tower').length;
+  const count = (tiles: StampTile[]) => stamp(tiles).lots.filter((l) => HOMES.has(l.kind)).length;
   const g = new Game({ size: 'small', seed: 5 });
   const settler = g.units.find((u) => u.owner === 0 && u.type === 'settler')!;
   const city = g.foundCity(settler)!;
@@ -145,8 +146,9 @@ describe('L5: on slopes, buildings stand level on a foundation', () => {
     if (g.use[t] !== USE.urban && g.use[t] !== USE.center) continue;
     for (const b of cp.place(t)) {
       if (b.kind === 'foundation') { foundations++; continue; }
-      if (['cottage', 'townhouse', 'cornerHouse', 'longhouse', 'hut'].includes(b.kind)) homes++;
-      if (['gardenTree', 'well', 'fountain', 'stall'].includes(b.kind)) continue;
+      if (b.kind === 'massWalls' || b.kind === 'massTower') homes++;
+      // (Roofs and doors sit on their walls.)
+      if (['gardenTree', 'well', 'fountain', 'stall', 'massGable', 'massDoor'].includes(b.kind)) continue;
       const p = new THREE.Vector3().setFromMatrixPosition(b.matrix);
       if (p.length() - 1 < ground(p.clone().normalize()) - 0.0003) sunk.push(`tile ${t}: ${b.kind}`);
     }
@@ -175,7 +177,8 @@ describe('L6: no building stands on a street or a road', () => {
     if (!b) { const geo = buildBuildingGeometry(kind); geo.computeBoundingBox(); b = geo.boundingBox!; box.set(kind, b); }
     return b;
   };
-  const FURNITURE = new Set<string>(['gardenTree', 'well', 'fountain', 'stall', 'shed', 'foundation']);
+  // (Roof eaves and doors are part of their building: the walls are checked.)
+  const FURNITURE = new Set<string>(['gardenTree', 'well', 'fountain', 'stall', 'shed', 'foundation', 'massGable', 'massDoor']);
   for (let t = 0; t < g.N; t++) cp.place(t);
   const streets = [
     ...cp.streets().map((s) => ({ pts: s.points, hw: s.halfWidth })),

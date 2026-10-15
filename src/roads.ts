@@ -86,10 +86,10 @@ function route(g: Game, from: number, to: number): number[] | null {
 // A road as drawn: smooth lines between towns. Roads stay out of built-up
 // tiles (they would run over the houses): each stretch outside the towns
 // ends at the middle of the edge where it reaches a town, which is where
-// the town's own streets come out to open land (src/town: outskirts strips).
+// a street of the town comes out to open land (src/town/edges.ts).
 export interface RoadLine { a: number; b: number; points: THREE.Vector3[] }
 
-export function roadLines(g: Game): RoadLine[] {
+export function roadLines(g: Game, planned: readonly Road[] = planRoads(g)): RoadLine[] {
   const built = (t: number) => g.use[t] === USE.urban || g.use[t] === USE.center;
   const edgeMid = (a: number, b: number) => {
     const tl = g.tiles[a]!, i = tl.neighbors.indexOf(b), k = tl.corners.length;
@@ -97,7 +97,7 @@ export function roadLines(g: Game): RoadLine[] {
   };
   const step = 0.04 * g.globe.avgEdgeAngle;
   const out: RoadLine[] = [];
-  for (const road of planRoads(g)) {
+  for (const road of planned) {
     const t = road.tiles;
     let run: THREE.Vector3[] = [];
     const flush = () => { if (run.length > 1) out.push({ a: road.a, b: road.b, points: smooth(run, step) }); run = []; };
@@ -110,6 +110,22 @@ export function roadLines(g: Game): RoadLine[] {
       run.push(g.tiles[t[k]!]!.center.clone());
     }
     flush();
+  }
+  return out;
+}
+
+// Where roads reach towns from open land: `${built}:${outside}` per edge.
+// A town's tile has a street through the middle of such an edge (town/edges.ts).
+export function roadEntries(g: Game, planned: readonly Road[] = planRoads(g)): Set<string> {
+  const built = (t: number) => g.use[t] === USE.urban || g.use[t] === USE.center;
+  const out = new Set<string>();
+  for (const road of planned) {
+    const t = road.tiles;
+    for (let k = 0; k + 1 < t.length; k++) {
+      const a = t[k]!, b = t[k + 1]!;
+      if (built(a) && !built(b)) out.add(`${a}:${b}`);
+      if (!built(a) && built(b)) out.add(`${b}:${a}`);
+    }
   }
   return out;
 }
