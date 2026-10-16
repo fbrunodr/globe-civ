@@ -16,8 +16,9 @@ export interface RiverPoint {
   edge: number;       // index k of the river edge (corners k -> k+1)
 }
 
-// Share of an edge, at each end, replaced by the rounded turn at a corner.
-const TURN = 0.45;
+// Share of an edge, at each end, replaced by the rounded turn at a corner
+// (the rest runs straight along the edge).
+const TURN = 0.2;
 const SAMPLES = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1];
 
 export function riverCurve(globe: Globe, paint: PaintData, river: River): RiverPoint[] {

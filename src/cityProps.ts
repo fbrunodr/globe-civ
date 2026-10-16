@@ -141,7 +141,11 @@ export function allowedDensity(g: Game, t: number, d: Density): Density {
 const mix = (a: number, b: number) => { let h = Math.imul(a ^ 0x9e3779b9, 0x85ebca6b) ^ b; h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35); return (h ^ (h >>> 16)) >>> 0; };
 
 // Built-up tiles: the centers and urban tiles (never pentagons, which have no drawings).
-export const isBuilt = (g: Game, t: number): boolean => (g.use[t] === USE.urban || g.use[t] === USE.center) && g.tiles[t].corners.length === 6;
+// Built-up: a center or urban land hex, stamped with a town drawing. An
+// urban water tile is a harbor: no streets cross into it (its edges read 0
+// from the land), its buildings stand by the quay.
+export const isBuilt = (g: Game, t: number): boolean => (g.use[t] === USE.urban || g.use[t] === USE.center) && g.tiles[t].corners.length === 6 && !g.isWater(t);
+export const isHarbor = (g: Game, t: number): boolean => g.use[t] === USE.urban && g.isWater(t);
 
 
 export class CityProps {
@@ -384,6 +388,26 @@ export class CityProps {
       placeAt(sp, kind, buildingEntry(kind).leaf, mulberry32(mix(sp.tile, sp.k + 11)));
     }
     for (const sp of st.halls) placeAt(sp, 'hall', 0x5f5650, mulberry32(mix(sp.tile, 7)));
+    // Harbors: each building on the quay side of the fan toward a built-up
+    // neighbor (side by side), facing it; anywhere it can stand otherwise.
+    for (const t of g.cityTiles(city, USE.urban)) {
+      if (!isHarbor(g, t)) continue;
+      const nbs = g.tiles[t].neighbors;
+      const quays = nbs.flatMap((n, j) => (isBuilt(g, n) ? [j] : []));
+      g.slotKeys(t).forEach((b, k) => {
+        if (!b || b === 'walls') return;
+        const kind = MODEL[b], rand = mulberry32(mix(t, k + 11));
+        const j = quays.length ? quays[k % quays.length]! : Math.floor(rand() * nbs.length);
+        const s0 = this.sample(t, j, k ? 0.22 : 0.45, k ? 0.45 : 0.22);
+        const s = standsAt(kind, s0) ? s0 : this.findSpot(t, kind, rand, s0.dir);
+        if (!s) return;
+        const yaw = facing(s.dir, g.tiles[nbs[j]!]!.center) + Math.PI / 2, roof = buildingEntry(kind).leaf;
+        if (buildingEntry(kind).water === 'float') put(t, this.make(kind, s.dir, s.water, yaw, HOUSE_SCALE, roof, rand));
+        else put(t, ...this.stand(kind, s.dir, yaw, HOUSE_SCALE, roof, rand, city.owner));
+      });
+      const w = g.wonderOn(t), site = w ? WONDER_MODEL[w] : city.wonderTile === t ? 'scaffold' : null;
+      if (site) put(t, ...this.landmark(t, site, mulberry32(mix(t, 9))));
+    }
     for (const sp of st.wonders) {
       const w = g.wonderOn(sp.tile);
       const kind = w ? WONDER_MODEL[w] : city.wonderTile === sp.tile ? 'scaffold' : null;

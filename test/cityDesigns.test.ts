@@ -7,7 +7,7 @@ import * as THREE from 'three';
 import { stamp, type FanPt } from '../src/cityStamp.ts';
 import { roadEntries, roadLines } from '../src/roads.ts';
 import { builtMask, cityGround } from '../src/terraform.ts';
-import { CityProps, tileDensity, allowedDensity, isBuilt, type CitySpot } from '../src/cityProps.ts';
+import { CityProps, tileDensity, allowedDensity, isBuilt, isHarbor, type CitySpot } from '../src/cityProps.ts';
 import { Game } from '../src/game.ts';
 import { aiTurn } from '../src/ai.ts';
 import { USE } from '../src/cities.ts';
@@ -104,6 +104,35 @@ describe('DS4: drawings meet on the globe', () => {
       }
     }
     expect(bad.slice(0, 5)).toEqual([]);
+  });
+});
+
+describe('DS7: harbors (urban water tiles) take no streets; their buildings stand on the water', async () => {
+  const { buildPresets, PRESETS } = await import('../src/sandbox.ts');
+  const g = new Game({ size: 'medium', seed: 7 });
+  g.units.length = 0;
+  buildPresets(g, PRESETS.filter((p) => p.name === 'Lighthouse port'));
+  // Water tiles wet, land dry.
+  const at = (t: number, dir: THREE.Vector3): CitySpot => ({ dir, ground: 0.01, water: g.isWater(t) ? 0.011 : 0, slope: 0, urban: 1 });
+  const cp = new CityProps(g, (t, i, wa, wb) => at(t, dirOf(g.globe, { t, i, wa, wb })), (d) => { const t = locate(g.globe, d).t; return { ...at(t, d), t }; }, 1);
+  const harbors = Array.from({ length: g.N }, (_, t) => t).filter((t) => isHarbor(g, t));
+  it('the port has a harbor tile', () => expect(harbors.length).toBeGreaterThan(0));
+  it('a harbor is not built up, and no street of a town crosses into it', () => {
+    const bad: string[] = [];
+    for (const t of harbors) {
+      if (isBuilt(g, t)) bad.push(`${t} built up`);
+      for (const n of g.tiles[t]!.neighbors) if (isBuilt(g, n) && cp.edgeValue(n, t) !== 0) bad.push(`${n}-${t}: a street`);
+    }
+    expect(bad).toEqual([]);
+  });
+  it('every building of a harbor is placed', () => {
+    const bad: string[] = [];
+    for (const t of harbors) {
+      const want = g.slotKeys(t).filter((k) => k !== null && k !== 'walls').length;
+      const got = cp.place(t).filter((b) => b.kind !== 'foundation').length;
+      if (got < want) bad.push(`tile ${t}: ${got}/${want}`);
+    }
+    expect(bad).toEqual([]);
   });
 });
 

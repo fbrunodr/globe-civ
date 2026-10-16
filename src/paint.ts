@@ -70,12 +70,20 @@ type ClassPair = `${GroundClass}-${GroundClass}`;
 export const PAIR_OVERRIDES: Partial<Record<ClassPair, PairRule>> = {
   'ice-water': { warp: 0.5, round: 0.12 }, // ice floes read sharp
 };
-// Borders along rivers bend a little less than others; rivers follow them (P5).
-export const RIVER_RULE: PairRule = { warp: 0.7, round: 0.12 };
+// Borders along rivers stay on their edges, like shores; rivers follow them
+// (P5), so a river runs along the hex edge (rounding the turns at corners).
+export const RIVER_RULE: PairRule = { warp: 0, round: 0.12 };
+// Shores follow the hex edges, only their corners rounded, and sit a little
+// inside the water tile (SHORE_SHIFT, a share of the tiles' inner radius):
+// land tiles stay dry to their edges, and each water tile keeps its water,
+// with a strip of beach inside its rim (where harbors stand).
+export const SHORE_RULE: PairRule = { warp: 0, round: 0.3 };
+export const SHORE_SHIFT = 0.15;
 
 export function pairRule(a: GroundClass, b: GroundClass): PairRule {
   const o = PAIR_OVERRIDES[`${a}-${b}`] ?? PAIR_OVERRIDES[`${b}-${a}`];
   if (o) return o;
+  if ((a === 'water') !== (b === 'water')) return SHORE_RULE;
   const ra = CLASS_RULES[a], rb = CLASS_RULES[b];
   return { warp: Math.min(ra.warp, rb.warp), round: Math.max(ra.round, rb.round) };
 }
@@ -174,6 +182,7 @@ export interface FanRules {
   ids: [number, number, number, number]; // t, A, B, C
   warp: number[];  // 5 warp shares
   round: number[]; // 5 rounding widths (radians)
+  shift: number[]; // 5 offsets (radians) of each boundary toward its reference tile (shores move into the water)
   river: number[]; // 3 (real edges): river strength 0..1, 0 = no river
   // How alike the looks of each pair of the fan's tiles are (0..1; 1 = same
   // group): t|A, t|B, t|C, A|B, B|C, A|C.
@@ -204,6 +213,18 @@ export function buildPaintData(globe: Globe, map: MapData, worldSeed: number): P
   }
   const r0 = sum / count;
   const params: PaintParams = { r0, seed: worldSeed | 0 };
+  // Each tile's own inner radius: rule widths are shares of the two tiles'
+  // mean (so a border is as soft, for its tiles' size, on small tiles as on large).
+  const inr = tiles.map((tile) => {
+    const k = tile.corners.length;
+    let s = 0;
+    for (let i = 0; i < k; i++) {
+      const p = globe.triCenters[tile.corners[i]], q = globe.triCenters[tile.corners[(i + 1) % k]];
+      s += Math.abs(p.clone().cross(q).normalize().dot(tile.center));
+    }
+    return s / k;
+  });
+  const size = (a: number, b: number) => (inr[a] + inr[b]) / 2;
 
   // River strength per edge, from the flow it carries.
   const edgeRiver = new Map<number, number>();
@@ -233,9 +254,16 @@ export function buildPaintData(globe: Globe, map: MapData, worldSeed: number): P
     const d = Math.hypot(ca.r - cb.r, ca.g - cb.g, ca.b - cb.b);
     return SIMILAR_MAX * smoothstep(SIMILAR_COLOR[1], SIMILAR_COLOR[0], d);
   };
+  // Water tiles beside land: borders between two waters there stay on their
+  // edges too (where one bends into a water tile, the land beside it would
+  // take the share it gives up, and the shore would move).
+  const coastal = tiles.map((t) => cls[t.id] === 'water' && t.neighbors.some((n) => cls[n] !== 'water'));
   const rule = (a: number, b: number): PairRule => {
-    if (edgeRiver.has(edgeKey(N, a, b))) return RIVER_RULE;
     const r = pairRule(cls[a], cls[b]);
+    // (A shore stays on its edge, even where a river runs along it.)
+    if (r === SHORE_RULE) return r;
+    if (cls[a] === 'water' && cls[b] === 'water' && (coastal[a] || coastal[b])) return { warp: 0, round: r.round };
+    if (edgeRiver.has(edgeKey(N, a, b))) return RIVER_RULE;
     const sm = group[a] === group[b] ? 0 : sim(a, b);
     return sm > 0 ? { warp: r.warp, round: r.round + SIMILAR_ROUND * sm } : r;
   };
@@ -247,10 +275,18 @@ export function buildPaintData(globe: Globe, map: MapData, worldSeed: number): P
     for (let i = 0; i < k; i++) {
       const A = tile.neighbors[(i + k - 1) % k], B = tile.neighbors[i], C = tile.neighbors[(i + 1) % k];
       const rules = [rule(t, A), rule(t, B), rule(t, C), rule(B, A), rule(B, C)];
+      // Each boundary's reference tile (its side of positive distance) and the other.
+      const pairs: [number, number][] = [[t, A], [t, B], [t, C], [B, A], [B, C]];
+      const shoreShift = ([ref, other]: [number, number]) => {
+        if (pairRule(cls[ref], cls[other]) !== SHORE_RULE) return 0;
+        const d = SHORE_SHIFT * size(ref, other);
+        return cls[ref] === 'water' ? -d : d;
+      };
       fans.push({
         ids: [t, A, B, C],
         warp: rules.map((r) => r.warp),
-        round: rules.map((r) => r.round * r0),
+        round: rules.map((r, j) => r.round * size(...pairs[j]!)),
+        shift: pairs.map(shoreShift),
         river: [A, B, C].map((nb) => edgeRiver.get(edgeKey(N, t, nb)) ?? 0),
         sim: [sim(t, A), sim(t, B), sim(t, C), sim(A, B), sim(B, C), sim(A, C)],
       });
@@ -305,14 +341,15 @@ export function fanFrames(globe: Globe): FanFrame[] {
 }
 
 // Warped signed distances of point (x, y, z) to the fan's five boundaries
-// (vertex attributes in the shader): distance + warp share × (δ · normal).
+// (vertex attributes in the shader): distance + warp share × (δ · normal)
+// + the boundary's shift (shores).
 export const FAN_COORDS = 5;
 
 export function fanCoords(fr: FanFrame, fan: FanRules, delta: ArrayLike<number>, x: number, y: number, z: number,
   out: Float32Array | number[], off = 0): void {
   for (let j = 0; j < 5; j++) {
     const nx = fr.n[3 * j], ny = fr.n[3 * j + 1], nz = fr.n[3 * j + 2];
-    out[off + j] = x * nx + y * ny + z * nz + fan.warp[j] * (delta[0] * nx + delta[1] * ny + delta[2] * nz);
+    out[off + j] = x * nx + y * ny + z * nz + fan.warp[j] * (delta[0] * nx + delta[1] * ny + delta[2] * nz) + fan.shift[j];
   }
 }
 

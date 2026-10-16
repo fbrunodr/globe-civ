@@ -15,7 +15,7 @@ import './style.css';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
-  CELL, LOT_SIZE, FLOOR_HEIGHT, FOOTPRINT_CELLS, HALF_WIDTH, corner, distToLine, nearestOn, len, sub, lotsOverlap, lotSamples, pointInPoly, rhoOf, isBuilding,
+  CELL, SAFE_RHO, LOT_SIZE, FLOOR_HEIGHT, FOOTPRINT_CELLS, HALF_WIDTH, corner, distToLine, nearestOn, len, sub, lotsOverlap, lotSamples, pointInPoly, rhoOf, isBuilding,
   type Density, type Floors, type Footprint, type Lot, type LotKind, type Pt, type Spot,
 } from './town/geometry.ts';
 import { CLASSES, STUB_U, parseKey, stubsOf, type Stub } from './town/edges.ts';
@@ -263,6 +263,25 @@ function drawOverlay(): void {
     }
     overlay.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(seg), new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.1 })));
   }
+  // The safe zone: never water inside the dashed line; past it (the blue
+  // band) a river may come in (the sea and lakes never enter a land tile), and what stands there is left out.
+  if (showSafe) {
+    const hex = (r: number) => Array.from({ length: 6 }, (_, j) => { const c = corner(6, j); return { x: c.x * r, y: c.y * r }; });
+    const inner = hex(SAFE_RHO), outer = hex(1), pos: number[] = [];
+    for (let j = 0; j < 6; j++) {
+      const q = [inner[j]!, outer[j]!, outer[(j + 1) % 6]!, inner[(j + 1) % 6]!].map((p) => toPlane(p, 0.0045));
+      for (const v of [q[0]!, q[1]!, q[2]!, q[0]!, q[2]!, q[3]!]) pos.push(v.x, v.y, v.z);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    overlay.add(new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0x3aa0ff, transparent: true, opacity: 0.16, depthTest: false, side: THREE.DoubleSide })));
+    const dash = line(inner, new THREE.Color(0x7cc4ff), true, 0.0048);
+    dash.material = new THREE.LineDashedMaterial({ color: 0x7cc4ff, dashSize: 0.02, gapSize: 0.014, depthTest: false, transparent: true });
+    dash.computeLineDistances();
+    overlay.add(dash);
+    // Buildings reaching past it, outlined.
+    for (const l of doc.lots) if (isBuilding(l.kind) && pastSafe(l)) overlay.add(line(lotOutline(l), new THREE.Color(0x3aa0ff), true, 0.0055, 0.8));
+  }
   // Road points (for dragging), spots, squares.
   const pts: THREE.Vector3[] = [];
   if (tool === 'select' || tool === 'street') doc.streets.forEach((s) => s.ctrl.forEach((p) => pts.push(toPlane(p, 0.006))));
@@ -343,6 +362,7 @@ function pick(p: Pt): Sel | null {
 // ---------- snapping ----------
 
 let snap = true;
+let showSafe = true;
 const grid = (p: Pt, step = CELL / 2): Pt => (snap ? { x: Math.round(p.x / step) * step, y: Math.round(p.y / step) * step } : p);
 // A road point: a stub, else a point on a road, else the grid.
 function snapStreet(p: Pt, skip = -1): { p: Pt; on: 'stub' | 'street' | null } {
@@ -682,6 +702,7 @@ addEventListener('keydown', (e) => {
   if (tools[k]) { setTool(tools[k]!); return; }
   if (k === 't') { setTilt(!tilted); return; }
   if (k === 'g') { setSnap(!snap); return; }
+  if (k === 'z') { setSafe(!showSafe); return; }
   if (k === 'enter') { if (tool === 'street') finishStreet(); else if (tool === 'square') finishSquare(); return; }
   if (k === 'escape') { drawing = null; selected = null; drawOverlay(); return; }
   if (k === 'delete' || k === 'backspace') { if (selected) { const before = snapshot(); remove(selected); selected = null; commit(before); } return; }
@@ -795,6 +816,8 @@ function fileAction(act: string): void {
   }
 }
 
+// A building reaching out of the safe zone (left out where water comes in).
+const pastSafe = (l: Lot): boolean => lotSamples(l).some((p) => rhoOf(6, p) > SAFE_RHO + 1e-9);
 function refreshPanel(): void {
   $('title').innerHTML = `${key} · ${role} · ${density}<small>${variant ? `variant ${variant}${dirty.has(rk()) ? ' (unsaved)' : ''}` : 'generated draft: editing makes a variant'} · ${doc.lots.length} lots</small>`;
   $('save').classList.toggle('dirty', dirty.size > 0);
@@ -802,6 +825,8 @@ function refreshPanel(): void {
   $('problems').innerHTML = problems.length
     ? problems.slice(0, 30).map((p) => `<li>${p.text}</li>`).join('') + (problems.length > 30 ? `<li>… ${problems.length - 30} more</li>` : '')
     : '<li class="ok">none: the game can use it</li>';
+  const past = doc.lots.filter((l) => isBuilding(l.kind) && pastSafe(l)).length;
+  $('safeNote').textContent = past ? `${past} building${past > 1 ? 's' : ''} past the safe zone (left out where a river comes in)` : 'everything inside the safe zone';
 }
 function syncBuildingButtons(): void {
   if (selected?.t !== 'lot') return;
@@ -851,6 +876,8 @@ function setSnap(s: boolean): void { snap = s; $('gridBtn').classList.toggle('on
 $('top').addEventListener('click', () => setTilt(false));
 $('tilt').addEventListener('click', () => setTilt(true));
 $('gridBtn').addEventListener('click', () => setSnap(!snap));
+function setSafe(s: boolean): void { showSafe = s; $('safeBtn').classList.toggle('on', s); drawOverlay(); }
+$('safeBtn').addEventListener('click', () => setSafe(!showSafe));
 $('undo').addEventListener('click', doUndo);
 $('redo').addEventListener('click', doRedo);
 $('redraft').addEventListener('click', () => { const before = snapshot(); doc.lots = lotsAlong(doc, key, role, density); commit(before); });

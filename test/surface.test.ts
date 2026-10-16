@@ -6,12 +6,18 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { generateWorld } from '../src/world.ts';
-import { buildPaintData, warpAt } from '../src/paint.ts';
+import { buildPaintData, warpAt, softAt, fanCoords, fanFrames, FAN_COORDS } from '../src/paint.ts';
 import { buildRelief } from '../src/relief.ts';
 import { tileLook } from '../src/look.ts';
 import { buildTerrainMesh, locate } from '../src/terrainMesh.ts';
 import { buildSurface, meshLevels, waterLevels, LOWLAND, type Surface } from '../src/surface.ts';
 import type { MapSizeKey } from '../src/rules.ts';
+import { SAFE_RHO, HARBOR_RHO } from '../src/town/geometry.ts';
+
+// Shores follow the hex edges a little inside the water tile, rivers run
+// along the edges (paint.ts SHORE_RULE, RIVER_RULE): land tiles keep out
+// sea and lakes entirely and rivers out of their safe zone, water tiles
+// keep their water (src/town/geometry.ts SAFE_RHO, HARBOR_RHO).
 
 const SEEDS: Record<MapSizeKey, number[]> = { small: [1, 2], medium: [4], large: [6] };
 
@@ -30,13 +36,13 @@ function setup(size: MapSizeKey, seed: number) {
     warp: (dir, out) => { warpAt(params, dir.x, dir.y, dir.z, out); },
     fanAttributes: [],
   }, 4);
-  return { w, looks, relief, mesh, surface: surface!, r0: params.r0 };
+  return { w, looks, relief, mesh, paint, surface: surface!, r0: params.r0 };
 }
 
 describe('surface', () => {
   for (const [size, seeds] of Object.entries(SEEDS) as [MapSizeKey, number[]][]) {
     for (const seed of seeds) {
-      const { w, looks, relief, mesh, surface, r0 } = setup(size, seed);
+      const { w, looks, relief, mesh, paint, surface, r0 } = setup(size, seed);
       const { globe, map } = w;
 
       it(`W1 ${size} seed ${seed}: water tiles are under water at their center, land tiles dry`, () => {
@@ -162,6 +168,64 @@ describe('surface', () => {
         }
         expect(off.slice(0, 10)).toEqual([]);
         expect(checked).toBeGreaterThan(200);
+      });
+
+      // Where the painting puts open water (sea, lake), and wetland pools
+      // (cities drain them). Every point of a fine grid over each tile's fans.
+      const frames = fanFrames(globe), co = new Float32Array(FAN_COORDS);
+      const waterKind = (t: number, i: number, wa: number, wb: number) => {
+        const tl = globe.tiles[t], k = tl.corners.length;
+        const A = globe.triCenters[tl.corners[i]], B = globe.triCenters[tl.corners[(i + 1) % k]];
+        const d = tl.center.clone().multiplyScalar(1 - wa - wb).addScaledVector(A, wa).addScaledVector(B, wb).normalize();
+        const fid = paint.fanStart[t] + i, fan = paint.fans[fid];
+        fanCoords(frames[fid], fan, warpAt(paint.params, d.x, d.y, d.z), d.x, d.y, d.z, co);
+        const sw = softAt(paint, fid, co);
+        let open = 0, pool = 0;
+        for (let c = 0; c < 4; c++) { const l = looks[fan.ids[c]]; if (l.water) open += sw[c]; else if (l.pool) pool += sw[c]; }
+        return open >= 0.5 ? 'open' : pool >= 0.05 ? 'pool' : 'river';
+      };
+      const grid = (t: number, f: (i: number, wa: number, wb: number) => void) => {
+        const n = 24;
+        for (let i = 0; i < globe.tiles[t].corners.length; i++) for (let a = 0; a <= n; a++) for (let b = 0; a + b <= n; b++) f(i, a / n, b / n);
+      };
+
+      it(`W7 ${size} seed ${seed}: land tiles are dry: no sea or lake water at all, river water only past ${SAFE_RHO} of the way to the edge`, () => {
+        const bad: string[] = [];
+        let coastal = 0;
+        for (const tile of globe.tiles) {
+          const t = tile.id;
+          if (looks[t].water || map.biome[t] === 'seaIce' || (!tile.neighbors.some((n) => looks[n].water) && !map.riverTile[t])) continue;
+          coastal++;
+          let open = Infinity, river = Infinity;
+          grid(t, (i, wa, wb) => {
+            const s = mesh.at(t, i, wa, wb);
+            if (s.water <= s.ground) return;
+            const k = waterKind(t, i, wa, wb);
+            // (On the edge itself, ρ = 1, a point is as much the neighbor's.)
+            if (k === 'open' && wa + wb < 1 - 1e-9) open = Math.min(open, wa + wb);
+            else if (k === 'river') river = Math.min(river, wa + wb);
+          });
+          if (open < Infinity) bad.push(`tile ${t}: sea or lake at ${open.toFixed(2)}`);
+          if (river < SAFE_RHO) bad.push(`tile ${t}: river at ${river.toFixed(2)}`);
+        }
+        expect(coastal).toBeGreaterThan(50);
+        expect(bad.slice(0, 10)).toEqual([]);
+      });
+
+      it(`W8 ${size} seed ${seed}: water tiles keep their water (harbors): under water out to ${HARBOR_RHO} of the way to the edge`, () => {
+        const bad: string[] = [];
+        for (const tile of globe.tiles) {
+          const t = tile.id;
+          // (Sea ice keeps its own ragged border: nothing is built beside it.)
+          if (!looks[t].water || !tile.neighbors.some((n) => !looks[n].water) || tile.neighbors.some((n) => map.biome[n] === 'seaIce')) continue;
+          let nearest = Infinity;
+          grid(t, (i, wa, wb) => {
+            const s = mesh.at(t, i, wa, wb);
+            if (s.water <= s.ground) nearest = Math.min(nearest, wa + wb);
+          });
+          if (nearest < HARBOR_RHO) bad.push(`tile ${t}: dry at ${nearest.toFixed(2)}`);
+        }
+        expect(bad.slice(0, 10)).toEqual([]);
       });
 
       it(`W3 ${size} seed ${seed}: every river's water is unbroken from near its source to its end`, () => {

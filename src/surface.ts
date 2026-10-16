@@ -355,15 +355,25 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
   };
   const MARGIN = MARGIN_R * r0;
   const maxFlow = Math.max(1, ...map.rivers.flatMap((r) => r.flow));
+  // Each tile's inner radius: a river is as wide, for the tiles it runs
+  // between, on small tiles as on large ones (it keeps out of their safe zones).
+  const inr = tiles.map((tile) => {
+    const k = tile.corners.length;
+    let s = 0;
+    for (let i = 0; i < k; i++) s += Math.abs(globe.triCenters[tile.corners[i]].clone().cross(globe.triCenters[tile.corners[(i + 1) % k]]).normalize().dot(tile.center));
+    return s / k;
+  });
   const courses: RiverCourse[] = [];
   for (const r of map.rivers) {
     const curve = riverCurve(globe, paint, r);
     const pts: THREE.Vector3[] = [];
     const flow: number[] = [];
+    const size: number[] = []; // the inner radius of the two tiles beside it (mean)
     for (const c of curve) {
       if (pts.length && pts[pts.length - 1].distanceTo(c.dir) < 0.01 * r0) continue;
       pts.push(c.dir.clone());
       flow.push(Math.sqrt(r.flow[c.edge] / maxFlow));
+      size.push((inr[c.tile] + inr[tiles[c.tile].neighbors[c.fan]]) / 2);
     }
     if (pts.length < 2) continue;
     const mouth = pts.length - 1;
@@ -390,6 +400,7 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
         const next = p.clone().addScaledVector(dirv, step).normalize();
         pts.push(next);
         flow.push(flow[flow.length - 1]);
+        size.push(size[size.length - 1]);
         if (inside < 0 && sampleField(wet, next) > 0.9) inside = s;
         if (inside >= 0 && s - inside >= 5) break;
       }
@@ -405,6 +416,7 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
       if (best && best.dist < 1.5 * r0) {
         pts.push(best.c.pts[best.j].clone());
         flow.push(flow[flow.length - 1]);
+        size.push(size[size.length - 1]);
         joinLevel = best.c.level[best.j];
       }
     }
@@ -418,9 +430,9 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
       if (j > 0) along += pts[j].distanceTo(pts[j - 1]);
       const p = pts[j], fw = 1 / (1.5 * r0);
       const vary = 1 + 0.3 * noise.noise(p.x * fw + 3.3, p.y * fw, p.z * fw - 8.1);
-      return r0 * (0.06 + 0.08 * f) * vary * (0.45 + 0.55 * smoothstep(0, 0.8 * r0, along));
+      return size[j] * (0.06 + 0.08 * f) * vary * (0.45 + 0.55 * smoothstep(0, 0.8 * r0, along));
     });
-    const depth = flow.map((f, j) => (0.00035 + 0.0005 * f) * Math.min(1, half[j] / (r0 * (0.06 + 0.08 * f))));
+    const depth = flow.map((f, j) => (0.00035 + 0.0005 * f) * Math.min(1, half[j] / (size[j] * (0.06 + 0.08 * f))));
     for (let j = mouth + 1; j < n; j++) half[j] *= 1 + 0.5 * Math.min(1, (j - mouth) / 8); // estuary
     // Ground along the course: the lowest of the middle and both banks.
     const ground = pts.map((p, j) => {
