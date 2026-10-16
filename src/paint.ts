@@ -258,10 +258,14 @@ export function buildPaintData(globe: Globe, map: MapData, worldSeed: number): P
   // edges too (where one bends into a water tile, the land beside it would
   // take the share it gives up, and the shore would move).
   const coastal = tiles.map((t) => cls[t.id] === 'water' && t.neighbors.some((n) => cls[n] !== 'water'));
+  // Shores: open water against land, ice sheets included (sea ice keeps its
+  // own ragged border).
+  const shore = (a: number, b: number): boolean => pairRule(cls[a], cls[b]) === SHORE_RULE
+    || (map.biome[a] === 'iceSheet' && cls[b] === 'water') || (map.biome[b] === 'iceSheet' && cls[a] === 'water');
   const rule = (a: number, b: number): PairRule => {
-    const r = pairRule(cls[a], cls[b]);
     // (A shore stays on its edge, even where a river runs along it.)
-    if (r === SHORE_RULE) return r;
+    if (shore(a, b)) return SHORE_RULE;
+    const r = pairRule(cls[a], cls[b]);
     if (cls[a] === 'water' && cls[b] === 'water' && (coastal[a] || coastal[b])) return { warp: 0, round: r.round };
     if (edgeRiver.has(edgeKey(N, a, b))) return RIVER_RULE;
     const sm = group[a] === group[b] ? 0 : sim(a, b);
@@ -278,7 +282,7 @@ export function buildPaintData(globe: Globe, map: MapData, worldSeed: number): P
       // Each boundary's reference tile (its side of positive distance) and the other.
       const pairs: [number, number][] = [[t, A], [t, B], [t, C], [B, A], [B, C]];
       const shoreShift = ([ref, other]: [number, number]) => {
-        if (pairRule(cls[ref], cls[other]) !== SHORE_RULE) return 0;
+        if (!shore(ref, other)) return 0;
         const d = SHORE_SHIFT * size(ref, other);
         return cls[ref] === 'water' ? -d : d;
       };

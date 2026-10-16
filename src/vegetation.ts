@@ -68,6 +68,9 @@ const SHORE_BAND = 0.25;        // tile radii
 const FRINGE_BAND = 0.75;       // r beyond which a forest edge thins
 const GROVE_SCALE = 1.5;        // tile radii
 const DRY = -0.00008;           // land props need the water this far under the ground
+// In a river (its channel runs along the hex edge, half in each tile), what
+// wades keeps to the shallow edge: reeds a little way in, trees on the bank.
+const RIVER_WADE = { Ground: 0.00025, Canopy: 0 } as const;
 
 const smoothstep = (a: number, b: number, x: number) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
@@ -225,7 +228,11 @@ export class Vegetation {
     const wu = catalogEntry(kind).water;
     let height = e.ground;
     if (!wu) { if (depth > DRY) return null; }
-    else if (wu.kind === 'wade') { if (depth > wu.depth) return null; }
+    else if (wu.kind === 'wade') {
+      const layer = CATALOG[kind].layer;
+      const inRiver = e.bank > 0.5 && (layer === 'Ground' || layer === 'Canopy');
+      if (depth > (inRiver ? Math.min(wu.depth, RIVER_WADE[layer as 'Ground' | 'Canopy']) : wu.depth)) return null;
+    }
     else if (wu.kind === 'bed') { if (depth < wu.minDepth) return null; }
     else {
       if (depth > wu.maxDepth || (wu.needWater && depth < 0.00005)) return null;

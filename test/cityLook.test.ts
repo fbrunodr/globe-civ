@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { BUILDING_KINDS, buildBuildingGeometry, buildingEntry, type BuildingKind } from '../src/buildingCatalog.ts';
 import { triangles } from '../src/propCatalog.ts';
-import { CityProps, type CitySpot } from '../src/cityProps.ts';
+import { CityProps, WATER_GAP, type CitySpot } from '../src/cityProps.ts';
 import { stamp, type StampTile } from '../src/cityStamp.ts';
 import { Game } from '../src/game.ts';
 import { aiTurn } from '../src/ai.ts';
@@ -156,6 +156,39 @@ describe('L5: on slopes, buildings stand level on a foundation', () => {
   it('houses still stand on the slope', () => expect(homes).toBeGreaterThan(200));
   it('they get foundations', () => expect(foundations).toBeGreaterThanOrEqual(homes));
   it('no building sinks below the ground under it (it stands at its highest corner)', () => expect(sunk.slice(0, 5)).toEqual([]));
+});
+
+describe('L7: no land building touches water: its footprint and a margin round it stay dry', () => {
+  const g = grownGame();
+  const D = g.globe.avgEdgeAngle;
+  // Flat ground with bands of water across it, about a tile apart (like rivers).
+  const wetAt = (d: THREE.Vector3) => Math.sin((d.x + 0.7 * d.z) / (2.2 * D)) > 0.75;
+  const at = (d: THREE.Vector3): CitySpot => ({ dir: d, ground: 0.01, water: wetAt(d) ? 0.0105 : 0, slope: 0, urban: 1 });
+  const sampler = (t: number, i: number, wa: number, wb: number): CitySpot => {
+    const tl = g.tiles[t]!, k = tl.corners.length;
+    const A = g.globe.triCenters[tl.corners[i]!]!, B = g.globe.triCenters[tl.corners[(i + 1) % k]!]!;
+    return at(tl.center.clone().multiplyScalar(1 - wa - wb).addScaledVector(A, wa).addScaledVector(B, wb).normalize());
+  };
+  const cp = new CityProps(g, sampler, (d) => ({ ...at(d), t: locate(g.globe, d).t }), 1);
+  let homes = 0;
+  const bad: string[] = [];
+  for (let t = 0; t < g.N; t++) {
+    if (g.use[t] !== USE.urban && g.use[t] !== USE.center) continue;
+    for (const b of cp.place(t)) {
+      // (Walls may follow a bank and garden trees grow on it; roofs, doors and foundations sit with their walls.)
+      if (buildingEntry(b.kind).water !== undefined || ['wallSegment', 'wallTower', 'gardenTree', 'massGable', 'massDoor', 'foundation'].includes(b.kind)) continue;
+      if (b.kind === 'massWalls' || b.kind === 'massTower') homes++;
+      const c = new THREE.Vector3().setFromMatrixPosition(b.matrix).normalize();
+      for (const p of cp.footprint(b)) {
+        const out = p.clone().sub(c), l = out.length();
+        // (A hair inside the margin: the check samples exactly at it.)
+        const q = l > 1e-12 ? p.clone().addScaledVector(out, (0.95 * WATER_GAP * D) / l).normalize() : p;
+        if (wetAt(p) || wetAt(q)) { bad.push(`tile ${t}: ${b.kind}`); break; }
+      }
+    }
+  }
+  it('houses still stand between the bands', () => expect(homes).toBeGreaterThan(100));
+  it('none reaches the water', () => expect(bad.slice(0, 5)).toEqual([]));
 });
 
 describe('L6: no building stands on a street or a road', () => {

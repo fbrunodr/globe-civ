@@ -75,6 +75,8 @@ const FOUNDATION_UNIT = 0.01;
 const FOUNDATION_STYLE = [0x8d877c, 0xb59a72, 0x9a6a55, 0x5f5a55, 0x7a5f45, 0xd2ccbe, 0xb08a5a, 0x6f7a62] as const;
 // render.ts draws prop models at 1.5 × PROP_SIZE of the reference size.
 const PROP_SCALE = 1.5 * 0.276;
+// Dry ground a land building keeps round its footprint (tile steps).
+export const WATER_GAP = 0.012;
 // The longest bridge a street gets (tile steps): rivers, inlets, pools.
 const BRIDGE = 0.4;
 
@@ -352,9 +354,20 @@ export class CityProps {
     // (The roads between cities too: they end at the town's edge, where they meet its streets.)
     const roads = this.roadLines().map((pts) => ({ points: pts, halfWidth: pts.map(() => ROAD_HALF_WIDTH * D), paved: false }));
     const clear = new StreetIndex([...streets, ...roads], D);
-    const fits = (b: PlacedBuilding) => clear.free(this.footprint(b));
-    const settle = (make: (shrink: number) => PlacedBuilding[]): PlacedBuilding[] => {
-      for (const shrink of [1, 0.85]) { const bs = make(shrink); if (fits(bs[0]!)) return bs; }
+    // Nor at the water: a land building's footprint, and a margin round it,
+    // stays dry (no house touching a river or the sea). Walls may follow a bank.
+    const dryAround = (b: PlacedBuilding) => {
+      if (buildingEntry(b.kind).water !== undefined) return true;
+      const c = new THREE.Vector3().setFromMatrixPosition(b.matrix).normalize();
+      return this.footprint(b).every((p) => {
+        const out = p.clone().sub(c);
+        const l = out.length();
+        return !wet(this.sampleDir(l > 1e-12 ? p.clone().addScaledVector(out, (WATER_GAP * D) / l).normalize() : p));
+      });
+    };
+    const fits = (b: PlacedBuilding, dry: boolean) => clear.free(this.footprint(b)) && (!dry || dryAround(b));
+    const settle = (make: (shrink: number) => PlacedBuilding[], dry = true): PlacedBuilding[] => {
+      for (const shrink of [1, 0.85]) { const bs = make(shrink); if (fits(bs[0]!, dry)) return bs; }
       return [];
     };
 
@@ -428,7 +441,9 @@ export class CityProps {
       const yaw = facing(s.dir, f) + Math.PI / 2;
       if (l.kind === 'tree' || l.kind === 'well' || l.kind === 'fountain' || l.kind === 'stall' || l.kind === 'shed') {
         const kind = DECOR[l.kind];
-        put(l.tile, this.make(kind, s.dir, s.ground, yaw + (l.kind === 'tree' ? rand() * 6.28 : 0), HOUSE_SCALE * sc * (l.kind === 'tree' ? 0.8 + 0.4 * rand() : 1), buildingEntry(kind).leaf, rand));
+        const b = this.make(kind, s.dir, s.ground, yaw + (l.kind === 'tree' ? rand() * 6.28 : 0), HOUSE_SCALE * sc * (l.kind === 'tree' ? 0.8 + 0.4 * rand() : 1), buildingEntry(kind).leaf, rand);
+        // (A garden tree may grow on the bank.)
+        if (l.kind === 'tree' || dryAround(b)) put(l.tile, b);
         continue;
       }
       if (!isBuilding(l.kind)) continue;
@@ -451,7 +466,7 @@ export class CityProps {
       pts.forEach((s, n) => {
         const corner = w.pts[n]!.wb === 0;
         if ((n === 0 || n === pts.length - 1 || corner) && standsAt('wallTower', s)) {
-          put(w.tile, ...settle((k) => this.stand('wallTower', s.dir, 0, HOUSE_SCALE * (corner ? 1 : 0.85) * k, buildingEntry('wallTower').leaf, rand, city.owner)));
+          put(w.tile, ...settle((k) => this.stand('wallTower', s.dir, 0, HOUSE_SCALE * (corner ? 1 : 0.85) * k, buildingEntry('wallTower').leaf, rand, city.owner), false));
         }
         const nx = pts[n + 1];
         if (!nx) return;
@@ -459,7 +474,7 @@ export class CityProps {
         if (!standsAt('wallSegment', mid)) return;
         // Stretched to the gap between its ends (model length 0.01 at prop scale).
         const len = Math.max(0.3, Math.min(4, s.dir.angleTo(nx.dir) / (0.01 * HOUSE_SCALE * this.scale * PROP_SCALE)));
-        put(w.tile, ...settle((k) => this.stand('wallSegment', mid.dir, facing(mid.dir, nx.dir), HOUSE_SCALE * k, buildingEntry('wallSegment').leaf, rand, city.owner, len)));
+        put(w.tile, ...settle((k) => this.stand('wallSegment', mid.dir, facing(mid.dir, nx.dir), HOUSE_SCALE * k, buildingEntry('wallSegment').leaf, rand, city.owner, len), false));
       });
     }
 

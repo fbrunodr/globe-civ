@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "mapcheck": "tsx scripts/mapcheck.ts",
+    "surfacecheck": "tsx scripts/surfacecheck.ts",
     "guarantees": "tsx scripts/guarantees.ts",
     "shots": "node scripts/shots.mjs"
   },
