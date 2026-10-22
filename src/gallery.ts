@@ -36,6 +36,10 @@ scene.fog = new THREE.Fog(0x9fc3e6, 150, 420);
 const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 1000);
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
+// The mouse as in the world view: drag moves over the ground, right-drag (or
+// Shift+drag) rotates and tilts, the wheel zooms.
+controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
+controls.screenSpacePanning = false;
 controls.minDistance = 0.05;
 controls.maxPolarAngle = Math.PI / 2 - 0.01;
 
@@ -225,7 +229,7 @@ function buildTerrains(): void {
     return { center, label: div, mix: e.mix };
   });
   refreshFocus();
-  info.textContent = `${set.name}: tile edge ${R / SC}, props at game scale. Click a label to focus · ← → terrain · WASD move · Q/E rotate · Z/X zoom`;
+  info.textContent = `${set.name}: tile edge ${R / SC}, props at game scale. Click a label to focus · ← → terrain · drag move · right-drag or Shift+drag rotate & tilt · WASD move · Q/E rotate · T/G tilt · Z/X zoom`;
 }
 
 function buildCatalog(): void {
@@ -268,7 +272,7 @@ function buildCatalog(): void {
       center.clone().add(new THREE.Vector3(0, 0, 4.4)), () => { state.focus = i; refreshFocus(); setCam('close'); });
     patches.push({ center, label: div, mix: '' });
   });
-  info.textContent = `${CATALOG_KINDS.length} props and ${BUILDING_KINDS.length} buildings, enlarged (×N in each label) to be visible. Budget ${BUDGET} triangles · WASD move · Q/E rotate · Z/X zoom`;
+  info.textContent = `${CATALOG_KINDS.length} props and ${BUILDING_KINDS.length} buildings, enlarged (×N in each label) to be visible. Budget ${BUDGET} triangles · drag move · right-drag or Shift+drag rotate & tilt · WASD move · Q/E rotate · T/G tilt · Z/X zoom`;
 }
 
 function refreshFocus(): void {
@@ -343,7 +347,7 @@ addEventListener('keydown', (e) => {
 
 // Keyboard camera, as in the game: W A S D move over the ground (Shift =
 // faster), Q / E rotate around the view's center, Z / X zoom in / out.
-const MOVE_KEYS = new Set(['w', 'a', 's', 'd', 'q', 'e', 'z', 'x', 'shift']);
+const MOVE_KEYS = new Set(['w', 'a', 's', 'd', 'q', 'e', 't', 'g', 'z', 'x', 'shift']);
 const keys = new Set<string>();
 addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLSelectElement || e.target instanceof HTMLInputElement || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -359,6 +363,13 @@ function keyboardCamera(dt: number): void {
   const offset = camera.position.clone().sub(controls.target);
   const rot = key('q') - key('e');
   if (rot !== 0) offset.applyAxisAngle(new THREE.Vector3(0, 1, 0), rot * 1.6 * dt);
+  // T / G: tilt toward the horizon / back down (as in the world view).
+  const tilt = key('t') - key('g');
+  if (tilt !== 0) {
+    const s = new THREE.Spherical().setFromVector3(offset);
+    s.phi = Math.min(controls.maxPolarAngle, Math.max(0.05, s.phi + tilt * 0.9 * dt));
+    offset.setFromSpherical(s);
+  }
   const zoom = key('x') - key('z');
   if (zoom !== 0) offset.multiplyScalar(Math.exp(zoom * 1.6 * dt));
   // Movement scales with the distance, so it feels the same at every zoom.

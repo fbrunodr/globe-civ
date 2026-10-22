@@ -439,7 +439,8 @@ const STYLE_BUILD: Record<Style, (l: Lot) => G[]> = {
     out.push(onFace(b, 'front', 0, 0, 0.0055, Math.min(0.0095, s.storey * 0.75), 0x2a3a4a));
     if (tall) {
       // A tenement: a cornice, a flat roof with a water tank.
-      out.push(...box(b.w + 0.002, 0.0014, b.d + 0.002, 0xd8d0c0, { x: b.x, y: b.h - 0.0014, z: b.z }, 0x5a5650));
+      // (A hair above the walls' own top: the roof would flicker with it otherwise.)
+      out.push(...box(b.w + 0.002, 0.0017, b.d + 0.002, 0xd8d0c0, { x: b.x, y: b.h - 0.0014, z: b.z }, 0x5a5650));
       out.push(cyl(0.003, 0.003, 0.005, 7, 0x6a5038, { x: b.x - b.w * 0.25, y: b.h, z: b.z - b.d * 0.2 }), cone(0.0033, 0.002, 7, 0x4a4a4a, { x: b.x - b.w * 0.25, y: b.h + 0.005, z: b.z - b.d * 0.2 }));
     } else {
       out.push(...gable(b.w + 0.002, b.d + 0.003, Math.min(b.w, b.d) * 0.42, slate, { x: b.x, y: b.h, z: b.z }, false, brick));

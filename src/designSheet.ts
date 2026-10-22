@@ -30,6 +30,10 @@ scene.background = new THREE.Color(0x9fc3e6);
 const camera = new THREE.PerspectiveCamera(40, 1, 0.01, 2000);
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
+// The mouse as in the world view: drag moves over the ground, right-drag (or
+// Shift+drag) rotates and tilts, the wheel zooms.
+controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
+controls.screenSpacePanning = false;
 controls.maxPolarAngle = Math.PI / 2 - 0.05;
 scene.add(new THREE.HemisphereLight(0xdfeeff, 0x6a5a40, 1.4));
 const sun = new THREE.DirectionalLight(0xfff4e0, 2.1);

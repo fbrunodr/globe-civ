@@ -24,6 +24,10 @@ scene.background = new THREE.Color(0x9fc3e6);
 const camera = new THREE.PerspectiveCamera(35, 1, 0.005, 200);
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
+// The mouse as in the world view: drag moves over the ground, right-drag (or
+// Shift+drag) rotates and tilts, the wheel zooms.
+controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
+controls.screenSpacePanning = false;
 controls.maxPolarAngle = Math.PI / 2 - 0.05;
 scene.add(new THREE.HemisphereLight(0xdfeeff, 0x6a5a40, 1.4));
 const sun = new THREE.DirectionalLight(0xfff4e0, 2.1);
@@ -136,7 +140,7 @@ $('style').addEventListener('change', (e) => { style = (e.target as HTMLSelectEl
 $('civSel').addEventListener('change', (e) => { civ = (e.target as HTMLSelectElement).value as ArchCiv; rebuild(); });
 $('variant').addEventListener('change', (e) => { const v = (e.target as HTMLSelectElement).value; variant = v === 'all' ? 'all' : Number(v); rebuild(true); });
 
-// Keyboard: W A S D move, Q E rotate, Z X zoom.
+// Keyboard: W A S D move, Q E rotate, T G tilt (toward the horizon / back down, as in the world view), Z X zoom.
 const keys = new Set<string>();
 addEventListener('keydown', (e) => { if (!(e.target instanceof HTMLSelectElement)) keys.add(e.key.toLowerCase()); });
 addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
@@ -156,6 +160,12 @@ function keyboard(): void {
   // (The offset from the target first: the camera then moves to target + offset.)
   const turn = (keys.has('q') ? 1 : 0) - (keys.has('e') ? 1 : 0);
   if (turn) { const off = camera.position.clone().sub(controls.target).applyAxisAngle(new THREE.Vector3(0, 1, 0), turn * 1.2 * dt); camera.position.copy(controls.target).add(off); }
+  const tilt = (keys.has('t') ? 1 : 0) - (keys.has('g') ? 1 : 0);
+  if (tilt) {
+    const s = new THREE.Spherical().setFromVector3(camera.position.clone().sub(controls.target));
+    s.phi = Math.min(controls.maxPolarAngle, Math.max(0.05, s.phi + tilt * 0.9 * dt));
+    camera.position.copy(controls.target).add(new THREE.Vector3().setFromSpherical(s));
+  }
   const zoom = (keys.has('x') ? 1 : 0) - (keys.has('z') ? 1 : 0);
   if (zoom) { const off = camera.position.clone().sub(controls.target).multiplyScalar(Math.exp(zoom * 1.5 * dt)); camera.position.copy(controls.target).add(off); }
 }
