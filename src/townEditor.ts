@@ -2,7 +2,8 @@
 // hand, SimCity style: roads first (from the red stubs on the rim, where
 // the neighbors' roads come in), then buildings that front onto them
 // (footprints of 2×2 to 4×4 terrain cells, single to skyscraper), props,
-// squares, and the building spots, hall or wonder.
+// squares, and the building spots, hall or wonder. The walled center
+// also has its walls drawn by hand, with gates where streets go through.
 //
 // Drawings are files: per role and density, each of the 13 edge classes
 // (town/edges.ts) has its generated draft and any number of variants by
@@ -15,14 +16,17 @@ import './style.css';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
-  CELL, SAFE_RHO, LOT_SIZE, FLOOR_HEIGHT, FOOTPRINT_CELLS, HALF_WIDTH, corner, distToLine, nearestOn, len, sub, lotsOverlap, lotSamples, pointInPoly, rhoOf, isBuilding,
+  CELL, DENSITY_TALLEST, FLOORS, densityAllows, SAFE_RHO, LOT_SIZE, wallHeight, FOOTPRINT_CELLS, HALF_WIDTH, ON_SQUARES, corner, distToLine, inSpot, nearestOn, spotOutline, len, sub, lotsOverlap, lotSamples, pointInPoly, rhoOf, isBuilding,
   type Density, type Floors, type Footprint, type Lot, type LotKind, type Pt, type Spot,
 } from './town/geometry.ts';
 import { CLASSES, STUB_U, parseKey, stubsOf, type Stub } from './town/edges.ts';
 import { edgeClass, RANK_CLASS, HALL_RADIUS, type Rank, type Role, type Skeleton } from './town/skeleton.ts';
 import { assemble, skeletonFor, recordKey, setRecord, storedRecord, allRecords, streetPath, variantsOf, fromRecord, clearance, LOT_INNER, type DrawingRecord, type Drawing } from './town/index.ts';
-import { drawingProblems } from './town/checks.ts';
+import { drawingProblems, spotOnStreet, spotPastRim } from './town/checks.ts';
+import { groupOf, isWonderRole, wonderSpot } from './town/wonders.ts';
+import { draftWalls, GATE_HALF, ON_WALL, WALL_CLEAR, WALL_HALF } from './town/walls.ts';
 import { stamp } from './cityStamp.ts';
+import { ARCH_CIVS, STYLE_NAME, styleOf, type ArchCiv } from './architecture.ts';
 import { FlatPainter, disposeGroup, OUTSIDE, RIM } from './flatTown.ts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -69,13 +73,15 @@ interface Doc {
   hall: Spot | null;
   wonder: Spot | null;
   lots: Lot[];
+  walls: Pt[][]; // the walled center's wall runs (a ring ends where it starts)
+  gates: Pt[];   // on the walls
 }
 
 let key = CLASSES[CLASSES.length - 1]!;
 let role: Role = 'block';
 let density: Density = 'medium';
 let variant = 0; // 0: the generated draft
-let doc: Doc = { streets: [], squares: [], spots: [], hall: null, wonder: null, lots: [] };
+let doc: Doc = { streets: [], squares: [], spots: [], hall: null, wonder: null, lots: [], walls: [], gates: [] };
 let stubs: Stub[] = [];
 let drawn: Drawing | null = null; // the doc as the game reads it
 const dirty = new Set<string>();
@@ -97,6 +103,7 @@ function recordOf(d: Doc): DrawingRecord {
       if (l.spot !== undefined) row.push(l.spot);
       return row;
     }),
+    ...(d.walls.length || d.gates.length ? { walls: d.walls.map((w) => w.map((p) => [r4(p.x), r4(p.y)] as [number, number])), gates: d.gates.map((p) => [r4(p.x), r4(p.y)] as [number, number]) } : {}),
   };
 }
 function docOf(r: DrawingRecord): Doc {
@@ -108,6 +115,7 @@ function docOf(r: DrawingRecord): Doc {
       const [kind, x, y, yaw, floors, sp] = row as [LotKind, number, number, number, number?, number?];
       return { kind, x, y, yaw: yaw * DEG, ...(isBuilding(kind) ? { floors: (floors ?? 1) as Floors } : {}), ...(sp !== undefined ? { spot: sp } : {}) };
     }),
+    walls: (r.walls ?? []).map((w) => w.map(([x, y]) => ({ x, y }))), gates: (r.gates ?? []).map(([x, y]) => ({ x, y })),
   };
 }
 // The generated draft, as something to edit: its roads through every third
@@ -120,8 +128,9 @@ function draftDoc(k: string, r: Role, d: Density): Doc {
       return { ctrl: n <= 4 ? [...p] : [p[0]!, ...p.slice(1, -1).filter((_, i) => i % 3 === 2), p[n - 1]!], rank: s.rank };
     }),
     squares: sk.squares.map((q) => ({ pts: [...q.pts], paved: q.paved })),
-    spots: [...sk.spots], hall: sk.hall && { ...sk.hall, r: HALL_RADIUS[d] }, wonder: sk.wonder, lots: [],
+    spots: [...sk.spots], hall: sk.hall && { ...sk.hall, r: HALL_RADIUS[d] }, wonder: sk.wonder, lots: [], walls: [], gates: [],
   };
+  if (r === 'walled') { const w = draftWalls(sk.stubs); out.walls = w.walls.map((x) => [...x]); out.gates = [...w.gates]; }
   // A road that ended on another ends on that road's new curve (a curve
   // through fewer points runs a little differently).
   const st = stubsOf(parseKey(k));
@@ -147,12 +156,16 @@ function lotsAlong(dc: Doc, k: string, r: Role, d: Density): Lot[] {
     streets: dc.streets.filter((s) => s.ctrl.length >= 2).map((s) => { const { pts, ends } = streetPath(s.ctrl, st); return { pts, rank: s.rank, ends }; }),
     squares: dc.squares, spots: dc.spots, hall: dc.hall, wonder: dc.wonder,
   };
-  return [...assemble(sk, d).lots];
+  return assemble(sk, d).lots.filter((l) => !nearWall(lotSamples(l), WALL_CLEAR, dc));
 }
+// Whether any of the points comes within `clear` of a wall.
+const nearWall = (pts: readonly Pt[], clear: number, dc: Doc = doc) => dc.walls.some((w) => w.length >= 2 && pts.some((p) => distToLine(p, w) < clear));
 
 // Opens a file: a variant by hand, or the draft (variant 0).
 function open(k: string, v: number): void {
   key = k; variant = v;
+  document.body.dataset['role'] = role;
+  if (role !== 'walled' && tool === 'wall') setTool('select');
   stubs = stubsOf(parseKey(key));
   const rec = v > 0 ? storedRecord(rk()) : null;
   doc = rec ? docOf(rec) : draftDoc(key, role, density);
@@ -208,7 +221,7 @@ function rebuild(): void {
   paint.ground(f);
   const c = parseKey(key);
   drawn = fromRecord(key, role, density, recordOf(doc));
-  paint.stamp(stamp([{ tile: 0, colouring: c, edgeCls: c.map((v) => (v ? edgeClass(v, density, density) : null)), role, density, walled: false, drawing: drawn }]), { spots: true });
+  paint.stamp(stamp([{ tile: 0, colouring: c, edgeCls: c.map((v) => (v ? edgeClass(v, density, density) : null)), role, density, drawing: drawn }]), { spots: true, walls: true });
   paint.marks(f, c);
   paint.floor(-2.5, -2.5, 2.5, 2.5);
   paint.flush(world);
@@ -240,6 +253,16 @@ function band(pts: readonly Pt[], hw: number, color: number, opacity: number): T
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   return new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthTest: false, side: THREE.DoubleSide }));
+}
+
+// A gate's opening: along its wall, GATE_HALF to either side.
+function gateBar(g: Pt): Pt[] {
+  let dir = { x: 1, y: 0 }, bd = Infinity;
+  for (const w of doc.walls) for (let i = 0; i + 1 < w.length; i++) {
+    const d = distToLine(g, [w[i]!, w[i + 1]!]);
+    if (d < bd) { bd = d; const ab = sub(w[i + 1]!, w[i]!), l = len(ab) || 1; dir = { x: ab.x / l, y: ab.y / l }; }
+  }
+  return [{ x: g.x - dir.x * GATE_HALF, y: g.y - dir.y * GATE_HALF }, { x: g.x + dir.x * GATE_HALF, y: g.y + dir.y * GATE_HALF }];
 }
 
 function drawOverlay(): void {
@@ -282,13 +305,16 @@ function drawOverlay(): void {
     // Buildings reaching past it, outlined.
     for (const l of doc.lots) if (isBuilding(l.kind) && pastSafe(l)) overlay.add(line(lotOutline(l), new THREE.Color(0x3aa0ff), true, 0.0055, 0.8));
   }
-  // Road points (for dragging), spots, squares.
+  // Road points and wall corners (for dragging), spots, squares.
   const pts: THREE.Vector3[] = [];
   if (tool === 'select' || tool === 'street') doc.streets.forEach((s) => s.ctrl.forEach((p) => pts.push(toPlane(p, 0.006))));
+  if (tool === 'select' || tool === 'wall') doc.walls.forEach((w) => w.forEach((p) => pts.push(toPlane(p, 0.02))));
+  // Gates: their openings, in orange.
+  doc.gates.forEach((g) => overlay.add(line(gateBar(g), new THREE.Color(0xffa23c), false, 0.022)));
   overlay.add(new THREE.Points(new THREE.BufferGeometry().setFromPoints(pts), new THREE.PointsMaterial({ color: 0xffffff, size: 6, sizeAttenuation: false, depthTest: false })));
-  doc.spots.forEach((s) => overlay.add(line(circle(s, s.r), new THREE.Color(0x7fd3ff))));
+  doc.spots.forEach((s) => overlay.add(line(spotOutline(s), new THREE.Color(0x7fd3ff))));
   if (doc.hall) overlay.add(line(circle(doc.hall, doc.hall.r), new THREE.Color(0xffb36b)));
-  if (doc.wonder) overlay.add(line(circle(doc.wonder, doc.wonder.r), new THREE.Color(0xe58cff)));
+  if (doc.wonder) overlay.add(line(spotOutline(doc.wonder), new THREE.Color(0xe58cff)));
   for (const q of doc.squares) overlay.add(line(q.pts, new THREE.Color(q.paved ? 0xd8d0c0 : 0x9fd06a)));
   // Every building's front, as a short mark in front of it.
   for (const l of doc.lots) {
@@ -301,8 +327,11 @@ function drawOverlay(): void {
     if (selected.t === 'lot') { const l = doc.lots[selected.i]; if (l) overlay.add(line(lotOutline(l), SEL)); }
     if (selected.t === 'street') { const s = doc.streets[selected.i]; if (s) overlay.add(line(streetPath(s.ctrl, stubs).pts, SEL, false, 0.007)); }
     if (selected.t === 'ctrl') { const p = doc.streets[selected.s]?.ctrl[selected.i]; if (p) overlay.add(line(circle(p, 0.01, 12), SEL)); }
-    if (selected.t === 'spot') { const s = spotRef(selected.which); if (s) overlay.add(line(circle(s, s.r + 0.005), SEL)); }
+    if (selected.t === 'spot') { const s = spotRef(selected.which); if (s) overlay.add(line(spotOutline({ ...s, r: s.r + 0.005, ...(s.hw !== undefined && s.hd !== undefined ? { hw: s.hw + 0.005, hd: s.hd + 0.005 } : {}) }), SEL)); }
     if (selected.t === 'square' || selected.t === 'vertex') { const q = doc.squares[selected.t === 'square' ? selected.i : selected.s]; if (q) overlay.add(line(q.pts, SEL)); }
+    if (selected.t === 'wall') { const w = doc.walls[selected.i]; if (w) overlay.add(line(w, SEL, false, 0.024)); }
+    if (selected.t === 'wallPt') { const p = doc.walls[selected.s]?.[selected.i]; if (p) overlay.add(line(circle(p, 0.012, 12), SEL, true, 0.024)); }
+    if (selected.t === 'gate') { const g = doc.gates[selected.i]; if (g) overlay.add(line(circle(g, 0.016, 12), SEL, true, 0.024)); }
   }
   // Problems, where they are.
   for (const p of problems) if (p.at) overlay.add(line(circle(p.at, 0.018, 12), BAD));
@@ -313,6 +342,12 @@ function drawOverlay(): void {
     overlay.add(band(path, HALF_WIDTH[RANK_CLASS[density][rank]], 0xffd23f, 0.55));
   }
   if (tool === 'square' && drawing && drawing.length) overlay.add(line([...drawing, ...(hover ? [grid(hover)] : [])], SEL, false));
+  // A wall being drawn, as thick as it will be; where its next corner would land; or where a gate would go.
+  if (tool === 'wall' && wallMode === 'wall') {
+    if (drawing && drawing.length) overlay.add(band([...drawing, ...(hover ? [snapWall(hover).p] : [])], WALL_HALF, 0xffd23f, 0.6));
+    if (hover) { const s = snapWall(hover); overlay.add(line(circle(s.p, s.on ? 0.014 : 0.008, 16), s.on ? SEL : new THREE.Color(0xffffff), true, 0.024)); }
+  }
+  if (tool === 'wall' && wallMode === 'gate' && hover) { const g = snapGate(hover); if (g) overlay.add(line(gateBar(g), SEL, false, 0.026)); }
   // Where the next road point would land.
   if (tool === 'street' && hover) {
     const s = snapStreet(hover);
@@ -323,7 +358,8 @@ function drawOverlay(): void {
 // ---------- picking ----------
 
 type Sel = { t: 'lot'; i: number } | { t: 'street'; i: number } | { t: 'ctrl'; s: number; i: number }
-  | { t: 'spot'; which: number | 'hall' | 'wonder' } | { t: 'square'; i: number } | { t: 'vertex'; s: number; i: number };
+  | { t: 'spot'; which: number | 'hall' | 'wonder' } | { t: 'square'; i: number } | { t: 'vertex'; s: number; i: number }
+  | { t: 'wall'; i: number } | { t: 'wallPt'; s: number; i: number } | { t: 'gate'; i: number };
 let selected: Sel | null = null;
 
 const spotRef = (w: number | 'hall' | 'wonder'): Spot | null => (w === 'hall' ? doc.hall : w === 'wonder' ? doc.wonder : doc.spots[w] ?? null);
@@ -338,6 +374,11 @@ function inLot(l: Lot, p: Pt): boolean {
   return Math.abs(d.x * -fv.y + d.y * fv.x) <= hw && Math.abs(d.x * fv.x + d.y * fv.y) <= hd;
 }
 function pick(p: Pt): Sel | null {
+  for (let i = 0; i < doc.gates.length; i++) if (len(sub(doc.gates[i]!, p)) < 0.014) return { t: 'gate', i };
+  for (let si = 0; si < doc.walls.length; si++) {
+    const w = doc.walls[si]!;
+    for (let i = 0; i < w.length; i++) if (len(sub(w[i]!, p)) < 0.012) return { t: 'wallPt', s: si, i };
+  }
   for (let si = 0; si < doc.streets.length; si++) {
     const c = doc.streets[si]!.ctrl;
     for (let i = 0; i < c.length; i++) if (len(sub(c[i]!, p)) < 0.012) return { t: 'ctrl', s: si, i };
@@ -349,12 +390,13 @@ function pick(p: Pt): Sel | null {
   for (let i = doc.lots.length - 1; i >= 0; i--) if (inLot(doc.lots[i]!, p)) return { t: 'lot', i };
   for (const w of [...doc.spots.map((_, i) => i), 'hall', 'wonder'] as (number | 'hall' | 'wonder')[]) {
     const s = spotRef(w);
-    if (s && len(sub(s, p)) < s.r) return { t: 'spot', which: w };
+    if (s && inSpot(p, s)) return { t: 'spot', which: w };
   }
   for (let i = doc.streets.length - 1; i >= 0; i--) {
     const s = doc.streets[i]!;
     if (distToLine(p, streetPath(s.ctrl, stubs).pts) < HALF_WIDTH[RANK_CLASS[density][s.rank]] + 0.006) return { t: 'street', i };
   }
+  for (let i = doc.walls.length - 1; i >= 0; i--) if (doc.walls[i]!.length >= 2 && distToLine(p, doc.walls[i]!) < WALL_HALF + 0.006) return { t: 'wall', i };
   for (let i = doc.squares.length - 1; i >= 0; i--) if (pointInPoly(p, doc.squares[i]!.pts)) return { t: 'square', i };
   return null;
 }
@@ -395,10 +437,28 @@ function nearestRoad(p: Pt): { q: Pt; along: Pt; hw: number; d: number } | null 
 }
 // The yaw that turns a lot's front toward its nearest road.
 function faceRoad(p: Pt): number | null { const r = nearestRoad(p); return r ? Math.atan2(r.q.y - p.y, r.q.x - p.x) : null; }
+// A wall corner: a corner of a wall (or of the one being drawn: its first
+// closes it into a ring), else the grid.
+function snapWall(p: Pt): { p: Pt; on: boolean } {
+  const corners = [...doc.walls.flat(), ...(drawing ?? [])];
+  let best: Pt | null = null, bd = 0.015;
+  for (const q of corners) { const d = len(sub(q, p)); if (d < bd) { bd = d; best = q; } }
+  return best ? { p: best, on: true } : { p: grid(p), on: false };
+}
+// Where a gate would go: the nearest point on a wall (null when none is near).
+function snapGate(p: Pt): Pt | null {
+  let best: Pt | null = null, bd = 0.03;
+  for (const w of doc.walls) {
+    if (w.length < 2) continue;
+    const q = nearestOn(w, p), d = len(sub(q, p));
+    if (d < bd) { bd = d; best = q; }
+  }
+  return best;
+}
 
 // ---------- tools ----------
 
-type Tool = 'select' | 'street' | 'building' | 'prop' | 'square' | 'spot' | 'erase';
+type Tool = 'select' | 'street' | 'building' | 'prop' | 'square' | 'spot' | 'erase' | 'wall';
 let tool: Tool = 'select';
 let rank: Rank = 'side';
 let footprint: Footprint = 'b22';
@@ -406,6 +466,7 @@ let floors: Floors = 1;
 let propKind: LotKind = 'tree';
 let paved = true;
 let spotWhich: number | 'hall' | 'wonder' = 0;
+let wallMode: 'wall' | 'gate' = 'wall';
 let ghostYaw = Math.PI / 2;
 let drawing: Pt[] | null = null;
 let hover: Pt | null = null;
@@ -439,12 +500,13 @@ function ghostLot(p: Pt): Lot {
 }
 function lotOk(l: Lot): boolean {
   if (!drawn) return false;
+  if (isBuilding(l.kind) && !densityAllows(density, l.floors ?? 1)) return false;
   const pts = lotSamples(l);
   if (!pts.every((q) => rhoOf(6, q) <= LOT_INNER + 1e-9)) return false;
   for (const s of clearance(drawn.streets, drawn.stubs)) if (pts.some((q) => distToLine(q, s.pts) < HALF_WIDTH[s.cls])) return false;
-  const furniture = l.kind === 'fountain' || l.kind === 'stall' || l.kind === 'tree' || l.kind === 'well';
-  if (!furniture && doc.squares.some((q) => q.paved && pts.some((v) => pointInPoly(v, q.pts)))) return false;
-  for (const s of [doc.hall, doc.wonder]) if (s && pts.some((v) => len(sub(v, s)) < s.r)) return false;
+  if (!ON_SQUARES.has(l.kind) && doc.squares.some((q) => q.paved && pts.some((v) => pointInPoly(v, q.pts)))) return false;
+  for (const s of [doc.hall, doc.wonder]) if (s && pts.some((v) => inSpot(v, s))) return false;
+  if (nearWall(pts, WALL_CLEAR)) return false;
   return true;
 }
 // A new lot replaces whatever it lands on; inside a building spot it is
@@ -459,25 +521,30 @@ function placeLot(l: Lot, skip = -1): void {
 // Where a spot (building spot, hall, wonder) would go: like a building,
 // fronting the nearest road (kept clear of it at its widest), or free and
 // turned by hand.
-const spotRadius = (w: number | 'hall' | 'wonder') => (w === 'hall' ? HALL_RADIUS[density] : spotRef(w)?.r ?? (w === 'wonder' ? 0.16 : 0.062));
+// (A wonder's footprint is its group's: round, or a rectangle facing its front.)
+const spotAt = (w: number | 'hall' | 'wonder', x: number, y: number, yaw: number): Spot => {
+  if (w === 'wonder' && isWonderRole(role)) return wonderSpot(groupOf(role), x, y, yaw);
+  return { x, y, yaw, r: w === 'hall' ? HALL_RADIUS[density] : spotRef(w)?.r ?? 0.062 };
+};
 function ghostSpot(p: Pt): Spot {
-  const r = spotRadius(spotWhich);
+  const s0 = spotAt(spotWhich, 0, 0, 0), depth = s0.hd ?? s0.r;
   if ($<HTMLInputElement>('spotToRoad').checked) {
     const road = nearestRoad(p);
-    if (road && road.d < road.hw + 2 * r + 0.03) {
+    if (road && road.d < road.hw + 2 * depth + 0.03) {
       let n = { x: -road.along.y, y: road.along.x };
       if ((p.x - road.q.x) * n.x + (p.y - road.q.y) * n.y < 0) n = { x: -n.x, y: -n.y };
-      const off = HALF_WIDTH.avenue + 0.006 + r;
-      return { x: road.q.x + n.x * off, y: road.q.y + n.y * off, r, yaw: Math.atan2(-n.y, -n.x) };
+      const off = HALF_WIDTH.avenue + 0.006 + depth;
+      return spotAt(spotWhich, road.q.x + n.x * off, road.q.y + n.y * off, Math.atan2(-n.y, -n.x));
     }
   }
   const at = grid(p);
-  return { x: at.x, y: at.y, r, yaw: ghostYaw };
+  return spotAt(spotWhich, at.x, at.y, ghostYaw);
 }
 function spotOk(s: Spot): boolean {
   if (!drawn) return false;
-  if (rhoOf(6, s) + s.r / 0.5 > LOT_INNER + 1e-9) return false;
-  if (drawn.streets.some((st) => distToLine(s, st.pts) < s.r + HALF_WIDTH[RANK_CLASS.high[st.rank]])) return false;
+  if (spotWhich === 'wonder' && !isWonderRole(role)) return false;
+  if (spotPastRim(s)) return false;
+  if (drawn.streets.some((st) => spotOnStreet(s, st.pts, HALF_WIDTH[RANK_CLASS.high[st.rank]]))) return false;
   if (spotWhich !== 'hall' && spotWhich !== 'wonder' && doc.squares.some((q) => q.paved && pointInPoly(s, q.pts))) return false;
   return true;
 }
@@ -487,18 +554,20 @@ function updateGhost(): void {
   ghost.clear();
   if (hover && tool === 'spot') {
     const s = ghostSpot(hover), ok = spotOk(s);
-    const disc = new THREE.Mesh(new THREE.CylinderGeometry(s.r, s.r, 0.02, 40), new THREE.MeshBasicMaterial({ color: ok ? 0x4cc27a : 0xef5b4f, transparent: true, opacity: 0.45, depthWrite: false }));
+    const mat = new THREE.MeshBasicMaterial({ color: ok ? 0x4cc27a : 0xef5b4f, transparent: true, opacity: 0.45, depthWrite: false });
+    const disc = s.hw !== undefined && s.hd !== undefined ? new THREE.Mesh(new THREE.BoxGeometry(2 * s.hw, 0.02, 2 * s.hd), mat) : new THREE.Mesh(new THREE.CylinderGeometry(s.r, s.r, 0.02, 40), mat);
     disc.position.copy(toPlane(s, 0.01));
+    disc.rotation.y = s.yaw - Math.PI / 2;
     ghost.add(disc);
-    const f = { x: Math.cos(s.yaw), y: Math.sin(s.yaw) };
-    ghost.add(line([s, { x: s.x + f.x * (s.r + 0.012), y: s.y + f.y * (s.r + 0.012) }], new THREE.Color(0xffffff), false, 0.03));
+    const f = { x: Math.cos(s.yaw), y: Math.sin(s.yaw) }, front = (s.hd ?? s.r) + 0.012;
+    ghost.add(line([s, { x: s.x + f.x * front, y: s.y + f.y * front }], new THREE.Color(0xffffff), false, 0.03));
     // What it would push aside: the lots inside it become its own (they give way to its building).
     return;
   }
   if (!hover || (tool !== 'building' && tool !== 'prop')) return;
   const l = ghostLot(hover), ok = lotOk(l);
   const [hw, hd] = LOT_SIZE[l.kind];
-  const h = isBuilding(l.kind) ? (l.floors ?? 1) * FLOOR_HEIGHT + 0.012 : 0.02;
+  const h = isBuilding(l.kind) ? wallHeight(l.floors ?? 1) + 0.012 : 0.02;
   const m = new THREE.Mesh(new THREE.BoxGeometry(2 * hw, h, 2 * hd), new THREE.MeshBasicMaterial({ color: ok ? 0x4cc27a : 0xef5b4f, transparent: true, opacity: 0.5, depthWrite: false }));
   m.position.copy(toPlane(l, h / 2));
   // (Its width runs across the way its front faces.)
@@ -545,6 +614,26 @@ function remove(s: Sel): void {
   else if (s.t === 'ctrl') { const c = doc.streets[s.s]!.ctrl; if (c.length > 2) c.splice(s.i, 1); else doc.streets.splice(s.s, 1); }
   else if (s.t === 'square' || s.t === 'vertex') { const i = s.t === 'square' ? s.i : s.s; const q = doc.squares[i]!; if (s.t === 'vertex' && q.pts.length > 3) q.pts.splice(s.i, 1); else doc.squares.splice(i, 1); }
   else if (s.t === 'spot') setSpot(s.which, null);
+  else if (s.t === 'gate') doc.gates.splice(s.i, 1);
+  else if (s.t === 'wall') removeWall(s.i);
+  else if (s.t === 'wallPt') { const w = doc.walls[s.s]!; if (w.length > 2) w.splice(s.i, 1); else removeWall(s.s); }
+}
+// A wall goes with its gates.
+function removeWall(i: number): void {
+  const w = doc.walls[i]!;
+  doc.gates = doc.gates.filter((g) => distToLine(g, w) >= ON_WALL);
+  doc.walls.splice(i, 1);
+}
+// Walls bulldoze the lots they run over (as roads do).
+function clearWalls(): void { doc.lots = doc.lots.filter((l) => !nearWall(lotSamples(l), WALL_CLEAR)); }
+function finishWall(): void {
+  if (drawing && drawing.length >= 2) {
+    const before = snapshot();
+    doc.walls.push(drawing);
+    drawing = null;
+    clearWalls();
+    commit(before);
+  } else { drawing = null; drawOverlay(); }
 }
 
 // ---------- the mouse ----------
@@ -607,9 +696,26 @@ canvas.addEventListener('mousedown', (e) => {
       if (typeof spotWhich === 'number') {
         const k = spotWhich;
         doc.lots = doc.lots.map((l) => (len(sub(l, s)) < s.r ? { ...l, spot: k } : l.spot === k && len(sub(l, s)) >= s.r ? (({ spot: _s, ...rest }) => rest)(l) : l));
-      } else doc.lots = doc.lots.filter((l) => !lotSamples(l).some((v) => len(sub(v, s)) < s.r));
+      } else doc.lots = doc.lots.filter((l) => !lotSamples(l).some((v) => inSpot(v, s)));
       commit(before);
       updateGhost();
+      break;
+    }
+    case 'wall': {
+      if (wallMode === 'gate') {
+        const g = snapGate(p);
+        if (!g) break;
+        const before = snapshot();
+        doc.gates.push(g);
+        commit(before);
+        break;
+      }
+      const s = snapWall(p);
+      if (!drawing) { drawing = [s.p]; drawOverlay(); break; }
+      if (len(sub(s.p, drawing[drawing.length - 1]!)) < 0.004) break; // (the second click of a double-click)
+      drawing.push(s.p);
+      // Back at its first corner: a ring, done.
+      if (drawing.length > 2 && len(sub(s.p, drawing[0]!)) < 1e-9) finishWall(); else drawOverlay();
       break;
     }
     case 'erase': {
@@ -636,11 +742,19 @@ canvas.addEventListener('mousemove', (e) => {
     else if (s.t === 'vertex') doc.squares[s.s]!.pts[s.i] = grid(p);
     else if (s.t === 'spot') { const sp = spotRef(s.which)!, q = grid(p); setSpot(s.which, { ...sp, x: q.x, y: q.y }); }
     else if (s.t === 'square') { doc.squares[s.i]!.pts = doc.squares[s.i]!.pts.map((v) => ({ x: v.x + d.x, y: v.y + d.y })); drag.from = p; }
+    else if (s.t === 'wallPt') {
+      // (A ring's first and last corner move together.)
+      const w = doc.walls[s.s]!, q = grid(p), ring = w.length > 2 && len(sub(w[0]!, w[w.length - 1]!)) < 1e-9;
+      w[s.i] = q;
+      if (ring && s.i === 0) w[w.length - 1] = q;
+      if (ring && s.i === w.length - 1) w[0] = q;
+    }
+    else if (s.t === 'gate') { const g = snapGate(p); if (g) doc.gates[s.i] = g; }
     else return;
     rebuild();
     return;
   }
-  if (tool === 'street' || tool === 'square') drawOverlay();
+  if (tool === 'street' || tool === 'square' || tool === 'wall') drawOverlay();
   updateGhost();
 });
 
@@ -652,6 +766,7 @@ addEventListener('mouseup', () => {
   // A building dropped on others replaces them; a road moved over lots clears them.
   if (sel.t === 'lot') placeLot(doc.lots[sel.i]!, sel.i);
   if (sel.t === 'ctrl') clearRoads();
+  if (sel.t === 'wallPt') clearWalls();
   if (sel.t === 'spot') { const sp = spotRef(sel.which)!; setSpot(sel.which, { ...sp, yaw: faceRoad(sp) ?? sp.yaw }); }
   selected = null;
   commit(before);
@@ -660,6 +775,7 @@ addEventListener('mouseup', () => {
 canvas.addEventListener('dblclick', (e) => {
   if (tool === 'street') { finishStreet(); return; }
   if (tool === 'square') { finishSquare(); return; }
+  if (tool === 'wall' && wallMode === 'wall') { finishWall(); return; }
   if (tool !== 'select') return;
   // A new point on a road, where it was double-clicked.
   const p = at(e);
@@ -698,13 +814,19 @@ addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && k === 'z') { e.preventDefault(); if (e.shiftKey) doRedo(); else doUndo(); return; }
   if ((e.ctrlKey || e.metaKey) && k === 's') { e.preventDefault(); void save(); return; }
   if (e.ctrlKey || e.metaKey) return;
-  const tools: Record<string, Tool> = { 1: 'select', 2: 'street', 3: 'building', 4: 'prop', 5: 'square', 6: 'spot', 7: 'erase' };
-  if (tools[k]) { setTool(tools[k]!); return; }
+  const tools: Record<string, Tool> = { 1: 'select', 2: 'street', 3: 'building', 4: 'prop', 5: 'square', 6: 'spot', 7: 'erase', 8: 'wall' };
+  if (tools[k] && (tools[k] !== 'wall' || role === 'walled')) { setTool(tools[k]!); return; }
   if (k === 't') { setTilt(!tilted); return; }
   if (k === 'g') { setSnap(!snap); return; }
   if (k === 'z') { setSafe(!showSafe); return; }
-  if (k === 'enter') { if (tool === 'street') finishStreet(); else if (tool === 'square') finishSquare(); return; }
-  if (k === 'escape') { drawing = null; selected = null; drawOverlay(); return; }
+  if (k === 'enter') { if (tool === 'street') finishStreet(); else if (tool === 'square') finishSquare(); else if (tool === 'wall') finishWall(); return; }
+  // Esc steps back: a drawing under way, else the tool in hand (back to Select), else the selection.
+  if (k === 'escape') {
+    if (drawing) { drawing = null; drawOverlay(); }
+    else if (tool !== 'select') setTool('select');
+    else { selected = null; drawOverlay(); }
+    return;
+  }
   if (k === 'delete' || k === 'backspace') { if (selected) { const before = snapshot(); remove(selected); selected = null; commit(before); } return; }
   if (k === 'r') {
     const by = (e.shiftKey ? -15 : 15) * DEG;
@@ -825,6 +947,12 @@ function refreshPanel(): void {
   $('problems').innerHTML = problems.length
     ? problems.slice(0, 30).map((p) => `<li>${p.text}</li>`).join('') + (problems.length > 30 ? `<li>… ${problems.length - 30} more</li>` : '')
     : '<li class="ok">none: the game can use it</li>';
+  // The civ's styles for the heights this density holds.
+  const styles = [...new Set(FLOORS.filter((f) => densityAllows(density, f)).map((f) => STYLE_NAME[styleOf(paint.look.civ, f)]))];
+  $('lookStyle').textContent = styles.join(' · ');
+  // (Heights this density does not hold cannot be picked.)
+  document.querySelectorAll<HTMLButtonElement>('button[data-floors]').forEach((b) => { b.disabled = !densityAllows(density, Number(b.dataset['floors']) as Floors); });
+  if (!densityAllows(density, floors)) { floors = DENSITY_TALLEST[density]; document.querySelectorAll<HTMLButtonElement>('button[data-floors]').forEach((b) => b.classList.toggle('on', Number(b.dataset['floors']) === floors)); }
   const past = doc.lots.filter((l) => isBuilding(l.kind) && pastSafe(l)).length;
   $('safeNote').textContent = past ? `${past} building${past > 1 ? 's' : ''} past the safe zone (left out where a river comes in)` : 'everything inside the safe zone';
 }
@@ -868,9 +996,21 @@ group('floors', (v) => { floors = Number(v) as Floors; restyle((l) => ({ ...l, f
 group('prop', (v) => { propKind = v as LotKind; updateGhost(); });
 group('paved', (v) => { paved = v === '1'; });
 group('spot', (v) => { spotWhich = v === 'hall' || v === 'wonder' ? v : Number(v); });
+group('wallmode', (v) => { wallMode = v as 'wall' | 'gate'; drawing = null; drawOverlay(); });
 group('role', (v) => { role = v as Role; open(key, variantsOf(key, role, density)[0] ?? 0); });
 group('density', (v) => { density = v as Density; open(key, variantsOf(key, role, density)[0] ?? 0); });
 $('onlyDrawn').addEventListener('change', renderTree);
+
+// Whose houses: only the look (the drawing is the same for every civ).
+const lookStore = (() => { try { return JSON.parse(localStorage.getItem('townEditor.look') ?? 'null') as { civ: ArchCiv } | null; } catch { return null; } })();
+if (lookStore && (ARCH_CIVS as readonly string[]).includes(lookStore.civ)) paint.look = { civ: lookStore.civ };
+$<HTMLSelectElement>('lookCiv').innerHTML = ARCH_CIVS.map((c) => `<option${c === paint.look.civ ? ' selected' : ''}>${c}</option>`).join('');
+function setLook(): void {
+  paint.look = { civ: $<HTMLSelectElement>('lookCiv').value as ArchCiv };
+  try { localStorage.setItem('townEditor.look', JSON.stringify(paint.look)); } catch { /* (no storage: the look is just not remembered) */ }
+  rebuild();
+}
+$('lookCiv').addEventListener('change', setLook);
 
 function setSnap(s: boolean): void { snap = s; $('gridBtn').classList.toggle('on', s); drawOverlay(); }
 $('top').addEventListener('click', () => setTilt(false));

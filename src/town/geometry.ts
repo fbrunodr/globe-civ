@@ -4,10 +4,11 @@
 
 export interface Pt { readonly x: number; readonly y: number }
 export type Sides = 5 | 6;
-// low: mostly single storeys (a village); medium: double (a town); high:
+// low: mostly single storeys (a village); medium: double (a town); dense:
+// three storeys (a Renaissance city of townhouses and palazzi); high:
 // quads, Industrial blocks (Haussmann's Paris); metropolitan: skyscrapers
 // among quads (a modern downtown).
-export const DENSITIES = ['low', 'medium', 'high', 'metropolitan'] as const;
+export const DENSITIES = ['low', 'medium', 'dense', 'high', 'metropolitan'] as const;
 export type Density = (typeof DENSITIES)[number];
 
 // Canonical shapes: inradius per shape, as on the globe (hexes 0.5 on
@@ -36,29 +37,51 @@ export const HALF_WIDTH: Record<StreetClass, number> = { lane: 0.013, street: 0.
 // SimCity: a footprint of whole cells (front × depth: b23 is 2 cells along
 // its street and 3 deep) and a height in floors. The rest is garden and
 // street furniture.
-export const CELL = 0.025; // tile steps
+export const CELL = 0.0225; // tile steps
 export const FOOTPRINTS = ['b22', 'b23', 'b32', 'b33', 'b44'] as const;
 export type Footprint = (typeof FOOTPRINTS)[number];
 export const FOOTPRINT_CELLS: Record<Footprint, readonly [number, number]> = { b22: [2, 2], b23: [2, 3], b32: [3, 2], b33: [3, 3], b44: [4, 4] };
-export type LotKind = Footprint | 'tree' | 'well' | 'fountain' | 'stall' | 'shed';
-export const LOT_KINDS: readonly LotKind[] = [...FOOTPRINTS, 'tree', 'well', 'fountain', 'stall', 'shed'];
+// Props: garden, street and square furniture (one model each, cityProps.ts).
+export const PROPS = ['tree', 'bush', 'hedge', 'flowerbed', 'well', 'fountain', 'statue', 'bench', 'lamp', 'stall', 'crates', 'shed'] as const;
+export type PropKind = (typeof PROPS)[number];
+export type LotKind = Footprint | PropKind;
+export const LOT_KINDS: readonly LotKind[] = [...FOOTPRINTS, ...PROPS];
+// Props that may stand on a paved square, in a green, turned any way (not
+// facing a street), and on a river bank (plants).
+export const ON_SQUARES: ReadonlySet<LotKind> = new Set<LotKind>(['tree', 'flowerbed', 'well', 'fountain', 'statue', 'bench', 'lamp', 'stall', 'crates']);
+export const ON_GREENS: ReadonlySet<LotKind> = new Set<LotKind>(['tree', 'bush', 'hedge', 'flowerbed', 'statue', 'bench', 'lamp', 'well', 'fountain']);
+export const SPINS: ReadonlySet<LotKind> = new Set<LotKind>(['tree', 'bush']);
+export const PLANTS: ReadonlySet<LotKind> = new Set<LotKind>(['tree', 'bush', 'hedge']);
 export const HOMES: ReadonlySet<LotKind> = new Set(FOOTPRINTS);
 export const isBuilding = (k: LotKind): k is Footprint => HOMES.has(k);
-// Heights: single, double, quad, skyscraper.
-export const FLOORS = [1, 2, 4, 12] as const;
+// Heights: single, double, triple, quad, skyscraper.
+export const FLOORS = [1, 2, 3, 4, 12] as const;
 export type Floors = (typeof FLOORS)[number];
-export const FLOOR_NAME: Record<Floors, string> = { 1: 'single', 2: 'double', 4: 'quad', 12: 'skyscraper' };
-export const FLOOR_HEIGHT = 0.9 * CELL; // tile steps per floor (a single storey as tall as a cottage's walls)
+export const FLOOR_NAME: Record<Floors, string> = { 1: 'single', 2: 'double', 3: 'triple', 4: 'quad', 12: 'skyscraper' };
+// How tall a building's walls are, in cells (chosen by eye: a double is
+// not twice a single, nor a skyscraper twelve times one). Low buildings get
+// a roof on top.
+// The tallest building a density holds: what a density unlocks is room for
+// taller buildings (low and medium: doubles; dense: triples; high: quads;
+// metropolitan: skyscrapers).
+export const DENSITY_TALLEST: Record<Density, Floors> = { low: 2, medium: 2, dense: 3, high: 4, metropolitan: 12 };
+export const densityAllows = (d: Density, floors: Floors): boolean => floors <= DENSITY_TALLEST[d];
+export const WALL_CELLS: Record<Floors, number> = { 1: 0.9, 2: 1.5, 3: 2.25, 4: 3.0, 12: 9.0 };
+export const wallHeight = (floors: Floors): number => WALL_CELLS[floors] * CELL;
+// Above this many floors a building is a tall block (flat top, no gable roof).
+export const isTall = (floors: Floors): boolean => floors > 2;
 // A building's front door (tile steps: width, height), on the side facing
-// its street; tall buildings get a wider entrance.
+// its street; a skyscraper gets a wide lobby entrance, the rest a street door.
 export function doorSize(kind: Footprint, floors: Floors): readonly [number, number] {
   const w = FOOTPRINT_CELLS[kind][0] * CELL;
-  return floors > 2 ? [Math.min(0.018, 0.4 * w), 0.75 * FLOOR_HEIGHT] : [Math.min(0.01, 0.35 * w), 0.6 * FLOOR_HEIGHT];
+  return floors === 12 ? [Math.min(0.018, 0.4 * w), 0.75 * wallHeight(1)] : [Math.min(0.01, 0.35 * w), 0.6 * wallHeight(1)];
 }
 // Footprint half extents: along its front, and in depth.
 export const LOT_SIZE: Record<LotKind, readonly [number, number]> = {
   ...Object.fromEntries(FOOTPRINTS.map((f) => [f, [FOOTPRINT_CELLS[f][0] * CELL / 2, FOOTPRINT_CELLS[f][1] * CELL / 2] as const])) as Record<Footprint, readonly [number, number]>,
-  tree: [0.012, 0.012], well: [0.008, 0.008], fountain: [0.02, 0.02], stall: [0.011, 0.009], shed: [0.012, 0.009],
+  tree: [0.012, 0.012], bush: [0.008, 0.008], hedge: [0.0135, 0.003], flowerbed: [0.012, 0.006],
+  well: [0.008, 0.008], fountain: [0.02, 0.02], statue: [0.006, 0.006], bench: [0.008, 0.004], lamp: [0.003, 0.003],
+  stall: [0.011, 0.009], crates: [0.009, 0.008], shed: [0.012, 0.009],
 };
 
 export interface Lot {
@@ -68,9 +91,30 @@ export interface Lot {
   readonly floors?: Floors; // buildings
   readonly spot?: number; // stands on building spot k (gone once a building is there)
 }
-// A round place for a building (the slots, the hall, a wonder): its middle,
-// radius, and the way it faces.
-export interface Spot { readonly x: number; readonly y: number; readonly r: number; readonly yaw: number }
+// A place for a building (the slots, the hall, a wonder): its middle,
+// radius (round), and the way it faces.
+export interface Spot {
+  readonly x: number; readonly y: number; readonly r: number; readonly yaw: number;
+  // A rectangle instead of a circle (wonders): hw across its front, hd deep
+  // (its front faces yaw); r is then the distance to its corners.
+  readonly hw?: number; readonly hd?: number;
+}
+// Whether p lies in a spot's footprint, grown by `margin`.
+export function inSpot(p: Pt, s: Spot, margin = 0): boolean {
+  if (s.hw === undefined || s.hd === undefined) return len(sub(p, s)) < s.r + margin;
+  const d = sub(p, s), fx = Math.cos(s.yaw), fy = Math.sin(s.yaw);
+  return Math.abs(d.x * -fy + d.y * fx) < s.hw + margin && Math.abs(d.x * fx + d.y * fy) < s.hd + margin;
+}
+// A spot's outline, a point every `step` or so.
+export function spotOutline(s: Spot, step = 0.01): Pt[] {
+  if (s.hw === undefined || s.hd === undefined) {
+    const n = Math.max(12, Math.ceil((2 * Math.PI * s.r) / step));
+    return Array.from({ length: n }, (_, i) => ({ x: s.x + s.r * Math.cos((2 * Math.PI * i) / n), y: s.y + s.r * Math.sin((2 * Math.PI * i) / n) }));
+  }
+  const fx = Math.cos(s.yaw), fy = Math.sin(s.yaw), at = (a: number, b: number) => ({ x: s.x - fy * a + fx * b, y: s.y + fx * a + fy * b });
+  const corners = [at(s.hw, s.hd), at(-s.hw, s.hd), at(-s.hw, -s.hd), at(s.hw, -s.hd)];
+  return corners.flatMap((c, i) => { const d = corners[(i + 1) % 4]!, n = Math.max(1, Math.ceil(len(sub(d, c)) / step)); return Array.from({ length: n }, (_, k) => ({ x: c.x + ((d.x - c.x) * k) / n, y: c.y + ((d.y - c.y) * k) / n })); });
+}
 export interface Street2 { readonly pts: readonly Pt[]; readonly cls: StreetClass }
 // A paved square (drawn on the ground) or a green (kept clear, not paved).
 export interface Square { readonly pts: readonly Pt[]; readonly paved: boolean }
@@ -209,15 +253,15 @@ export function lotsOverlap(a: Lot, b: Lot, pad = 0): boolean {
 export function layoutProblems(region: (p: Pt) => boolean, streets: readonly Street2[], lots: readonly Lot[],
   spots: readonly Spot[], squares: readonly Square[] = []): string[] {
   const out: string[] = [];
-  const furniture = (k: LotKind) => k === 'fountain' || k === 'stall' || k === 'tree' || k === 'well';
+  const furniture = (k: LotKind) => ON_SQUARES.has(k);
   lots.forEach((l, i) => {
     const pts = lotSamples(l);
     if (!pts.every(region)) out.push(`lot ${i} (${l.kind}) outside`);
     for (const s of streets) if (pts.some((p) => distToLine(p, s.pts) < HALF_WIDTH[s.cls])) { out.push(`lot ${i} (${l.kind}) on a street`); break; }
     for (const q of squares) if (q.paved && !furniture(l.kind) && pts.some((p) => pointInPoly(p, q.pts))) out.push(`lot ${i} on a square`);
     spots.forEach((s, k) => {
-      if (l.spot === k) { if (len(sub(l, s)) >= s.r) out.push(`lot ${i} of spot ${k} outside it`); }
-      else if (pts.some((p) => len(sub(p, s)) < s.r)) out.push(`lot ${i} on spot ${k}`);
+      if (l.spot === k) { if (!inSpot(l, s)) out.push(`lot ${i} of spot ${k} outside it`); }
+      else if (pts.some((p) => inSpot(p, s))) out.push(`lot ${i} on spot ${k}`);
     });
     for (let j = i + 1; j < lots.length; j++) if (lotsOverlap(l, lots[j]!)) out.push(`lots ${i} and ${j} overlap`);
   });

@@ -52,6 +52,7 @@ export default defineConfig({
         cityLab: resolve(import.meta.dirname, 'city_lab.html'),
         cityDesigns: resolve(import.meta.dirname, 'city_designs.html'),
         townEditor: resolve(import.meta.dirname, 'town_editor.html'),
+        buildings: resolve(import.meta.dirname, 'buildings.html'),
       },
     },
   },

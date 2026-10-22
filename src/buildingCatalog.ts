@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { buildModel, cone, cyl, part, seg, tf, V, type Palette, type Tf } from './propCatalog.ts';
+import type { PropKind } from './town/geometry.ts';
+import { houseGeometry, isHouseKind, type HouseKind } from './houses.ts';
 
 // City models: houses, rural structures, quarter buildings and wonders,
 // drawn as instanced props like the flora (render.ts) and shown in the prop
@@ -126,6 +128,39 @@ export const BUILDINGS_CATALOG = {
     gable(0.0024, 0.0018, 0.0007, p.leaf, { y: 0.0016 }),
     flat(0.0018, 0.0011, 0xb08a5a, { y: 0.0008 }),
   ] },
+  statue: { name: 'Statue', leaf: 0x7a6a50, build: (p) => [
+    ...block(0.0013, 0.0013, 0.0008, STONE),
+    cyl(0.00028, 0.0002, 0.0012, 5, p.leaf, { y: 0.0008 }),
+    part(new THREE.IcosahedronGeometry(0.0002, 0), p.leaf, tf({ y: 0.00225 })),
+  ] },
+  // A bench, facing its front (+z).
+  bench: { name: 'Bench', leaf: TIMBER, build: (p) => [
+    ...block(0.0018, 0.0005, 0.0001, p.leaf, { y: 0.0003 }),
+    ...[-0.0008, 0.0008].flatMap((x) => block(0.0001, 0.0004, 0.0003, IRON, { x })),
+    ...block(0.0018, 0.0001, 0.0004, p.leaf, { y: 0.0004, z: -0.0002 }),
+  ] },
+  lampPost: { name: 'Lamp post', leaf: 0xe8d8a0, build: (p) => [
+    column(0.0026, 0.00007, IRON),
+    ...block(0.00035, 0.00035, 0.0004, p.leaf, { y: 0.0026 }),
+    cone(0.00028, 0.00018, 4, IRON, { y: 0.003, ry: Math.PI / 4 }),
+  ] },
+  crates: { name: 'Crates and barrels', leaf: 0x9a7a52, build: (p) => [
+    ...block(0.0008, 0.0008, 0.0007, p.leaf, { x: -0.0004, z: 0.0002 }),
+    ...block(0.0006, 0.0006, 0.0005, 0x8a6a48, { x: 0.0004, z: 0.0003, ry: 0.4 }),
+    cyl(0.00035, 0.00035, 0.0008, 6, 0x6a4a32, { x: 0.0002, z: -0.0004 }),
+    part(new THREE.CircleGeometry(0.00035, 6).rotateX(-Math.PI / 2), 0x5a3e2a, tf({ x: 0.0002, y: 0.0008, z: -0.0004 })),
+  ] },
+  flowerBed: { name: 'Flower bed', leaf: 0xc96a7a, build: (p) => [
+    walls(0.0026, 0.0012, 0.0003, STONE),
+    flat(0.0026, 0.0012, 0x5a4a38, { y: 0.00025 }),
+    ...[[-0.0008, 0], [0, 0.0001], [0.0008, -0.0001]].map(([x, z], i) =>
+      part(new THREE.OctahedronGeometry(0.00032, 0), i === 1 ? 0x5e8a44 : p.leaf, tf({ x, y: 0.0004, z, sy: 0.7 }))),
+  ] },
+  hedge: { name: 'Hedge', leaf: 0x4f6e38, build: (p) => block(0.003, 0.0006, 0.0008, p.leaf) },
+  bush: { name: 'Bush', leaf: 0x5b7a3e, build: (p) => [
+    part(new THREE.IcosahedronGeometry(0.0008, 0), p.leaf, tf({ y: 0.0006, sy: 0.8 })),
+    part(new THREE.IcosahedronGeometry(0.0006, 0), p.leaf, tf({ x: 0.0006, y: 0.00045, sy: 0.8 })),
+  ] },
   // ---------- city center ----------
   hall: { name: 'City hall', leaf: 0x5f5650, build: (p) => [
     walls(0.011, 0.0075, 0.0055, STONE),
@@ -243,11 +278,9 @@ export const BUILDINGS_CATALOG = {
   ] },
   // ---------- wonders (landmarks at a believable scale: a quarter of a tile at
   // most, no taller than ~3× the tallest building; up to 120 triangles) ----------
+  // One great pyramid filling the monument's square (Giza's proportions: as high as 0.64 of its base).
   pyramids: { name: 'Pyramids', leaf: 0xd2bb8a, build: (p) => [
-    hip(0.034, 0.034, 0.022, p.leaf),
-    hip(0.019, 0.019, 0.0125, p.leaf, { x: 0.026, z: 0.016 }),
-    hip(0.012, 0.012, 0.008, 0xc9b282, { x: -0.022, z: 0.022 }),
-    ...block(0.006, 0.004, 0.003, 0xc2aa7a, { x: 0.012, z: -0.024 }),
+    hip(0.04, 0.04, 0.0256, p.leaf),
   ] },
   greatLighthouse: { name: 'Great Lighthouse', leaf: 0xe2dac8, build: (p) => [
     ...block(0.014, 0.014, 0.012, p.leaf),
@@ -332,11 +365,22 @@ export const BUILDINGS_CATALOG = {
 } satisfies Record<string, BuildingEntry>;
 
 export type BuildingKind = keyof typeof BUILDINGS_CATALOG;
+// The model of each prop a town drawing places (town/geometry.ts PROPS).
+export const PROP_MODEL: Record<PropKind, BuildingKind> = {
+  tree: 'gardenTree', bush: 'bush', hedge: 'hedge', flowerbed: 'flowerBed', well: 'well', fountain: 'fountain', statue: 'statue',
+  bench: 'bench', lamp: 'lampPost', stall: 'stall', crates: 'crates', shed: 'shed',
+};
 export const BUILDING_KINDS = Object.keys(BUILDINGS_CATALOG) as BuildingKind[];
 export const buildingEntry = (k: BuildingKind): BuildingEntry => BUILDINGS_CATALOG[k];
 
 export const buildBuildingGeometry = (kind: BuildingKind, palette?: Partial<Palette>): THREE.BufferGeometry =>
   buildModel(BUILDINGS_CATALOG[kind], kind, palette);
+
+// Any model a town places: a catalog building, or a lot model (houses.ts:
+// in tile steps, cached; the others at prop scale, built anew).
+export type ModelKind = BuildingKind | HouseKind;
+export const modelGeometry = (kind: ModelKind, palette?: Partial<Palette>): THREE.BufferGeometry =>
+  isHouseKind(kind) ? houseGeometry(kind) : buildBuildingGeometry(kind, palette);
 
 // Roof colors by roof kind: an instance picks one (muted, realistic).
 export const ROOFS = {

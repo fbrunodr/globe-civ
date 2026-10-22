@@ -17,6 +17,7 @@ import { makeSky, makeHalo, installHaze, HAZE, HAZE_DENSITY, AIR } from './sky.t
 import { makeWeather, type Weather } from './weather.ts';
 import { buildPropGeometry, catalogEntry, CATALOG, CATALOG_KINDS, type CatalogKind, type Layer } from './propCatalog.ts';
 import { BUILDING_KINDS, buildBuildingGeometry, type BuildingKind } from './buildingCatalog.ts';
+import { houseGeometry, type HouseKind } from './houses.ts';
 import { CityProps, type CitySpot } from './cityProps.ts';
 import { roadLines, ROAD_HALF_WIDTH } from './roads.ts';
 import { Vegetation, type SpotEnv } from './vegetation.ts';
@@ -44,8 +45,9 @@ const HUE_JITTER = 0.12;
 const HIDE_ABOVE = { Canopy: Infinity, Accent: Infinity, Understory: 1.6, Ground: 0.8 } as const;
 const PROP_CHUNKS = 8;
 
-// Flora and city buildings share the chunks.
-type PropKind = CatalogKind | BuildingKind;
+// Flora and city buildings share the chunks; town lots (houses.ts) are
+// models of their own, made on first use.
+type PropKind = CatalogKind | BuildingKind | HouseKind;
 const PROP_KINDS: readonly PropKind[] = [...CATALOG_KINDS, ...BUILDING_KINDS];
 const isFloraKind = (k: PropKind): k is CatalogKind => k in CATALOG;
 
@@ -809,6 +811,15 @@ export class GlobeRenderer {
     return out;
   }
 
+  // A prop's model: flora and catalog buildings made at the start (at prop
+  // scale); a town lot made when first needed (in tile steps: its instances
+  // carry the scale).
+  private geometryOf(kind: PropKind): THREE.BufferGeometry {
+    let g = this.propGeo.get(kind);
+    if (!g) { g = houseGeometry(kind as HouseKind); this.propGeo.set(kind, g); }
+    return g;
+  }
+
   // Height of a prop model as drawn (before per-instance scaling).
   private propHeight(kind: CatalogKind): number {
     const g = this.propGeo.get(kind)!;
@@ -835,14 +846,15 @@ export class GlobeRenderer {
         for (const p of this.placeProps(t)) add(p, dim);
         for (const p of this.cityProps.place(t)) add(p, dim);
       }
-      for (const kind of PROP_KINDS) {
+      // (Every kind this chunk shows now, or showed before: those get emptied.)
+      for (const kind of new Set<PropKind>([...PROP_KINDS, ...lists.keys(), ...chunk.meshes.keys()])) {
         const items = lists.get(kind) ?? [];
         let mesh = chunk.meshes.get(kind);
         if (!mesh || mesh.instanceMatrix.count < items.length) {
           if (mesh) { this.scene.remove(mesh); mesh.dispose(); mesh.geometry.getAttribute('leafTint')?.array && mesh.geometry.deleteAttribute('leafTint'); }
           if (items.length === 0) { chunk.meshes.delete(kind); continue; }
           const cap = Math.ceil(items.length * 1.3) + 8;
-          mesh = new THREE.InstancedMesh(instanceGeometry(this.propGeo.get(kind)!, cap), isFloraKind(kind) ? this.propMat : this.buildingMat, cap);
+          mesh = new THREE.InstancedMesh(instanceGeometry(this.geometryOf(kind), cap), isFloraKind(kind) ? this.propMat : this.buildingMat, cap);
           // Ground cover is too small to cast a visible shadow (and skipping it saves draw calls).
           mesh.castShadow = !isFloraKind(kind) || CATALOG[kind].layer !== 'Ground';
           mesh.userData['hideAbove'] = isFloraKind(kind) ? HIDE_ABOVE[CATALOG[kind].layer] : Infinity;

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { BUILDING_KINDS, buildBuildingGeometry, buildingEntry, type BuildingKind } from '../src/buildingCatalog.ts';
+import { BUILDING_KINDS, buildBuildingGeometry, buildingEntry, modelGeometry, type ModelKind } from '../src/buildingCatalog.ts';
+import { isHouseKind } from '../src/houses.ts';
 import { triangles } from '../src/propCatalog.ts';
 import { CityProps, WATER_GAP, type CitySpot } from '../src/cityProps.ts';
 import { stamp, type StampTile } from '../src/cityStamp.ts';
@@ -91,7 +92,7 @@ describe('L3: city buildings stand on dry ground (boats on water)', () => {
       const pos = new THREE.Vector3().setFromMatrixPosition(b.matrix).normalize();
       const s = spots.get(key(pos));
       if (!s) continue;
-      const rule = buildingEntry(b.kind).water;
+      const rule = isHouseKind(b.kind) ? undefined : buildingEntry(b.kind).water;
       const wet = s.water - s.ground >= 0.0003, dry = s.water <= s.ground;
       if (rule === 'float' ? !wet : rule === 'shore' ? !wet && !dry : !dry) bad.push(`tile ${t}: ${b.kind}`);
     }
@@ -146,9 +147,8 @@ describe('L5: on slopes, buildings stand level on a foundation', () => {
     if (g.use[t] !== USE.urban && g.use[t] !== USE.center) continue;
     for (const b of cp.place(t)) {
       if (b.kind === 'foundation') { foundations++; continue; }
-      if (b.kind === 'massWalls' || b.kind === 'massTower') homes++;
-      // (Roofs and doors sit on their walls.)
-      if (['gardenTree', 'well', 'fountain', 'stall', 'massGable', 'massDoor'].includes(b.kind)) continue;
+      if (isHouseKind(b.kind)) homes++;
+      if (['gardenTree', 'well', 'fountain', 'stall'].includes(b.kind)) continue;
       const p = new THREE.Vector3().setFromMatrixPosition(b.matrix);
       if (p.length() - 1 < ground(p.clone().normalize()) - 0.0003) sunk.push(`tile ${t}: ${b.kind}`);
     }
@@ -176,8 +176,9 @@ describe('L7: no land building touches water: its footprint and a margin round i
     if (g.use[t] !== USE.urban && g.use[t] !== USE.center) continue;
     for (const b of cp.place(t)) {
       // (Walls may follow a bank and garden trees grow on it; roofs, doors and foundations sit with their walls.)
-      if (buildingEntry(b.kind).water !== undefined || ['wallSegment', 'wallTower', 'gardenTree', 'massGable', 'massDoor', 'foundation'].includes(b.kind)) continue;
-      if (b.kind === 'massWalls' || b.kind === 'massTower') homes++;
+      // (Town lots: the house and its yard.)
+      if ((!isHouseKind(b.kind) && buildingEntry(b.kind).water !== undefined) || ['wallSegment', 'wallTower', 'gardenTree', 'foundation'].includes(b.kind)) continue;
+      if (isHouseKind(b.kind)) homes++;
       const c = new THREE.Vector3().setFromMatrixPosition(b.matrix).normalize();
       for (const p of cp.footprint(b)) {
         const out = p.clone().sub(c), l = out.length();
@@ -205,13 +206,12 @@ describe('L6: no building stands on a street or a road', () => {
   const cp = new CityProps(g, sampler, (d) => ({ ...at(d), t: locate(g.globe, d).t }), scale);
   const PROP = 1.5 * 0.276 * scale; // render.ts draws building models at this scale
   const box = new Map<string, THREE.Box3>();
-  const footprint = (kind: BuildingKind) => {
+  const footprint = (kind: ModelKind) => {
     let b = box.get(kind);
-    if (!b) { const geo = buildBuildingGeometry(kind); geo.computeBoundingBox(); b = geo.boundingBox!; box.set(kind, b); }
+    if (!b) { const geo = modelGeometry(kind); geo.computeBoundingBox(); b = geo.boundingBox!; box.set(kind, b); }
     return b;
   };
-  // (Roof eaves and doors are part of their building: the walls are checked.)
-  const FURNITURE = new Set<string>(['gardenTree', 'well', 'fountain', 'stall', 'shed', 'foundation', 'massGable', 'massDoor']);
+  const FURNITURE = new Set<string>(['gardenTree', 'well', 'fountain', 'stall', 'shed', 'foundation']);
   for (let t = 0; t < g.N; t++) cp.place(t);
   const streets = [
     ...cp.streets().map((s) => ({ pts: s.points, hw: s.halfWidth })),
@@ -238,7 +238,9 @@ describe('L6: no building stands on a street or a road', () => {
       const fb = footprint(b.kind);
       const pts: THREE.Vector3[] = [];
       for (const [x, z] of [[fb.min.x, fb.min.z], [fb.max.x, fb.min.z], [fb.max.x, fb.max.z], [fb.min.x, fb.max.z], [(fb.min.x + fb.max.x) / 2, fb.min.z], [(fb.min.x + fb.max.x) / 2, fb.max.z], [fb.min.x, (fb.min.z + fb.max.z) / 2], [fb.max.x, (fb.min.z + fb.max.z) / 2]] as const) {
-        pts.push(new THREE.Vector3(x * PROP, 0, z * PROP).applyMatrix4(b.matrix).normalize());
+        // (A town lot, its yard included, is in tile steps with its scale in its matrix.)
+        const k = isHouseKind(b.kind) ? 1 : PROP;
+        pts.push(new THREE.Vector3(x * k, 0, z * k).applyMatrix4(b.matrix).normalize());
       }
       const c = new THREE.Vector3().setFromMatrixPosition(b.matrix).normalize();
       if (streets.some((s) => s.pts.length > 1 && c.distanceTo(s.pts[0]!) < 0.1 && pts.some((p) => near(p, s) < 0))) bad.set(b.kind, (bad.get(b.kind) ?? 0) + 1);

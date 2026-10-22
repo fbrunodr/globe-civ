@@ -16,9 +16,15 @@ import {
   type Density, type Pt, type Spot, type Square, type StreetClass,
 } from './geometry.ts';
 import { parseKey, stubsOf, type EdgeValue, type Stub } from './edges.ts';
+import { WONDER_ROLES, groupOf, isWonderRole, wonderSpot, type WonderRole } from './wonders.ts';
 
-export type Role = 'block' | 'center' | 'wonder';
-export const ROLES: readonly Role[] = ['block', 'center', 'wonder'];
+// A tile's part in its town: an ordinary block, the center (the hall and
+// its square), the center within walls (drawn by hand, town/walls.ts), or
+// a wonder's tile (by the wonder's group: town/wonders.ts).
+export type Role = 'block' | 'center' | 'walled' | WonderRole;
+export const ROLES: readonly Role[] = ['block', 'center', 'walled', ...WONDER_ROLES];
+// The roles with the city hall.
+export const hasHall = (r: Role): boolean => r === 'center' || r === 'walled';
 export type Rank = 'main' | 'side' | 'lane';
 
 // Street widths by rank and density; a stub's street is as wide as its
@@ -26,15 +32,16 @@ export type Rank = 'main' | 'side' | 'lane';
 export const RANK_CLASS: Record<Density, Record<Rank, StreetClass>> = {
   low: { main: 'street', side: 'lane', lane: 'lane' },
   medium: { main: 'main', side: 'street', lane: 'lane' },
+  dense: { main: 'main', side: 'main', lane: 'street' },
   high: { main: 'avenue', side: 'main', lane: 'street' },
   metropolitan: { main: 'avenue', side: 'avenue', lane: 'main' },
 };
 // The city hall grows with its tile's density (a quad's height and more
 // ground at high density and above; cityProps.ts, flatTown.ts scale it).
-export const HALL_RADIUS: Record<Density, number> = { low: 0.045, medium: 0.045, high: 0.062, metropolitan: 0.075 };
-export const HALL_TALL: Record<Density, number> = { low: 1, medium: 1, high: 1.8, metropolitan: 2.4 };
+export const HALL_RADIUS: Record<Density, number> = { low: 0.045, medium: 0.045, dense: 0.054, high: 0.062, metropolitan: 0.075 };
+export const HALL_TALL: Record<Density, number> = { low: 1, medium: 1, dense: 1.4, high: 1.8, metropolitan: 2.4 };
 export const rankOfValue = (v: EdgeValue): Rank => (v === 1 ? 'main' : 'side');
-const DENSITY_ORDER: Record<Density, number> = { low: 0, medium: 1, high: 2, metropolitan: 3 };
+const DENSITY_ORDER: Record<Density, number> = { low: 0, medium: 1, dense: 2, high: 3, metropolitan: 4 };
 // The width where an edge's streets cross it: by the denser of its two tiles,
 // so both tiles agree.
 export function edgeClass(v: EdgeValue, a: Density, b: Density): StreetClass {
@@ -67,7 +74,6 @@ const INNER = 0.88;      // streets stay within this share of the inradius (but 
 const FAR = 0.17;        // ground farther than this from every street gets a lane
 const SPOT_R = 0.062;    // building spots
 const HALL_R = 0.075; // (room for the largest hall, HALL_RADIUS)
-const WONDER_R = 0.16;
 const WIDEST = HALF_WIDTH.avenue;
 
 const hashStr = (s: string) => { let h = 2166136261; for (const ch of s) h = Math.imul(h ^ ch.charCodeAt(0), 16777619); return h >>> 0; };
@@ -164,6 +170,8 @@ class Plan {
 // ---------- the draft ----------
 
 export function draftSkeleton(key: string, role: Role, variant = 0): Skeleton {
+  // (The walled center's streets are the center's: its walls go round them.)
+  if (role === 'walled') return { ...draftSkeleton(key, 'center', variant), role };
   const colouring = parseKey(key);
   const stubs = stubsOf(colouring);
   const rand = mulberry32(hashStr(`${key}|${role}|${variant}`));
@@ -171,12 +179,12 @@ export function draftSkeleton(key: string, role: Role, variant = 0): Skeleton {
   const squares: Square[] = [];
   let hall: Spot | null = null, wonder: Spot | null = null;
 
-  if (role === 'wonder') {
+  if (isWonderRole(role)) {
     // A ring street round the wonder's green; every stub's street runs in to it.
-    const R = 0.21;
+    wonder = wonderSpot(groupOf(role), 0, 0, Math.PI / 2);
+    const R = wonder.r + 0.05;
     plan.streets.push({ pts: ring({ x: 0, y: 0 }, R, 36), rank: 'side', ends: [null, null] });
     squares.push({ pts: ring({ x: 0, y: 0 }, R - 0.02, 24).slice(0, -1), paved: false });
-    wonder = { x: 0, y: 0, r: WONDER_R, yaw: 0 };
     stubs.forEach((s, i) => {
       const q = mul(norm(add(s.p, mul(s.into, LEAD))), R);
       plan.fromStub(i, q, mul(norm(q), -1), rankOfValue(s.value));
@@ -190,14 +198,15 @@ export function draftSkeleton(key: string, role: Role, variant = 0): Skeleton {
     const c = { x: (rand() - 0.5) * 0.04, y: (rand() - 0.5) * 0.04 };
     plan.streets.push({ pts: ring(c, 0.17 + 0.03 * rand(), 30, 0.12, rand), rank: 'side', ends: [null, null] });
   }
-  if (role !== 'wonder') infill(plan, wonder);
+  // (Lanes into empty ground; round a wonder, outside its ring.)
+  infill(plan, wonder);
   // (The hall after the lanes, so none runs through it.)
   if (role === 'center') {
     const c = centerSquare(plan.streets);
     squares.push(c.square);
     hall = c.hall;
   }
-  const spots = role === 'wonder' ? [] : placeSpots(plan.streets, squares, hall, rand);
+  const spots = isWonderRole(role) ? [] : placeSpots(plan.streets, squares, hall, rand);
   return { key, role, stubs, streets: plan.streets, squares, spots, hall, wonder };
 }
 

@@ -9,10 +9,12 @@
 // turned and mirrored into place. Its streets end exactly at the stubs of
 // its sides, where the neighbor's streets end too.
 
-import { HALF_WIDTH, densify, sideLength, toFan, len, sub, type Density, type Floors, type LotKind, type Pt, type StreetClass } from './town/geometry.ts';
-import { STUB_U, classOf, turnPoint, sideUnder, type EdgeValue, type Turn } from './town/edges.ts';
+import { HALF_WIDTH, densify, toFan, len, sub, type Density, type Floors, type LotKind, type Pt, type StreetClass } from './town/geometry.ts';
+import { classOf, turnPoint, sideUnder, type EdgeValue, type Turn } from './town/edges.ts';
 import { pickDrawing, type Drawing, type Role } from './town/index.ts';
 import { EDGE_BLEND, HALL_TALL } from './town/skeleton.ts';
+import { wallRuns } from './town/walls.ts';
+import { groupOf, isWonderRole, type WonderGroup } from './town/wonders.ts';
 
 export interface FanPt { t: number; i: number; wa: number; wb: number }
 
@@ -23,7 +25,6 @@ export interface StampTile {
   edgeCls: readonly (StreetClass | null)[]; // per tile side: how wide its streets are where they cross it
   role: Role;
   density: Density;
-  walled: boolean;                          // walls round its rim (the center)
   pick?: number;                            // which of the hand-drawn variants (a hash; default 0)
   drawing?: Drawing;                        // this one instead (the editor; drawn for the colouring's class)
 }
@@ -37,10 +38,10 @@ export interface StampedLot {
   spot?: number;     // the building spot it gives way to
   seed: number;      // stable per lot, for its look
 }
-export interface StampedSpot { tile: number; k: number; at: FanPt; face: FanPt; r: number; tall?: number } // tall: height × (halls grow with density)
+export interface StampedSpot { tile: number; k: number; at: FanPt; face: FanPt; r: number; tall?: number; hw?: number; hd?: number; group?: WonderGroup } // tall: height × (halls grow with density); hw, hd: a wonder's rectangle; group: a wonder's
 export interface StampedStreet { tile: number; pts: FanPt[]; hw: number[] } // half widths (tile steps), per point
 export interface StampedSquare { tile: number; pts: FanPt[]; paved: boolean }
-export interface StampedWall { tile: number; pts: FanPt[] } // a run of wall (gates between runs)
+export interface StampedWall { tile: number; pts: FanPt[]; towers: boolean[] } // a run of wall (gates between runs), towers where true
 
 export interface Stamp {
   lots: StampedLot[];
@@ -54,8 +55,6 @@ export interface Stamp {
 
 const FACE = 0.01; // how far ahead the facing point is (tile steps)
 export const STAMP_STEP = 0.02; // street points every this far (tile steps, as drawn)
-// Walls run round the rim at this share of the inradius (lots stay inside LOT_INNER).
-export const WALL_RHO = 0.985;
 
 const smoothstep = (a: number, b: number, x: number) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 const hashInts = (...xs: number[]) => { let h = 2166136261; for (const x of xs) h = Math.imul(h ^ (x | 0), 16777619); return h >>> 0; };
@@ -85,7 +84,10 @@ export function stamp(tiles: readonly StampTile[]): Stamp {
     });
     d.spots.forEach((sp, k) => out.spots.push({ tile: s.tile, k, at: at(sp), face: ahead(sp, sp.yaw), r: sp.r }));
     if (d.hall) out.halls.push({ tile: s.tile, k: -1, at: at(d.hall), face: ahead(d.hall, d.hall.yaw), r: d.hall.r, tall: HALL_TALL[s.density] });
-    if (d.wonder) out.wonders.push({ tile: s.tile, k: -1, at: at(d.wonder), face: ahead(d.wonder, d.wonder.yaw), r: d.wonder.r });
+    if (d.wonder) {
+      const w = d.wonder;
+      out.wonders.push({ tile: s.tile, k: -1, at: at(w), face: ahead(w, w.yaw), r: w.r, ...(w.hw !== undefined && w.hd !== undefined ? { hw: w.hw, hd: w.hd } : {}), ...(isWonderRole(s.role) ? { group: groupOf(s.role) } : {}) });
+    }
     for (const st of d.streets) {
       const pts = densify(st.pts, STAMP_STEP);
       const own = HALF_WIDTH[st.cls];
@@ -104,32 +106,7 @@ export function stamp(tiles: readonly StampTile[]): Stamp {
       out.streets.push({ tile: s.tile, pts: pts.map(at), hw });
     }
     for (const q of d.squares) out.squares.push({ tile: s.tile, pts: q.pts.map(at), paved: q.paved });
-    if (s.walled) out.walls.push(...wallRuns(s));
+    for (const r of wallRuns(d)) out.walls.push({ tile: s.tile, pts: r.pts.map(at), towers: [...r.towers] });
   }
   return out;
-}
-
-// Walls round the tile's rim, with a gate wherever a street crosses it.
-const GATE = 0.048; // half width of a gate (tile steps): the widest street and a tower beside it
-function wallRuns(s: StampTile): StampedWall[] {
-  const rho = WALL_RHO;
-  const L = sideLength(6) * rho;
-  const pts: FanPt[][] = [];
-  let run: FanPt[] = [];
-  const at = (i: number, u: number): FanPt => ({ t: s.tile, i, wa: rho * (1 - u), wb: rho * u });
-  for (let i = 0; i < 6; i++) {
-    const gates = STUB_U[s.colouring[i]!].map((u) => [u - GATE / L, u + GATE / L] as const);
-    let u = 0;
-    for (const [g0, g1] of gates) {
-      run.push(at(i, u), at(i, (u + g0) / 2), at(i, g0));
-      pts.push(run);
-      run = [];
-      u = g1;
-    }
-    run.push(at(i, u), at(i, (u + 1) / 2));
-  }
-  // The last run joins the first round the corner.
-  if (pts.length) pts[0] = [...run, ...pts[0]!];
-  else pts.push([...run, run[0]!]);
-  return pts.map((p) => ({ tile: s.tile, pts: p }));
 }

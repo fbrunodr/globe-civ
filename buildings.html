@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Building Styles</title>
+    <style>
+      #labels { position: fixed; inset: 0; pointer-events: none; }
+      .lbl { background: rgba(14,17,26,0.78); color: #e8ecf3; padding: 2px 7px; border-radius: 6px; font: 12px system-ui, sans-serif; white-space: nowrap; }
+      .lbl.head { font-weight: 600; }
+      .lbl.off { color: #f2b0a8; }
+      #topbar label { display: flex; align-items: center; gap: 4px; }
+      body:not([data-mode="style"]) .style-only { display: none !important; }
+      body:not([data-mode="civ"]) .civ-only { display: none !important; }
+      #pairs { position: fixed; left: 10px; bottom: 10px; max-width: 46vw; background: rgba(18,22,32,0.9); color: #cfd6e2; border-radius: 10px; padding: 8px 12px; font: 12px system-ui, sans-serif; }
+    </style>
+  </head>
+  <body data-mode="overview">
+    <canvas id="c"></canvas>
+    <div id="labels"></div>
+    <div id="hud">
+      <div id="topbar">
+        <span id="civ">Building styles</span>
+        <nav class="devnav"><a href="/">Game</a><a href="/gallery.html">Gallery</a><a class="active" href="/buildings.html">Buildings</a><a href="/city_lab.html">City lab</a><a href="/city_designs.html">Town designs</a><a href="/town_editor.html">Town editor</a><a href="/world_view.html">World view</a></nav>
+        <button data-mode="overview" class="active">All styles</button>
+        <button data-mode="style">By style</button>
+        <button data-mode="civ">By civ</button>
+        <label class="style-only">Style <select id="style"></select></label>
+        <label class="civ-only">Civ <select id="civSel"></select></label>
+        <label>Variant <select id="variant"><option value="0">1</option><option value="1">2</option><option value="2">3</option><option value="all">all</option></select></label>
+        <span class="spacer"></span>
+        <span id="hint"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Q</kbd>/<kbd>E</kbd> rotate · <kbd>Z</kbd>/<kbd>X</kbd> zoom</span>
+      </div>
+    </div>
+    <div id="pairs"></div>
+    <script type="module" src="/src/buildingViewer.ts"></script>
+  </body>
+</html>

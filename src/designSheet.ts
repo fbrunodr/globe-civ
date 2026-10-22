@@ -18,6 +18,7 @@ import { variantsOf } from './town/index.ts';
 import { stamp, type StampTile } from './cityStamp.ts';
 import { FlatPainter, disposeGroup, type FlatTile } from './flatTown.ts';
 import { mulberry32 } from './rng.ts';
+import { ARCH_CIVS, type ArchCiv } from './architecture.ts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const canvas = $<HTMLCanvasElement>('c');
@@ -67,7 +68,7 @@ function classesView(): { w: number; h: number } {
     paint.tiles.set(f.id, f);
     paint.ground(f);
     const c = parseKey(key);
-    paint.stamp(stamp([{ tile: f.id, colouring: c, edgeCls: c.map((v) => (v ? edgeClass(v, classDensity, classDensity) : null)), role, density: classDensity, walled: role === 'center' && walls }]), { walls, spots: showBuildings });
+    paint.stamp(stamp([{ tile: f.id, colouring: c, edgeCls: c.map((v) => (v ? edgeClass(v, classDensity, classDensity) : null)), role: role === 'center' && walls ? 'walled' : role, density: classDensity }]), { walls, spots: showBuildings });
     paint.marks(f, c);
     const vs = variantsOf(key, role, classDensity).length;
     label(`${key}${vs ? ` ✎${vs}` : ''}`, x, z + 0.58);
@@ -100,7 +101,7 @@ function townsView(): { w: number; h: number } {
       return (Math.imul(i * 31 + j * 7 + townSeed, 2246822519) >>> 0) % 8 === 0 ? 1 : 0;
     });
     const edgeCls = colouring.map((v, j) => (v ? edgeClass(v, density[i]!, nbs[j] !== undefined && built[nbs[j]!] ? density[nbs[j]!]! : density[i]!) : null));
-    stamps.push({ tile: i, colouring, edgeCls, role: i === 0 ? 'center' : 'block', density: density[i]!, walled: i === 0 && walls });
+    stamps.push({ tile: i, colouring, edgeCls, role: i === 0 ? (walls ? 'walled' : 'center') : 'block', density: density[i]! });
   });
   paint.stamp(stamp(stamps), { walls, spots: showBuildings });
   return { w: 2 * C, h: 2 * C };
@@ -141,6 +142,9 @@ $<HTMLSelectElement>('role').addEventListener('change', (e) => { role = (e.targe
 $<HTMLSelectElement>('townDensity').addEventListener('change', (e) => { townDensity = (e.target as HTMLSelectElement).value as Density | 'mixed'; build(); });
 $<HTMLInputElement>('buildings').addEventListener('change', (e) => { showBuildings = (e.target as HTMLInputElement).checked; build(); });
 $<HTMLInputElement>('walls').addEventListener('change', (e) => { walls = (e.target as HTMLInputElement).checked; build(); });
+// Whose houses (the drawings are the same for every civ).
+$<HTMLSelectElement>('lookCiv').innerHTML = ARCH_CIVS.map((c) => `<option${c === paint.look.civ ? ' selected' : ''}>${c}</option>`).join('');
+$('lookCiv').addEventListener('change', () => { paint.look = { civ: $<HTMLSelectElement>('lookCiv').value as ArchCiv }; build(); });
 $('reroll').addEventListener('click', (e) => { townSeed++; build(); (e.currentTarget as HTMLElement).blur(); });
 $('fit').addEventListener('click', () => { framed = false; build(); });
 

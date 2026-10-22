@@ -2,9 +2,11 @@
 // street skeleton (skeleton.ts: the same for every density) with its lots
 // (draft.ts: by density). Built on first use and kept.
 
-import { HALF_WIDTH, curve, len, lotSamples, pointInPoly, rhoOf, sub, distToLine, add, mul, isBuilding, LOT_KINDS, FLOORS, type Density, type Floors, type Lot, type LotKind, type Pt, type Spot, type Square, type StreetClass, type Street2 } from './geometry.ts';
+import { HALF_WIDTH, curve, len, lotSamples, pointInPoly, rhoOf, sub, distToLine, add, mul, isBuilding, LOT_KINDS, FLOORS, ON_GREENS, type Density, type Floors, type Lot, type LotKind, type Pt, type Spot, type Square, type StreetClass, type Street2 } from './geometry.ts';
 import { draftLots } from './draft.ts';
-import { draftSkeleton, RANK_CLASS, EDGE_BLEND, LEAD, HALL_RADIUS, type Rank, type Role, type Skeleton } from './skeleton.ts';
+import { draftSkeleton, hasHall, RANK_CLASS, EDGE_BLEND, LEAD, HALL_RADIUS, type Rank, type Role, type Skeleton } from './skeleton.ts';
+import { draftWalls, DRAFT_RHO, WALL_CLEAR } from './walls.ts';
+import { groupOf, isWonderRole, wonderSpot } from './wonders.ts';
 import { parseKey, stubsOf, type Stub } from './edges.ts';
 import STORED from './drawings.json';
 
@@ -25,6 +27,9 @@ export interface Drawing {
   readonly hall: Spot | null;
   readonly wonder: Spot | null;
   readonly lots: readonly Lot[];
+  // The walled center's walls (none on other tiles): runs, and gates on them.
+  readonly walls: readonly (readonly Pt[])[];
+  readonly gates: readonly Pt[];
 }
 
 // Lots stay within this share of the inradius (the rest is the tile's rim:
@@ -80,6 +85,8 @@ export interface DrawingRecord {
   hall: [number, number, number, number] | null;
   wonder: [number, number, number, number] | null;
   lots: (string | number)[][];                       // kind, x, y, yaw[, floors[, spot]]
+  walls?: XY[][];                                    // the walled center: wall runs
+  gates?: XY[];                                      // and gates on them
 }
 // Stored as `class|role|density|variant` (variants from 1).
 const records: Record<string, DrawingRecord> = Object.fromEntries(Object.entries(STORED as Record<string, DrawingRecord>)
@@ -121,6 +128,8 @@ export function fromRecord(key: string, role: Role, density: Density, r: Drawing
     return { pts, rank: s.rank, cls: RANK_CLASS[density][s.rank], ends };
   });
   const spot = (a: [number, number, number, number] | null): Spot | null => (a ? { x: a[0], y: a[1], r: a[2], yaw: a[3] * DEG } : null);
+  // (A wonder's footprint is its group's: the record only places and turns it.)
+  const wonderAt = (a: [number, number, number, number] | null): Spot | null => (a && isWonderRole(role) ? wonderSpot(groupOf(role), a[0], a[1], a[3] * DEG) : null);
   const lots: Lot[] = r.lots.flatMap((row) => {
     const [kind, x, y, yaw, floors, sp] = row as [string, number, number, number, number?, number?];
     if (!(LOT_KINDS as readonly string[]).includes(kind)) return [];
@@ -131,7 +140,8 @@ export function fromRecord(key: string, role: Role, density: Density, r: Drawing
   return {
     key, role, density, stubs, streets,
     squares: r.squares.map((q) => ({ pts: q.pts.map(pt), paved: q.paved })),
-    spots: r.spots.map((a) => spot(a)!), hall: spot(r.hall), wonder: spot(r.wonder), lots,
+    spots: r.spots.map((a) => spot(a)!), hall: spot(r.hall), wonder: wonderAt(r.wonder), lots,
+    walls: (r.walls ?? []).map((w) => w.map(pt)), gates: (r.gates ?? []).map(pt),
   };
 }
 
@@ -148,6 +158,7 @@ export function toRecord(d: Drawing, ctrlOf: (s: DrawnStreet) => readonly Pt[]):
       if (l.spot !== undefined) row.push(l.spot);
       return row;
     }),
+    ...(d.walls.length ? { walls: d.walls.map((w) => w.map(xy)), gates: d.gates.map(xy) } : {}),
   };
 }
 
@@ -174,7 +185,7 @@ export function assemble(sk: Skeleton, density: Density): Drawing {
   const streets: DrawnStreet[] = sk.streets.map((s) => ({ pts: s.pts, rank: s.rank, cls: RANK_CLASS[density][s.rank], ends: s.ends }));
   const clear = clearance(streets, sk.stubs);
   const decor: Lot[] = [];
-  if (sk.role === 'center') {
+  if (hasHall(sk.role)) {
     // A well or fountain on the square, clear of the streets and the hall.
     const sq = sk.squares.find((q) => q.paved);
     if (sq) {
@@ -187,8 +198,12 @@ export function assemble(sk: Skeleton, density: Density): Drawing {
     }
   }
   const keepClear = [...(sk.hall ? [{ ...sk.hall, r: HALL_RADIUS[density] }] : []), ...(sk.wonder ? [sk.wonder] : [])];
+  // The walled center's draft walls: a ring round the rim (the lots keep inside it).
+  const walls = sk.role === 'walled' ? draftWalls(sk.stubs) : { walls: [], gates: [] };
+  const inner = sk.role === 'walled' ? DRAFT_RHO - WALL_CLEAR / 0.5 - 0.01 : LOT_INNER;
+  // (A hair inside it: the editor stores lots rounded, turned to whole degrees.)
   const lots = draftLots({
-    region: (p) => rhoOf(6, p) <= LOT_INNER,
+    region: (p) => rhoOf(6, p) <= inner - 0.003,
     density: () => density,
     streets: clear,
     squares: sk.squares.filter((q) => q.paved),
@@ -200,8 +215,8 @@ export function assemble(sk: Skeleton, density: Density): Drawing {
   });
   // (Greens are kept clear of homes too.)
   const greens = sk.squares.filter((q) => !q.paved);
-  const kept = lots.filter((l) => l.kind === 'tree' || !greens.some((q) => pointInPoly(l, q.pts)));
-  return { key: sk.key, role: sk.role, density, stubs: sk.stubs, streets, squares: sk.squares, spots: sk.spots, hall: sk.hall && { ...sk.hall, r: HALL_RADIUS[density] }, wonder: sk.wonder, lots: [...decor, ...kept] };
+  const kept = lots.filter((l) => ON_GREENS.has(l.kind) || !greens.some((q) => pointInPoly(l, q.pts)));
+  return { key: sk.key, role: sk.role, density, stubs: sk.stubs, streets, squares: sk.squares, spots: sk.spots, hall: sk.hall && { ...sk.hall, r: HALL_RADIUS[density] }, wonder: sk.wonder, lots: [...decor, ...kept], walls: walls.walls, gates: walls.gates };
 }
 
 export type { Role, Rank, Skeleton };

@@ -5,7 +5,9 @@
 import { describe, it, expect } from 'vitest';
 import { CLASSES, TURNS, STUB_U, classOf, key, parseKey, underTurn, type EdgeValue } from '../src/town/edges.ts';
 import { drawingFor, skeletonFor, clearance, LOT_INNER } from '../src/town/index.ts';
-import { ROLES, RANK_CLASS, components } from '../src/town/skeleton.ts';
+import { ROLES, RANK_CLASS, components, hasHall } from '../src/town/skeleton.ts';
+import { drawingProblems } from '../src/town/checks.ts';
+import { isWonderRole } from '../src/town/wonders.ts';
 import { DENSITIES, HALF_WIDTH, HOMES, layoutProblems, distToLine, len, sub, rhoOf, pointInPoly } from '../src/town/geometry.ts';
 
 const all = (): EdgeValue[][] => Array.from({ length: 64 }, (_, n) => [0, 1, 2, 3, 4, 5].map((j) => ((n >> j) & 1) as EdgeValue));
@@ -60,13 +62,13 @@ describe('TD2: every skeleton is sound', () => {
       expect(bad.slice(0, 10)).toEqual([]);
     });
   }
-  it('blocks and centers have two building spots, wonder tiles none; centers a hall, wonder tiles a wonder; all clear of the streets at their widest', () => {
+  it('blocks and centers (walled or not) have two building spots, wonder tiles none; centers a hall, wonder tiles a wonder; all clear of the streets at their widest', () => {
     const bad: string[] = [];
     for (const k of CLASSES) for (const role of ROLES) {
       const sk = skeletonFor(k, role);
-      if (sk.spots.length !== (role === 'wonder' ? 0 : 2)) bad.push(`${k} ${role}: ${sk.spots.length} spots`);
-      if ((sk.hall !== null) !== (role === 'center')) bad.push(`${k} ${role}: hall`);
-      if ((sk.wonder !== null) !== (role === 'wonder')) bad.push(`${k} ${role}: wonder`);
+      if (sk.spots.length !== (isWonderRole(role) ? 0 : 2)) bad.push(`${k} ${role}: ${sk.spots.length} spots`);
+      if ((sk.hall !== null) !== hasHall(role)) bad.push(`${k} ${role}: hall`);
+      if ((sk.wonder !== null) !== (isWonderRole(role))) bad.push(`${k} ${role}: wonder`);
       for (const sp of [...sk.spots, ...(sk.hall ? [sk.hall] : [])]) {
         for (const st of sk.streets) if (distToLine(sp, st.pts) < sp.r + HALF_WIDTH[RANK_CLASS.high[st.rank]] - 1e-9) bad.push(`${k} ${role}: a spot on a street`);
         if (rhoOf(6, sp) + sp.r / 0.5 > LOT_INNER) bad.push(`${k} ${role}: a spot reaches the rim`);
@@ -85,10 +87,24 @@ describe('TD3: every drawing has its lots in order', () => {
         const dr = drawingFor(k, role, d);
         const homes = dr.lots.filter((l) => HOMES.has(l.kind)).length;
         // (A wonder takes the middle of its tile.)
-        if (homes < (role === 'wonder' ? 10 : 20)) bad.push(`${k} ${role}: only ${homes} homes`);
+        if (homes < (isWonderRole(role) ? 10 : 20)) bad.push(`${k} ${role}: only ${homes} homes`);
         const spots = [...dr.spots, ...(dr.hall ? [dr.hall] : []), ...(dr.wonder ? [dr.wonder] : [])];
         const lp = layoutProblems((p) => rhoOf(6, p) <= LOT_INNER + 1e-9, clearance(dr.streets, dr.stubs), dr.lots, spots, dr.squares);
         if (lp.length) bad.push(`${k} ${role}: ${lp.slice(0, 2).join('; ')}`);
+      }
+      expect(bad.slice(0, 10)).toEqual([]);
+    });
+  }
+});
+
+describe('TD4: walls', () => {
+  for (const d of DENSITIES) {
+    it(`${d}: every walled center's draft is sound (walls in the tile, every street through a gate, nothing on a wall), and no other tile has walls`, () => {
+      const bad: string[] = [];
+      for (const k of CLASSES) for (const role of ROLES) {
+        const dr = drawingFor(k, role, d);
+        if (role === 'walled' && !dr.walls.length) bad.push(`${k}: no walls`);
+        for (const p of drawingProblems(dr)) bad.push(`${k} ${role}: ${p.text}`);
       }
       expect(bad.slice(0, 10)).toEqual([]);
     });

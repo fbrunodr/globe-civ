@@ -4,10 +4,13 @@
 // keeps the drawings' turn).
 
 import * as THREE from 'three';
-import { corner, LOT_SIZE, FLOOR_HEIGHT, doorSize, isBuilding, type Footprint, type LotKind, type Pt, type Floors } from './town/geometry.ts';
+import { corner, SPINS, isBuilding, type Footprint, type Pt, type Floors } from './town/geometry.ts';
 import { STUB_U, type EdgeValue } from './town/edges.ts';
 import type { FanPt, Stamp } from './cityStamp.ts';
-import { BUILDINGS_CATALOG, ROOFS, buildBuildingGeometry, type BuildingKind } from './buildingCatalog.ts';
+import type { WonderGroup } from './town/wonders.ts';
+import { BUILDINGS_CATALOG, PROP_MODEL, buildBuildingGeometry, modelGeometry, type BuildingKind, type ModelKind } from './buildingCatalog.ts';
+import { styleOf, type ArchCiv } from './architecture.ts';
+import { HOUSE_VARIANTS, houseKind } from './houses.ts';
 import { makePropMaterial, instanceGeometry } from './propMaterial.ts';
 import { mulberry32 } from './rng.ts';
 
@@ -15,8 +18,6 @@ import { mulberry32 } from './rng.ts';
 // 0.07, and towns at HOUSE_SCALE 1.5 over that.
 export const MODEL = (1.5 * 0.276) / 0.07;
 export const HOUSE = 1.5 * MODEL;
-// How much of its lot a building fills (cityProps.ts FIT).
-const FIT = 0.92;
 
 export interface FlatTile { id: number; cx: number; cz: number }
 
@@ -24,8 +25,8 @@ export const STREET_RGB = new THREE.Color(0x9a8a70), PLAZA_RGB = new THREE.Color
 export const GROUND = new THREE.Color(0x7d9a55), RIM = new THREE.Color(0x76924f), OUTSIDE = new THREE.Color(0x6f8a4b), STUB = new THREE.Color(0xd9534f);
 const GREEN_RGB = new THREE.Color(0x8aa860);
 
-const ROOF_PICK = [...ROOFS.terracotta, ...ROOFS.slate];
-const FURNITURE: Record<Exclude<LotKind, `b${string}`>, BuildingKind> = { tree: 'gardenTree', well: 'well', fountain: 'fountain', stall: 'stall', shed: 'shed' };
+// A wonder to show for each group.
+const WONDER_SAMPLE: Record<WonderGroup, BuildingKind> = { monument: 'pyramids', arena: 'colosseum', hall: 'greatLibrary', tower: 'greatLighthouse' };
 const SAMPLE: readonly BuildingKind[] = ['library', 'market', 'temple', 'workshop', 'amphitheater', 'granary', 'barracks', 'odeon'];
 
 export const buildingMat = makePropMaterial(0.32);
@@ -35,7 +36,9 @@ export class FlatPainter {
   readonly tiles = new Map<number, FlatTile>();
   private pos: number[] = [];
   private col: number[] = [];
-  private readonly instances = new Map<string, { kind: BuildingKind; roof: number; mats: THREE.Matrix4[]; cols: THREE.Color[] }>();
+  private readonly instances = new Map<string, { kind: ModelKind; roof: number; mats: THREE.Matrix4[]; cols: THREE.Color[] }>();
+  // Whose houses, and of which era (architecture.ts): their style.
+  look: { civ: ArchCiv } = { civ: 'Romans' };
   private readonly radius = new Map<BuildingKind, number>();
 
   canon(f: FlatTile, p: Pt, y = 0): THREE.Vector3 { return new THREE.Vector3(f.cx + p.x, y, f.cz - p.y); }
@@ -90,6 +93,13 @@ export class FlatPainter {
     });
   }
 
+  // A model's half extents across (x) and deep (z), in model units.
+  private modelBox(kind: BuildingKind): readonly [number, number] {
+    const g = buildBuildingGeometry(kind); g.computeBoundingBox();
+    const b = g.boundingBox!;
+    g.dispose();
+    return [Math.max(-b.min.x, b.max.x), Math.max(-b.min.z, b.max.z)];
+  }
   private modelRadius(kind: BuildingKind): number {
     let r = this.radius.get(kind);
     if (r === undefined) {
@@ -101,7 +111,7 @@ export class FlatPainter {
     return r;
   }
   // A model at `at`, turned by yaw (radians, around up), scaled (x, y, z).
-  model(kind: BuildingKind, at: THREE.Vector3, yaw: number, scale: THREE.Vector3, roof: number, shade = 1): void {
+  model(kind: ModelKind, at: THREE.Vector3, yaw: number, scale: THREE.Vector3, roof: number, shade = 1): void {
     const key = `${kind}|${roof}`;
     let e = this.instances.get(key);
     if (!e) { e = { kind, roof, mats: [], cols: [] }; this.instances.set(key, e); }
@@ -111,18 +121,9 @@ export class FlatPainter {
   // The yaw that turns a model's front toward `face` (as cityProps.ts does).
   yawToward(at: THREE.Vector3, face: THREE.Vector3): number { const f = face.clone().sub(at); return Math.atan2(-f.z, f.x) + Math.PI / 2; }
 
-  // A massing model on a lot: walls the footprint wide, its floors high, a
-  // gable roof on low buildings (as cityProps.ts standMass).
-  building(kind: Footprint, floors: Floors, at: THREE.Vector3, yaw: number, roof: number, shade = 1): void {
-    const [lw, ld] = LOT_SIZE[kind];
-    const unit = 0.01, w = 2 * lw * FIT, d = 2 * ld * FIT, h = floors * FLOOR_HEIGHT;
-    const tall = floors > 2;
-    this.model(tall ? 'massTower' : 'massWalls', at, yaw, new THREE.Vector3(w / unit, h / unit, d / unit), tall ? BUILDINGS_CATALOG.massTower.leaf : roof, shade);
-    if (!tall) this.model('massGable', at.clone().setY(at.y + h), yaw, new THREE.Vector3(w / unit, (0.33 * d) / unit, d / unit), roof);
-    // The door, on the front (the model's +z, toward its street).
-    const [dw, dh] = doorSize(kind, floors);
-    const front = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
-    this.model('massDoor', at.clone().addScaledVector(front, d / 2), yaw, new THREE.Vector3(dw / unit, dh / unit, 0.003 / unit), BUILDINGS_CATALOG.massDoor.leaf);
+  // A lot's model (houses.ts) in the painter's look: its civ's style for its height.
+  building(kind: Footprint, floors: Floors, at: THREE.Vector3, yaw: number, variant: number, shade = 1): void {
+    this.model(houseKind(styleOf(this.look.civ, floors), kind, floors, variant), at, yaw, new THREE.Vector3(1, 1, 1), 0xffffff, shade);
   }
 
   // A stamp (cityStamp.ts) as the game would show it.
@@ -142,28 +143,36 @@ export class FlatPainter {
       const at = this.toPlane(h.at), s = HOUSE * Math.min(1.6, (1.15 * h.r) / (this.modelRadius('hall') * HOUSE));
       this.model('hall', at, this.yawToward(at, this.toPlane(h.face)), new THREE.Vector3(s, s * (h.tall ?? 1), s), 0x5f5650);
     }
+    // A wonder of its group, fitted to its footprint (as cityProps.ts does), facing its front.
     for (const w of st.wonders) {
-      const at = this.toPlane(w.at), s = HOUSE * Math.min(1, (1.0 * w.r) / (this.modelRadius('colosseum') * HOUSE));
-      this.model('colosseum', at, 0, new THREE.Vector3(s, s, s), BUILDINGS_CATALOG.colosseum.leaf);
+      const kind = WONDER_SAMPLE[w.group ?? 'arena'], at = this.toPlane(w.at), box = this.modelBox(kind);
+      const fit = w.hw !== undefined && w.hd !== undefined ? Math.min(w.hw / box[0], w.hd / box[1]) : w.r / Math.hypot(box[0], box[1]);
+      const s = Math.min(HOUSE, 0.92 * fit);
+      this.model(kind, at, this.yawToward(at, this.toPlane(w.face)), new THREE.Vector3(s, s, s), BUILDINGS_CATALOG[kind].leaf);
     }
     for (const l of st.lots) {
       if (l.spot !== undefined && used.has(`${l.tile}:${l.spot}`)) continue;
       const rand = mulberry32(l.seed);
       const at = this.toPlane(l.at), yaw = this.yawToward(at, this.toPlane(l.face));
       if (!isBuilding(l.kind)) {
-        const kind = FURNITURE[l.kind as Exclude<LotKind, `b${string}`>];
+        const kind = PROP_MODEL[l.kind];
         const s = HOUSE * (l.kind === 'tree' ? 0.8 + 0.4 * rand() : 1);
-        this.model(kind, at, l.kind === 'tree' ? rand() * 6.28 : yaw, new THREE.Vector3(s, s, s), BUILDINGS_CATALOG[kind].leaf);
+        this.model(kind, at, SPINS.has(l.kind) ? rand() * 6.28 : yaw, new THREE.Vector3(s, s, s), BUILDINGS_CATALOG[kind].leaf);
         continue;
       }
-      this.building(l.kind, l.floors ?? 1, at, yaw, ROOF_PICK[Math.floor(rand() * ROOF_PICK.length)]!, 0.9 + 0.15 * rand());
+      this.building(l.kind, l.floors ?? 1, at, yaw, Math.floor(rand() * HOUSE_VARIANTS), 0.92 + 0.12 * rand());
     }
     if (opts.walls) {
       for (const w of st.walls) {
         const pts = w.pts.map((p) => this.toPlane(p));
-        this.ribbon(pts, 0.007, 0.012, WALL_RGB);
+        // Wall segments between its points (the model is 0.01 long, stretched to fit), as the game stands them.
+        for (let n = 0; n + 1 < pts.length; n++) {
+          const a = pts[n]!, b = pts[n + 1]!, d = b.clone().sub(a), l = d.length();
+          if (l < 1e-6) continue;
+          this.model('wallSegment', a.clone().add(b).multiplyScalar(0.5), Math.atan2(-d.z, d.x), new THREE.Vector3(l / 0.01, HOUSE, HOUSE), BUILDINGS_CATALOG.wallSegment.leaf);
+        }
         pts.forEach((p, n) => {
-          if (n === 0 || n === pts.length - 1 || w.pts[n]!.wb === 0) this.model('wallTower', p, 0, new THREE.Vector3(HOUSE, HOUSE, HOUSE), BUILDINGS_CATALOG.wallTower.leaf);
+          if (w.towers[n]) this.model('wallTower', p, 0, new THREE.Vector3(HOUSE, HOUSE, HOUSE), BUILDINGS_CATALOG.wallTower.leaf);
         });
       }
     }
@@ -178,7 +187,7 @@ export class FlatPainter {
     group.add(new THREE.Mesh(geo, flatMat));
     let count = 0;
     for (const e of this.instances.values()) {
-      const model = buildBuildingGeometry(e.kind, { leaf: e.roof });
+      const model = modelGeometry(e.kind, { leaf: e.roof });
       const mesh = new THREE.InstancedMesh(instanceGeometry(model, e.mats.length), buildingMat, e.mats.length);
       const leaf = mesh.geometry.getAttribute('leafTint') as THREE.InstancedBufferAttribute;
       const lc = new THREE.Color(e.roof);

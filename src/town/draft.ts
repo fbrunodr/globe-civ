@@ -6,7 +6,7 @@
 
 import { mulberry32, type Rng } from '../rng.ts';
 import {
-  HALF_WIDTH, LOT_SIZE, type Floors, add, densify, distToSeg, len, lotSamples, lotsOverlap, mul, nearestOn, pointInPoly, sub,
+  HALF_WIDTH, LOT_SIZE, type Floors, add, densify, distToSeg, inSpot, len, lotSamples, lotsOverlap, mul, nearestOn, pointInPoly, sub,
   type Density, type Lot, type LotKind, type Pt, type Spot, type Square, type Street2,
 } from './geometry.ts';
 
@@ -44,6 +44,7 @@ interface Row { kinds: readonly LotKind[]; floors: readonly Floors[] }
 export const ROWS: Record<Density, { rows: readonly Row[]; skip: number; garden: number; gap: number; yard: number }> = {
   low: { rows: [{ kinds: ['b22', 'b22', 'b32'], floors: [1, 1, 2] }, { kinds: ['tree'], floors: [1] }], skip: 0.2, garden: 0.5, gap: 0.01, yard: 0.1 },
   medium: { rows: [{ kinds: ['b23', 'b23', 'b22'], floors: [2, 2, 1] }, { kinds: ['b22', 'b23'], floors: [1, 2] }], skip: 0.04, garden: 0.5, gap: 0.004, yard: 0.12 },
+  dense: { rows: [{ kinds: ['b23', 'b33', 'b23'], floors: [3, 3, 2] }, { kinds: ['b23', 'b22'], floors: [2, 3] }], skip: 0.04, garden: 0.6, gap: 0.004, yard: 0.11 },
   high: { rows: [{ kinds: ['b33', 'b23', 'b32'], floors: [4, 4, 2] }, { kinds: ['b23', 'b33'], floors: [2, 4] }], skip: 0.04, garden: 0.7, gap: 0.004, yard: 0.1 },
   metropolitan: { rows: [{ kinds: ['b44', 'b33', 'b44'], floors: [12, 4, 12] }, { kinds: ['b33'], floors: [4] }], skip: 0.05, garden: 0.9, gap: 0.006, yard: 0.1 },
 };
@@ -73,10 +74,10 @@ export function draftLots(inp: DraftInput): Lot[] {
     if (pts.some((p) => streetGap(p, 0.002) < 0)) return false;
     if (pts.some((p) => inp.squares.some((q) => pointInPoly(p, q.pts)))) return false;
     for (let k = 0; k < inp.spots.length; k++) {
-      const s = inp.spots[k]!, inside = len(sub(l, s)) < s.r;
-      if (k === spot ? !inside : pts.some((p) => len(sub(p, s)) < s.r)) return false;
+      const s = inp.spots[k]!, inside = inSpot(l, s);
+      if (k === spot ? !inside : pts.some((p) => inSpot(p, s))) return false;
     }
-    if (inp.keepClear.some((s) => pts.some((p) => len(sub(p, s)) < s.r))) return false;
+    if (inp.keepClear.some((s) => pts.some((p) => inSpot(p, s)))) return false;
     return !lots.some((o) => lotsOverlap(o, l, 0.003));
   };
   const along = (spot?: number) => {

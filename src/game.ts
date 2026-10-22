@@ -1,4 +1,5 @@
 import { buildFlora, type Flora } from './flora.ts';
+import { openSlots } from './density.ts';
 import type { Globe, Tile } from './goldberg.ts';
 import type { MapData } from './mapgen.ts';
 import { generateWorld, type World } from './world.ts';
@@ -739,8 +740,9 @@ export class Game {
   }
 
   // Where building k could go in the city now: an urban tile (or the center)
-  // with a free slot, or a rural tile touching the core (it becomes urban;
-  // its improvement goes). Harbor buildings stand on water, all others on land.
+  // with a free slot (a low tile has one, a denser tile two: density.ts), or
+  // a rural tile touching the core (it becomes urban; its improvement goes).
+  // Harbor buildings stand on water, all others on land.
   buildingSpots(city: City, k: BuildingKey): number[] {
     if (CITY_BUILDINGS[k].role === 'walls') return [];
     const out: number[] = [];
@@ -749,7 +751,7 @@ export class Game {
       const u = this.use[t];
       if (!buildingFits(k, this.isWater(t), this.map.riverTile[t] === 1)) continue;
       if (u === USE.urban || u === USE.center) {
-        if (this.slotKeys(t).includes(null)) out.push(t);
+        if (this.slotKeys(t).slice(0, openSlots(this, t)).includes(null)) out.push(t);
       } else if (u === USE.rural && this.canBeUrban(t) && this.touchesCore(city, t)) {
         out.push(t);
       }

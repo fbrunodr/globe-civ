@@ -145,8 +145,8 @@ describe('DS5: densities', () => {
       const two = g.slotKeys(t).filter((k) => k !== null).length >= 2;
       if (two) expect(allowedDensity(g, t, 'low')).not.toBe('low');
       if (g.relief[t] === 'hills') expect(allowedDensity(g, t, 'metropolitan')).not.toBe('metropolitan');
-      // Quads and skyscrapers only by hand (the City Lab), until the Industrial and Modern eras exist.
-      expect(['high', 'metropolitan']).not.toContain(tileDensity(g, t));
+      // Triples, quads and skyscrapers only by hand (the City Lab), until the Renaissance, Industrial and Modern eras exist.
+      expect(['dense', 'high', 'metropolitan']).not.toContain(tileDensity(g, t));
     }
   });
 });
