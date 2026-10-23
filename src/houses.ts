@@ -13,15 +13,23 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { cone, cyl, part, tf, type Tf } from './propCatalog.ts';
+import { cone, cyl } from './propCatalog.ts';
 import { CELL, FOOTPRINT_CELLS, wallHeight, type Floors, type Footprint } from './town/geometry.ts';
-import { mulberry32, type Rng } from './rng.ts';
+import { mulberry32 } from './rng.ts';
 import type { Style } from './architecture.ts';
-
-type G = THREE.BufferGeometry;
+import {
+  E, P, box, cypress, fence, frustum, gable, hip, onFace, palm, patch, pick, place, plant, ring, shrub, storeys, tree, windows, yard, faceWidth,
+  type Body, type Build, type Face, type G, type Lot,
+} from './houseKit.ts';
+import { HOUSE_STYLES } from './styles/houses.ts';
+import { TRIPLE_STYLES } from './styles/triples.ts';
+import { QUAD_STYLES } from './styles/quads.ts';
+import { TOWER_STYLES } from './styles/towers.ts';
 export const HOUSE_VARIANTS = 3;
-// A lot model's key (a model kind of its own for the renderers).
-export type HouseKind = `house|${Style}|${Footprint}|${Floors}|${number}`;
+// A lot model's key (a model kind of its own for the renderers): its
+// style, footprint, height and variant (the last three loosely typed: the
+// full product is too large a union for the compiler; houseKind builds it).
+export type HouseKind = `house|${Style}|${string}`;
 export const houseKind = (style: Style, fp: Footprint, floors: Floors, variant: number): HouseKind => `house|${style}|${fp}|${floors}|${variant % HOUSE_VARIANTS}`;
 export const isHouseKind = (k: string): k is HouseKind => k.startsWith('house|');
 export function parseHouseKind(k: HouseKind): { style: Style; fp: Footprint; floors: Floors; variant: number } {
@@ -29,149 +37,10 @@ export function parseHouseKind(k: HouseKind): { style: Style; fp: Footprint; flo
   return { style: style as Style, fp: fp as Footprint, floors: Number(floors) as Floors, variant: Number(v) };
 }
 
-// ---------- primitives (tile steps) ----------
-
-const P = (g: G, c: number, o: Tf = {}) => part(g, c, tf(o));
-const E = 0.00025; // how far details stand proud of a wall
-// A closed box standing on y = o.y (walls and a top; no floor).
-function box(w: number, h: number, d: number, c: number, o: Tf = {}, top = c): G[] {
-  return [
-    P(new THREE.CylinderGeometry(Math.SQRT1_2, Math.SQRT1_2, 1, 4, 1, true).rotateY(Math.PI / 4).translate(0, 0.5, 0).scale(w, h, d), c, o),
-    P(new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2).translate(0, h, 0), top, o),
-  ];
-}
-// Four walls only (an open box: a parapet, a fence, a yard wall).
-const ring = (w: number, h: number, d: number, c: number, o: Tf = {}) =>
-  P(new THREE.CylinderGeometry(Math.SQRT1_2, Math.SQRT1_2, 1, 4, 1, true).rotateY(Math.PI / 4).translate(0, 0.5, 0).scale(w, h, d), c, o);
-// A flat patch on the ground (y slightly up so it shows over the terrain).
-const patch = (w: number, d: number, c: number, x = 0, z = 0, y = 0.0003, ry = 0) =>
-  P(new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2), c, { x, y, z, ry });
-// A frustum: a w0 × d0 base rising h to a w1 × d1 top (8 triangles; the top
-// closed when `top` is given).
-function frustum(w0: number, d0: number, w1: number, d1: number, h: number, c: number, o: Tf = {}, top?: number): G[] {
-  const a = [w0 / 2, d0 / 2], b = [w1 / 2, d1 / 2];
-  const q = (x0: number, z0: number, x1: number, z1: number, x2: number, z2: number, x3: number, z3: number) => [x0, 0, z0, x1, 0, z1, x2, h, z2, x0, 0, z0, x2, h, z2, x3, h, z3];
-  const p = [
-    ...q(-a[0]!, a[1]!, a[0]!, a[1]!, b[0]!, b[1]!, -b[0]!, b[1]!),
-    ...q(a[0]!, -a[1]!, -a[0]!, -a[1]!, -b[0]!, -b[1]!, b[0]!, -b[1]!),
-    ...q(a[0]!, a[1]!, a[0]!, -a[1]!, b[0]!, -b[1]!, b[0]!, b[1]!),
-    ...q(-a[0]!, -a[1]!, -a[0]!, a[1]!, -b[0]!, b[1]!, -b[0]!, -b[1]!),
-  ];
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(p, 3));
-  const out = [P(g, c, o)];
-  if (top !== undefined) out.push(P(new THREE.PlaneGeometry(w1, d1).rotateX(-Math.PI / 2).translate(0, h, 0), top, o));
-  return out;
-}
-// A gable roof over w × d, h high, its ridge along x (or along z: `alongZ`).
-function gable(w: number, d: number, h: number, c: number, o: Tf = {}, alongZ = false, end = c): G[] {
-  if (alongZ) return gable(d, w, h, c, { ...o, ry: (o.ry ?? 0) + Math.PI / 2 }, false, end);
-  const x = w / 2, z = d / 2;
-  const slopes = new THREE.BufferGeometry();
-  slopes.setAttribute('position', new THREE.Float32BufferAttribute([
-    -x, 0, z, x, 0, z, x, h, 0, -x, 0, z, x, h, 0, -x, h, 0,
-    x, 0, -z, -x, 0, -z, -x, h, 0, x, 0, -z, -x, h, 0, x, h, 0,
-  ], 3));
-  const ends = new THREE.BufferGeometry();
-  ends.setAttribute('position', new THREE.Float32BufferAttribute([-x, 0, -z, -x, 0, z, -x, h, 0, x, 0, z, x, 0, -z, x, h, 0], 3));
-  return [P(slopes, c, o), P(ends, end, o)];
-}
-// A hipped roof over w × d, h high (its ridge along the longer side).
-function hip(w: number, d: number, h: number, c: number, o: Tf = {}): G {
-  const x = w / 2, z = d / 2, r = Math.max(0, (Math.max(w, d) - Math.min(w, d)) / 2);
-  const [rx, rz] = w >= d ? [r, 0] : [0, r];
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute([
-    -x, 0, z, x, 0, z, rx, h, rz, -x, 0, z, rx, h, rz, -rx, h, -rz,
-    x, 0, -z, -x, 0, -z, -rx, h, -rz, x, 0, -z, -rx, h, -rz, rx, h, rz,
-    x, 0, z, x, 0, -z, rx, h, rz, -x, 0, -z, -x, 0, z, -rx, h, -rz,
-  ], 3));
-  // (Front and back are trapezoids and the ends triangles when the ridge
-  // runs along x; along z they swap, with the same faces.)
-  return P(g, c, o);
-}
-const shrub = (x: number, z: number, r: number, c: number) => P(new THREE.OctahedronGeometry(r, 0), c, { x, y: r * 0.7, z, sy: 0.8 });
-function tree(x: number, z: number, s: number, crown: number): G[] {
-  return [cyl(0.0007 * s, 0.0005 * s, 0.006 * s, 3, 0x6a5038, { x, z }), P(new THREE.OctahedronGeometry(0.0045 * s, 0), crown, { x, y: 0.008 * s, z, sy: 1.1 })];
-}
-const cypress = (x: number, z: number, s: number) => [cyl(0.0005 * s, 0.0004 * s, 0.002 * s, 3, 0x5a4030, { x, z }), cone(0.0018 * s, 0.013 * s, 5, 0x3f5a35, { x, y: 0.0015 * s, z })];
-function palm(x: number, z: number, s: number): G[] {
-  return [cyl(0.0006 * s, 0.0004 * s, 0.011 * s, 3, 0x7a6448, { x, z, rz: 0.08 }), P(new THREE.OctahedronGeometry(0.004 * s, 0), 0x5e8a44, { x: x + 0.0008 * s, y: 0.011 * s, z, sy: 0.3 })];
-}
-
-// ---------- the building body and its facades ----------
-
-interface Body { x: number; z: number; w: number; d: number; y: number; h: number }
-type Face = 'front' | 'back' | 'left' | 'right';
-const FACE_TURN: Record<Face, number> = { front: 0, back: Math.PI, right: Math.PI / 2, left: -Math.PI / 2 };
-// A quad on a face of a body: `along` from the face's middle, `y` up from the ground, w × h.
-function onFace(b: Body, face: Face, along: number, y: number, w: number, h: number, c: number, out = E): G {
-  const g = new THREE.PlaneGeometry(w, h).translate(along, y + h / 2, 0).rotateY(FACE_TURN[face]);
-  const [dx, dz] = face === 'front' ? [0, b.d / 2 + out] : face === 'back' ? [0, -b.d / 2 - out] : face === 'right' ? [b.w / 2 + out, 0] : [-b.w / 2 - out, 0];
-  return P(g, c, { x: b.x + dx, z: b.z + dz });
-}
-const faceWidth = (b: Body, f: Face) => (f === 'front' || f === 'back' ? b.w : b.d);
-// Windows on a face, floor by floor: as many as fit `spacing` apart (the
-// middle of the ground floor of the front left for the door when `door`).
-interface WinOpts { w: number; h: number; spacing: number; sill: number; color: number; frame?: number | undefined; shutter?: number | undefined; door?: boolean; floors: number; storey: number; base: number }
-function windows(b: Body, face: Face, o: WinOpts): G[] {
-  const out: G[] = [], fw = faceWidth(b, face), n = Math.max(1, Math.floor((fw - 0.004) / o.spacing));
-  for (let f = 0; f < o.floors; f++) {
-    for (let i = 0; i < n; i++) {
-      const along = (i - (n - 1) / 2) * (fw / n);
-      if (o.door && f === 0 && face === 'front' && Math.abs(along) < fw / n / 2) continue;
-      const y = b.y + o.base + f * o.storey + o.sill;
-      if (o.frame !== undefined) out.push(onFace(b, face, along, y - 0.0005, o.w + 0.001, o.h + 0.001, o.frame, E * 0.5));
-      out.push(onFace(b, face, along, y, o.w, o.h, o.color));
-      if (o.shutter !== undefined) for (const s of [-1, 1]) out.push(onFace(b, face, along + s * (o.w / 2 + o.w * 0.28), y, o.w * 0.5, o.h, o.shutter));
-    }
-  }
-  return out;
-}
-
-// ---------- the yard ----------
-
-interface Lot { lw: number; ld: number; floors: Floors; H: number; v: number; rand: Rng; fp: Footprint }
-// The building's place on its lot: a share of the lot's width and depth,
-// set back from the front by `setback` (tile steps).
-function place(l: Lot, cw: number, cd: number, setback: number): Body {
-  const w = 2 * l.lw * cw, d = 2 * l.ld * cd;
-  return { x: 0, z: l.ld - setback - d / 2, w, d, y: 0, h: l.H };
-}
-// The ground of the lot, a path from the door to the street.
-function yard(l: Lot, b: Body, ground: number, path: number, pathW = 0.005): G[] {
-  const out = [patch(2 * l.lw * 0.98, 2 * l.ld * 0.98, ground)];
-  const front = b.z + b.d / 2, len = l.ld - front;
-  if (len > 0.001) out.push(patch(pathW, len, path, b.x, front + len / 2, 0.0005));
-  return out;
-}
-// A fence or wall round the lot (open at the path).
-function fence(l: Lot, h: number, c: number, gap = 0.008): G[] {
-  const w = 2 * l.lw * 0.96, d = 2 * l.ld * 0.96, side = (w - gap) / 2;
-  return [
-    ...box(0.0007, h, d, c, { x: -w / 2 }), ...box(0.0007, h, d, c, { x: w / 2 }), ...box(w, h, 0.0007, c, { z: -d / 2 }),
-    ...box(side, h, 0.0007, c, { x: -(gap + side) / 2, z: d / 2 }), ...box(side, h, 0.0007, c, { x: (gap + side) / 2, z: d / 2 }),
-  ];
-}
-// Shrubs along the back and the sides of the yard, where there is room.
-function plant(l: Lot, b: Body, n: number, c: number, r = 0.0026): G[] {
-  const out: G[] = [];
-  const spots: [number, number][] = [[-l.lw * 0.7, -l.ld * 0.75], [l.lw * 0.7, -l.ld * 0.75], [-l.lw * 0.75, l.ld * 0.7], [l.lw * 0.75, l.ld * 0.7], [0, -l.ld * 0.8]];
-  for (const [x, z] of spots) {
-    if (out.length >= n) break;
-    const inside = Math.abs(x - b.x) < b.w / 2 + r && Math.abs(z - b.z) < b.d / 2 + r;
-    if (!inside) out.push(shrub(x, z, r * (0.8 + 0.4 * l.rand()), c));
-  }
-  return out;
-}
-const pick = <T>(l: Lot, xs: readonly T[]): T => xs[l.v % xs.length]!;
-
 // ---------- the styles ----------
 
-// The storey layout of a body: floor heights from the walls' height.
-const storeys = (l: Lot, base = 0.15) => ({ floors: l.floors, base: l.H * base / l.floors, storey: (l.H * (1 - base / l.floors)) / l.floors });
-
-const STYLE_BUILD: Record<Style, (l: Lot) => G[]> = {
+// The first styles; the rest are in styles/ by the height they serve.
+export const FIRST_STYLES = {
   mediterranean(l) {
     const wall = pick(l, [0xe8dcc4, 0xddc9a6, 0xefe6d6]), roof = pick(l, [0xb5653f, 0xa85a3a, 0xc07a50]), shutter = pick(l, [0x5a7a5a, 0x4a6a8a, 0x7a5a3a]);
     const b = place(l, 0.68, 0.6, l.ld * 0.22), out: G[] = [];
@@ -313,6 +182,8 @@ const STYLE_BUILD: Record<Style, (l: Lot) => G[]> = {
     const out: G[] = [patch(2 * l.lw * 0.98, 2 * l.ld * 0.98, 0xb8a070)];
     const hut = (x: number, z: number, r: number, h: number) => [
       cyl(r, r, h, 8, mud, { x, z }), cone(r * 1.3, r * 1.25, 8, thatch, { x, y: h * 0.92, z }),
+      // A finial on the peak (an ostrich egg on a pole, as on Ethiopian tukuls).
+      cyl(0.00025, 0.00025, r * 0.35, 3, 0x5a4636, { x, y: h * 0.92 + r * 1.2, z }), P(new THREE.SphereGeometry(r * 0.12, 5, 3), 0xf2efe6, { x, y: h * 0.92 + r * 1.55, z, sy: 1.3 }),
       onFace({ x, z, w: r * 2, d: r * 2, y: 0, h }, 'front', 0, 0, r * 0.5, h * 0.7, 0x3a2a20, E * 2),
     ];
     const r = Math.min(l.lw, l.ld) * (l.floors > 1 ? 0.42 : 0.36), h = l.H * 0.55;
@@ -518,6 +389,13 @@ const STYLE_BUILD: Record<Style, (l: Lot) => G[]> = {
     out.push(onFace(b, 'front', b.w * 0.25, 0, 0.006, Math.min(0.009, s.storey * 0.75), glass));
     return out;
   },
+} satisfies Record<string, Build>;
+
+const { tulouRing, ...TRIPLES } = TRIPLE_STYLES;
+const STYLE_BUILD: Record<Style, Build> = {
+  ...FIRST_STYLES, ...HOUSE_STYLES, ...TRIPLES, ...QUAD_STYLES, ...TOWER_STYLES,
+  // A tulou needs room for its ring; on the narrower lots, a shophouse.
+  tulou: (l) => (Math.min(...FOOTPRINT_CELLS[l.fp]) >= 3 ? tulouRing(l) : FIRST_STYLES.eastAsian(l)),
 };
 
 // ---------- the models ----------

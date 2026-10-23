@@ -40,7 +40,7 @@ const rebuild = () => {
 $('rebuild').addEventListener('click', rebuild);
 seedEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') rebuild(); });
 
-const game = new Game({ size, seed });
+const game = new Game({ size, seed, everyCiv: true });
 game.units.length = 0;
 game.explored.fill(1);
 game.visible.fill(1);

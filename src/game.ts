@@ -1,4 +1,5 @@
 import { buildFlora, type Flora } from './flora.ts';
+import type { ArchCiv } from './architecture.ts';
 import { openSlots } from './density.ts';
 import type { Globe, Tile } from './goldberg.ts';
 import type { MapData } from './mapgen.ts';
@@ -46,7 +47,7 @@ export interface AdjacencyHit {
 
 export interface Player {
   id: number;
-  name: string;
+  name: ArchCiv;
   color: string;
   cityNames: string[];
   isHuman: boolean;
@@ -117,6 +118,8 @@ export interface Message {
 export interface GameOptions {
   size: MapSizeKey;
   seed: number;
+  // Every civ a player (the City Lab): those past the map's starts begin with no units.
+  everyCiv?: boolean;
 }
 
 // Pure game state + rules. Knows nothing about rendering or the DOM.
@@ -154,7 +157,7 @@ export class Game {
   readonly players: Player[];
   over: 'victory' | 'defeat' | null = null;
 
-  constructor({ size, seed }: GameOptions) {
+  constructor({ size, seed, everyCiv = false }: GameOptions) {
     this.seed = seed;
     this.world = generateWorld(size, seed);
     this.globe = this.world.globe;
@@ -176,7 +179,7 @@ export class Game {
     this.explored = new Uint8Array(this.N);
     this.visible = new Uint8Array(this.N);
 
-    this.players = CIVS.slice(0, this.world.starts.length).map((civ, id) => ({
+    this.players = (everyCiv ? CIVS : CIVS.slice(0, this.world.starts.length)).map((civ, id) => ({
       id, name: civ.name, color: civ.color, cityNames: civ.cities,
       isHuman: id === HUMAN, alive: true, gold: 0, science: 0, culture: 0, faith: 0, era: 0, citiesFounded: 0, offensive: false,
     }));
@@ -1122,6 +1125,7 @@ export class Game {
   private placeUnits(): void {
     this.players.forEach((p, i) => {
       const s = this.world.starts[i];
+      if (s === undefined) return; // (a City Lab civ past the map's starts)
       this.createUnit('settler', p.id, s);
       const nb = this.tiles[s].neighbors.find((x) => !this.isWater(x)) ?? s;
       this.createUnit('warrior', p.id, nb);

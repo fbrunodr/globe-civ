@@ -18,7 +18,7 @@ import type { Game, City } from './game.ts';
 import { USE, SLOTS, improvementFor, isWonderKey, type ImprovementKey, type BuildingKey, type WonderKey, type EraIndex } from './cities.ts';
 import { ROOFS, PROP_MODEL, buildingEntry, modelGeometry, type BuildingKind, type ModelKind } from './buildingCatalog.ts';
 import { HOUSE_VARIANTS, houseKind, isHouseKind, type HouseKind } from './houses.ts';
-import { archCivOf, styleOf } from './architecture.ts';
+import { styleOf } from './architecture.ts';
 import { tileDensity, allowedDensity } from './density.ts';
 import { LOT_SIZE, PLANTS, SPINS, isBuilding, type Density, type StreetClass } from './town/geometry.ts';
 import { planRoads, roadLines, roadEntries, ROAD_HALF_WIDTH } from './roads.ts';
@@ -417,7 +417,7 @@ export class CityProps {
     }
 
     // Lots: homes and street furniture, never on water.
-    const archCiv = archCivOf(g.players[city.owner]!.name);
+    const archCiv = g.players[city.owner]!.name;
     for (const l of st.lots) {
       if (l.spot !== undefined && builtSpot.has(`${l.tile}:${l.spot}`)) continue;
       const s = at(l.at);
