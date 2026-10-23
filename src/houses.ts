@@ -322,7 +322,7 @@ const STYLE_BUILD: Record<Style, (l: Lot) => G[]> = {
       for (const [x, z] of [[-1, -1], [1, -1], [1, 1], [-1, 1]] as const) out.push(cyl(0.0003, 0.0003, 0.004, 3, 0x6a5038, { x: l.lw * 0.55 + x * 0.002, z: -l.ld * 0.5 + z * 0.002 }));
       out.push(cyl(0.0032, 0.0032, 0.004, 7, mud, { x: l.lw * 0.55, y: 0.004, z: -l.ld * 0.5 }), cone(0.0042, 0.004, 7, thatch, { x: l.lw * 0.55, y: 0.0078, z: -l.ld * 0.5 }));
     }
-    // The kraal's palisade: a ring of stakes (an open drum), open at the front.
+    // The compound's palisade: a ring of stakes (an open drum), open at the front.
     const R = Math.min(l.lw, l.ld) * 0.95;
     out.push(P(new THREE.CylinderGeometry(R, R, 0.0035, 14, 1, true, 0.35, Math.PI * 2 - 0.7).translate(0, 0.00175, 0), 0x7a5a3a));
     return out;

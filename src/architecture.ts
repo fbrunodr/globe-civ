@@ -10,10 +10,11 @@
 import type { Density, Floors, Footprint } from './town/geometry.ts';
 import { DENSITIES, FLOORS, FOOTPRINTS } from './town/geometry.ts';
 
-// The civs: Civilization I's, and the Spanish, the Persians and the Vikings of Civilization II.
+// The civs: Civilization I's (the Hebrews and the Ethiopians in place of the Americans and the
+// Zulus), and the Spanish, the Persians and the Vikings of Civilization II.
 export const ARCH_CIVS = [
-  'Romans', 'Egyptians', 'Chinese', 'Mongols', 'Zulus', 'Aztecs', 'Greeks', 'English', 'Spanish', 'French',
-  'Germans', 'Persians', 'Indians', 'Japanese', 'Babylonians', 'Russians', 'Americans', 'Vikings',
+  'Romans', 'Egyptians', 'Chinese', 'Mongols', 'Ethiopians', 'Aztecs', 'Greeks', 'English', 'Spanish', 'French',
+  'Germans', 'Persians', 'Indians', 'Japanese', 'Babylonians', 'Russians', 'Hebrews', 'Vikings',
 ] as const;
 export type ArchCiv = (typeof ARCH_CIVS)[number];
 
@@ -40,7 +41,7 @@ export const STYLES = [
   'northern',      // timber and wattle, steep thatch, longhouses
   'yurt',          // felt yurts in fenced camps
   'mesoamerican',  // plastered stone on stepped platforms, flat roofs
-  'african',       // round thatched huts in a kraal
+  'african',       // round thatched huts in a fenced compound
   'southAsian',    // brick and stone, flat roofs, small domed pavilions (taller: havelis)
   // triples
   'renaissance',   // palazzi: stucco, arcades, tiled hip roofs
@@ -55,7 +56,7 @@ export const STYLES = [
 export type Style = (typeof STYLES)[number];
 export const STYLE_NAME: Record<Style, string> = {
   mediterranean: 'Mediterranean', nile: 'Nile & Mesopotamia', eastAsian: 'East Asian', northern: 'Northern timber', yurt: 'Yurt camp',
-  mesoamerican: 'Mesoamerican', african: 'Kraal', southAsian: 'South Asian', renaissance: 'Renaissance', gothic: 'Gothic',
+  mesoamerican: 'Mesoamerican', african: 'Round huts', southAsian: 'South Asian', renaissance: 'Renaissance', gothic: 'Gothic',
   islamic: 'Islamic', brick: 'Industrial brick', haussmann: 'Haussmann', modern: 'Modern',
 };
 
@@ -71,17 +72,17 @@ const TABLE: Record<ArchCiv, Row> = {
   Egyptians: S('nile', 'islamic', 'haussmann'),
   Babylonians: S('nile', 'islamic', 'haussmann'),
   Persians: S('nile', 'islamic', 'haussmann'),
+  Hebrews: S('nile', 'islamic', 'haussmann'),
   Chinese: S('eastAsian', 'eastAsian', 'eastAsian'),
   Japanese: S('eastAsian', 'eastAsian', 'eastAsian'),
   Mongols: S('yurt', 'eastAsian', 'brick'),
-  Zulus: S('african', 'nile', 'brick'),
+  Ethiopians: S('african', 'nile', 'brick'),
   Indians: S('southAsian', 'southAsian', 'haussmann'),
   English: S('northern', 'gothic', 'brick'),
   French: S('northern', 'gothic', 'haussmann'),
   Germans: S('northern', 'gothic', 'brick'),
   Vikings: S('northern', 'gothic', 'brick'),
   Russians: S('northern', 'gothic', 'brick'),
-  Americans: S('northern', 'gothic', 'brick'),
 };
 // The style of a civ's buildings of a height (whatever the era: an era only decides which heights there are).
 export const styleOf = (civ: ArchCiv, floors: Floors): Style => TABLE[civ][ARCH_ERAS.indexOf(eraOfFloors(floors))]!;
