@@ -564,17 +564,6 @@ export class GlobeRenderer {
     this.shadowsDirty = true;
   }
 
-  // The map's field of view (degrees; the framing is kept, cam.setLens).
-  lens = LENS;
-  setLens(fov: number): void {
-    this.lens = fov;
-    this.cam.setLens(fov);
-    if (!this.walk.active) { this.camera.fov = fov; this.camera.updateProjectionMatrix(); }
-  }
-  // The flora's small things (its ground layer: grass, rocks, flowers, reeds) shown or not.
-  smallFlora = true;
-  setSmallFlora(on: boolean): void { this.smallFlora = on; }
-
   // Clouds and rain on or off (the debug views always hide them).
   clouds = true;
   setClouds(on: boolean): void {
@@ -601,7 +590,7 @@ export class GlobeRenderer {
       this.walk.exit();
       this.cam.place(this.walk.position, this.walk.facing, 0.1);
       this.camera.near = 0.005;
-      this.camera.fov = this.lens;
+      this.camera.fov = LENS;
     }
     this.cam.enabled = !on;
     this.camera.updateProjectionMatrix();
@@ -877,7 +866,6 @@ export class GlobeRenderer {
           // Ground cover is too small to cast a visible shadow (and skipping it saves draw calls).
           mesh.castShadow = !isFloraKind(kind) || CATALOG[kind].layer !== 'Ground';
           mesh.userData['hideAbove'] = isFloraKind(kind) ? HIDE_ABOVE[CATALOG[kind].layer] : Infinity;
-          mesh.userData['small'] = isFloraKind(kind) && CATALOG[kind].layer === 'Ground';
           chunk.meshes.set(kind, mesh);
           this.scene.add(mesh);
         }
@@ -909,7 +897,7 @@ export class GlobeRenderer {
     const altitude = (dist - 1) / this.scale;
     for (const chunk of this.chunks) {
       const seen = camDir.angleTo(chunk.dir) < horizon + chunk.radius;
-      for (const mesh of chunk.meshes.values()) mesh.visible = this.view === 'normal' && seen && altitude < (mesh.userData['hideAbove'] as number) && (this.smallFlora || !mesh.userData['small']);
+      for (const mesh of chunk.meshes.values()) mesh.visible = this.view === 'normal' && seen && altitude < (mesh.userData['hideAbove'] as number);
     }
   }
 
