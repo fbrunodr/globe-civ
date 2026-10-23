@@ -103,11 +103,11 @@ const ROAD_KERB = [0.62, 0.59, 0.54] as const;
 const SQUARE_GROW = 0.022; // squares reach this far (tile steps) under the streets round them
 const SHADOW_NORMAL_TEXELS = 1.5;
 const WALK_FOV = 55;
-// The look (chosen by comparing in a now-removed panel): a 30° lens from
+// The look (chosen by comparing in a now-removed panel): a 35° lens from
 // further back (flatter perspective, less of a small planet); a white sun
 // fairly low in the sky over an even, cool sky fill; the sun cooler toward
 // the poles.
-const LENS = 30;
+const LENS = 35;
 const LIGHT = { sunColor: 0xffffff, sun: 2.5, sunHeight: 35, fill: 1.0, fillSky: 0xb9cdea, fillGround: 0x4f4232, exposure: 1.0, cool: 2 / 3 };
 const SUN_COOL = new THREE.Color(0xe4edff);
 // Bridges (heights × the world scale; spans in tile steps): the deck stands
@@ -564,6 +564,17 @@ export class GlobeRenderer {
     this.shadowsDirty = true;
   }
 
+  // The map's field of view (degrees; the framing is kept, cam.setLens).
+  lens = LENS;
+  setLens(fov: number): void {
+    this.lens = fov;
+    this.cam.setLens(fov);
+    if (!this.walk.active) { this.camera.fov = fov; this.camera.updateProjectionMatrix(); }
+  }
+  // The flora's small things (its ground layer: grass, rocks, flowers, reeds) shown or not.
+  smallFlora = true;
+  setSmallFlora(on: boolean): void { this.smallFlora = on; }
+
   // Clouds and rain on or off (the debug views always hide them).
   clouds = true;
   setClouds(on: boolean): void {
@@ -590,7 +601,7 @@ export class GlobeRenderer {
       this.walk.exit();
       this.cam.place(this.walk.position, this.walk.facing, 0.1);
       this.camera.near = 0.005;
-      this.camera.fov = LENS;
+      this.camera.fov = this.lens;
     }
     this.cam.enabled = !on;
     this.camera.updateProjectionMatrix();
@@ -866,6 +877,7 @@ export class GlobeRenderer {
           // Ground cover is too small to cast a visible shadow (and skipping it saves draw calls).
           mesh.castShadow = !isFloraKind(kind) || CATALOG[kind].layer !== 'Ground';
           mesh.userData['hideAbove'] = isFloraKind(kind) ? HIDE_ABOVE[CATALOG[kind].layer] : Infinity;
+          mesh.userData['small'] = isFloraKind(kind) && CATALOG[kind].layer === 'Ground';
           chunk.meshes.set(kind, mesh);
           this.scene.add(mesh);
         }
@@ -897,7 +909,7 @@ export class GlobeRenderer {
     const altitude = (dist - 1) / this.scale;
     for (const chunk of this.chunks) {
       const seen = camDir.angleTo(chunk.dir) < horizon + chunk.radius;
-      for (const mesh of chunk.meshes.values()) mesh.visible = this.view === 'normal' && seen && altitude < (mesh.userData['hideAbove'] as number);
+      for (const mesh of chunk.meshes.values()) mesh.visible = this.view === 'normal' && seen && altitude < (mesh.userData['hideAbove'] as number) && (this.smallFlora || !mesh.userData['small']);
     }
   }
 

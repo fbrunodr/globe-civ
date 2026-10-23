@@ -339,6 +339,9 @@ const setView = (m: DebugView) => {
   document.querySelectorAll<HTMLButtonElement>('#views [data-view]').forEach((b) => b.classList.toggle('active', b.dataset['view'] === m));
 };
 document.querySelectorAll<HTMLButtonElement>('#views [data-view]').forEach((b) => b.addEventListener('click', () => { setView(b.dataset['view'] as DebugView); b.blur(); }));
+// Field of view; the flora's small things.
+$('fov').addEventListener('input', () => { const v = Number($<HTMLInputElement>('fov').value); view.setLens(v); $('fovVal').textContent = `${v}°`; });
+$('smallFlora').addEventListener('click', (e) => { view.setSmallFlora(!view.smallFlora); $('smallFlora').classList.toggle('active', view.smallFlora); (e.currentTarget as HTMLElement).blur(); });
 const toggleClouds = () => { view.setClouds(!view.clouds); $('clouds').classList.toggle('active', view.clouds); };
 const toggleLens = () => { lens = !lens; $('lens').classList.toggle('active', lens); overlay(); };
 $('clouds').addEventListener('click', (e) => { toggleClouds(); (e.currentTarget as HTMLElement).blur(); });
