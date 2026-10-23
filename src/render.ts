@@ -10,6 +10,7 @@ import { buildPaintData, fanCoords, fanFrames, paintAt, softAt, warpAt, FAN_COOR
 import { buildRelief, CONE_RADIUS, CRATER, CRATER_DEPTH, type Relief } from './relief.ts';
 import { buildSurface, meshLevels, type SurfaceLayers } from './surface.ts';
 import { cityGround } from './terraform.ts';
+import { buildTownGround, interpolate, type TownGround } from './townGround.ts';
 import type { Density } from './town/geometry.ts';
 import { makeWaterMaterial, type WaterMaterial } from './water.ts';
 import { WalkCamera } from './walk.ts';
@@ -32,6 +33,9 @@ const UP = new THREE.Vector3(0, 1, 0);
 // Subdivisions per tile fan; higher = smoother relief, more triangles. Tiles
 // near water and relief get 2× or 4× this (see the mesh levels below).
 const SUBDIV = 4;
+// Built-up ground is redrawn with each coarse triangle's edges split this
+// many times on a coarse tile (fewer on finer ones: the same fine size).
+const TOWN_SPLITS = 12;
 // Props: size relative to the original models, and the number of chunks they
 // are grouped in for horizon culling. (Variant densities are per flat tile at
 // the reference tile size.)
@@ -225,6 +229,12 @@ export class GlobeRenderer {
   private readonly origHeight: Float32Array;
   private reshaped = new Set<number>();
   private groundKey = '';
+  // Built-up ground drawn fine (townGround.ts), its houses' floors cut in;
+  // what it was made for; the terrain's full triangle list (some hidden under it).
+  private town: { ground: TownGround; mesh: THREE.Mesh } | null = null;
+  private townKey = '';
+  private fullIndex: Uint32Array | null = null;
+  private levels: Uint8Array | null = null;
   private readonly textures = new Map<string, THREE.CanvasTexture>();
 
   private pointer = { x: 0, y: 0, dirty: false };
@@ -307,6 +317,7 @@ export class GlobeRenderer {
     this.relief = buildRelief(g.globe, g.map, L, g.seed, params.r0);
     const frames = this.frames, fans = this.paint.fans;
     const levels = meshLevels(g.globe, g.map, L);
+    this.levels = levels;
     let coast: Float32Array | null = null;
     let layers: SurfaceLayers | null = null;
     this.terrain = buildTerrainMesh(g.globe, {
@@ -513,6 +524,8 @@ export class GlobeRenderer {
     // (The flora on a town's tiles stays clear of what the town builds.)
     for (const t of townChanged) for (const x of [t, ...g.tiles[t].neighbors]) { this.propCache.delete(x); dirty.add(this.tileChunk[x]!); }
     if (changed.length) this.updateProps(); else if (dirty.size) this.updateProps(dirty);
+    // (The buildings now placed: their floors cut into the fine town ground.)
+    this.updateTownGround();
     this.updateRoads(changed.length > 0 || townChanged.length > 0);
     this.updateSmoke();
     this.updateCities();
@@ -686,6 +699,7 @@ export class GlobeRenderer {
       fogArr[v] = hidden / n;
     }
     fogAttr.needsUpdate = true;
+    if (this.town) interpolate(this.terrain.geometry, this.town.ground, 'unexplored');
     // Water: per shared vertex, from the tiles it touches.
     const owners = this.terrain.topo.owners;
     const wFog = this.terrain.water.getAttribute('unexplored') as THREE.BufferAttribute;
@@ -1003,6 +1017,40 @@ export class GlobeRenderer {
     for (const v of changes.keys()) tiles.add(topo.tile[v]!);
     for (const t of [...tiles]) for (const n of g.tiles[t].neighbors) tiles.add(n);
     return [...tiles];
+  }
+
+  // Redraws built-up ground fine (townGround.ts) with every house's floor
+  // cut in (cityProps.ts pads), when the town or its houses changed; the
+  // coarse triangles under it are hidden. Made anew each time from the
+  // coarse ground: a house gone, its cut goes with it.
+  private updateTownGround(): void {
+    const g = this.game;
+    const built = new Set<number>();
+    for (let t = 0; t < g.N; t++) if (g.use[t] === USE.urban || g.use[t] === USE.center) built.add(t);
+    const pads = this.cityProps.pads();
+    const key = `${[...built].join(',')}#${pads.map((p) => `${p.at.x.toFixed(6)},${p.at.y.toFixed(6)},${p.base.toFixed(7)}`).join(';')}`;
+    if (key === this.townKey) return;
+    this.townKey = key;
+    const geo = this.terrain.geometry;
+    this.fullIndex ??= Uint32Array.from(geo.getIndex()!.array as ArrayLike<number>);
+    if (this.town) { this.scene.remove(this.town.mesh); this.town.ground.geometry.dispose(); this.town = null; }
+    geo.setIndex(new THREE.BufferAttribute(this.fullIndex, 1));
+    if (built.size) {
+      const pc1 = geo.getAttribute('pc1');
+      // (Fine triangles about 0.012 tile steps on a side, whatever the coarse level.)
+      const ground = buildTownGround({
+        coarse: geo, triToTile: this.terrain.triToTile, built, pads, D: g.globe.avgEdgeAngle,
+        splits: (t) => TOWN_SPLITS / (this.levels![t] ?? 1), group: (v) => pc1.getY(v),
+      });
+      const keep: number[] = [];
+      for (let tr = 0; tr < this.fullIndex.length / 3; tr++) if (!ground.hidden.has(tr)) keep.push(this.fullIndex[tr * 3]!, this.fullIndex[tr * 3 + 1]!, this.fullIndex[tr * 3 + 2]!);
+      geo.setIndex(new THREE.BufferAttribute(Uint32Array.from(keep), 1));
+      const mesh = new THREE.Mesh(ground.geometry, this.terrainMat.material);
+      mesh.castShadow = true; mesh.receiveShadow = true;
+      this.scene.add(mesh);
+      this.town = { ground, mesh };
+    }
+    this.shadowsDirty = true;
   }
 
   // Levels the top of a mountain tile for a wonder: within LEVEL_R of the

@@ -77,3 +77,39 @@ export function cityGround(globe: Globe, topo: Topology, layers: SurfaceLayers, 
   }
   return out;
 }
+
+// ---------- floors cut into the ground ----------
+
+// A building's floor (cityProps.ts Pad): its middle, half extents (tangent
+// vectors, radians), and the floor's height above radius 1.
+export interface FloorPad { readonly at: { x: number; y: number; z: number }; readonly X: { x: number; y: number; z: number }; readonly Z: { x: number; y: number; z: number }; readonly base: number }
+// The cut round a floor: flat this far beyond its lot (tile steps), then
+// banked up at this slope (rise over run) to the ground as it was.
+export const PAD_MARGIN = 0.003, PAD_SLOPE = 1.2;
+
+// Where the ground (heights per vertex, `dirs` their unit directions) is
+// higher than a floor over it, the new height: down to the floor under
+// the lot, a bank round it. Only ever lowers; pure, from the heights given
+// (the ground as it was before any floor), so with fewer floors there is
+// less cut and with none, none: nothing to undo. `near` lists the vertices
+// worth testing for a pad; D is the radians per tile step.
+export function padCuts<P extends FloorPad>(dirs: ArrayLike<number>, heights: ArrayLike<number>, pads: readonly P[], D: number,
+  near: (p: P) => Iterable<number>): Map<number, { height: number; up: number }> {
+  const cut = new Map<number, { height: number; up: number }>();
+  const margin = PAD_MARGIN * D;
+  for (const p of pads) {
+    const x2 = p.X.x ** 2 + p.X.y ** 2 + p.X.z ** 2, z2 = p.Z.x ** 2 + p.Z.y ** 2 + p.Z.z ** 2, xl = Math.sqrt(x2), zl = Math.sqrt(z2);
+    for (const v of near(p)) {
+      const h = heights[v]!;
+      if (h <= p.base) continue;
+      const dx = dirs[v * 3]! - p.at.x, dy = dirs[v * 3 + 1]! - p.at.y, dz = dirs[v * 3 + 2]! - p.at.z;
+      const a = Math.abs((dx * p.X.x + dy * p.X.y + dz * p.X.z) / x2), b = Math.abs((dx * p.Z.x + dy * p.Z.y + dz * p.Z.z) / z2);
+      const d = Math.max(0, Math.hypot(Math.max(0, a - 1) * xl, Math.max(0, b - 1) * zl) - margin);
+      // (Flat at the floor over the lot, then a bank up to the ground as it was;
+      // the floor's normals straight up, a bank's left as they were.)
+      const allowed = p.base + d * PAD_SLOPE;
+      if (allowed < (cut.get(v)?.height ?? h)) cut.set(v, { height: allowed, up: d > 0 ? 0 : 1 });
+    }
+  }
+  return cut;
+}

@@ -65,8 +65,15 @@ interface CityLayout {
 // (tile steps) from every building and street, off the squares.
 export const FLORA_GAP = 0.03;
 
+// Where a building's floor is cut into the ground: its middle, its half
+// extents (tangent vectors, radians) and its floor's height (above radius
+// 1). The ground under it higher than its floor is dug down to it
+// (render.ts); lower ground gets a foundation (the building's own parts).
+export interface Pad { at: THREE.Vector3; X: THREE.Vector3; Z: THREE.Vector3; base: number }
+
 export interface PlacedBuilding {
   kind: PlacedKind; // (a town's trees are its tile's own flora)
+  pad?: Pad;
   matrix: THREE.Matrix4;
   color: THREE.Color; // per-instance shade
   leaf: THREE.Color;  // roof
@@ -232,6 +239,10 @@ export class CityProps {
     return out;
   }
 
+  // Every building's pad (where the ground is dug down to its floor).
+  pads(): Pad[] {
+    return this.game.cities.flatMap((c) => [...this.layout(c).byTile.values()].flat().flatMap((b) => (b.pad ? [b.pad] : [])));
+  }
   // Every city's streets (for the ground ribbons) and squares.
   streets(): Street[] {
     return this.game.cities.flatMap((c) => this.layout(c).streets);
@@ -715,14 +726,6 @@ export class CityProps {
     return [b, f];
   }
 
-  // A massing model (town drawings): walls hw × hd (half extents, radians)
-  // and h high, level at the highest corner of its footprint on a
-  // foundation; a gable roof on low buildings, a flat top on tall ones
-  // (the block's own). The walls come first (its footprint is theirs).
-  // A town lot (houses.ts: the building in its yard, in tile steps) on the
-  // ground, scaled by s (radians per tile step): level at the highest corner
-  // of the lot, with a foundation (in its civ's style) down to the lowest
-  // where the ground slopes.
   // The trees that grow on a tile: the canopy of its forest, or of its
   // biome, else what grows on its river banks (none: a garden tree).
   private readonly trees = new Map<number, readonly Entry[]>();
@@ -741,27 +744,36 @@ export class CityProps {
     return { kind: e[0], leaf, size: e[3] ?? 1 };
   }
 
+  // A town lot (houses.ts: the building in its yard, in tile steps; or a
+  // city hall, civic.ts) on the ground, scaled by s (radians per tile
+  // step). Its floor is at the street: the ground at its door, where the
+  // lot meets its street. Where the ground under it is lower, a foundation
+  // (in its civ's style) fills up to the floor; where it is higher, the
+  // ground is dug down to the floor (its pad: render.ts cuts it, from the
+  // ground as it was, so the cut goes when the building does).
   private standLot(kind: LotModelKind, dir: THREE.Vector3, yaw: number, lw: number, ld: number, s: number, rand: Rng, owner: number): PlacedBuilding[] {
     const q = new THREE.Quaternion().setFromUnitVectors(UP, dir).multiply(new THREE.Quaternion().setFromAxisAngle(UP, yaw));
     const X = new THREE.Vector3(1, 0, 0).applyQuaternion(q).multiplyScalar(lw * s);
     const Z = new THREE.Vector3(0, 0, 1).applyQuaternion(q).multiplyScalar(ld * s);
+    const base = this.sampleDir(dir.clone().addScaledVector(Z, 1.04).normalize()).ground;
     let low = this.sampleDir(dir).ground, high = low;
-    for (const [a, b] of [[1, 1], [1, -1], [-1, -1], [-1, 1]] as const) {
+    for (const [a, b] of [[1, 1], [1, -1], [-1, -1], [-1, 1], [0, -1], [1, 0], [-1, 0]] as const) {
       const g = this.sampleDir(dir.clone().addScaledVector(X, a).addScaledVector(Z, b).normalize()).ground;
       low = Math.min(low, g); high = Math.max(high, g);
     }
     const sink = 0.00012 * this.scale, shade = 0.92 + 0.12 * rand();
     const out: PlacedBuilding[] = [{
       kind,
-      matrix: new THREE.Matrix4().compose(dir.clone().multiplyScalar(1 + high - sink), q, new THREE.Vector3(s, s, s)),
+      matrix: new THREE.Matrix4().compose(dir.clone().multiplyScalar(1 + base - sink), q, new THREE.Vector3(s, s, s)),
       color: new THREE.Color(shade, shade, shade),
       leaf: new THREE.Color(1, 1, 1),
+      ...(high > base + sink ? { pad: { at: dir.clone(), X, Z, base: base - sink } } : {}),
     }];
-    if (high - low >= FOUNDATION_MIN * this.scale) {
+    if (base - low >= FOUNDATION_MIN * this.scale) {
       const fu = this.scale * PROP_SCALE * FOUNDATION_UNIT, fs = 0.0002 * this.scale;
       out.push({
         kind: 'foundation',
-        matrix: new THREE.Matrix4().compose(dir.clone().multiplyScalar(1 + low - fs), q, new THREE.Vector3((2 * lw * s * 1.0) / fu, (high - low + fs) / fu, (2 * ld * s * 1.0) / fu)),
+        matrix: new THREE.Matrix4().compose(dir.clone().multiplyScalar(1 + low - fs), q, new THREE.Vector3((2 * lw * s * 1.0) / fu, (base - low + fs) / fu, (2 * ld * s * 1.0) / fu)),
         color: new THREE.Color(1, 1, 1).multiplyScalar(0.92 + 0.1 * rand()),
         leaf: new THREE.Color(FOUNDATION_STYLE[((owner % FOUNDATION_STYLE.length) + FOUNDATION_STYLE.length) % FOUNDATION_STYLE.length]!),
       });

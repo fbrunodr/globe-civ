@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { isFloraModel, waterRule, BUILDING_KINDS, buildBuildingGeometry, modelGeometry, type ModelKind } from '../src/buildingCatalog.ts';
+import { padCuts } from '../src/terraform.ts';
+import { isFloraModel, isLotModel, waterRule, BUILDING_KINDS, buildBuildingGeometry, modelGeometry, type ModelKind } from '../src/buildingCatalog.ts';
 import { isHouseKind } from '../src/houses.ts';
 import { triangles } from '../src/propCatalog.ts';
 import { CityProps, WATER_GAP, type CitySpot } from '../src/cityProps.ts';
@@ -134,7 +135,7 @@ describe('L4: City Lab presets build as described', () => {
   });
 });
 
-describe('L5: on slopes, buildings stand level on a foundation', () => {
+describe('L5: on slopes, houses stand level at their street: a foundation below, a cut above', () => {
   const g = grownGame();
   // A tilted world: the ground rises steadily along x (far steeper than any hill).
   const ground = (d: THREE.Vector3) => 0.01 + 0.08 * d.x;
@@ -145,21 +146,34 @@ describe('L5: on slopes, buildings stand level on a foundation', () => {
     return at(tl.center.clone().multiplyScalar(1 - wa - wb).addScaledVector(A, wa).addScaledVector(B, wb).normalize());
   };
   const cp = new CityProps(g, sampler, (d) => ({ ...at(d), t: locate(g.globe, d).t }), 1);
-  let homes = 0, foundations = 0;
-  const sunk: string[] = [];
+  let homes = 0, levelled = 0;
+  const sunk: string[] = [], offStreet: string[] = [];
   for (let t = 0; t < g.N; t++) {
     if (g.use[t] !== USE.urban && g.use[t] !== USE.center) continue;
-    for (const b of cp.place(t)) {
-      if (b.kind === 'foundation') { foundations++; continue; }
-      if (isHouseKind(b.kind)) homes++;
-      if (['gardenTree', 'well', 'fountain', 'stall'].includes(b.kind)) continue;
-      const p = new THREE.Vector3().setFromMatrixPosition(b.matrix);
-      if (p.length() - 1 < ground(p.clone().normalize()) - 0.0003) sunk.push(`tile ${t}: ${b.kind}`);
+    const items = cp.place(t);
+    for (const [i, b] of items.entries()) {
+      if (b.kind === 'foundation') continue;
+      const p = new THREE.Vector3().setFromMatrixPosition(b.matrix), floor = p.length() - 1;
+      if (isLotModel(b.kind)) {
+        if (isHouseKind(b.kind)) homes++;
+        // Its floor at the ground of its door (the front of its lot, at the street).
+        const front = new THREE.Vector3(0, 0, 1).applyQuaternion(new THREE.Quaternion().setFromRotationMatrix(b.matrix)).normalize();
+        const s = new THREE.Vector3().setFromMatrixScale(b.matrix).x, ld = new THREE.Box3().setFromBufferAttribute(modelGeometry(b.kind).getAttribute('position') as THREE.BufferAttribute).max.z;
+        const door = ground(p.clone().normalize().addScaledVector(front, ld * s).normalize());
+        if (Math.abs(floor - door) > 0.0006) offStreet.push(`tile ${t}: ${b.kind} floor ${floor.toFixed(5)} door ${door.toFixed(5)}`);
+        // Lower ground under it: a foundation follows; higher: a cut (its pad, at its floor).
+        if (items[i + 1]?.kind === 'foundation' || b.pad) levelled++;
+        if (b.pad && Math.abs(b.pad.base - floor) > 1e-9) offStreet.push(`tile ${t}: pad off its floor`);
+        continue;
+      }
+      if (['gardenTree', 'well', 'fountain', 'stall'].includes(b.kind) || isFloraModel(b.kind)) continue;
+      if (floor < ground(p.clone().normalize()) - 0.0003) sunk.push(`tile ${t}: ${b.kind}`);
     }
   }
   it('houses still stand on the slope', () => expect(homes).toBeGreaterThan(200));
-  it('they get foundations', () => expect(foundations).toBeGreaterThanOrEqual(homes));
-  it('no building sinks below the ground under it (it stands at its highest corner)', () => expect(sunk.slice(0, 5)).toEqual([]));
+  it('each house\'s floor is at the street, at its door', () => expect(offStreet.slice(0, 5)).toEqual([]));
+  it('on the slope every house has a foundation, a cut, or both', () => expect(levelled).toBeGreaterThanOrEqual(homes));
+  it('no other building sinks below the ground under it (it stands at its highest corner)', () => expect(sunk.slice(0, 5)).toEqual([]));
 });
 
 describe('L7: no land building touches water: its footprint and a margin round it stay dry', () => {
@@ -253,4 +267,33 @@ describe('L6: no building stands on a street or a road', () => {
   }
   it('checks the buildings of a grown world', () => expect(checked).toBeGreaterThan(500));
   it('no footprint touches a street or road', () => expect(Object.fromEntries(bad)).toEqual({}));
+});
+
+describe('L8: floors cut into the ground, reversibly', () => {
+  // A patch of ground round the north pole, rising along x; vertices every 0.002 rad.
+  const D = 0.057, dirs: number[] = [], heights: number[] = [];
+  for (let i = -30; i <= 30; i++) for (let j = -30; j <= 30; j++) {
+    const v = new THREE.Vector3(i * 0.002, j * 0.002, 1).normalize();
+    dirs.push(v.x, v.y, v.z); heights.push(0.01 + 0.05 * v.x);
+  }
+  const all = Array.from({ length: heights.length }, (_, k) => k);
+  const pad = (x: number, y: number, base: number) => ({ at: new THREE.Vector3(x, y, 1).normalize(), X: new THREE.Vector3(0.01, 0, 0), Z: new THREE.Vector3(0, 0.01, 0), base });
+  const pads = [pad(0, 0, 0.01), pad(0.03, 0.03, 0.0105)];
+  const cut = padCuts(dirs, heights, pads, D, () => all);
+  it('only ever lowers the ground, and only where it is above a floor', () => {
+    for (const [v, c] of cut) expect(c.height).toBeLessThan(heights[v]!);
+  });
+  it('under a lot the ground is at the floor (or lower, as it was)', () => {
+    for (const p of pads) for (const v of all) {
+      const d = new THREE.Vector3(dirs[v * 3], dirs[v * 3 + 1], dirs[v * 3 + 2]).sub(p.at);
+      if (Math.abs(d.dot(p.X)) / p.X.lengthSq() < 1 && Math.abs(d.dot(p.Z)) / p.Z.lengthSq() < 1) expect(cut.get(v)?.height ?? heights[v]!).toBeLessThanOrEqual(p.base + 1e-12);
+    }
+  });
+  it('the same floors give the same cut, from the ground as it was: one floor gone, its cut goes; none, none', () => {
+    expect([...padCuts(dirs, heights, pads, D, () => all)]).toEqual([...cut]);
+    const one = padCuts(dirs, heights, [pads[0]!], D, () => all);
+    expect([...one.keys()].every((v) => cut.has(v))).toBe(true);
+    expect(one.size).toBeLessThan(cut.size);
+    expect(padCuts(dirs, heights, [], D, () => all).size).toBe(0);
+  });
 });
