@@ -3,8 +3,8 @@
 // A gate is a point on a wall: the wall opens GATE_HALF to either side of
 // it, with a tower on each side. Streets may cross a wall only through a
 // gate (checks.ts). Towers also stand at every corner of a run and at its
-// loose ends. The generated draft is a ring round the tile's rim with a
-// gate where each street comes in.
+// loose ends. The generated draft is a ring inside the tile's safe zone
+// with a gate where each street comes in.
 
 import { corner, len, mul, sub, type Pt } from './geometry.ts';
 import type { Stub } from './edges.ts';
@@ -13,7 +13,7 @@ export const WALL_HALF = 0.008;  // half the wall's thickness (tile steps)
 export const TOWER_R = 0.02;     // a tower's radius
 export const GATE_HALF = 0.048;  // half a gate's opening, along its wall
 export const WALL_CLEAR = 0.02;  // lots keep this far from a wall's line (clear of its towers)
-export const DRAFT_RHO = 0.985;  // the draft ring's share of the inradius
+export const DRAFT_RHO = 0.76;   // the draft ring's share of the inradius (inside the safe zone, geometry.ts SAFE_RHO: no river reaches it)
 
 export interface Walls { readonly walls: readonly (readonly Pt[])[]; readonly gates: readonly Pt[] }
 

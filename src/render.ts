@@ -18,6 +18,7 @@ import { makeWeather, type Weather } from './weather.ts';
 import { buildPropGeometry, catalogEntry, CATALOG, CATALOG_KINDS, type CatalogKind, type Layer } from './propCatalog.ts';
 import { BUILDING_KINDS, buildBuildingGeometry, type BuildingKind } from './buildingCatalog.ts';
 import { houseGeometry, type HouseKind } from './houses.ts';
+import { civicGeometry, isCivicKind, type CivicKind } from './civic.ts';
 import { CityProps, type CitySpot } from './cityProps.ts';
 import { roadLines, ROAD_HALF_WIDTH } from './roads.ts';
 import { Vegetation, type SpotEnv } from './vegetation.ts';
@@ -47,7 +48,7 @@ const PROP_CHUNKS = 8;
 
 // Flora and city buildings share the chunks; town lots (houses.ts) are
 // models of their own, made on first use.
-type PropKind = CatalogKind | BuildingKind | HouseKind;
+type PropKind = CatalogKind | BuildingKind | HouseKind | CivicKind;
 const PROP_KINDS: readonly PropKind[] = [...CATALOG_KINDS, ...BUILDING_KINDS];
 const isFloraKind = (k: PropKind): k is CatalogKind => k in CATALOG;
 
@@ -71,8 +72,10 @@ const REF_EDGE = 0.07;
 export type DebugView = 'normal' | 'height' | 'water';
 
 // Flora yields to cities: the share of each layer's props that stays on a
-// developed tile (urban ground keeps a few garden trees; fields keep
-// hedgerow trees; camps keep their forest).
+// rural tile (fields keep hedgerow trees; camps keep their forest). Built
+// tiles keep whatever stands clear of their buildings and streets
+// (cityProps.floraClear); `urban` is that share for a rural tile with no
+// improvement.
 const FLORA_KEEP: Record<'urban' | ImprovementKey, Record<Layer, number>> = {
   urban:   { Canopy: 0.06, Understory: 0.04, Ground: 0, Accent: 0 },
   farm:    { Canopy: 0.2, Understory: 0.12, Ground: 0.08, Accent: 0.3 },
@@ -507,7 +510,8 @@ export class GlobeRenderer {
       for (const x of [t, ...g.tiles[t].neighbors]) { this.propCache.delete(x); dirty.add(this.tileChunk[x]!); }
     }
     const townChanged = this.cityProps.changed();
-    for (const t of townChanged) dirty.add(this.tileChunk[t]!);
+    // (The flora on a town's tiles stays clear of what the town builds.)
+    for (const t of townChanged) for (const x of [t, ...g.tiles[t].neighbors]) { this.propCache.delete(x); dirty.add(this.tileChunk[x]!); }
     if (changed.length) this.updateProps(); else if (dirty.size) this.updateProps(dirty);
     this.updateRoads(changed.length > 0 || townChanged.length > 0);
     this.updateSmoke();
@@ -773,7 +777,11 @@ export class GlobeRenderer {
             const use = g.use[u];
             // (What grows in the water, mangroves and reeds, stays: no house stands there.)
             const inWater = env.water - env.ground > 0 && catalogEntry(prop.kind).water !== undefined;
-            if (use !== USE.wild && !inWater) {
+            // On built ground the tile's own flora stays where it stands clear of
+            // the buildings and streets (a town keeps its trees, never adds any).
+            if ((use === USE.urban || use === USE.center) && !inWater) {
+              if (!this.cityProps.floraClear(u, d)) continue;
+            } else if (use !== USE.wild && !inWater) {
               const imp = use === USE.rural ? improvementFor(g.terrainAt(u)) : null;
               const keepShare = FLORA_KEEP[use === USE.rural ? imp ?? 'urban' : 'urban'][CATALOG[prop.kind].layer];
               if (rand() >= keepShare) continue;
@@ -816,7 +824,7 @@ export class GlobeRenderer {
   // carry the scale).
   private geometryOf(kind: PropKind): THREE.BufferGeometry {
     let g = this.propGeo.get(kind);
-    if (!g) { g = houseGeometry(kind as HouseKind); this.propGeo.set(kind, g); }
+    if (!g) { g = isCivicKind(kind) ? civicGeometry(kind) : houseGeometry(kind as HouseKind); this.propGeo.set(kind, g); }
     return g;
   }
 

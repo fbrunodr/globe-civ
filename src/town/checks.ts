@@ -4,7 +4,7 @@
 // needs are there and clear of the streets; lots stay in the tile's lot
 // area, clear of streets, squares, spots and each other.
 
-import { DENSITY_TALLEST, FLOOR_NAME, HALF_WIDTH, densityAllows, distToLine, inSpot, isBuilding, layoutProblems, len, lotSamples, rhoOf, spotOutline, sub, pointInPoly, type Pt, type Spot } from './geometry.ts';
+import { DENSITY_TALLEST, SAFE_RHO, FLOOR_NAME, HALF_WIDTH, densityAllows, distToLine, inSpot, isBuilding, layoutProblems, len, lotSamples, rhoOf, spotOutline, sub, pointInPoly, type Pt, type Spot } from './geometry.ts';
 import { isWonderRole } from './wonders.ts';
 import { components, hasHall, RANK_CLASS } from './skeleton.ts';
 import { crossings, gateWall, GATE_HALF, TOWER_R, WALL_CLEAR, WALL_HALF } from './walls.ts';
@@ -17,10 +17,11 @@ export function spotOnStreet(sp: Spot, street: readonly Pt[], hw: number): boole
   if (sp.hw === undefined) return distToLine(sp, street) < sp.r + hw - 1e-9;
   return spotOutline(sp).some((p) => distToLine(p, street) < hw - 1e-9) || street.some((p) => inSpot(p, sp));
 }
-// A spot reaching past the lot area.
+// A spot (a building spot, the hall, a wonder: what a player builds)
+// reaching past the safe zone, where a river may come in.
 export function spotPastRim(sp: Spot): boolean {
-  if (sp.hw === undefined) return rhoOf(6, sp) + sp.r / 0.5 > LOT_INNER + 1e-9;
-  return spotOutline(sp).some((p) => rhoOf(6, p) > LOT_INNER + 1e-9);
+  if (sp.hw === undefined) return rhoOf(6, sp) + sp.r / 0.5 > SAFE_RHO + 1e-9;
+  return spotOutline(sp).some((p) => rhoOf(6, p) > SAFE_RHO + 1e-9);
 }
 
 export function drawingProblems(d: Drawing): Problem[] {
@@ -45,7 +46,7 @@ export function drawingProblems(d: Drawing): Problem[] {
   if ((d.wonder !== null) !== isWonderRole(d.role)) out.push({ text: isWonderRole(d.role) ? 'the wonder tile needs its wonder' : 'only a wonder tile has a wonder' });
   for (const sp of [...d.spots, ...(d.hall ? [d.hall] : []), ...(d.wonder ? [d.wonder] : [])]) {
     if (d.streets.some((st) => spotOnStreet(sp, st.pts, HALF_WIDTH[RANK_CLASS.high[st.rank]]))) out.push({ text: 'a spot touches a street (at its widest)', at: sp });
-    if (spotPastRim(sp)) out.push({ text: 'a spot reaches the rim', at: sp });
+    if (spotPastRim(sp)) out.push({ text: 'a spot reaches past the safe zone (a river may come in there)', at: sp });
   }
   for (const sp of d.spots) if (d.squares.some((q) => q.paved && pointInPoly(sp, q.pts))) out.push({ text: 'a building spot is on a square', at: sp });
   const spots = [...d.spots, ...(d.hall ? [d.hall] : []), ...(d.wonder ? [d.wonder] : [])];

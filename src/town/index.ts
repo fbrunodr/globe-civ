@@ -2,12 +2,16 @@
 // street skeleton (skeleton.ts: the same for every density) with its lots
 // (draft.ts: by density). Built on first use and kept.
 
-import { HALF_WIDTH, curve, len, lotSamples, pointInPoly, rhoOf, sub, distToLine, add, mul, isBuilding, LOT_KINDS, FLOORS, ON_GREENS, type Density, type Floors, type Lot, type LotKind, type Pt, type Spot, type Square, type StreetClass, type Street2 } from './geometry.ts';
+import { HALF_WIDTH, LOT_INNER, curve, len, lotSamples, pointInPoly, rhoOf, sub, distToLine, add, mul, isBuilding, LOT_KINDS, FLOORS, ON_GREENS, type Density, type Floors, type Lot, type LotKind, type Pt, type Spot, type Square, type StreetClass, type Street2 } from './geometry.ts';
 import { draftLots } from './draft.ts';
 import { draftSkeleton, hasHall, RANK_CLASS, EDGE_BLEND, LEAD, HALL_RADIUS, type Rank, type Role, type Skeleton } from './skeleton.ts';
 import { draftWalls, DRAFT_RHO, WALL_CLEAR } from './walls.ts';
 import { groupOf, isWonderRole, wonderSpot } from './wonders.ts';
 import { parseKey, stubsOf, type Stub } from './edges.ts';
+import { townField, withStreets } from './field.ts';
+
+// How much a street draws building to it, by rank.
+const STREET_PULL: Record<Rank, number> = { main: 0.55, side: 0.4, lane: 0.2 };
 import STORED from './drawings.json';
 
 export interface DrawnStreet {
@@ -32,9 +36,7 @@ export interface Drawing {
   readonly gates: readonly Pt[];
 }
 
-// Lots stay within this share of the inradius (the rest is the tile's rim:
-// gardens back to back with the neighbor's, and room for walls).
-export const LOT_INNER = 0.95;
+export { LOT_INNER };
 
 const skeletons = new Map<string, Skeleton>();
 const drawings = new Map<string, Drawing>();
@@ -202,9 +204,14 @@ export function assemble(sk: Skeleton, density: Density): Drawing {
   const walls = sk.role === 'walled' ? draftWalls(sk.stubs) : { walls: [], gates: [] };
   const inner = sk.role === 'walled' ? DRAFT_RHO - WALL_CLEAR / 0.5 - 0.01 : LOT_INNER;
   // (A hair inside it: the editor stores lots rounded, turned to whole degrees.)
+  // How thick the town is: the class's field, risen along the streets
+  // (most along main streets).
+  const field = withStreets(townField(sk.key, hasHall(sk.role)), streets.map((s) => ({ pts: s.pts, pull: STREET_PULL[s.rank] })));
   const lots = draftLots({
     region: (p) => rhoOf(6, p) <= inner - 0.003,
-    density: () => density,
+    built: (p) => rhoOf(6, p) <= inner - 0.003,
+    density,
+    intensity: (p) => field.at(p),
     streets: clear,
     squares: sk.squares.filter((q) => q.paved),
     spots: sk.spots,

@@ -1,12 +1,12 @@
 // Towers (twelve floors, metropolitan tiles) in the civs' own styles
 // (architecture.ts). Most are skins on the glass tower's massing (houses.ts
-// modern): a podium, setbacks, a crown; the pagoda and the capsule tower
+// modern): a podium, setbacks, a crown; the pagoda and the Tokyo tower
 // are shapes of their own. (The Stalinist tower is in quads.ts.)
 
 import * as THREE from 'three';
 import { cyl } from '../propCatalog.ts';
 import {
-  E, P, arch, box, faceWidth, frustum, onFace, patch, pick, place, strips, tree, ALL, type Body, type Build, type G, type Lot,
+  E, P, arch, box, chamfered, faceWidth, frustum, onFace, patch, pick, place, strips, tree, ALL, type Body, type Build, type G, type Lot,
 } from '../houseKit.ts';
 
 const GLASS = 0x56687a;
@@ -183,27 +183,54 @@ export const TOWER_STYLES = {
     return out;
   },
 
-  // Japanese: two concrete cores with capsules plugged on, each with one round window (Nakagin).
-  capsule(l) {
-    const core = pick(l, [0xbfc3c4, 0xb4b8b8, 0xc8cccc]), cap = 0xe6e7e3, out: G[] = [plaza(l, 0xb0aca4)];
-    const cw = Math.min(l.lw, l.ld) * 0.36, sz = 0.0105;
-    const cores = [{ x: -l.lw * 0.3, z: -l.ld * 0.1, h: l.H }, { x: l.lw * 0.32, z: l.ld * 0.15, h: l.H * 0.78 }];
-    for (const [ci, c] of cores.entries()) {
-      out.push(...box(cw, c.h, cw, core, { x: c.x, z: c.z }), ...box(cw * 1.5, 0.008, cw * 1.5, core, { x: c.x, z: c.z }));
-      const rows = Math.floor((c.h - 0.012) / (sz * 1.05));
-      for (let r = 0; r < rows; r++) {
-        const y = 0.01 + r * sz * 1.05, k = (r + ci) % 3;
-        // Capsules on the faces in turn: front and side, then back, then the other side.
-        const spots: [number, number, number][] = k === 0 ? [[0, cw / 2 + sz / 2, 0], [cw / 2 + sz / 2, 0, Math.PI / 2]] : k === 1 ? [[0, -cw / 2 - sz / 2, Math.PI]] : [[-cw / 2 - sz / 2, 0, -Math.PI / 2]];
-        for (const [dx, dz, ry] of spots) {
-          const cb: Body = { x: c.x + dx, z: c.z + dz, w: sz, d: sz, y, h: sz * 0.9 };
-          out.push(...box(sz, sz * 0.9, sz, cap, { x: cb.x, y, z: cb.z, ry }));
-          const face = ry === 0 ? 'front' : ry === Math.PI ? 'back' : ry > 0 ? 'right' : 'left';
-          out.push(P(new THREE.CircleGeometry(0.0028, 5), 0x3a4650, face === 'front' ? { x: cb.x, y: y + sz * 0.45, z: cb.z + sz / 2 + E } : face === 'back' ? { x: cb.x, y: y + sz * 0.45, z: cb.z - sz / 2 - E, ry: Math.PI } : face === 'right' ? { x: cb.x + sz / 2 + E, y: y + sz * 0.45, z: cb.z, ry: Math.PI / 2 } : { x: cb.x - sz / 2 - E, y: y + sz * 0.45, z: cb.z, ry: -Math.PI / 2 }));
-        }
+  // Japanese: Tokyo's office towers. Pale cladding banded floor by floor
+  // (dark glass between white spandrels), chamfered corners, a lit sign
+  // podium; on top a rescue helipad, or a red-and-white lattice mast (a nod
+  // to Tokyo Tower); one in three a blue glass slab with white mullions.
+  tokyo(l) {
+    const clad = pick(l, [0xe4e4e0, 0xd6d8d8, 0xcfd2d6]), dark = 0x3c4652, out: G[] = [plaza(l, 0xb4b0a8)];
+    const b = place(l, 0.62, 0.62, l.ld * 0.18);
+    // The podium: shops, signs in a row of colours.
+    const pod: Body = { x: b.x, z: b.z + 0.002, w: b.w * 1.18, d: b.d * 1.12, y: 0, h: 0.012 };
+    out.push(...box(pod.w, pod.h, pod.d, 0xbdbab4, { x: pod.x, z: pod.z }));
+    out.push(onFace(pod, 'front', 0, 0, pod.w * 0.8, 0.006, 0x2a3038));
+    const signs = [0xc8423a, 0xe0b040, 0x3a7ab8, 0xe8e8e8];
+    for (let i = 0; i < 4; i++) out.push(onFace(pod, 'front', (i - 1.5) * pod.w * 0.22, 0.007, pod.w * 0.18, 0.003, signs[(i + l.v) % 4]!, E * 2));
+    if (l.v === 1) {
+      // A blue glass slab, white mullions, a lattice mast on top.
+      const t: Body = { x: b.x, z: b.z, w: b.w, d: b.d * 0.8, y: pod.h, h: l.H - pod.h };
+      out.push(...box(t.w, t.h, t.d, 0x5a7894, { x: t.x, y: t.y, z: t.z }, 0xd8dade));
+      for (const f of ALL) out.push(...strips(t, f, t.y, t.h, 0.0007, 0.005, 0xeef0f2, E * 2));
+      for (let y = t.y + 0.018; y < t.y + t.h - 0.005; y += 0.018) for (const f of ALL) out.push(onFace(t, f, 0, y, faceWidth(t, f), 0.0012, 0xeef0f2, E * 3));
+      const top = l.H;
+      out.push(...box(t.w * 0.5, 0.006, t.d * 0.5, 0xd8dade, { x: t.x, y: top, z: t.z }));
+      let y = top + 0.006, w = 0.008;
+      for (let i = 0; i < 4; i++) {
+        const h = 0.009;
+        out.push(...frustum(w, w, w * 0.72, w * 0.72, h, i % 2 ? 0xeeeeea : 0xc8402e, { x: t.x, y, z: t.z }));
+        y += h; w *= 0.72;
       }
-      out.push(...box(cw * 0.8, 0.005, cw * 0.8, core, { x: c.x, y: c.h, z: c.z }));
+      out.push(cyl(0.0004, 0.0002, 0.012, 3, 0xc8402e, { x: t.x, y, z: t.z }));
+      return out;
     }
+    // Banded towers, chamfered; the second steps back once (Shinjuku).
+    const tiers: [number, number][] = l.v === 2 ? [[1, 0.62], [0.72, 0.38]] : [[1, 1]];
+    let y = pod.h;
+    for (const [k, share] of tiers) {
+      const h = (l.H - pod.h) * share, t: Body = { x: b.x, z: b.z, w: b.w * k, d: b.d * k, y, h };
+      out.push(...chamfered(t.w, h, t.d, 0.14, clad, { x: t.x, y, z: t.z }, 0xc4c6c8));
+      const storey = 0.0085;
+      for (let yy = y + storey * 0.35; yy < y + h - storey * 0.6; yy += storey) {
+        for (const f of ALL) out.push(onFace(t, f, 0, yy, faceWidth(t, f) * 0.7, storey * 0.5, dark, E * 2));
+      }
+      y += h;
+    }
+    // On the roof: plant, and a rescue helipad (a dark pad, a white ring).
+    const r = Math.min(b.w, b.d) * (l.v === 2 ? 0.26 : 0.34);
+    out.push(...box(b.w * 0.3, 0.004, b.d * 0.25, 0xa8aaac, { x: b.x - b.w * 0.2, y, z: b.z - b.d * 0.25 }));
+    out.push(P(new THREE.CircleGeometry(r, 10).rotateX(-Math.PI / 2), 0x3e4a46, { x: b.x + b.w * 0.08, y: y + 0.0002, z: b.z + b.d * 0.06 }));
+    out.push(P(new THREE.RingGeometry(r * 0.72, r * 0.84, 10).rotateX(-Math.PI / 2), 0xf2f2ee, { x: b.x + b.w * 0.08, y: y + 0.0004, z: b.z + b.d * 0.06 }));
+    out.push(...tree(-l.lw * 0.75, l.ld * 0.75, 0.9, 0x5e8a44));
     return out;
   },
 } satisfies Record<string, Build>;

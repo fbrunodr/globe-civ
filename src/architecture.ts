@@ -94,7 +94,7 @@ export const STYLES = [
   'mural',         // a windowless block wrapped in a mosaic mural
   'timber',        // a mass-timber tower with an open frame on top
   'pagoda',        // stacked, outward-flaring tiers and a gold spire
-  'capsule',       // concrete cores with capsules plugged on
+  'tokyo',         // Tokyo offices: banded, chamfered, a helipad or a lattice mast
 ] as const;
 export type Style = (typeof STYLES)[number];
 export const STYLE_NAME: Record<Style, string> = {
@@ -109,7 +109,7 @@ export const STYLE_NAME: Record<Style, string> = {
   shikumen: 'Shikumen', zakkyo: 'Signboard buildings', panel: 'Painted panel blocks', deco: 'Asmara Deco', indoSaracenic: 'Indo-Saracenic',
   brickExpressionist: 'Brick Expressionism', stalinist: 'Stalinist',
   modern: 'Modern', screen: 'Mashrabiya tower', verticalForest: 'Vertical forest', highTech: 'High-tech glass', miesian: 'Bronze slab',
-  briseSoleil: 'Brise-soleil', mural: 'Mosaic tower', timber: 'Timber tower', pagoda: 'Pagoda tower', capsule: 'Capsule tower',
+  briseSoleil: 'Brise-soleil', mural: 'Mosaic tower', timber: 'Timber tower', pagoda: 'Pagoda tower', tokyo: 'Tokyo high-rise',
 };
 
 // Each civ's style per height: singles, doubles, triples, quads, towers
@@ -126,7 +126,7 @@ const TABLE: Record<ArchCiv, Row> = {
   Persians: S('windcatcher', 'safavid', 'haussmann', 'screen'),
   Hebrews: S('levantine', 'levantine', 'bauhaus', 'modern'),
   Chinese: S('eastAsian', 'tulou', 'shikumen', 'pagoda'),
-  Japanese: S('machiya', 'kura', 'zakkyo', 'capsule'),
+  Japanese: S('machiya', 'kura', 'zakkyo', 'tokyo'),
   Mongols: S('yurt', 'monastic', 'panel', 'modern'),
   Ethiopians: S('african', 'gondarine', 'deco', 'briseSoleil'),
   Indians: S('southAsian', 'haveli', 'indoSaracenic', 'briseSoleil'),

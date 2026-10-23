@@ -16,14 +16,18 @@
 import * as THREE from 'three';
 import type { Game, City } from './game.ts';
 import { USE, SLOTS, improvementFor, isWonderKey, type ImprovementKey, type BuildingKey, type WonderKey, type EraIndex } from './cities.ts';
-import { ROOFS, PROP_MODEL, buildingEntry, modelGeometry, type BuildingKind, type ModelKind } from './buildingCatalog.ts';
-import { HOUSE_VARIANTS, houseKind, isHouseKind, type HouseKind } from './houses.ts';
+import { ROOFS, PROP_MODEL, buildingEntry, isFloraModel, isLotModel, placedGeometry, waterRule, type BuildingKind, type LotModelKind, type PlacedKind } from './buildingCatalog.ts';
+import { civicExtent, civicKind } from './civic.ts';
+import { CATALOG, catalogEntry, type CatalogKind } from './propCatalog.ts';
+import { biomeVariant, featureVariant } from './flora.ts';
+import { BANK_CLIMATE, RIVER_BANKS, type Entry } from './floraData.ts';
+import { HOUSE_VARIANTS, houseKind } from './houses.ts';
 import { styleOf } from './architecture.ts';
 import { tileDensity, allowedDensity } from './density.ts';
 import { LOT_SIZE, PLANTS, SPINS, isBuilding, type Density, type StreetClass } from './town/geometry.ts';
 import { planRoads, roadLines, roadEntries, ROAD_HALF_WIDTH } from './roads.ts';
 import { key as colouringKey, type EdgeValue } from './town/edges.ts';
-import { edgeClass, type Role } from './town/skeleton.ts';
+import { edgeClass, HALL_RADIUS, type Role } from './town/skeleton.ts';
 import { WONDER_GROUP } from './town/wonders.ts';
 import { stamp, STAMP_STEP, type FanPt, type Stamp, type StampTile, type StampedSpot } from './cityStamp.ts';
 import { mulberry32, type Rng } from './rng.ts';
@@ -54,10 +58,15 @@ interface CityLayout {
   byTile: Map<number, PlacedBuilding[]>;
   streets: Street[];
   pavings: Paving[];
+  flora?: (d: THREE.Vector3) => boolean; // where wild flora may stay (made when first asked)
 }
 
+// Wild flora on a built tile stays where it stands at least this far
+// (tile steps) from every building and street, off the squares.
+export const FLORA_GAP = 0.03;
+
 export interface PlacedBuilding {
-  kind: ModelKind;
+  kind: PlacedKind; // (a town's trees are its tile's own flora)
   matrix: THREE.Matrix4;
   color: THREE.Color; // per-instance shade
   leaf: THREE.Color;  // roof
@@ -137,7 +146,7 @@ export const isHarbor = (g: Game, t: number): boolean => g.use[t] === USE.urban 
 export class CityProps {
   private readonly cache = new Map<number, { sig: string; items: PlacedBuilding[] }>();
   private readonly layouts = new Map<number, CityLayout>();
-  private readonly box = new Map<ModelKind, readonly [number, number]>();
+  private readonly box = new Map<PlacedKind, readonly [number, number]>();
   private roads: THREE.Vector3[][] = [];
   private entries = new Set<string>();
   private roadsKey = '';
@@ -344,7 +353,7 @@ export class CityProps {
     // Nor at the water: a land building's footprint, and a margin round it,
     // stays dry (no house touching a river or the sea). Walls may follow a bank.
     const dryAround = (b: PlacedBuilding) => {
-      if (!isHouseKind(b.kind) && buildingEntry(b.kind).water !== undefined) return true;
+      if (waterRule(b.kind) !== undefined) return true;
       const c = new THREE.Vector3().setFromMatrixPosition(b.matrix).normalize();
       return this.footprint(b).every((p) => {
         const out = p.clone().sub(c);
@@ -373,15 +382,13 @@ export class CityProps {
       let spot: CitySpot | null = s;
       if (!standsAt(kind, s)) spot = this.findSpot(sp.tile, kind, rand, s.dir);
       if (!spot) return;
-      // (A hall grows with its tile's density: wider, and taller still.)
-      const tall = sp.tall ?? 1;
-      const size = fitSpot(kind, sp, local(s.dir, f), tall > 1 ? sp.r / 0.045 : 1);
+      const size = fitSpot(kind, sp, local(s.dir, f));
       const yaw = facing(spot.dir, f) + Math.PI / 2;
       if (water === 'float') { put(sp.tile, this.make(kind, spot.dir, spot.water, yaw, size, roof, rand)); return; }
       const bs = settle((k) => this.stand(kind, spot!.dir, yaw, size * k, roof, rand, city.owner));
-      if (bs[0] && tall !== 1) bs[0].matrix.multiply(new THREE.Matrix4().makeScale(1, tall, 1));
       put(sp.tile, ...bs);
     };
+    const archCiv = g.players[city.owner]!.name;
     for (const sp of st.spots) {
       const b = g.slotKeys(sp.tile)[sp.k];
       if (!b || b === 'walls') continue;
@@ -389,7 +396,15 @@ export class CityProps {
       const kind = MODEL[b];
       placeAt(sp, kind, buildingEntry(kind).leaf, mulberry32(mix(sp.tile, sp.k + 11)));
     }
-    for (const sp of st.halls) placeAt(sp, 'hall', 0x5f5650, mulberry32(mix(sp.tile, 7)));
+    // The hall: its civ's, for its tile's density (civic.ts), as large as its spot.
+    for (const sp of st.halls) {
+      const s0 = at(sp.at), f = dirAt(sp.face), d = sp.density ?? 'medium', [hw, hd] = civicExtent(d);
+      // (On dry ground: where its spot is wet, the nearest dry place on its tile.)
+      const s = standsAt('hall', s0) ? s0 : this.findSpot(sp.tile, 'hall', mulberry32(mix(sp.tile, 8)), s0.dir);
+      if (!s) continue;
+      const sc = local(s.dir, f) * (sp.r / HALL_RADIUS[d]), yaw = facing(s.dir, f) + Math.PI / 2;
+      put(sp.tile, ...settle((k) => this.standLot(civicKind(archCiv, d), s.dir, yaw, hw, hd, D * sc * k, mulberry32(mix(sp.tile, 7)), city.owner)));
+    }
     // Harbors: each building on the quay side of the fan toward a built-up
     // neighbor (side by side), facing it; anywhere it can stand otherwise.
     for (const t of g.cityTiles(city, USE.urban)) {
@@ -417,7 +432,6 @@ export class CityProps {
     }
 
     // Lots: homes and street furniture, never on water.
-    const archCiv = g.players[city.owner]!.name;
     for (const l of st.lots) {
       if (l.spot !== undefined && builtSpot.has(`${l.tile}:${l.spot}`)) continue;
       const s = at(l.at);
@@ -430,8 +444,12 @@ export class CityProps {
       const sc = local(s.dir, f);
       const yaw = facing(s.dir, f) + Math.PI / 2;
       if (!isBuilding(l.kind)) {
-        const kind = PROP_MODEL[l.kind];
-        const b = this.make(kind, s.dir, s.ground, yaw + (SPINS.has(l.kind) ? rand() * 6.28 : 0), HOUSE_SCALE * sc * (l.kind === 'tree' ? 0.8 + 0.4 * rand() : 1), buildingEntry(kind).leaf, rand);
+        // A tree is one of those that grow on the tile (the town kept them), as large as in the wild.
+        const wild = l.kind === 'tree' ? this.treeOf(l.tile, rand) : null;
+        const kind = wild?.kind ?? PROP_MODEL[l.kind];
+        const b = wild
+          ? this.make(wild.kind, s.dir, s.ground, yaw + rand() * 6.28, wild.size * (0.85 + 0.3 * rand()), wild.leaf, rand)
+          : this.make(kind as BuildingKind, s.dir, s.ground, yaw + (SPINS.has(l.kind) ? rand() * 6.28 : 0), HOUSE_SCALE * sc * (l.kind === 'tree' ? 0.8 + 0.4 * rand() : 1), buildingEntry(kind as BuildingKind).leaf, rand);
         // (Plants may grow on the bank.)
         if (PLANTS.has(l.kind) || dryAround(b)) put(l.tile, b);
         continue;
@@ -474,10 +492,10 @@ export class CityProps {
   }
 
   // Half extents of a model's footprint (x, z), in model units.
-  private modelBox(kind: ModelKind): readonly [number, number] {
+  private modelBox(kind: PlacedKind): readonly [number, number] {
     let r = this.box.get(kind);
     if (r === undefined) {
-      const geo = modelGeometry(kind);
+      const geo = placedGeometry(kind);
       geo.computeBoundingBox();
       const b = geo.boundingBox!;
       r = [Math.max(-b.min.x, b.max.x), Math.max(-b.min.z, b.max.z)];
@@ -552,11 +570,68 @@ export class CityProps {
     return best;
   }
 
+  // Whether the tile's own flora may stay at d on built tile t: clear of
+  // every building and street of its town by FLORA_GAP, off its squares.
+  // (So a town keeps the trees that grew there, never more than the wild.)
+  floraClear(t: number, d: THREE.Vector3): boolean {
+    const city = this.game.cityById.get(this.game.tileCity[t]);
+    if (!city) return true;
+    const l = this.layout(city);
+    l.flora ??= this.floraIndex(l);
+    return l.flora(d);
+  }
+  private floraIndex(l: CityLayout): (d: THREE.Vector3) => boolean {
+    const D = this.game.globe.avgEdgeAngle, gap = FLORA_GAP * D;
+    // Buildings: each a box in its own frame (its matrix's inverse), bucketed by where it stands.
+    const cell = 0.15 * D, key = (p: THREE.Vector3, dx = 0, dy = 0, dz = 0) => `${Math.floor(p.x / cell) + dx},${Math.floor(p.y / cell) + dy},${Math.floor(p.z / cell) + dz}`;
+    interface Box { inv: THREE.Matrix4; hx: number; hz: number; gx: number; gz: number; at: THREE.Vector3; reach: number }
+    const cells = new Map<string, Box[]>(), big: Box[] = [];
+    for (const b of [...l.byTile.values()].flat()) {
+      if (isFloraModel(b.kind) || b.kind === 'foundation') continue;
+      const [hx, hz] = this.modelBox(b.kind), G = isLotModel(b.kind) ? 1 : PROP_SCALE * this.scale;
+      const pos = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
+      b.matrix.decompose(pos, q, sc);
+      const box: Box = { inv: b.matrix.clone().invert(), hx: hx * G, hz: hz * G, gx: gap / sc.x, gz: gap / sc.z, at: pos, reach: Math.hypot(hx * G * sc.x, hz * G * sc.z) + gap };
+      if (box.reach > cell) big.push(box); else { const k = key(pos); const c = cells.get(k); if (c) c.push(box); else cells.set(k, [box]); }
+    }
+    const streets = new StreetIndex(l.streets, D);
+    // Squares: polygons on the tangent plane at their middle.
+    const squares = l.pavings.map((p) => {
+      const c = p.points.reduce((a, v) => a.add(v), new THREE.Vector3()).normalize();
+      const e1 = new THREE.Vector3(0, 1, 0).cross(c).normalize(), e2 = c.clone().cross(e1);
+      const flat = (v: THREE.Vector3) => [v.dot(e1), v.dot(e2)] as const;
+      return { c, flat, poly: p.points.map(flat), r: Math.max(...p.points.map((v) => v.angleTo(c))) + gap };
+    });
+    const inBox = (bx: Box, d: THREE.Vector3) => {
+      if (bx.at.distanceTo(d.clone().multiplyScalar(bx.at.length())) > bx.reach) return false;
+      const p = d.clone().multiplyScalar(bx.at.length()).applyMatrix4(bx.inv);
+      return Math.abs(p.x) < bx.hx + bx.gx && Math.abs(p.z) < bx.hz + bx.gz;
+    };
+    return (d) => {
+      for (const bx of big) if (inBox(bx, d)) return false;
+      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
+        for (const bx of cells.get(key(d, dx, dy, dz)) ?? []) if (inBox(bx, d)) return false;
+      }
+      if (!streets.clear(d, gap)) return false;
+      for (const s of squares) {
+        if (d.angleTo(s.c) > s.r) continue;
+        const [x, y] = s.flat(d);
+        let inside = false;
+        for (let i = 0, j = s.poly.length - 1; i < s.poly.length; j = i++) {
+          const a = s.poly[i]!, b = s.poly[j]!;
+          if ((a[1] > y) !== (b[1] > y) && x < ((b[0] - a[0]) * (y - a[1])) / (b[1] - a[1]) + a[0]) inside = !inside;
+        }
+        if (inside) return false;
+      }
+      return true;
+    };
+  }
+
   // A placed building's footprint on the ground: its corners and the
   // middles of its sides (unit directions).
   footprint(b: PlacedBuilding): THREE.Vector3[] {
     // (A town lot is in tile steps, its scale in its matrix; the others at prop scale.)
-    const [hx, hz] = this.modelBox(b.kind), G = isHouseKind(b.kind) ? 1 : PROP_SCALE * this.scale;
+    const [hx, hz] = this.modelBox(b.kind), G = isLotModel(b.kind) ? 1 : PROP_SCALE * this.scale;
     const out: THREE.Vector3[] = [];
     for (const [x, z] of [[1, 1], [1, -1], [-1, -1], [-1, 1], [1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
       out.push(new THREE.Vector3(x * hx * G, 0, z * hz * G).applyMatrix4(b.matrix).normalize());
@@ -648,7 +723,25 @@ export class CityProps {
   // ground, scaled by s (radians per tile step): level at the highest corner
   // of the lot, with a foundation (in its civ's style) down to the lowest
   // where the ground slopes.
-  private standLot(kind: HouseKind, dir: THREE.Vector3, yaw: number, lw: number, ld: number, s: number, rand: Rng, owner: number): PlacedBuilding[] {
+  // The trees that grow on a tile: the canopy of its forest, or of its
+  // biome, else what grows on its river banks (none: a garden tree).
+  private readonly trees = new Map<number, readonly Entry[]>();
+  private treeOf(t: number, rand: Rng): { kind: CatalogKind; leaf: number; size: number } | null {
+    let list = this.trees.get(t);
+    if (!list) {
+      const g = this.game, canopy = (es: readonly Entry[]) => es.filter((e) => CATALOG[e[0]].layer === 'Canopy' && catalogEntry(e[0]).water === undefined);
+      const fv = featureVariant(g.map, g.flora, t), bv = biomeVariant(g.map, g.flora, t);
+      list = [fv ? canopy(fv.mix) : [], canopy(bv.mix), canopy(RIVER_BANKS[BANK_CLIMATE[g.map.biome[t]]])].find((l) => l.length) ?? [];
+      this.trees.set(t, list);
+    }
+    if (!list.length) return null;
+    let r = rand() * list.reduce((a, e) => a + e[1], 0), e = list[0]!;
+    for (const x of list) { r -= x[1]; if (r <= 0) { e = x; break; } }
+    const tint = e[2], leaf = tint === undefined ? CATALOG[e[0]].leaf : typeof tint === 'number' ? tint : tint[Math.floor(rand() * tint.length)]!;
+    return { kind: e[0], leaf, size: e[3] ?? 1 };
+  }
+
+  private standLot(kind: LotModelKind, dir: THREE.Vector3, yaw: number, lw: number, ld: number, s: number, rand: Rng, owner: number): PlacedBuilding[] {
     const q = new THREE.Quaternion().setFromUnitVectors(UP, dir).multiply(new THREE.Quaternion().setFromAxisAngle(UP, yaw));
     const X = new THREE.Vector3(1, 0, 0).applyQuaternion(q).multiplyScalar(lw * s);
     const Z = new THREE.Vector3(0, 0, 1).applyQuaternion(q).multiplyScalar(ld * s);
@@ -676,7 +769,7 @@ export class CityProps {
     return out;
   }
 
-  private make(kind: BuildingKind, dir: THREE.Vector3, height: number, yaw: number, size: number, roof: number, rand: Rng): PlacedBuilding {
+  private make(kind: BuildingKind | CatalogKind, dir: THREE.Vector3, height: number, yaw: number, size: number, roof: number, rand: Rng): PlacedBuilding {
     const q = new THREE.Quaternion().setFromUnitVectors(UP, dir);
     q.multiply(new THREE.Quaternion().setFromAxisAngle(UP, yaw));
     // Sink a little so slopes never show a gap under the walls.
@@ -710,6 +803,17 @@ class StreetIndex {
   }
   private key(d: THREE.Vector3, dx = 0, dy = 0, dz = 0): string {
     return `${Math.floor(d.x / this.size) + dx},${Math.floor(d.y / this.size) + dy},${Math.floor(d.z / this.size) + dz}`;
+  }
+  // Whether p is clear of every street by `gap` beyond its half width.
+  clear(p: THREE.Vector3, gap: number): boolean {
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
+      for (const s of this.cells.get(this.key(p, dx, dy, dz)) ?? []) {
+        const ab = s.b.clone().sub(s.a), l2 = ab.lengthSq();
+        const u = l2 > 0 ? Math.max(0, Math.min(1, p.clone().sub(s.a).dot(ab) / l2)) : 0;
+        if (s.a.clone().addScaledVector(ab, u).distanceTo(p) < s.wa + (s.wb - s.wa) * u + gap) return false;
+      }
+    }
+    return true;
   }
   // Every point clear of every street (beyond its half width).
   free(pts: readonly THREE.Vector3[]): boolean {

@@ -1,13 +1,13 @@
-// The drafting pen (scripts/draftTowns.ts only, never at runtime): puts a
-// first set of lots along a drawing's hand-drawn streets, which is then
-// frozen into lots.json and corrected by hand. Lots face their street, row
-// after row back from it; skipped lots become gardens; open ground far
-// from any street gets garden trees and sheds.
+// The drafting pen: lots along a drawing's streets (the generated drafts,
+// and the editor's "Redraft lots"). Every building fronts its street, in
+// one row along each side; skipped lots are gardens; the open ground keeps
+// what grew there (the game keeps the tile's own flora), a shed here and
+// there.
 
 import { mulberry32, type Rng } from '../rng.ts';
 import {
-  HALF_WIDTH, LOT_SIZE, type Floors, add, densify, distToSeg, inSpot, len, lotSamples, lotsOverlap, mul, nearestOn, pointInPoly, sub,
-  type Density, type Lot, type LotKind, type Pt, type Spot, type Square, type Street2,
+  HALF_WIDTH, LOT_SIZE, isBuilding, type Density, type Floors, type Footprint, add, densify, distToSeg, inSpot, len, lotSamples, lotsOverlap, mul, nearestOn, pointInPoly, sub,
+  type Lot, type LotKind, type Pt, type Spot, type Square, type Street2,
 } from './geometry.ts';
 
 // Street segments in grid cells, to find the ones near a point quickly.
@@ -38,21 +38,32 @@ class SegIndex {
   }
 }
 
-// Lot rows back from a street, by density: each row's buildings (footprints
-// and floors, picked at random) or garden trees.
-interface Row { kinds: readonly LotKind[]; floors: readonly Floors[] }
-export const ROWS: Record<Density, { rows: readonly Row[]; skip: number; garden: number; gap: number; yard: number }> = {
-  low: { rows: [{ kinds: ['b22', 'b22', 'b32'], floors: [1, 1, 2] }, { kinds: ['tree'], floors: [1] }], skip: 0.2, garden: 0.5, gap: 0.01, yard: 0.1 },
-  medium: { rows: [{ kinds: ['b23', 'b23', 'b22'], floors: [2, 2, 1] }, { kinds: ['b22', 'b23'], floors: [1, 2] }], skip: 0.04, garden: 0.5, gap: 0.004, yard: 0.12 },
-  dense: { rows: [{ kinds: ['b23', 'b33', 'b23'], floors: [3, 3, 2] }, { kinds: ['b23', 'b22'], floors: [2, 3] }], skip: 0.04, garden: 0.6, gap: 0.004, yard: 0.11 },
-  high: { rows: [{ kinds: ['b33', 'b23', 'b32'], floors: [4, 4, 2] }, { kinds: ['b23', 'b33'], floors: [2, 4] }], skip: 0.04, garden: 0.7, gap: 0.004, yard: 0.1 },
-  metropolitan: { rows: [{ kinds: ['b44', 'b33', 'b44'], floors: [12, 4, 12] }, { kinds: ['b33'], floors: [4] }], skip: 0.05, garden: 0.9, gap: 0.006, yard: 0.1 },
+// What a lot holds, by density and by how thick the town is there (the
+// field, town/field.ts): the thickest ground gets the tallest buildings
+// the density holds, thinner ground lower ones. Tiers from the thickest;
+// footprints and floors picked at random within a tier.
+interface Tier { readonly min: number; readonly kinds: readonly Footprint[]; readonly floors: readonly Floors[] }
+export const TIERS: Record<Density, readonly Tier[]> = {
+  low: [{ min: 0.6, kinds: ['b32', 'b22', 'b23'], floors: [1, 2, 1] }, { min: 0, kinds: ['b22', 'b22', 'b32'], floors: [1] }],
+  medium: [{ min: 0.5, kinds: ['b23', 'b22', 'b32'], floors: [2] }, { min: 0.25, kinds: ['b22', 'b32'], floors: [1, 2] }, { min: 0, kinds: ['b22'], floors: [1] }],
+  dense: [{ min: 0.62, kinds: ['b23', 'b33', 'b23'], floors: [3] }, { min: 0.38, kinds: ['b23', 'b22'], floors: [2] }, { min: 0, kinds: ['b22', 'b32'], floors: [1] }],
+  high: [{ min: 0.7, kinds: ['b33', 'b23', 'b32'], floors: [4] }, { min: 0.48, kinds: ['b23', 'b33'], floors: [3] }, { min: 0.28, kinds: ['b23', 'b22'], floors: [2] }, { min: 0, kinds: ['b22'], floors: [1] }],
+  metropolitan: [{ min: 0.8, kinds: ['b44', 'b44', 'b33'], floors: [12, 12, 4] }, { min: 0.6, kinds: ['b33', 'b44'], floors: [4] }, { min: 0.4, kinds: ['b33', 'b23'], floors: [3] }, { min: 0, kinds: ['b23', 'b22'], floors: [2] }],
 };
-const rowDepth = (r: Row) => Math.max(...r.kinds.map((k) => LOT_SIZE[k][1]));
+// Whether a lot is built at all: rises from nothing to always over this
+// range of the field (below it, gardens).
+export const BUILD_FROM: Record<Density, readonly [number, number]> = {
+  low: [0.2, 0.62], medium: [0.12, 0.42], dense: [0.1, 0.38], high: [0.1, 0.36], metropolitan: [0.1, 0.36],
+};
+// Skyscrapers stand apart: none closer than this to another (the second is a quad).
+const TOWER_APART = 0.09;
+const smooth = (a: number, b: number, x: number) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
 export interface DraftInput {
   region: (p: Pt) => boolean;      // where lots may stand
-  density: (p: Pt) => Density;     // whose density the ground is (strips: one per half)
+  built: (p: Pt) => boolean;       // where buildings may stand (the building line)
+  density: Density;
+  intensity: (p: Pt) => number;    // how thick the town is there (0..1, town/field.ts)
   streets: readonly Street2[];
   squares: readonly Square[];
   spots: readonly Spot[];          // building spots (their own lots are drafted inside them)
@@ -70,7 +81,7 @@ export function draftLots(inp: DraftInput): Lot[] {
   const streetGap = (p: Pt, pad: number) => index.gap(p, pad);
   const fits = (l: Lot, spot?: number) => {
     const pts = lotSamples(l);
-    if (!pts.every(inp.region)) return false;
+    if (!pts.every(isBuilding(l.kind) ? inp.built : inp.region)) return false;
     if (pts.some((p) => streetGap(p, 0.002) < 0)) return false;
     if (pts.some((p) => inp.squares.some((q) => pointInPoly(p, q.pts)))) return false;
     for (let k = 0; k < inp.spots.length; k++) {
@@ -80,66 +91,75 @@ export function draftLots(inp: DraftInput): Lot[] {
     if (inp.keepClear.some((s) => pts.some((p) => inSpot(p, s)))) return false;
     return !lots.some((o) => lotsOverlap(o, l, 0.003));
   };
+  // A building for ground this thick (null: leave it a garden).
+  const d = inp.density;
+  const pick = (at: number, inSpot: boolean): { kind: Footprint; floors: Floors } | null => {
+    const [lo, hi] = BUILD_FROM[d];
+    if (!inSpot && rand() > smooth(lo, hi, at)) return null;
+    const v = at + (rand() - 0.5) * 0.12;
+    const tier = TIERS[d].find((t) => v >= t.min) ?? TIERS[d][TIERS[d].length - 1]!;
+    return { kind: tier.kinds[Math.floor(rand() * tier.kinds.length)]!, floors: tier.floors[Math.floor(rand() * tier.floors.length)]! };
+  };
+  // Every building fronts a street: one row along each side of it (lanes
+  // reach the ground farther in, skeleton.ts). Where a building does not
+  // fit, a smaller one is tried before moving on.
+  const SMALLER: readonly Footprint[] = ['b44', 'b33', 'b23', 'b32', 'b22'];
   const along = (spot?: number) => {
-    for (let row = 0; row < 3; row++) {
-      inp.streets.forEach((st, si) => {
-        if (inp.frontage && !inp.frontage(si)) return;
-        const sw = HALF_WIDTH[st.cls];
-        const pts = densify(st.pts, 0.004);
+    inp.streets.forEach((st, si) => {
+      if (inp.frontage && !inp.frontage(si)) return;
+      const sw = HALF_WIDTH[st.cls];
+      const pts = densify(st.pts, 0.004);
+      const near = spot === undefined ? null : inp.spots[spot]!;
+      for (const sgn of [1, -1]) {
         let run = rand() * 0.02, last = -Infinity;
-        const near = spot === undefined ? null : inp.spots[spot]!;
-        const pick = (r: Row) => ({ kind: r.kinds[Math.floor(rand() * r.kinds.length)]!, floors: r.floors[Math.floor(rand() * r.floors.length)]! });
-        let next: { kind: LotKind; floors: Floors } | null = null;
+        let next: { kind: Footprint; floors: Floors } | 'garden' | null = null;
         for (let i = 1; i < pts.length; i++) {
           run += len(sub(pts[i]!, pts[i - 1]!));
           // (A spot's own lots front the streets beside it.)
           if (near && len(sub(pts[i]!, near)) > near.r + 0.09) continue;
-          const d = inp.density(pts[i]!), R = ROWS[d];
-          if (row >= R.rows.length) continue;
-          next ??= pick(R.rows[row]!);
-          const { kind, floors } = next;
-          const [hw, hd] = LOT_SIZE[kind];
-          if (run - last < 2 * hw + R.gap + 0.004 * rand()) continue;
+          next ??= pick(inp.intensity(pts[i]!), spot !== undefined) ?? 'garden';
           const a = pts[Math.max(0, i - 3)]!, b = pts[Math.min(pts.length - 1, i + 3)]!;
           const t = sub(b, a), tl = len(t);
           if (tl < 1e-9) continue;
-          // Rows stand one behind the other, fronts aligned.
-          let front = sw + 0.004;
-          for (let r = 0; r < row; r++) front += 2 * rowDepth(R.rows[r]!) + 0.005;
-          const off = front + hd;
-          let placed = false;
-          for (const sgn of [1, -1]) {
-            const n = { x: (-t.y / tl) * sgn, y: (t.x / tl) * sgn };
-            const c = add(pts[i]!, mul(n, off));
-            const base: Lot = kind === 'tree' ? { x: c.x, y: c.y, yaw: Math.atan2(-n.y, -n.x), kind } : { x: c.x, y: c.y, yaw: Math.atan2(-n.y, -n.x), kind, floors };
-            const lot: Lot = spot === undefined ? base : { ...base, spot };
-            if (!fits(lot, spot)) continue;
-            placed = true;
-            if (spot === undefined && rand() < R.skip) {
-              const tree: Lot = { x: c.x, y: c.y, yaw: 0, kind: 'tree' };
-              if (rand() < R.garden && fits(tree)) lots.push(tree);
-              continue;
-            }
-            lots.push(lot);
+          const n = { x: (-t.y / tl) * sgn, y: (t.x / tl) * sgn }, yaw = Math.atan2(-n.y, -n.x);
+          const at = (kind: LotKind) => add(pts[i]!, mul(n, sw + 0.004 + LOT_SIZE[kind][1]));
+          // (A garden is a gap of a small house's width: the tile's own trees grow there, the game keeps them.)
+          if (next === 'garden') {
+            if (run - last < 2 * LOT_SIZE.b22[0] + 0.004) continue;
+            const c = at('b22');
+            if (!fits({ x: c.x, y: c.y, yaw, kind: 'b22' })) continue;
+            last = run; next = null;
+            continue;
           }
-          if (placed) { last = run; next = null; }
+          const want = next;
+          for (const kind of SMALLER.slice(SMALLER.indexOf(want.kind))) {
+            if (run - last < 2 * LOT_SIZE[kind][0] + 0.004 + 0.003 * rand()) continue;
+            const c = at(kind);
+            // (Skyscrapers apart: a quad beside one already there.)
+            const floors: Floors = want.floors === 12 && lots.some((o) => o.floors === 12 && len(sub(o, c)) < TOWER_APART) ? 4 : want.floors;
+            const lot: Lot = spot === undefined ? { x: c.x, y: c.y, yaw, kind, floors } : { x: c.x, y: c.y, yaw, kind, floors, spot };
+            if (!fits(lot, spot)) continue;
+            lots.push(lot);
+            last = run; next = null;
+            break;
+          }
         }
-      });
-    }
+      }
+    });
   };
   along();
   inp.spots.forEach((_, k) => along(k));
-  // Gardens: trees and sheds on open ground away from the streets.
-  for (let x = -0.6; x <= 0.6; x += 0.04) {
-    for (let y = -0.6; y <= 0.6; y += 0.04) {
-      const p = { x: x + (rand() - 0.5) * 0.02, y: y + (rand() - 0.5) * 0.02 };
-      if (!inp.region(p) || streetGap(p, 0) < 0.03) continue; // (gap is capped at 0.05, above this)
-      const R = ROWS[inp.density(p)];
-      const r = rand();
-      const kind: LotKind | null = r < R.yard ? 'tree' : r < R.yard + 0.04 ? 'shed' : null;
-      if (!kind) continue;
+  // Open ground keeps what grew there (the game keeps the tile's own
+  // flora clear of buildings and streets: render.ts); a shed here and there
+  // where the town thins.
+  for (let x = -0.6; x <= 0.6; x += 0.05) {
+    for (let y = -0.6; y <= 0.6; y += 0.05) {
+      const p = { x: x + (rand() - 0.5) * 0.03, y: y + (rand() - 0.5) * 0.03 };
+      if (!inp.region(p) || streetGap(p, 0) < 0.025) continue; // (gap is capped at 0.05, above this)
+      const at = inp.intensity(p);
+      if (at < 0.25 || at > 0.7 || rand() > 0.06) continue;
       const q = nearestStreet(inp.streets, p);
-      const lot: Lot = { x: p.x, y: p.y, yaw: q ? Math.atan2(q.y - p.y, q.x - p.x) : rand() * 6.28, kind };
+      const lot: Lot = { x: p.x, y: p.y, yaw: q ? Math.atan2(q.y - p.y, q.x - p.x) : rand() * 6.28, kind: 'shed' };
       if (fits(lot)) lots.push(lot);
     }
   }

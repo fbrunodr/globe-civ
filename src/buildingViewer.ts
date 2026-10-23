@@ -11,6 +11,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { ARCH_CIVS, STYLES, STYLE_NAME, eraOfFloors, pairsOf, styleFloors, styleOf, type ArchCiv, type Style } from './architecture.ts';
 import { FLOORS, FLOOR_NAME, FOOTPRINTS, FOOTPRINT_CELLS, type Floors, type Footprint } from './town/geometry.ts';
 import { HOUSE_VARIANTS, houseKind } from './houses.ts';
+import { civicKind } from './civic.ts';
 import { FlatPainter, disposeGroup } from './flatTown.ts';
 import { WorldLabel, disposeLabels } from './worldLabel.ts';
 
@@ -36,7 +37,7 @@ let world = new THREE.Group();
 scene.add(world);
 const paint = new FlatPainter();
 
-type Mode = 'overview' | 'style' | 'civ';
+type Mode = 'overview' | 'style' | 'civ' | 'halls';
 let mode: Mode = 'overview';
 let style: Style = 'mediterranean';
 let civ: ArchCiv = 'Romans';
@@ -107,6 +108,16 @@ function build(): { w: number; d: number } {
     const by = new Map<string, Set<ArchCiv>>();
     for (const p of pairsOf(style)) { const k = `${FLOOR_NAME[p.floors]}s`; by.set(k, (by.get(k) ?? new Set()).add(p.civ)); }
     pairs = `<b>${STYLE_NAME[style]}</b> is built by: ${[...by].map(([k, cs]) => `<br>${k}: ${[...cs].join(', ')}`).join('')}`;
+  } else if (mode === 'halls') {
+    // Every civ's city hall (a row each) at each tier (civic.ts).
+    const ds = ['low', 'dense', 'high', 'metropolitan'] as const, colW = 0.2, rowD = 0.2;
+    ds.forEach((d, i) => label(`${d === 'low' ? 'low · medium' : d}`, 0.1 + i * colW, -0.04, 'head'));
+    ARCH_CIVS.forEach((c, r) => {
+      label(c, -0.09, r * rowD + 0.08, 'head');
+      ds.forEach((d, i) => paint.model(civicKind(c, d), new THREE.Vector3(0.1 + i * colW, 0, r * rowD + 0.08), 0, new THREE.Vector3(1, 1, 1), 0xffffff));
+    });
+    dims = { w: ds.length * colW, d: ARCH_CIVS.length * rowD };
+    pairs = 'City halls by civ, as the town grows (civic.ts).';
   } else {
     // (Each height in the civ's style for it, in every era that builds it.)
     dims = table((f) => styleOf(civ, f), FLOORS, () => true, 0, 0, (f) => `${FLOOR_NAME[f]} · ${eraOfFloors(f)}`);

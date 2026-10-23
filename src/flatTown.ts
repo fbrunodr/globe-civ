@@ -4,7 +4,7 @@
 // keeps the drawings' turn).
 
 import * as THREE from 'three';
-import { corner, SPINS, isBuilding, type Footprint, type Pt, type Floors } from './town/geometry.ts';
+import { corner, rhoOf, LOT_SIZE, SPINS, isBuilding, type Footprint, type Pt, type Floors } from './town/geometry.ts';
 import { STUB_U, type EdgeValue } from './town/edges.ts';
 import type { FanPt, Stamp } from './cityStamp.ts';
 import type { WonderGroup } from './town/wonders.ts';
@@ -12,6 +12,8 @@ import { BUILDINGS_CATALOG, PROP_MODEL, buildBuildingGeometry, modelGeometry, ty
 import { styleOf, type ArchCiv } from './architecture.ts';
 import { HOUSE_VARIANTS, houseKind } from './houses.ts';
 import { makePropMaterial, instanceGeometry } from './propMaterial.ts';
+import { civicKind } from './civic.ts';
+import { HALL_RADIUS } from './town/skeleton.ts';
 import { mulberry32 } from './rng.ts';
 
 // Models: render.ts draws them at 1.5 × PROP_SIZE (0.276) of a tile edge of
@@ -127,7 +129,7 @@ export class FlatPainter {
   }
 
   // A stamp (cityStamp.ts) as the game would show it.
-  stamp(st: Stamp, opts: { walls?: boolean; spots?: boolean } = {}): void {
+  stamp(st: Stamp, opts: { walls?: boolean; spots?: boolean; wild?: boolean } = {}): void {
     for (const q of st.squares) this.polygon(q.pts.map((p) => this.toPlane(p)), 0.0015, q.paved ? PLAZA_RGB : GREEN_RGB);
     for (const s of st.streets) this.ribbon(s.pts.map((p) => this.toPlane(p)), s.hw, 0.002, STREET_RGB);
     const used = new Set<string>();
@@ -139,9 +141,10 @@ export class FlatPainter {
         this.model(kind, at, this.yawToward(at, this.toPlane(sp.face)), new THREE.Vector3(s, s, s), BUILDINGS_CATALOG[kind].leaf);
       });
     }
+    // The hall: its civ's, for its tile's density (civic.ts), as large as its spot.
     for (const h of st.halls) {
-      const at = this.toPlane(h.at), s = HOUSE * Math.min(1.6, (1.15 * h.r) / (this.modelRadius('hall') * HOUSE));
-      this.model('hall', at, this.yawToward(at, this.toPlane(h.face)), new THREE.Vector3(s, s * (h.tall ?? 1), s), 0x5f5650);
+      const d = h.density ?? 'medium', at = this.toPlane(h.at), s = h.r / HALL_RADIUS[d];
+      this.model(civicKind(this.look.civ, d), at, this.yawToward(at, this.toPlane(h.face)), new THREE.Vector3(s, s, s), 0xffffff);
     }
     // A wonder of its group, fitted to its footprint (as cityProps.ts does), facing its front.
     for (const w of st.wonders) {
@@ -162,6 +165,7 @@ export class FlatPainter {
       }
       this.building(l.kind, l.floors ?? 1, at, yaw, Math.floor(rand() * HOUSE_VARIANTS), 0.92 + 0.12 * rand());
     }
+    if (opts.wild ?? true) this.wild(st);
     if (opts.walls) {
       for (const w of st.walls) {
         const pts = w.pts.map((p) => this.toPlane(p));
@@ -174,6 +178,46 @@ export class FlatPainter {
         pts.forEach((p, n) => {
           if (w.towers[n]) this.model('wallTower', p, 0, new THREE.Vector3(HOUSE, HOUSE, HOUSE), BUILDINGS_CATALOG.wallTower.leaf);
         });
+      }
+    }
+  }
+
+  // The wild trees a town keeps (as the game does, cityProps.floraClear):
+  // a woodland of garden trees over the stamped tiles, left where it
+  // stands clear of every lot, street, square and spot (here no terrain
+  // tells which trees grow, so one kind stands for them).
+  private wild(st: Stamp): void {
+    const GAP = 0.03; // (as the game: cityProps.ts FLORA_GAP)
+    const obstacles: { at: THREE.Vector3; r: number }[] = [];
+    for (const l of st.lots) obstacles.push({ at: this.toPlane(l.at), r: Math.hypot(...LOT_SIZE[l.kind]) + GAP });
+    for (const s of [...st.spots, ...st.halls, ...st.wonders]) obstacles.push({ at: this.toPlane(s.at), r: s.r + GAP });
+    const streets = st.streets.map((s) => ({ pts: s.pts.map((p) => this.toPlane(p)), hw: s.hw }));
+    const squares = st.squares.map((q) => q.pts.map((p) => this.toPlane(p)));
+    const segDist = (p: THREE.Vector3, a: THREE.Vector3, b: THREE.Vector3) => {
+      const ab = b.clone().sub(a), l2 = ab.lengthSq(), u = l2 > 0 ? Math.max(0, Math.min(1, p.clone().sub(a).dot(ab) / l2)) : 0;
+      return a.clone().addScaledVector(ab, u).distanceTo(p);
+    };
+    const inPoly = (p: THREE.Vector3, poly: THREE.Vector3[]) => {
+      let inside = false;
+      for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+        const a = poly[i]!, b = poly[j]!;
+        if ((a.z > p.z) !== (b.z > p.z) && p.x < ((b.x - a.x) * (p.z - a.z)) / (b.z - a.z) + a.x) inside = !inside;
+      }
+      return inside;
+    };
+    for (const id of new Set(st.lots.map((l) => l.tile).concat(st.streets.map((s) => s.tile)))) {
+      const f = this.tiles.get(id);
+      if (!f) continue;
+      const rand = mulberry32(id * 7919 + 3);
+      for (let x = -0.5; x <= 0.5; x += 0.035) for (let y = -0.5; y <= 0.5; y += 0.035) {
+        const c = { x: x + (rand() - 0.5) * 0.03, y: y + (rand() - 0.5) * 0.03 };
+        if (rhoOf(6, c) > 0.97 || rand() > 0.3) continue;
+        const p = this.canon(f, c);
+        if (obstacles.some((o) => o.at.distanceTo(p) < o.r)) continue;
+        if (streets.some((s) => s.pts.some((a, i) => i + 1 < s.pts.length && segDist(p, a, s.pts[i + 1]!) < (s.hw[i] ?? 0.02) + GAP))) continue;
+        if (squares.some((q) => inPoly(p, q))) continue;
+        const s = HOUSE * (0.8 + 0.4 * rand());
+        this.model('gardenTree', p, rand() * 6.28, new THREE.Vector3(s, s, s), BUILDINGS_CATALOG.gardenTree.leaf);
       }
     }
   }

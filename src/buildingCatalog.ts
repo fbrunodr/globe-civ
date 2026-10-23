@@ -1,7 +1,8 @@
 import * as THREE from 'three';
-import { buildModel, cone, cyl, part, seg, tf, V, type Palette, type Tf } from './propCatalog.ts';
+import { CATALOG, buildCatalogGeometry, buildModel, cone, cyl, part, seg, tf, V, type CatalogKind, type Palette, type Tf } from './propCatalog.ts';
 import type { PropKind } from './town/geometry.ts';
 import { houseGeometry, isHouseKind, type HouseKind } from './houses.ts';
+import { civicGeometry, isCivicKind, type CivicKind } from './civic.ts';
 
 // City models: houses, rural structures, quarter buildings and wonders,
 // drawn as instanced props like the flora (render.ts) and shown in the prop
@@ -376,11 +377,21 @@ export const buildingEntry = (k: BuildingKind): BuildingEntry => BUILDINGS_CATAL
 export const buildBuildingGeometry = (kind: BuildingKind, palette?: Partial<Palette>): THREE.BufferGeometry =>
   buildModel(BUILDINGS_CATALOG[kind], kind, palette);
 
-// Any model a town places: a catalog building, or a lot model (houses.ts:
-// in tile steps, cached; the others at prop scale, built anew).
-export type ModelKind = BuildingKind | HouseKind;
+// Any model a town places: a catalog building, or a lot model (a house,
+// houses.ts, or a city hall, civic.ts: in tile steps, cached; the others
+// at prop scale, built anew).
+export type LotModelKind = HouseKind | CivicKind;
+export const isLotModel = (k: string): k is LotModelKind => isHouseKind(k) || isCivicKind(k);
+export type ModelKind = BuildingKind | LotModelKind;
+// What a town places: a model, or a plant of the flora (its trees are its tile's own).
+export type PlacedKind = ModelKind | CatalogKind;
+export const isFloraModel = (k: PlacedKind): k is CatalogKind => k in CATALOG;
+// Where a placed thing may stand on water (catalog buildings: boats, shore huts; none else).
+export const waterRule = (k: PlacedKind): BuildingEntry['water'] => (isFloraModel(k) || isLotModel(k) ? undefined : buildingEntry(k).water);
+// Its geometry before scaling (the flora's and the catalog's at reference size; lot models in tile steps).
+export const placedGeometry = (k: PlacedKind): THREE.BufferGeometry => (isFloraModel(k) ? buildCatalogGeometry(k) : modelGeometry(k));
 export const modelGeometry = (kind: ModelKind, palette?: Partial<Palette>): THREE.BufferGeometry =>
-  isHouseKind(kind) ? houseGeometry(kind) : buildBuildingGeometry(kind, palette);
+  isHouseKind(kind) ? houseGeometry(kind) : isCivicKind(kind) ? civicGeometry(kind) : buildBuildingGeometry(kind, palette);
 
 // Roof colors by roof kind: an instance picks one (muted, realistic).
 export const ROOFS = {

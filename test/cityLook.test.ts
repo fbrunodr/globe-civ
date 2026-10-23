@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { BUILDING_KINDS, buildBuildingGeometry, buildingEntry, modelGeometry, type ModelKind } from '../src/buildingCatalog.ts';
+import { isFloraModel, waterRule, BUILDING_KINDS, buildBuildingGeometry, modelGeometry, type ModelKind } from '../src/buildingCatalog.ts';
 import { isHouseKind } from '../src/houses.ts';
 import { triangles } from '../src/propCatalog.ts';
 import { CityProps, WATER_GAP, type CitySpot } from '../src/cityProps.ts';
@@ -41,7 +41,8 @@ describe('L2: houses grow with the city', () => {
     const tiles = [city.tile, ...g.tiles[city.tile].neighbors.slice(0, 5)];
     for (const t of tiles) cp.setDensity(t, 'medium');
     for (const t of tiles.slice(1)) g.use[t] = USE.urban, g.tileCity[t] = city.id;
-    expect(count(cp.stampTiles(tiles, null))).toBeGreaterThanOrEqual(300);
+    // (Every building fronts a street, and the town thins away from its edge: town/field.ts.)
+    expect(count(cp.stampTiles(tiles, null))).toBeGreaterThanOrEqual(200);
   });
   it('denser tiles, more houses', () => {
     const tiles = [city.tile, ...g.tiles[city.tile].neighbors.slice(0, 5)];
@@ -92,7 +93,7 @@ describe('L3: city buildings stand on dry ground (boats on water)', () => {
       const pos = new THREE.Vector3().setFromMatrixPosition(b.matrix).normalize();
       const s = spots.get(key(pos));
       if (!s) continue;
-      const rule = isHouseKind(b.kind) ? undefined : buildingEntry(b.kind).water;
+      const rule = waterRule(b.kind);
       const wet = s.water - s.ground >= 0.0003, dry = s.water <= s.ground;
       if (rule === 'float' ? !wet : rule === 'shore' ? !wet && !dry : !dry) bad.push(`tile ${t}: ${b.kind}`);
     }
@@ -177,7 +178,8 @@ describe('L7: no land building touches water: its footprint and a margin round i
     for (const b of cp.place(t)) {
       // (Walls may follow a bank and garden trees grow on it; roofs, doors and foundations sit with their walls.)
       // (Town lots: the house and its yard.)
-      if ((!isHouseKind(b.kind) && buildingEntry(b.kind).water !== undefined) || ['wallSegment', 'wallTower', 'gardenTree', 'foundation'].includes(b.kind)) continue;
+      // (The town's trees are its tile's flora, which may grow on a bank.)
+      if (waterRule(b.kind) !== undefined || isFloraModel(b.kind) || ['wallSegment', 'wallTower', 'gardenTree', 'bush', 'hedge', 'foundation'].includes(b.kind)) continue;
       if (isHouseKind(b.kind)) homes++;
       const c = new THREE.Vector3().setFromMatrixPosition(b.matrix).normalize();
       for (const p of cp.footprint(b)) {
@@ -233,7 +235,7 @@ describe('L6: no building stands on a street or a road', () => {
   for (let t = 0; t < g.N; t++) {
     if (g.use[t] === USE.wild) continue;
     for (const b of cp.place(t)) {
-      if (FURNITURE.has(b.kind)) continue;
+      if (FURNITURE.has(b.kind) || isFloraModel(b.kind)) continue;
       checked++;
       const fb = footprint(b.kind);
       const pts: THREE.Vector3[] = [];

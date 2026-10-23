@@ -12,7 +12,7 @@
 import { HALF_WIDTH, densify, toFan, len, sub, type Density, type Floors, type LotKind, type Pt, type StreetClass } from './town/geometry.ts';
 import { classOf, turnPoint, sideUnder, type EdgeValue, type Turn } from './town/edges.ts';
 import { pickDrawing, type Drawing, type Role } from './town/index.ts';
-import { EDGE_BLEND, HALL_TALL } from './town/skeleton.ts';
+import { EDGE_BLEND } from './town/skeleton.ts';
 import { wallRuns } from './town/walls.ts';
 import { groupOf, isWonderRole, type WonderGroup } from './town/wonders.ts';
 
@@ -38,7 +38,7 @@ export interface StampedLot {
   spot?: number;     // the building spot it gives way to
   seed: number;      // stable per lot, for its look
 }
-export interface StampedSpot { tile: number; k: number; at: FanPt; face: FanPt; r: number; tall?: number; hw?: number; hd?: number; group?: WonderGroup } // tall: height × (halls grow with density); hw, hd: a wonder's rectangle; group: a wonder's
+export interface StampedSpot { tile: number; k: number; at: FanPt; face: FanPt; r: number; density?: Density; hw?: number; hd?: number; group?: WonderGroup } // density: a hall's tile's (its model); hw, hd: a wonder's rectangle; group: a wonder's
 export interface StampedStreet { tile: number; pts: FanPt[]; hw: number[] } // half widths (tile steps), per point
 export interface StampedSquare { tile: number; pts: FanPt[]; paved: boolean }
 export interface StampedWall { tile: number; pts: FanPt[]; towers: boolean[] } // a run of wall (gates between runs), towers where true
@@ -83,7 +83,7 @@ export function stamp(tiles: readonly StampTile[]): Stamp {
       out.lots.push(lot);
     });
     d.spots.forEach((sp, k) => out.spots.push({ tile: s.tile, k, at: at(sp), face: ahead(sp, sp.yaw), r: sp.r }));
-    if (d.hall) out.halls.push({ tile: s.tile, k: -1, at: at(d.hall), face: ahead(d.hall, d.hall.yaw), r: d.hall.r, tall: HALL_TALL[s.density] });
+    if (d.hall) out.halls.push({ tile: s.tile, k: -1, at: at(d.hall), face: ahead(d.hall, d.hall.yaw), r: d.hall.r, density: s.density });
     if (d.wonder) {
       const w = d.wonder;
       out.wonders.push({ tile: s.tile, k: -1, at: at(w), face: ahead(w, w.yaw), r: w.r, ...(w.hw !== undefined && w.hd !== undefined ? { hw: w.hw, hd: w.hd } : {}), ...(isWonderRole(s.role) ? { group: groupOf(s.role) } : {}) });

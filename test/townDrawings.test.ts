@@ -8,7 +8,7 @@ import { drawingFor, skeletonFor, clearance, LOT_INNER } from '../src/town/index
 import { ROLES, RANK_CLASS, components, hasHall } from '../src/town/skeleton.ts';
 import { drawingProblems } from '../src/town/checks.ts';
 import { isWonderRole } from '../src/town/wonders.ts';
-import { DENSITIES, HALF_WIDTH, HOMES, layoutProblems, distToLine, len, sub, rhoOf, pointInPoly } from '../src/town/geometry.ts';
+import { DENSITIES, HALF_WIDTH, HOMES, LOT_SIZE, SAFE_RHO, layoutProblems, spotOutline, distToLine, len, sub, rhoOf, pointInPoly } from '../src/town/geometry.ts';
 
 const all = (): EdgeValue[][] => Array.from({ length: 64 }, (_, n) => [0, 1, 2, 3, 4, 5].map((j) => ((n >> j) & 1) as EdgeValue));
 
@@ -86,8 +86,12 @@ describe('TD3: every drawing has its lots in order', () => {
       for (const k of CLASSES) for (const role of ROLES) {
         const dr = drawingFor(k, role, d);
         const homes = dr.lots.filter((l) => HOMES.has(l.kind)).length;
-        // (A wonder takes the middle of its tile.)
-        if (homes < (isWonderRole(role) ? 10 : 20)) bad.push(`${k} ${role}: only ${homes} homes`);
+        // (The town thins away from its sides with no street, town/field.ts:
+        // homes by the streets that come in; a center has its own; a wonder
+        // takes much of its tile.)
+        const sides = [...k].filter((c) => c === '1').length;
+        const need = isWonderRole(role) ? 2 * sides : hasHall(role) ? Math.max(12, 4 * sides) : 4 * sides;
+        if (homes < need) bad.push(`${k} ${role}: only ${homes} homes (${need} wanted)`);
         const spots = [...dr.spots, ...(dr.hall ? [dr.hall] : []), ...(dr.wonder ? [dr.wonder] : [])];
         const lp = layoutProblems((p) => rhoOf(6, p) <= LOT_INNER + 1e-9, clearance(dr.streets, dr.stubs), dr.lots, spots, dr.squares);
         if (lp.length) bad.push(`${k} ${role}: ${lp.slice(0, 2).join('; ')}`);
@@ -109,4 +113,38 @@ describe('TD4: walls', () => {
       expect(bad.slice(0, 10)).toEqual([]);
     });
   }
+});
+
+describe('TD5: every building fronts a street', () => {
+  for (const d of DENSITIES) {
+    it(`${d}: each building's front is at a street's edge`, () => {
+      const bad: string[] = [];
+      for (const k of CLASSES) for (const role of ROLES) {
+        const dr = drawingFor(k, role, d);
+        for (const l of dr.lots) {
+          if (!HOMES.has(l.kind)) continue;
+          const [, hd] = LOT_SIZE[l.kind];
+          const front = { x: l.x + Math.cos(l.yaw) * hd, y: l.y + Math.sin(l.yaw) * hd };
+          const gap = Math.min(...dr.streets.map((s) => distToLine(front, s.pts) - HALF_WIDTH[s.cls]));
+          // (Set back 0.004 from a street at its widest: up to 0.018 from a narrower one.)
+          if (gap > 0.02) bad.push(`${k} ${role}: a ${l.kind} ${gap.toFixed(3)} back from the nearest street`);
+        }
+      }
+      expect(bad.slice(0, 10)).toEqual([]);
+    });
+  }
+});
+
+describe('TD6: what a player builds keeps inside the safe zone; wonders in the middle', () => {
+  it('building spots, the hall and a wonder lie wholly inside SAFE_RHO (no river reaches them); a wonder stands at its tile\'s middle', () => {
+    const bad: string[] = [];
+    for (const k of CLASSES) for (const role of ROLES) for (const d of DENSITIES) {
+      const dr = drawingFor(k, role, d);
+      for (const sp of [...dr.spots, ...(dr.hall ? [dr.hall] : []), ...(dr.wonder ? [dr.wonder] : [])]) {
+        if (spotOutline(sp).some((p) => rhoOf(6, p) > SAFE_RHO + 1e-9)) bad.push(`${k} ${role} ${d}: a spot past the safe zone`);
+      }
+      if (dr.wonder && len(dr.wonder) > 1e-9) bad.push(`${k} ${role}: the wonder off the middle`);
+    }
+    expect(bad.slice(0, 10)).toEqual([]);
+  });
 });
