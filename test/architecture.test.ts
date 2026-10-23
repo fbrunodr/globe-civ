@@ -1,12 +1,17 @@
 // Guarantees of the town's architecture (architecture.ts, houses.ts): what
 // each density holds, every civ has a style for every height, every slot a
-// town can need has a model, and densities unlock in order.
+// town can need has a model, densities unlock in order, and no model has
+// faces that flicker.
 
 import { describe, it, expect } from 'vitest';
 import { ARCH_CIVS, ARCH_ERAS, DENSITY_ERA, SLOTS, STYLES, eraOfFloors, unlocked, pairsOf, styleFloors, styleOf } from '../src/architecture.ts';
 import { DENSITIES, DENSITY_TALLEST, FLOORS, FOOTPRINTS, FOOTPRINT_CELLS, CELL } from '../src/town/geometry.ts';
 import { HOUSE_VARIANTS, houseGeometry, houseKind } from '../src/houses.ts';
-import { triangles } from '../src/propCatalog.ts';
+import { triangles, part, CATALOG_KINDS, buildCatalogGeometry } from '../src/propCatalog.ts';
+import { BUILDING_KINDS, buildBuildingGeometry } from '../src/buildingCatalog.ts';
+import { coplanarClashes } from '../src/coplanar.ts';
+import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 describe('AR1: what each density holds', () => {
   it('low and medium hold up to doubles, dense triples, high quads, metropolitan skyscrapers; each density holds every height of the ones before', () => {
@@ -46,6 +51,26 @@ describe('AR2: every slot has a model', () => {
       if (b.max.y < 0.004 || b.min.y < -0.002) bad.push(`${k}: height ${b.min.y.toFixed(4)}..${b.max.y.toFixed(4)}`);
       if (triangles(g) > 700) bad.push(`${k}: ${triangles(g)} triangles`);
     }
+    expect(bad.slice(0, 10)).toEqual([]);
+  });
+});
+
+describe('AR5: no faces fight for the same pixels', () => {
+  it('the check finds two overlapping squares in one plane, in different colors, and nothing in one color or a hair apart', () => {
+    const sq = (c: number, z = 0, x = 0) => part(new THREE.PlaneGeometry(0.01, 0.01), c, new THREE.Matrix4().makeTranslation(x, 0, z));
+    expect(coplanarClashes(mergeGeometries([sq(0xff0000), sq(0x00ff00, 0, 0.005)])!).length).toBeGreaterThan(0);
+    expect(coplanarClashes(mergeGeometries([sq(0xff0000), sq(0xff0000, 0, 0.005)])!)).toHaveLength(0);
+    expect(coplanarClashes(mergeGeometries([sq(0xff0000), sq(0x00ff00, 0.0001, 0.005)])!)).toHaveLength(0);
+    expect(coplanarClashes(mergeGeometries([sq(0xff0000), sq(0x00ff00, 0, 0.01)])!)).toHaveLength(0); // only touching
+  });
+  it('no lot model, building or prop has overlapping coplanar faces in different colors (they flicker)', () => {
+    const bad: string[] = [];
+    for (const st of STYLES) for (const f of styleFloors(st)) for (const fp of FOOTPRINTS) for (let v = 0; v < HOUSE_VARIANTS; v++) {
+      const k = houseKind(st, fp, f, v), c = coplanarClashes(houseGeometry(k), 1);
+      if (c.length) bad.push(`${k}: ${c[0]!.colorA} on ${c[0]!.colorB} in plane ${c[0]!.plane}`);
+    }
+    for (const k of BUILDING_KINDS) { const c = coplanarClashes(buildBuildingGeometry(k), 1); if (c.length) bad.push(`${k}: ${c[0]!.colorA} on ${c[0]!.colorB}`); }
+    for (const k of CATALOG_KINDS) { const c = coplanarClashes(buildCatalogGeometry(k), 1); if (c.length) bad.push(`${k}: ${c[0]!.colorA} on ${c[0]!.colorB}`); }
     expect(bad.slice(0, 10)).toEqual([]);
   });
 });

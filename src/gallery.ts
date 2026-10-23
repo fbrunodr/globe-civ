@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { CSS2DObject, CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
+import { WorldLabel, clickableLabels, disposeLabels, type LabelLine } from './worldLabel.ts';
 import { CATALOG, CATALOG_KINDS, buildCatalogGeometry, triangles, type CatalogKind } from './propCatalog.ts';
 import { BUILDINGS_CATALOG, BUILDING_KINDS, buildBuildingGeometry } from './buildingCatalog.ts';
 import { BIOME_FLORA, FEATURE_FLORA, realmsLabel, type Tint, type Variant } from './floraData.ts';
@@ -28,13 +28,13 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
-const labels = new CSS2DRenderer({ element: document.querySelector<HTMLDivElement>('#labels')! });
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x9fc3e6);
 scene.fog = new THREE.Fog(0x9fc3e6, 150, 420);
 const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 1000);
 const controls = new OrbitControls(camera, canvas);
+clickableLabels(canvas, camera, () => world);
 controls.enableDamping = true;
 // The mouse as in the world view: drag moves over the ground, right-drag (or
 // Shift+drag) rotates and tilts, the wheel zooms.
@@ -166,19 +166,19 @@ function waterSheet(at: THREE.Vector3, depth: number): THREE.Mesh {
   m.renderOrder = 1;
   return m;
 }
-function label(html: string, at: THREE.Vector3, onClick?: () => void): HTMLDivElement {
-  const div = document.createElement('div');
-  div.className = 'lbl';
-  div.innerHTML = html;
-  if (onClick) div.addEventListener('click', onClick);
-  const o = new CSS2DObject(div);
-  o.position.copy(at);
+// A label standing on the ground (a sign in the scene; click it to focus).
+const LABEL = 1;
+function label(title: string, sub: string, at: THREE.Vector3, onClick: () => void, subColor?: string): WorldLabel {
+  const lines: LabelLine[] = [{ text: title, bold: true }, { text: sub, small: true, ...(subColor ? { color: subColor } : {}) }];
+  const o = new WorldLabel(lines, LABEL);
+  o.onClick = onClick;
+  o.position.copy(at).setY(at.y + o.scale.y / 2 + 0.1);
   world.add(o);
-  return div;
+  return o;
 }
 
 function clearWorld(): void {
-  world.traverse((o) => { if (o instanceof CSS2DObject) o.element.remove(); });
+  disposeLabels(world);
   world.clear();
 }
 
@@ -193,7 +193,7 @@ const state = {
   focus: 0,
   seed: 1,
 };
-let patches: { center: THREE.Vector3; label: HTMLDivElement; mix: string }[] = [];
+let patches: { center: THREE.Vector3; label: WorldLabel; mix: string }[] = [];
 
 const $ = <T extends HTMLElement>(s: string) => document.querySelector<T>(s)!;
 const select = $<HTMLSelectElement>('#terrain');
@@ -224,7 +224,7 @@ function buildTerrains(): void {
     world.add(hex(0x4a4436, center.clone().setY(-0.06), R * 1.06));
     if (set.water !== undefined) world.add(waterSheet(center, set.water));
     const tris = addInstances(e.items, center, world);
-    const div = label(`<b>${e.title}</b><small>${e.sub} · ${Math.round(tris).toLocaleString()} tris</small>`,
+    const div = label(e.title, `${e.sub} · ${Math.round(tris).toLocaleString()} tris`,
       center.clone().add(new THREE.Vector3(0, 0, R * 0.95)), () => { state.focus = i; refreshFocus(); setCam('close'); });
     return { center, label: div, mix: e.mix };
   });
@@ -249,8 +249,8 @@ function buildCatalog(): void {
     mesh.castShadow = true;
     world.add(mesh);
     const tris = triangles(geo);
-    const div = label(`<b>${e.name}</b><small>${e.layer} ×${scale} · <span class="${tris > BUDGET ? 'over' : ''}">${tris} tris</span></small>`,
-      center.clone().add(new THREE.Vector3(0, 0, 4.4)), () => { state.focus = i; refreshFocus(); setCam('close'); });
+    const div = label(e.name, `${e.layer} ×${scale} · ${tris} tris`,
+      center.clone().add(new THREE.Vector3(0, 0, 4.4)), () => { state.focus = i; refreshFocus(); setCam('close'); }, tris > BUDGET ? '#ff8a80' : undefined);
     patches.push({ center, label: div, mix: '' });
   });
   // City buildings (buildingCatalog.ts) after the flora.
@@ -268,7 +268,7 @@ function buildCatalog(): void {
     mesh.castShadow = true;
     world.add(mesh);
     const tris = triangles(geo);
-    const div = label(`<b>${e.name}</b><small>Building ×${scale} · ${tris} tris</small>`,
+    const div = label(e.name, `Building ×${scale} · ${tris} tris`,
       center.clone().add(new THREE.Vector3(0, 0, 4.4)), () => { state.focus = i; refreshFocus(); setCam('close'); });
     patches.push({ center, label: div, mix: '' });
   });
@@ -276,7 +276,7 @@ function buildCatalog(): void {
 }
 
 function refreshFocus(): void {
-  patches.forEach((p, i) => p.label.classList.toggle('focus', i === state.focus));
+  patches.forEach((p, i) => p.label.setStyle({ focus: i === state.focus }));
   mixPanel.innerHTML = patches[state.focus]?.mix ?? '';
 }
 
@@ -387,7 +387,6 @@ function keyboardCamera(dt: number): void {
 
 function resize(): void {
   renderer.setSize(innerWidth, innerHeight, false);
-  labels.setSize(innerWidth, innerHeight);
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
 }
@@ -400,5 +399,4 @@ renderer.setAnimationLoop((time) => {
   keyboardCamera(Math.min(0.1, timer.getDelta()));
   controls.update();
   renderer.render(scene, camera);
-  labels.render(scene, camera);
 });

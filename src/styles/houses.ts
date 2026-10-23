@@ -162,7 +162,7 @@ export const HOUSE_STYLES = {
     }
     const rh = Math.min(b.w, b.d) * 0.26;
     out.push(...gable(b.w + 0.004, b.d + 0.005, rh, tile, { x: b.x, y: b.h, z: b.z }, false, l.floors > 1 ? plaster : wood));
-    out.push(...box(b.w + 0.004, 0.0012, 0.0016, shadeTile(tile), { x: b.x, y: b.h + rh - 0.0006, z: b.z }));
+    out.push(...box(b.w + 0.0036, 0.0012, 0.0016, shadeTile(tile), { x: b.x, y: b.h + rh - 0.0006, z: b.z }));
     // The garden behind: raked gravel, a stone lantern, a maple.
     out.push(patch(2 * l.lw * 0.9, l.ld * 0.5, 0xd8d4c8, 0, -l.ld * 0.72, 0.0005));
     out.push(...box(0.0012, 0.003, 0.0012, 0x9a9488, { x: -l.lw * 0.6, z: -l.ld * 0.7 }), ...box(0.0028, 0.0008, 0.0028, 0x8a847a, { x: -l.lw * 0.6, y: 0.003, z: -l.ld * 0.7 }));
@@ -178,7 +178,7 @@ export const HOUSE_STYLES = {
     out.push(...box(b.w, b.h, b.d, log, { x: b.x, z: b.z }));
     // Log courses, the log ends crossing at the corners.
     out.push(...bands(b, steps(0.0022, b.h, 0.0022), 0.0004, shadeWood(log), SEEN));
-    for (const [x, z] of [[-1, -1], [1, -1], [1, 1], [-1, 1]] as const) out.push(...box(0.0018, b.h, 0.0018, shadeWood(log), { x: b.x + x * b.w / 2, z: b.z + z * b.d / 2 }));
+    for (const [x, z] of [[-1, -1], [1, -1], [1, 1], [-1, 1]] as const) out.push(...box(0.0018, b.h - 0.0002, 0.0018, shadeWood(log), { x: b.x + x * b.w / 2, z: b.z + z * b.d / 2 }));
     // A steep board roof, its gable to the street, a small window in the gable.
     const rh = Math.min(b.w, b.d) * 0.62;
     out.push(...gable(b.w + 0.004, b.d + 0.004, rh, roof, { x: b.x, y: b.h, z: b.z }, true, log));
@@ -186,7 +186,7 @@ export const HOUSE_STYLES = {
     // Windows in white carved frames (nalichniki) with painted shutters.
     out.push(...windows(b, 'front', { ...s, w: 0.003, h: s.storey * 0.36, spacing: 0.009, sill: s.storey * 0.32, color: 0x2a3038, frame: white, shutter: paint }));
     for (const f of ['left', 'right'] as Face[]) out.push(...windows(b, f, { ...s, w: 0.0026, h: s.storey * 0.32, spacing: 0.012, sill: s.storey * 0.34, color: 0x2a3038, frame: white }));
-    out.push(onFace(b, 'right', b.d * 0.25, 0, 0.0042, Math.min(0.0085, s.storey * 0.7), 0x5a4030));
+    out.push(onFace(b, 'right', b.d * 0.25, 0, 0.0042, Math.min(0.0085, s.storey * 0.7), 0x5a4030, E * 2));
     out.push(...fence(l, 0.0035, 0x8a8070, 0.008), ...birch(-l.lw * 0.66, -l.ld * 0.66, 1), ...birch(-l.lw * 0.76, -l.ld * 0.4, 0.8));
     out.push(...box(0.008, 0.003, 0.003, 0x8a6a48, { x: l.lw * 0.58, z: -l.ld * 0.74 }));
     return out;
@@ -252,7 +252,7 @@ export const HOUSE_STYLES = {
     const b = place(l, 0.72, 0.5, l.ld * 0.3), s = storeys(l, 0.12), out: G[] = [];
     out.push(...yard(l, b, 0x7d9a55, 0xb0a890));
     out.push(...box(b.w, b.h, b.d, granite, { x: b.x, z: b.z }));
-    for (const [x, z] of [[-1, 1], [1, 1]] as const) out.push(...box(0.0018, b.h, 0.0018, 0xc8c2b6, { x: b.x + x * b.w / 2, z: b.z + z * b.d / 2 })); // quoins
+    for (const [x, z] of [[-1, 1], [1, 1]] as const) out.push(...box(0.0018, b.h - 0.0002, 0.0018, 0xc8c2b6, { x: b.x + x * b.w / 2, z: b.z + z * b.d / 2 })); // quoins
     out.push(...windows(b, 'front', { ...s, w: 0.003, h: s.storey * 0.45, spacing: 0.01, sill: s.storey * 0.3, color: 0x2a3038, frame: 0xd8d2c4, shutter, door: true }));
     for (const f of ['back', 'left', 'right'] as Face[]) out.push(...windows(b, f, { ...s, w: 0.0026, h: s.storey * 0.4, spacing: 0.013, sill: s.storey * 0.32, color: 0x2a3038 }));
     out.push(onFace(b, 'front', 0, 0, 0.005, Math.min(0.009, s.storey * 0.72), shutter));

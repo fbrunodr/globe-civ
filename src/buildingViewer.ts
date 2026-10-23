@@ -8,17 +8,16 @@
 import './style.css';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { CSS2DObject, CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
 import { ARCH_CIVS, STYLES, STYLE_NAME, eraOfFloors, pairsOf, styleFloors, styleOf, type ArchCiv, type Style } from './architecture.ts';
 import { FLOORS, FLOOR_NAME, FOOTPRINTS, FOOTPRINT_CELLS, type Floors, type Footprint } from './town/geometry.ts';
 import { HOUSE_VARIANTS, houseKind } from './houses.ts';
 import { FlatPainter, disposeGroup } from './flatTown.ts';
+import { WorldLabel, disposeLabels } from './worldLabel.ts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const canvas = $<HTMLCanvasElement>('c');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-const labels = new CSS2DRenderer({ element: $<HTMLDivElement>('labels') });
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x9fc3e6);
 const camera = new THREE.PerspectiveCamera(35, 1, 0.005, 200);
@@ -46,12 +45,11 @@ let variant: number | 'all' = 0;
 const GAP = 0.03; // between lots (tile steps)
 const size = (fp: Footprint) => FOOTPRINT_CELLS[fp].map((c) => c * 0.0225) as [number, number];
 
+// A label standing on the ground (a sign in the scene, LABEL tall).
+const LABEL = 0.01;
 function label(text: string, x: number, z: number, cls = ''): void {
-  const el = document.createElement('div');
-  el.className = `lbl ${cls}`;
-  el.textContent = text;
-  const o = new CSS2DObject(el);
-  o.position.set(x, 0.002, z);
+  const o = new WorldLabel([{ text, bold: cls.includes('head'), ...(cls.includes('off') ? { color: '#f2b0a8' } : {}) }], LABEL);
+  o.position.set(x, LABEL / 2 + 0.001, z);
   world.add(o);
 }
 // One cell: the lot (or its variants side by side) at x, z (its front toward +z, the viewer).
@@ -83,7 +81,7 @@ function table(styleAt: (f: Floors) => Style, heights: readonly Floors[], allowe
 function build(): { w: number; d: number } {
   scene.remove(world);
   disposeGroup(world);
-  world.traverse((o) => { if (o instanceof CSS2DObject) o.element.remove(); });
+  disposeLabels(world);
   world = new THREE.Group();
   scene.add(world);
   let dims = { w: 1, d: 1 };
@@ -170,9 +168,9 @@ function keyboard(): void {
   if (zoom) { const off = camera.position.clone().sub(controls.target).multiplyScalar(Math.exp(zoom * 1.5 * dt)); camera.position.copy(controls.target).add(off); }
 }
 
-const resize = () => { renderer.setSize(innerWidth, innerHeight); labels.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); };
+const resize = () => { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); };
 addEventListener('resize', resize);
 resize();
 rebuild(true);
-renderer.setAnimationLoop(() => { keyboard(); controls.update(); renderer.render(scene, camera); labels.render(scene, camera); });
+renderer.setAnimationLoop(() => { keyboard(); controls.update(); renderer.render(scene, camera); });
 if (import.meta.env.DEV) Object.assign(window, { __viewer: { camera, controls, set: (m: Mode, s?: Style) => { mode = m; if (s) style = s; document.body.dataset['mode'] = m; rebuild(true); } } });

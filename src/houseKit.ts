@@ -15,6 +15,10 @@ export type Build = (l: Lot) => G[];
 
 export const P = (g: G, c: number, o: Tf = {}) => part(g, c, tf(o));
 export const E = 0.00025; // how far details stand proud of a wall
+// Details lie in layers off a wall, so none share a plane (they would
+// flicker): painted bands and strips lowest, window frames over them,
+// windows and doors (E) over both, anything laid on those at E * 2 and up.
+export const BAND = E * 0.4, FRAME = E * 0.7;
 // A closed box standing on y = o.y (walls and a top; no floor).
 export function box(w: number, h: number, d: number, c: number, o: Tf = {}, top = c): G[] {
   return [
@@ -103,7 +107,7 @@ export function windows(b: Body, face: Face, o: WinOpts): G[] {
       const along = (i - (n - 1) / 2) * (fw / n);
       if (o.door && f === 0 && face === 'front' && Math.abs(along) < fw / n / 2) continue;
       const y = b.y + o.base + f * o.storey + o.sill;
-      if (o.frame !== undefined) out.push(onFace(b, face, along, y - 0.0005, o.w + 0.001, o.h + 0.001, o.frame, E * 0.5));
+      if (o.frame !== undefined) out.push(onFace(b, face, along, y - 0.0005, o.w + 0.001, o.h + 0.001, o.frame, FRAME));
       out.push(onFace(b, face, along, y, o.w, o.h, o.color));
       if (o.shutter !== undefined) for (const s of [-1, 1]) out.push(onFace(b, face, along + s * (o.w / 2 + o.w * 0.28), y, o.w * 0.5, o.h, o.shutter));
     }
@@ -209,13 +213,13 @@ export function merlons(b: Body, y: number, size: number, step: number, c: numbe
   return out;
 }
 // Vertical strips on a face, `step` apart (fins, piers, boards).
-export function strips(b: Body, face: Face, y: number, h: number, w: number, step: number, c: number, out = E): G[] {
+export function strips(b: Body, face: Face, y: number, h: number, w: number, step: number, c: number, out = BAND): G[] {
   const fw = faceWidth(b, face), n = Math.max(1, Math.floor(fw / step));
   return Array.from({ length: n + 1 }, (_, i) => onFace(b, face, -fw / 2 + (i * fw) / n, y, w, h, c, out));
 }
 // Horizontal bands round a body at heights ys (string courses, log lines).
 export const bands = (b: Body, ys: readonly number[], h: number, c: number, faces: readonly Face[] = ['front', 'back', 'left', 'right']): G[] =>
-  ys.flatMap((y) => faces.map((f) => onFace(b, f, 0, y, faceWidth(b, f), h, c)));
+  ys.flatMap((y) => faces.map((f) => onFace(b, f, 0, y, faceWidth(b, f), h, c, BAND)));
 // A tree with a flat, wide crown (an acacia, a pine), a slender one (a birch).
 export const flatTree = (x: number, z: number, s: number, crown: number): G[] => [
   cyl(0.0006 * s, 0.0005 * s, 0.008 * s, 3, 0x6a5038, { x, z }), P(new THREE.OctahedronGeometry(0.006 * s, 0), crown, { x, y: 0.009 * s, z, sy: 0.35 }),

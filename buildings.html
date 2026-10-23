@@ -5,10 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Building Styles</title>
     <style>
-      #labels { position: fixed; inset: 0; pointer-events: none; }
-      .lbl { background: rgba(14,17,26,0.78); color: #e8ecf3; padding: 2px 7px; border-radius: 6px; font: 12px system-ui, sans-serif; white-space: nowrap; }
-      .lbl.head { font-weight: 600; }
-      .lbl.off { color: #f2b0a8; }
       #topbar label { display: flex; align-items: center; gap: 4px; }
       body:not([data-mode="style"]) .style-only { display: none !important; }
       body:not([data-mode="civ"]) .civ-only { display: none !important; }
@@ -17,7 +13,6 @@
   </head>
   <body data-mode="overview">
     <canvas id="c"></canvas>
-    <div id="labels"></div>
     <div id="hud">
       <div id="topbar">
         <span id="civ">Building styles</span>

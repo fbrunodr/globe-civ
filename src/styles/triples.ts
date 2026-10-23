@@ -40,10 +40,10 @@ export const TRIPLE_STYLES = {
     const wall = pick(l, [0xecd3a0, 0xe8bfa8, 0xd8dcc0]), marble = 0xf6f1e4, iron = 0x2a2a2a, shut = pick(l, [0x3c5a7a, 0x5a6a3a, 0x3c5a7a]);
     const b = place(l, 0.8, 0.62, l.ld * 0.1), s = storeys(l, 0.1), out: G[] = [];
     out.push(...yard(l, b, 0xd0c8b4, 0xe0d8c4));
-    out.push(...box(b.w, b.h, b.d, wall, { x: b.x, z: b.z }), ...box(b.w + 0.001, s.base, b.d + 0.001, marble, { x: b.x, z: b.z }));
+    out.push(...box(b.w, b.h, b.d, wall, { x: b.x, z: b.z }), ...box(b.w + 0.0016, s.base, b.d + 0.0016, marble, { x: b.x, z: b.z }));
     const front = b.z + b.d / 2;
-    for (const sx of [-1, 1]) out.push(...box(0.0024, b.h, 0.0012, marble, { x: b.x + sx * (b.w / 2 - 0.0012), z: front }));
-    out.push(...box(b.w + 0.002, 0.0012, b.d + 0.002, marble, { x: b.x, y: b.h - 0.0012, z: b.z }));
+    for (const sx of [-1, 1]) out.push(...box(0.0024, b.h - 0.0002, 0.0012, marble, { x: b.x + sx * (b.w / 2 - 0.0009), z: front }));
+    out.push(...box(b.w + 0.002, 0.0012, b.d + 0.002, marble, { x: b.x, y: b.h - 0.001, z: b.z }));
     // Tall windows in marble frames, each upper one on its own iron balcony.
     const n = Math.max(2, Math.floor(b.w / 0.0095));
     for (let f = 0; f < l.floors; f++) for (const a of bays(b.w, n)) {
@@ -70,7 +70,7 @@ export const TRIPLE_STYLES = {
     out.push(...yard(l, b, 0xb8ae98, 0xc8bca4));
     out.push(...box(b.w, b.h, b.d, stone, { x: b.x, z: b.z }, 0xc8b8a0), ...box(b.w + 0.0008, s.base, b.d + 0.0008, cantera, { x: b.x, z: b.z }));
     out.push(...bands(b, floorLines(l, s), 0.0007, cantera));
-    out.push(...box(b.w + 0.0014, 0.0012, b.d + 0.0014, cantera, { x: b.x, y: b.h - 0.0012, z: b.z }));
+    out.push(...box(b.w + 0.0014, 0.0012, b.d + 0.0014, cantera, { x: b.x, y: b.h - 0.001, z: b.z }, 0xc8b8a0));
     // The parapet, pinnacles along its front.
     out.push(ring(b.w, 0.0024, b.d, stone, { x: b.x, y: b.h, z: b.z }));
     const front = b.z + b.d / 2, np = Math.max(3, Math.floor(b.w / 0.009) + 1);
@@ -86,7 +86,7 @@ export const TRIPLE_STYLES = {
     // A big doorway into the courtyard, framed in cantera.
     const dh = s.base + s.storey * 0.62;
     out.push(...arch(b, 'front', 0, 0, 0.0085, dh, cantera), ...arch(b, 'front', 0, 0, 0.0062, dh * 0.95, 0x5b3a24, false, E * 2));
-    out.push(patch(b.w * 0.36, b.d * 0.36, 0x9a8a70, b.x, b.z, b.h + 0.0002));
+    out.push(patch(b.w * 0.36, b.d * 0.36, 0x9a8a70, b.x, b.z, b.h + 0.0004));
     out.push(...tree(-l.lw * 0.6, -l.ld * 0.84, 0.9, 0x8a6ac0));
     return out;
   },
@@ -183,7 +183,7 @@ export const TRIPLE_STYLES = {
     // The roof: heavy tile, a thick ridge, end ornaments (onigawara).
     const rh = Math.min(b.w, b.d) * 0.32;
     out.push(...gable(b.w + 0.005, b.d + 0.006, rh, tile, { x: b.x, y: b.h, z: b.z }, false, plaster));
-    out.push(...box(b.w + 0.005, 0.0018, 0.0022, tile, { x: b.x, y: b.h + rh - 0.0008, z: b.z }));
+    out.push(...box(b.w + 0.0046, 0.0018, 0.0022, tile, { x: b.x, y: b.h + rh - 0.0008, z: b.z }));
     for (const sx of [-1, 1]) out.push(...box(0.0018, 0.003, 0.0026, tile, { x: b.x + sx * (b.w / 2 + 0.0025), y: b.h + rh - 0.0008, z: b.z }));
     out.push(...flatTree(-l.lw * 0.62, -l.ld * 0.78, 1, 0x3f5a35));
     return out;
@@ -237,7 +237,7 @@ export const TRIPLE_STYLES = {
     const b = place(l, 0.86, 0.68, l.ld * 0.14), s = storeys(l, 0.08), out: G[] = [];
     out.push(...yard(l, b, 0xd0b890, 0xc0a888));
     out.push(...box(b.w, b.h, b.d, pink, { x: b.x, z: b.z }));
-    out.push(...bands(b, floorLines(l, s), 0.0007, white), ...box(b.w + 0.0014, 0.0012, b.d + 0.0014, white, { x: b.x, y: b.h - 0.0012, z: b.z }, shade(pink, 0.85)));
+    out.push(...bands(b, floorLines(l, s), 0.0007, white), ...box(b.w + 0.0014, 0.0012, b.d + 0.0014, white, { x: b.x, y: b.h - 0.001, z: b.z }, shade(pink, 0.85)));
     out.push(ring(b.w, 0.002, b.d, pink, { x: b.x, y: b.h, z: b.z }));
     // Jharokhas: balconies with stone screens and domed hoods, on the upper floors.
     const front = b.z + b.d / 2, n = b.w > 0.05 ? 3 : 2, jw = 0.0065, jd = 0.0028;
@@ -263,7 +263,7 @@ export const TRIPLE_STYLES = {
     out.push(...yard(l, b, 0x7d9a55, 0xa8a094));
     out.push(patch(2 * l.lw * 0.94, l.ld * 0.24, 0xa8a094, 0, l.ld * 0.86, 0.0004));
     out.push(...box(b.w, b.h, b.d, brick, { x: b.x, z: b.z }));
-    out.push(...box(b.w + 0.0016, 0.001, b.d + 0.0016, white, { x: b.x, y: b.h - 0.001, z: b.z }), ring(b.w, 0.0026, b.d, brick, { x: b.x, y: b.h, z: b.z }));
+    out.push(...box(b.w + 0.0016, 0.001, b.d + 0.0016, white, { x: b.x, y: b.h - 0.0008, z: b.z }), ring(b.w, 0.0026, b.d, brick, { x: b.x, y: b.h, z: b.z }));
     out.push(hip(b.w * 0.9, b.d * 0.9, Math.min(b.w, b.d) * 0.2, slate, { x: b.x, y: b.h, z: b.z }));
     // Sash windows on the upper floors, front and back (the sides are party walls).
     for (const f of ['front', 'back'] as const) out.push(...windows(b, f, { ...s, floors: l.floors - 1, base: s.base + s.storey, w: 0.0028, h: s.storey * 0.55, spacing: 0.0078, sill: s.storey * 0.22, color: 0x2a3038, frame: white }));

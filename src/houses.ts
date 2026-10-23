@@ -18,7 +18,7 @@ import { CELL, FOOTPRINT_CELLS, wallHeight, type Floors, type Footprint } from '
 import { mulberry32 } from './rng.ts';
 import type { Style } from './architecture.ts';
 import {
-  E, P, box, cypress, fence, frustum, gable, hip, onFace, palm, patch, pick, place, plant, ring, shrub, storeys, tree, windows, yard, faceWidth,
+  BAND, E, P, box, cypress, fence, frustum, gable, hip, onFace, palm, patch, pick, place, plant, ring, shrub, storeys, tree, windows, yard, faceWidth,
   type Body, type Build, type Face, type G, type Lot,
 } from './houseKit.ts';
 import { HOUSE_STYLES } from './styles/houses.ts';
@@ -47,7 +47,7 @@ export const FIRST_STYLES = {
     out.push(...yard(l, b, 0xcab89a, 0xd8ccb0));
     out.push(...box(b.w + 0.002, 0.0015, b.d + 0.002, 0xcfc4ac, { x: b.x, z: b.z }));                 // plinth
     out.push(...box(b.w, b.h, b.d, wall, { x: b.x, z: b.z }));
-    out.push(...box(b.w + 0.0016, 0.0009, b.d + 0.0016, 0xcfc4ac, { x: b.x, y: b.h - 0.0009, z: b.z })); // cornice
+    out.push(...box(b.w + 0.0016, 0.0009, b.d + 0.0016, 0xcfc4ac, { x: b.x, y: b.h - 0.0007, z: b.z })); // cornice (its top a hair over the walls': they would flicker)
     out.push(hip(b.w + 0.004, b.d + 0.004, Math.min(b.w, b.d) * 0.28, roof, { x: b.x, y: b.h, z: b.z }));
     const s = storeys(l);
     for (const f of ['front', 'back', 'left', 'right'] as Face[]) out.push(...windows(b, f, { ...s, w: 0.0032, h: s.storey * 0.42, spacing: 0.011, sill: s.storey * 0.3, color: 0x3a3028, shutter: f === 'front' ? shutter : undefined, door: true }));
@@ -102,7 +102,7 @@ export const FIRST_STYLES = {
     for (let t = 0; t < tiers; t++) {
       const k = 1 - t * 0.1, w = b.w * k, d = b.d * k, y = 0.0018 + t * th;
       out.push(...box(w, th, d, wall, { x: b.x, y, z: b.z }));
-      for (const [x, z] of [[-1, -1], [1, -1], [1, 1], [-1, 1]] as const) out.push(...box(0.0012, th, 0.0012, wood, { x: b.x + x * w / 2, y, z: b.z + z * d / 2 }));
+      for (const [x, z] of [[-1, -1], [1, -1], [1, 1], [-1, 1]] as const) out.push(...box(0.0012, th - 0.0002, 0.0012, wood, { x: b.x + x * w / 2, y, z: b.z + z * d / 2 }));
       // Lattice panels between the posts.
       const tb: Body = { x: b.x, z: b.z, w, d, y, h: th };
       out.push(onFace(tb, 'front', 0, y + th * 0.2, w * 0.7, th * 0.55, 0xb08a60), onFace(tb, 'back', 0, y + th * 0.25, w * 0.6, th * 0.45, 0xb08a60));
@@ -124,9 +124,9 @@ export const FIRST_STYLES = {
     out.push(...yard(l, b, 0x7d9a55, 0x9a8a6a));
     out.push(...box(b.w, b.h, b.d, daub, { x: b.x, z: b.z }));
     // Timber frame: corner posts and a sill and head beam on the front.
-    for (const [x, z] of [[-1, -1], [1, -1], [1, 1], [-1, 1]] as const) out.push(...box(0.0013, b.h, 0.0013, timber, { x: b.x + x * b.w / 2, z: b.z + z * b.d / 2 }));
-    out.push(onFace(b, 'front', 0, b.h - 0.0012, b.w, 0.0012, timber), onFace(b, 'front', 0, 0, b.w, 0.0012, timber));
-    if (l.floors > 1) out.push(onFace(b, 'front', 0, b.h / 2, b.w, 0.0011, timber), onFace(b, 'left', 0, b.h / 2, b.d, 0.0011, timber), onFace(b, 'right', 0, b.h / 2, b.d, 0.0011, timber));
+    for (const [x, z] of [[-1, -1], [1, -1], [1, 1], [-1, 1]] as const) out.push(...box(0.0013, b.h - 0.0002, 0.0013, timber, { x: b.x + x * b.w / 2, z: b.z + z * b.d / 2 }));
+    out.push(onFace(b, 'front', 0, b.h - 0.0012, b.w, 0.0012, timber, BAND), onFace(b, 'front', 0, 0, b.w, 0.0012, timber, BAND));
+    if (l.floors > 1) out.push(onFace(b, 'front', 0, b.h / 2, b.w, 0.0011, timber, BAND), onFace(b, 'left', 0, b.h / 2, b.d, 0.0011, timber, BAND), onFace(b, 'right', 0, b.h / 2, b.d, 0.0011, timber, BAND));
     const s = storeys(l);
     for (const f of ['front', 'back', 'left', 'right'] as Face[]) out.push(...windows(b, f, { ...s, w: 0.0026, h: s.storey * 0.3, spacing: 0.014, sill: s.storey * 0.35, color: 0x2a2420, door: true }));
     out.push(onFace(b, 'front', 0, 0, 0.0055, Math.min(0.0095, s.storey * 0.72), 0x5a4030));
@@ -251,7 +251,7 @@ export const FIRST_STYLES = {
     const s = storeys(l);
     out.push(...box(b.w + 0.0012, s.base + s.storey * 0.12, b.d + 0.0012, stone, { x: b.x, z: b.z }));            // rusticated base
     for (let f = 1; f < l.floors; f++) out.push(...box(b.w + 0.001, 0.0007, b.d + 0.001, stone, { x: b.x, y: s.base + f * s.storey, z: b.z })); // string course
-    out.push(...box(b.w + 0.002, 0.001, b.d + 0.002, stone, { x: b.x, y: b.h - 0.001, z: b.z }));                 // cornice
+    out.push(...box(b.w + 0.002, 0.001, b.d + 0.002, stone, { x: b.x, y: b.h - 0.0008, z: b.z }));                // cornice
     out.push(hip(b.w + 0.003, b.d + 0.003, Math.min(b.w, b.d) * 0.22, roof, { x: b.x, y: b.h, z: b.z }));
     // An arcade on the ground floor of a wide front; windows with stone frames above.
     if (b.w > 0.05) {
@@ -279,8 +279,8 @@ export const FIRST_STYLES = {
       out.push(...box(up.w, up.h, up.d, plaster, { x: b.x, y: up.y, z: b.z }));
       for (const f of ['front', 'left', 'right', 'back'] as Face[]) {
         const fw = faceWidth(up, f), n = Math.max(2, Math.round(fw / 0.008));
-        for (let i = 0; i <= n; i++) out.push(onFace(up, f, -fw / 2 + (i * fw) / n, up.y, 0.0008, up.h, timber));
-        out.push(onFace(up, f, 0, up.y + up.h / 2, fw, 0.0008, timber));
+        for (let i = 0; i <= n; i++) out.push(onFace(up, f, -fw / 2 + (i * fw) / n, up.y, 0.0008, up.h, timber, BAND));
+        out.push(onFace(up, f, 0, up.y + up.h / 2, fw, 0.0008, timber, BAND));
       }
     }
     for (const f of ['front', 'back', 'left', 'right'] as Face[]) out.push(...windows({ ...b, w: b.w + 0.002, d: b.d + 0.002 }, f, { ...s, w: 0.0026, h: s.storey * 0.42, spacing: 0.009, sill: s.storey * 0.3, color: 0x2e2a28, door: true }));

@@ -5,9 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Town Designs</title>
     <style>
-      #labels { position: fixed; inset: 0; pointer-events: none; }
-      .lbl { background: rgba(14,17,26,0.78); color: #e8ecf3; padding: 2px 7px; border-radius: 6px; font: 12px system-ui, sans-serif; white-space: nowrap; }
-      body.far .lbl { display: none; }
       #topbar label { display: flex; align-items: center; gap: 4px; }
       body:not([data-view="towns"]) .towns-only { display: none !important; }
       body:not([data-view="classes"]) .classes-only { display: none !important; }
@@ -15,7 +12,6 @@
   </head>
   <body>
     <canvas id="c"></canvas>
-    <div id="labels"></div>
     <div id="hud">
       <div id="topbar">
         <span id="civ">Town designs</span>

@@ -213,7 +213,7 @@ export const QUAD_STYLES = {
     out.push(...box(tw, th, tw, stone, { x: tb.x, z: tb.z }), disc(tb, 'front', 0, th - 0.0045, 0.0028, 0xf4f1ea), dome(tw * 0.62, blue, { x: tb.x, y: th, z: tb.z, sy: 1.2 }), cone(0.0005, 0.003, 4, gold, { x: tb.x, y: th + tw * 0.74, z: tb.z }));
     // Turrets on the front corners.
     for (const sx of [-1, 1]) {
-      const o = { x: b.x + sx * (b.w / 2 - 0.0018), z: front - 0.0018 };
+      const o = { x: b.x + sx * (b.w / 2 - 0.0015), z: front - 0.0015 };
       out.push(cyl(0.0022, 0.0022, b.h + 0.004, 6, stone, o), dome(0.0024, blue, { ...o, y: b.h + 0.004 }, 6));
     }
     out.push(...palm(-l.lw * 0.76, -l.ld * 0.86, 0.9));

@@ -111,8 +111,12 @@ export const TOWER_STYLES = {
       for (let i = 0; i <= n; i++) out.push(...box(0.0007, H, 0.003, concrete, { x: b.x - b.w / 2 + (i * b.w) / n, z }));
       for (const y of lines(0, H, 0.012)) out.push(...box(b.w, 0.0007, 0.003, concrete, { x: b.x, y, z }));
     }
+    const placed = new Set<string>();
     for (let k = 0; k < 6; k++) {
       const n = Math.max(3, Math.round(b.w / 0.006)), i = (k * 5 + l.v) % n, y = 0.012 * (1 + ((k * 7 + l.v * 3) % Math.max(2, Math.floor(H / 0.012) - 1)));
+      // (One panel to a bay: two in one would flicker.)
+      if (placed.has(`${k % 2}|${i}|${y}`)) continue;
+      placed.add(`${k % 2}|${i}|${y}`);
       out.push(onFace(b, k % 2 ? 'back' : 'front', -b.w / 2 + (i + 0.5) * (b.w / n), y, b.w / n - 0.0009, 0.0105, colors[k % 3]!, E * 2));
     }
     for (const f of ['left', 'right'] as const) for (const y of lines(0, H, 0.006)) out.push(onFace(b, f, 0, y, b.d * 0.8, 0.0025, 0x3a3a36));

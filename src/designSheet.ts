@@ -10,7 +10,7 @@
 import './style.css';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { CSS2DObject, CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
+import { WorldLabel, disposeLabels } from './worldLabel.ts';
 import { DENSITIES, type Density } from './town/geometry.ts';
 import { CLASSES, parseKey, type EdgeValue } from './town/edges.ts';
 import { edgeClass, type Role } from './town/skeleton.ts';
@@ -24,7 +24,6 @@ const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as 
 const canvas = $<HTMLCanvasElement>('c');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-const labels = new CSS2DRenderer({ element: $<HTMLDivElement>('labels') });
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x9fc3e6);
 const camera = new THREE.PerspectiveCamera(40, 1, 0.01, 2000);
@@ -43,12 +42,11 @@ let world = new THREE.Group();
 scene.add(world);
 const paint = new FlatPainter();
 
+// A label standing on the ground by a tile (a sign in the scene, LABEL tall).
+const LABEL = 0.12;
 function label(text: string, x: number, z: number): void {
-  const el = document.createElement('div');
-  el.className = 'lbl';
-  el.textContent = text;
-  const o = new CSS2DObject(el);
-  o.position.set(x, 0.05, z);
+  const o = new WorldLabel([{ text }], LABEL);
+  o.position.set(x, LABEL / 2 + 0.01, z);
   world.add(o);
 }
 
@@ -115,7 +113,7 @@ let framed = false;
 function build(): void {
   scene.remove(world);
   disposeGroup(world);
-  world.traverse((o) => { if (o instanceof CSS2DObject) o.element.remove(); });
+  disposeLabels(world);
   world = new THREE.Group();
   scene.add(world);
   paint.tiles.clear();
@@ -191,7 +189,6 @@ function keyboard(): void {
 
 const resize = () => {
   renderer.setSize(innerWidth, innerHeight);
-  labels.setSize(innerWidth, innerHeight);
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
 };
@@ -202,9 +199,7 @@ build();
 renderer.setAnimationLoop(() => {
   keyboard();
   controls.update();
-  document.body.classList.toggle('far', camera.position.distanceTo(controls.target) > 16);
   renderer.render(scene, camera);
-  labels.render(scene, camera);
 });
 if (import.meta.env.DEV) {
   Object.assign(window, { __sheet: {
