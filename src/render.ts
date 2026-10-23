@@ -1517,17 +1517,6 @@ export class GlobeRenderer {
       sprite.renderOrder = 10;
       this.citiesGroup.add(sprite);
     }
-    // Wonders: a small banner with the name, readable from strategic zoom.
-    for (const [w, t] of g.wondersBuilt) {
-      if (!g.explored[t]) continue;
-      const label = `★ ${WONDERS[w].name}`;
-      const tex = this.texture(`w|${label}`, 512, 96, (ctx) => drawCityLabel(ctx, '#c9a94e', label));
-      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, sizeAttenuation: false }));
-      sprite.scale.set(0.09, 0.017, 1);
-      sprite.position.copy(g.tiles[t].center).multiplyScalar(this.terrain.centerRadius[t] + 0.012 * s);
-      sprite.renderOrder = 9;
-      this.citiesGroup.add(sprite);
-    }
   }
 
   // ---------- input & loop ----------
