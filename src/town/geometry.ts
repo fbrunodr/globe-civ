@@ -31,9 +31,9 @@ export const SAFE_RHO = 0.8;
 // the building spots, the hall, a wonder (checks.ts spotPastRim). Houses
 // may stand out to the lot area's edge (LOT_INNER): where a river comes in
 // the game leaves out those at its bank.
-// Lots stay within this share of the inradius (the rest is the tile's rim:
-// gardens back to back with the neighbor's, and room for walls).
-export const LOT_INNER = 0.95;
+// Lots stay within this share of the inradius: nearly to the edge, so a
+// town reads as one across its tiles (no strip of rim between them).
+export const LOT_INNER = 0.995;
 export const HARBOR_RHO = 0.75;
 
 export type StreetClass = 'lane' | 'street' | 'main' | 'avenue';

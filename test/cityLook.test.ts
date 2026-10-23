@@ -44,12 +44,15 @@ describe('L2: houses grow with the city', () => {
     // (Every building fronts a street, and the town thins away from its edge: town/field.ts.)
     expect(count(cp.stampTiles(tiles, null))).toBeGreaterThanOrEqual(200);
   });
-  it('denser tiles, more houses', () => {
+  // (Every street front is built at any density, so a denser tile holds
+  // about as many houses, built higher: more storeys in all.)
+  it('denser tiles, more storeys', () => {
     const tiles = [city.tile, ...g.tiles[city.tile].neighbors.slice(0, 5)];
+    const storeys = (ts: StampTile[]) => stamp(ts).lots.reduce((a, l) => a + (HOMES.has(l.kind) ? l.floors ?? 1 : 0), 0);
     for (const t of tiles) cp.setDensity(t, 'low');
-    const low = count(cp.stampTiles(tiles, null));
+    const low = storeys(cp.stampTiles(tiles, null));
     for (const t of tiles) cp.setDensity(t, 'medium');
-    expect(count(cp.stampTiles(tiles, null))).toBeGreaterThan(low);
+    expect(storeys(cp.stampTiles(tiles, null))).toBeGreaterThan(low);
   });
 });
 

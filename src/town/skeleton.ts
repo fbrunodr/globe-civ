@@ -178,9 +178,10 @@ class Plan {
 
 // ---------- the draft ----------
 
-export function draftSkeleton(key: string, role: Role, variant = 0): Skeleton {
-  // (The walled center's streets are the center's: its walls go round them.)
-  if (role === 'walled') return { ...draftSkeleton(key, 'center', variant), role };
+export function draftSkeleton(key: string, role: Role, variant = 0, rim = true): Skeleton {
+  // (The walled center's streets are the center's, but for the rim
+  // streets: its walls go round them, and nothing stands outside them.)
+  if (role === 'walled') return { ...draftSkeleton(key, 'center', variant, false), role };
   const colouring = parseKey(key);
   const stubs = stubsOf(colouring);
   const rand = mulberry32(hashStr(`${key}|${role}|${variant}`));
@@ -193,11 +194,13 @@ export function draftSkeleton(key: string, role: Role, variant = 0): Skeleton {
     const w = wonderPlan(plan, groupOf(role));
     wonder = w.wonder;
     squares.push(...w.squares);
+    if (rim) rimStreets(plan, colouring);
   } else if (stubs.length === 0) {
     village(plan, role === 'center');
   } else {
     layStreets(plan, colouring);
     connect(plan);
+    if (rim) rimStreets(plan, colouring);
   }
   if (role === 'center') {
     const c = centerPlaza(plan.streets, field);
@@ -206,8 +209,9 @@ export function draftSkeleton(key: string, role: Role, variant = 0): Skeleton {
   }
   // (Lanes into empty ground where the town is thick; none across the hall, its square or a wonder.)
   const center = role === 'center';
-  infill(plan, field, [...(wonder ? [wonder] : []), ...(hall ? [hall] : [])], squares.filter((q) => q.paved), center ? CENTER_REACH : INNER - 0.06);
+  // (The building spots before the lanes, so they find room; no lane runs through them.)
   const spots = isWonderRole(role) ? [] : placeSpots(plan.streets, squares, hall, rand, field, center);
+  infill(plan, field, [...(wonder ? [wonder] : []), ...(hall ? [hall] : []), ...spots], squares.filter((q) => q.paved), center ? CENTER_REACH : INNER - 0.06);
   return { key, role, stubs, streets: plan.streets, squares, spots, hall, wonder };
 }
 
@@ -226,6 +230,28 @@ function village(plan: Plan, center: boolean): void {
     const reach = (center ? 0.27 : 0.36) + 0.04 * rand(), side = perp(out), sway = (rand() - 0.5) * 0.08;
     const end = add(add(c, mul(out, reach)), mul(side, sway));
     plan.streets.push({ pts: bezier(start, out, end, norm(sub(end, start)), mul(side, sway * 0.5), 10), rank: 'lane', ends: [null, null] });
+  }
+}
+
+// Along each side whose street joins another built tile, a street at
+// RIM_RHO: the houses outside it back onto the edge, back to back with
+// the neighbor's, so a town reads as one across its tiles. It runs from
+// the side's own street out toward each corner, round the corner where
+// the next side is joined too (meeting that side's), short of it where
+// the town ends there.
+export const RIM_RHO = 0.81;
+function rimStreets(plan: Plan, c: readonly EdgeValue[]): void {
+  const d = 0.5 * RIM_RHO, toCorner = d / Math.cos(Math.PI / 6);
+  for (let j = 0; j < 6; j++) {
+    if (!c[j]) continue;
+    const n = { x: Math.cos((j * Math.PI) / 3), y: Math.sin((j * Math.PI) / 3) }, mid = mul(n, d);
+    for (const dir of [1, -1]) {
+      const k = (j + dir + 6) % 6, a = ((j + dir * 0.5) * Math.PI) / 3;
+      const cornerPt = { x: Math.cos(a) * toCorner, y: Math.sin(a) * toCorner };
+      // (Where the next side is open: stop short of the corner, the row of houses ends there.)
+      const end = c[k] ? cornerPt : lerp(mid, cornerPt, 0.72);
+      plan.add([mid, lerp(mid, end, 0.34), lerp(mid, end, 0.67), end], 'side', [null, null]);
+    }
   }
 }
 
