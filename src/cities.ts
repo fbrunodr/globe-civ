@@ -10,11 +10,17 @@
 // each). Each new citizen is a growth placement the player (or the city's
 // governor) makes. There are no workers.
 //
-// Buildings sit in slots: two per urban tile and two on the center. Two
-// buildings of one family on a tile make a quarter (Campus, Market, ...),
-// which adds its yield, and each family building gains from what surrounds
-// its tile (adjacency). Civic buildings fit any land slot and never form a
-// quarter; walls stand around the center and take no slot.
+// Buildings sit in slots, as many as the tile's density gives it (one on a
+// low tile, two medium or dense, three high or metropolitan: town/geometry.ts
+// SPOTS), on urban tiles and the center. Two buildings of one family on a
+// tile make a quarter (Campus, Market, ...), which adds its yield, and each
+// family building gains from what surrounds its tile (adjacency). Civic
+// buildings fit any land slot and never form a quarter; walls stand around
+// the center and take no slot. Any urban tile but the center may also hold
+// one wonder, beside its buildings (on its site: town/geometry.ts).
+//
+// A city starts with the tiles around its center and buys the ring beyond
+// with gold (game.ts buyTile); it never reaches farther.
 //
 // Pure rules only: the state lives in Game (typed arrays per tile), the look
 // in render.ts.
@@ -99,7 +105,15 @@ export function urbanAllowed(t: TileTerrain): boolean {
 }
 
 export const MAX_SPECIALISTS = 2; // per urban tile
-export const SLOTS = 2;           // building slots per urban tile (and on the center)
+export const SLOTS = 3;           // building slots stored per tile (as many as the densest has: density.ts openSlots)
+export const QUARTER = 2;         // buildings of one family on a tile that make a quarter
+
+// ---------- territory ----------
+
+export const CITY_REACH = 2;      // the farthest a city's tiles are from its center
+export const START_REACH = 1;     // what a new city owns
+// What buying a tile costs: more for each the city has bought already.
+export const tileCost = (bought: number): number => 25 + 15 * bought;
 
 // An urban tile's own yield (workshops and trade), a specialist's outside a
 // quarter (a craftsman or merchant), and the center's.
@@ -221,16 +235,19 @@ export function slotsYield(keys: readonly (BuildingKey | null)[], adjacency: (f:
     if (f) families.set(f, (families.get(f) ?? 0) + 1);
   }
   for (const [f, n] of families) {
-    const pts = Math.min(ADJACENCY_CAP, adjacency(f)) + (n >= SLOTS ? QUARTER_BONUS : 0);
+    const pts = Math.min(ADJACENCY_CAP, adjacency(f)) + (n >= QUARTER ? QUARTER_BONUS : 0);
     sum = addOut(sum, scaleOut(FAMILIES[f].unit, pts));
   }
   return sum;
 }
 
-// The quarter a tile's two slots form, if both hold the same family.
+// The quarter a tile's buildings form: a family with QUARTER of them there
+// (with three slots, at most one family can).
 export function quarterOf(keys: readonly (BuildingKey | null)[]): FamilyKey | null {
-  const fs = keys.map((k) => (k ? familyOf(k) : null));
-  return fs.length >= SLOTS && fs[0] && fs.every((f) => f === fs[0]) ? fs[0] : null;
+  const n = new Map<FamilyKey, number>();
+  for (const k of keys) { const f = k ? familyOf(k) : null; if (f) n.set(f, (n.get(f) ?? 0) + 1); }
+  for (const [f, c] of n) if (c >= QUARTER) return f;
+  return null;
 }
 
 // What a specialist living in a tile yields: its quarter's kind, else generic.
@@ -252,8 +269,9 @@ export interface WonderDef {
   readonly desc: string;
 }
 
-// Each is built once in the world, on a whole urban tile (Machu Picchu: a
-// mountain top), placed explicitly.
+// Each is built once in the world, on the site of an urban tile that is
+// not the center, beside its buildings (Machu Picchu: on a mountain top
+// next to the city, the tile staying wild), placed explicitly.
 export const WONDERS = {
   pyramids:        { name: 'Pyramids',         cost: 180, site: 'desertOrFloodplain', yields: out({ prod: 4, culture: 2 }), desc: 'On desert or floodplain. +4 production, +2 culture.' },
   greatLighthouse: { name: 'Great Lighthouse', cost: 160, site: 'coast', yields: out({ food: 2, gold: 3, culture: 1 }), desc: 'On the coast. +2 food, +3 gold, +1 culture.' },

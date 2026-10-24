@@ -87,8 +87,7 @@
       <header>
         <h2>Drawings</h2>
         <div class="pickers">
-          <div class="picker"><span>Type</span><button data-role="block" class="on">block</button><button data-role="center">center</button><button data-role="walled">walled center</button>
-            <span style="margin-top:4px">Wonder</span><button data-role="wonder-monument" title="large square: Pyramids, Hanging Gardens, palaces">monument</button><button data-role="wonder-arena" title="round: Colosseum, Stonehenge">arena</button><button data-role="wonder-hall" title="long: Great Library">hall</button><button data-role="wonder-tower" title="small: Great Lighthouse">tower</button></div>
+          <div class="picker"><span>Type</span><button data-role="block" class="on" title="every built-up tile: its site holds the city hall on the center, a wonder elsewhere">block</button><button data-role="walled">walled center</button></div>
           <div class="picker"><span>Density</span><button data-density="low">low</button><button data-density="medium" class="on">medium</button><button data-density="dense">dense</button><button data-density="high">high</button><button data-density="metropolitan">metropolitan</button></div>
         </div>
         <div id="filterRow"><label><input type="checkbox" id="onlyDrawn" /> drawn only</label><span id="counts"></span></div>
@@ -102,6 +101,7 @@
       <div class="row"><button id="top" class="on" title="T">Top</button><button id="tilt" title="T">Tilted</button></div>
       <div class="row look"><select id="lookCiv" title="Whose houses (the drawing is the same for every civ)"></select></div>
       <div id="lookStyle"></div>
+      <div class="row"><label title="What the preview shows on the site and the spots">Built <select id="preview"></select></label></div>
       <div class="row"><button id="gridBtn" class="on" title="G">Grid snap</button></div>
       <div class="row"><button id="safeBtn" class="on" title="Z: never water inside the dashed line; the blue band may be river water (the sea and lakes never enter a land tile)">Safe zone</button></div>
       <div class="row"><button id="undo" title="Ctrl+Z">↶ Undo</button><button id="redo" title="Ctrl+Shift+Z">↷ Redo</button></div>
@@ -130,8 +130,9 @@
         <span class="opt square"><button data-paved="1" class="on">paved square</button><button data-paved="0">green</button><span>click corners · <kbd>Enter</kbd> or the first corner closes it</span></span>
         <span class="opt wall"><button data-wallmode="wall" class="on">🧱 wall</button><button data-wallmode="gate">🚪 gate</button>
           <span id="hintWall">wall: click corners · <kbd>Enter</kbd>, or the first corner, ends it · gate: click on a wall · streets may only cross a wall through a gate</span></span>
-        <span class="opt spot"><button data-spot="0" class="on">building spot 1</button><button data-spot="1">building spot 2</button><button data-spot="hall">hall</button><button data-spot="wonder">wonder</button>
-          <span class="sep"></span><label><input type="checkbox" id="spotToRoad" checked /> front on the road</label></span>
+        <span class="opt spot"><button data-spot="0" class="on" title="4×4: low tiles have one">building spot 1</button><button data-spot="1" title="medium and dense tiles have two">building spot 2</button><button data-spot="2" title="high and metropolitan tiles have three">building spot 3</button><button data-spot="site" title="7×7: the city hall on the center, a wonder elsewhere (houses on it give way)">site</button>
+          <span class="sep"></span><label><input type="checkbox" id="spotToRoad" checked /> front on the road</label>
+          <span id="hintSpot">a spot's 4×4 house stands until its building does: select the spot, then pick its height</span></span>
       </div>
       <div id="tools">
         <button data-tool="select" class="on"><span class="ic">✋</span>Select <kbd>1</kbd></button>

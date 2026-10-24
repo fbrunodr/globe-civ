@@ -113,7 +113,8 @@ function checkCities(g: Game): string[] {
     seenW.add(w);
     const top = WONDERS[w].site === 'mountainTop';
     if (top ? g.relief[t] !== 'mountains' || g.use[t] !== USE.wild : g.use[t] !== USE.urban || g.isWater(t)) out.push(`WN1 tile ${t}: ${w} not on ${top ? 'a wild mountain' : 'a land urban tile'}`);
-    if (g.slotKeys(t).some((k) => k !== null)) out.push(`WN1 tile ${t}: ${w} shares its tile with buildings`);
+    // (A wonder stands beside its tile's buildings, but never on a center: its site holds the hall.)
+    if (g.use[t] === USE.center) out.push(`WN1 tile ${t}: ${w} on a city's center`);
     if (g.wondersBuilt.get(w) !== t) out.push(`WN1 ${w}: recorded on tile ${g.wondersBuilt.get(w)}, stands on ${t}`);
   }
   for (const c of g.cities) {

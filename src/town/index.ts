@@ -1,12 +1,15 @@
 // The town drawings: for each edge class (edges.ts), role and density, the
-// street skeleton (skeleton.ts: the same for every density) with its lots
-// (draft.ts: by density). Built on first use and kept.
+// street skeleton (skeleton.ts: the same for every density) with its site,
+// its building spots (as many as the density has) and its lots (draft.ts:
+// by density). Built on first use and kept.
 
-import { HALF_WIDTH, LOT_INNER, curve, len, lotSamples, pointInPoly, rhoOf, sub, distToLine, add, mul, isBuilding, LOT_KINDS, FLOORS, ON_GREENS, type Density, type Floors, type Lot, type LotKind, type Pt, type Spot, type Square, type StreetClass, type Street2 } from './geometry.ts';
+import {
+  LOT_INNER, SPOTS, SPOT_HOUSE, SPOT_HOUSE_FLOORS, curve, len, pointInPoly, rhoOf, sub, add, mul, isBuilding, buildingSpot, siteSpot, LOT_KINDS, FLOORS, ON_GREENS,
+  type Density, type Floors, type Lot, type LotKind, type Pt, type Spot, type Square, type StreetClass, type Street2,
+} from './geometry.ts';
 import { draftLots } from './draft.ts';
-import { draftSkeleton, hasHall, RANK_CLASS, EDGE_BLEND, LEAD, HALL_RADIUS, type Rank, type Role, type Skeleton } from './skeleton.ts';
+import { draftSkeleton, thickInMiddle, RANK_CLASS, WIDEST_CLASS, EDGE_BLEND, LEAD, type Rank, type Role, type Skeleton } from './skeleton.ts';
 import { draftWalls, DRAFT_RHO, WALL_CLEAR } from './walls.ts';
-import { groupOf, isWonderRole, wonderSpot } from './wonders.ts';
 import { parseKey, stubsOf, type Stub } from './edges.ts';
 import { townField, withStreets } from './field.ts';
 
@@ -27,9 +30,8 @@ export interface Drawing {
   readonly stubs: readonly Stub[];
   readonly streets: readonly DrawnStreet[];
   readonly squares: readonly Square[];
-  readonly spots: readonly Spot[];
-  readonly hall: Spot | null;
-  readonly wonder: Spot | null;
+  readonly site: Spot;              // the hall on the center, a wonder elsewhere (the houses on it give way)
+  readonly spots: readonly Spot[];  // building spots: SPOTS[density], each with its house (a lot with its spot)
   readonly lots: readonly Lot[];
   // The walled center's walls (none on other tiles): runs, and gates on them.
   readonly walls: readonly (readonly Pt[])[];
@@ -77,15 +79,15 @@ export function pickDrawing(key: string, role: Role, density: Density, hash: num
 //
 // One record per class, role and density: streets as the points they were
 // drawn through (a street drawn from a stub runs straight in from it first),
-// squares, spots, and every lot. Numbers rounded; angles in degrees.
+// squares, the site, the spots, and every lot. Numbers rounded; angles in
+// degrees.
 
 type XY = [number, number];
 export interface DrawingRecord {
   streets: { ctrl: XY[]; rank: Rank }[];
   squares: { pts: XY[]; paved: boolean }[];
-  spots: [number, number, number, number][];        // x, y, r, yaw
-  hall: [number, number, number, number] | null;
-  wonder: [number, number, number, number] | null;
+  site: [number, number, number];                    // x, y, yaw
+  spots: [number, number, number][];                 // x, y, yaw
   lots: (string | number)[][];                       // kind, x, y, yaw[, floors[, spot]]
   walls?: XY[][];                                    // the walled center: wall runs
   gates?: XY[];                                      // and gates on them
@@ -129,9 +131,6 @@ export function fromRecord(key: string, role: Role, density: Density, r: Drawing
     const { pts, ends } = streetPath(s.ctrl.map(pt), stubs);
     return { pts, rank: s.rank, cls: RANK_CLASS[density][s.rank], ends };
   });
-  const spot = (a: [number, number, number, number] | null): Spot | null => (a ? { x: a[0], y: a[1], r: a[2], yaw: a[3] * DEG } : null);
-  // (A wonder's footprint is its group's: the record only places and turns it.)
-  const wonderAt = (a: [number, number, number, number] | null): Spot | null => (a && isWonderRole(role) ? wonderSpot(groupOf(role), a[0], a[1], a[3] * DEG) : null);
   const lots: Lot[] = r.lots.flatMap((row) => {
     const [kind, x, y, yaw, floors, sp] = row as [string, number, number, number, number?, number?];
     if (!(LOT_KINDS as readonly string[]).includes(kind)) return [];
@@ -142,18 +141,18 @@ export function fromRecord(key: string, role: Role, density: Density, r: Drawing
   return {
     key, role, density, stubs, streets,
     squares: r.squares.map((q) => ({ pts: q.pts.map(pt), paved: q.paved })),
-    spots: r.spots.map((a) => spot(a)!), hall: spot(r.hall), wonder: wonderAt(r.wonder), lots,
+    site: siteSpot(r.site[0], r.site[1], r.site[2] * DEG), spots: r.spots.map(([x, y, yaw]) => buildingSpot(x, y, yaw * DEG)), lots,
     walls: (r.walls ?? []).map((w) => w.map(pt)), gates: (r.gates ?? []).map(pt),
   };
 }
 
 // A drawing as a record (to start editing from a draft).
 export function toRecord(d: Drawing, ctrlOf: (s: DrawnStreet) => readonly Pt[]): DrawingRecord {
-  const sp = (s: Spot | null): [number, number, number, number] | null => (s ? [r4(s.x), r4(s.y), r4(s.r), Math.round(s.yaw / DEG)] : null);
+  const sp = (s: Spot): [number, number, number] => [r4(s.x), r4(s.y), Math.round(s.yaw / DEG)];
   return {
     streets: d.streets.map((s) => ({ ctrl: ctrlOf(s).map(xy), rank: s.rank })),
     squares: d.squares.map((q) => ({ pts: q.pts.map(xy), paved: q.paved })),
-    spots: d.spots.map((s) => sp(s)!), hall: sp(d.hall), wonder: sp(d.wonder),
+    site: sp(d.site), spots: d.spots.map(sp),
     lots: d.lots.map((l) => {
       const row: (string | number)[] = [l.kind, r4(l.x), r4(l.y), Math.round(l.yaw / DEG)];
       if (isBuilding(l.kind) || l.spot !== undefined) row.push(l.floors ?? 1);
@@ -166,7 +165,7 @@ export function toRecord(d: Drawing, ctrlOf: (s: DrawnStreet) => readonly Pt[]):
 
 // The widest a street may be where it nears a stub: its edge takes the
 // denser tile's width (up to the widest of its rank).
-export const widestNearStub = (rank: Rank): StreetClass => RANK_CLASS.high[rank];
+export const widestNearStub = (rank: Rank): StreetClass => WIDEST_CLASS[rank];
 
 // What lots keep clear of: each street at its width, and near its stubs at
 // the widest it may get there.
@@ -183,30 +182,23 @@ export function clearance(streets: readonly DrawnStreet[], stubs: readonly Stub[
   return out;
 }
 
+// A spot's house, until a building stands there.
+export const spotHouse = (sp: Spot, k: number, density: Density): Lot =>
+  ({ x: sp.x, y: sp.y, yaw: sp.yaw, kind: SPOT_HOUSE, floors: SPOT_HOUSE_FLOORS[density], spot: k });
+
 export function assemble(sk: Skeleton, density: Density): Drawing {
   const streets: DrawnStreet[] = sk.streets.map((s) => ({ pts: s.pts, rank: s.rank, cls: RANK_CLASS[density][s.rank], ends: s.ends }));
   const clear = clearance(streets, sk.stubs);
-  const decor: Lot[] = [];
-  if (hasHall(sk.role)) {
-    // A well or fountain on the square, clear of the streets and the hall.
-    const sq = sk.squares.find((q) => q.paved);
-    if (sq) {
-      const c = sq.pts.reduce((a, p) => ({ x: a.x + p.x / sq.pts.length, y: a.y + p.y / sq.pts.length }), { x: 0, y: 0 });
-      const kind = density === 'low' ? 'well' as const : 'fountain' as const;
-      const lot: Lot = { x: c.x, y: c.y, yaw: 0, kind };
-      const clearOfAll = lotSamples(lot).every((p) => clear.every((s) => distToLine(p, s.pts) > HALF_WIDTH[s.cls] + 0.004)
-        && (!sk.hall || len(sub(p, sk.hall)) > sk.hall.r + 0.006));
-      if (clearOfAll) decor.push(lot);
-    }
-  }
-  const keepClear = [...(sk.hall ? [{ ...sk.hall, r: HALL_RADIUS[density] }] : []), ...(sk.wonder ? [sk.wonder] : [])];
+  const spots = sk.spots.slice(0, SPOTS[density]);
+  const walled = sk.role === 'walled';
   // The walled center's draft walls: a ring round the rim (the lots keep inside it).
-  const walls = sk.role === 'walled' ? draftWalls(sk.stubs) : { walls: [], gates: [] };
-  const inner = sk.role === 'walled' ? DRAFT_RHO - WALL_CLEAR / 0.5 - 0.01 : LOT_INNER;
+  const walls = walled ? draftWalls(sk.stubs) : { walls: [], gates: [] };
+  const inner = walled ? DRAFT_RHO - WALL_CLEAR / 0.5 - 0.01 : LOT_INNER;
   // (A hair inside it: the editor stores lots rounded, turned to whole degrees.)
   // How thick the town is: the class's field, risen along the streets
   // (most along main streets).
-  const field = withStreets(townField(sk.key, hasHall(sk.role)), streets.map((s) => ({ pts: s.pts, pull: STREET_PULL[s.rank] })));
+  const field = withStreets(townField(sk.key, thickInMiddle(sk.key, sk.role)), streets.map((s) => ({ pts: s.pts, pull: STREET_PULL[s.rank] })));
+  // (Houses on the site too: they stand until the hall or a wonder does.)
   const lots = draftLots({
     region: (p) => rhoOf(6, p) <= inner - 0.003,
     built: (p) => rhoOf(6, p) <= inner - 0.003,
@@ -214,16 +206,18 @@ export function assemble(sk: Skeleton, density: Density): Drawing {
     intensity: (p) => field.at(p),
     streets: clear,
     squares: sk.squares.filter((q) => q.paved),
-    spots: sk.spots,
-    keepClear,
-    decor,
+    keepClear: spots,
+    decor: [],
     seed: hashStr(`${sk.key}|${sk.role}|${density}`),
     frontage: (i) => i < streets.length,
   });
   // (Greens are kept clear of homes too.)
   const greens = sk.squares.filter((q) => !q.paved);
   const kept = lots.filter((l) => ON_GREENS.has(l.kind) || !greens.some((q) => pointInPoly(l, q.pts)));
-  return { key: sk.key, role: sk.role, density, stubs: sk.stubs, streets, squares: sk.squares, spots: sk.spots, hall: sk.hall && { ...sk.hall, r: HALL_RADIUS[density] }, wonder: sk.wonder, lots: [...decor, ...kept], walls: walls.walls, gates: walls.gates };
+  return {
+    key: sk.key, role: sk.role, density, stubs: sk.stubs, streets, squares: sk.squares, site: sk.site, spots,
+    lots: [...spots.map((sp, k) => spotHouse(sp, k, density)), ...kept], walls: walls.walls, gates: walls.gates,
+  };
 }
 
 export type { Role, Rank, Skeleton };

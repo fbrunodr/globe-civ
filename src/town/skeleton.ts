@@ -1,5 +1,6 @@
 // Drafts of the town drawings, one per edge class (edges.ts) and role:
-// the street skeleton, squares, the hall or wonder, and the building spots.
+// the street skeleton, the site (the hall or a wonder) and the building
+// spots.
 // A draft is a pure function of its class, role and variant; hand-corrected
 // drawings (the editor) take its place.
 //
@@ -12,27 +13,23 @@
 
 import { mulberry32, type Rng } from '../rng.ts';
 import {
-  HALF_WIDTH, SAFE_RHO, add, sub, mul, len, lerp, distToLine, inSpot, linesMeet, nearestOn, pointInPoly, rhoOf, spotOutline,
+  HALF_WIDTH, MAX_SPOTS, SAFE_RHO, add, sub, mul, len, lerp, distToLine, buildingSpot, inSpot, linesMeet, nearestOn, pointInPoly, rhoOf, siteSpot, spotCorners, spotOutline, spotsOverlap,
   type Density, type Pt, type Spot, type Square, type StreetClass,
 } from './geometry.ts';
 import { parseKey, stubsOf, type EdgeValue, type Stub } from './edges.ts';
-import { WONDER_ROLES, groupOf, isWonderRole, wonderSpot, type WonderGroup, type WonderRole } from './wonders.ts';
 import { townField, type Field } from './field.ts';
 import { DRAFT_RHO, WALL_CLEAR, WALL_HALF } from './walls.ts';
 
-// What the center keeps inside its walls (the walled center has the
-// center's skeleton): lanes end, and the hall and spots stand, within the
-// draft walls (walls.ts) and clear of them.
+// What the walled center keeps inside its walls: lanes end, and the site
+// and spots stand, within the draft walls (walls.ts) and clear of them.
 const CENTER_REACH = DRAFT_RHO - 0.08;
 const insideWalls = (p: Pt, r: number) => rhoOf(6, p) + (r + WALL_CLEAR + WALL_HALF) / 0.5 <= DRAFT_RHO;
 
-// A tile's part in its town: an ordinary block, the center (the hall and
-// its square), the center within walls (drawn by hand, town/walls.ts), or
-// a wonder's tile (by the wonder's group: town/wonders.ts).
-export type Role = 'block' | 'center' | 'walled' | WonderRole;
-export const ROLES: readonly Role[] = ['block', 'center', 'walled', ...WONDER_ROLES];
-// The roles with the city hall.
-export const hasHall = (r: Role): boolean => r === 'center' || r === 'walled';
+// A tile's part in its town: a block (any built-up tile: on the center its
+// site holds the city hall, elsewhere a wonder if one is built there), or
+// the center within walls (drawn by hand, town/walls.ts).
+export type Role = 'block' | 'walled';
+export const ROLES: readonly Role[] = ['block', 'walled'];
 export type Rank = 'main' | 'side' | 'lane';
 
 // Street widths by rank and density; a stub's street is as wide as its
@@ -44,9 +41,8 @@ export const RANK_CLASS: Record<Density, Record<Rank, StreetClass>> = {
   high: { main: 'avenue', side: 'main', lane: 'street' },
   metropolitan: { main: 'avenue', side: 'avenue', lane: 'main' },
 };
-// The city hall grows with its tile's density: more ground, and a grander
-// model (civic.ts: each civ's own, by tier).
-export const HALL_RADIUS: Record<Density, number> = { low: 0.045, medium: 0.045, dense: 0.054, high: 0.062, metropolitan: 0.075 };
+// The widest each rank gets (at the densest), for what must keep clear of it at any density.
+export const WIDEST_CLASS: Record<Rank, StreetClass> = RANK_CLASS.metropolitan;
 export const rankOfValue = (v: EdgeValue): Rank => (v === 1 ? 'main' : 'side');
 const DENSITY_ORDER: Record<Density, number> = { low: 0, medium: 1, dense: 2, high: 3, metropolitan: 4 };
 // The width where an edge's streets cross it: by the denser of its two tiles,
@@ -69,9 +65,8 @@ export interface Skeleton {
   readonly stubs: readonly Stub[];
   readonly streets: readonly SkelStreet[];
   readonly squares: readonly Square[];
-  readonly spots: readonly Spot[]; // building slots
-  readonly hall: Spot | null;
-  readonly wonder: Spot | null;
+  readonly site: Spot;              // the hall (on the center) or a wonder
+  readonly spots: readonly Spot[];  // building spots, MAX_SPOTS (a density uses the first SPOTS[density])
 }
 
 // ---------- limits (tile steps; the hex's inradius is 0.5) ----------
@@ -81,9 +76,6 @@ export interface Skeleton {
 export const LEAD = 0.125;
 const INNER = 0.88;      // streets stay within this share of the inradius (but at their stubs)
 const FAR = 0.12;        // ground farther than this from every street gets a lane
-const SPOT_R = 0.062;    // building spots
-const HALL_R = 0.075; // (room for the largest hall, HALL_RADIUS)
-const WIDEST = HALF_WIDTH.avenue;
 
 const hashStr = (s: string) => { let h = 2166136261; for (const ch of s) h = Math.imul(h ^ ch.charCodeAt(0), 16777619); return h >>> 0; };
 const norm = (p: Pt): Pt => { const l = len(p); return l > 1e-12 ? mul(p, 1 / l) : { x: 1, y: 0 }; };
@@ -178,46 +170,38 @@ class Plan {
 
 // ---------- the draft ----------
 
-export function draftSkeleton(key: string, role: Role, variant = 0, rim = true): Skeleton {
-  // (The walled center's streets are the center's, but for the rim
-  // streets: its walls go round them, and nothing stands outside them.)
-  if (role === 'walled') return { ...draftSkeleton(key, 'center', variant, false), role };
+export function draftSkeleton(key: string, role: Role, variant = 0): Skeleton {
+  // (The walled center has no rim streets: its walls go round, and nothing
+  // stands outside them.)
+  const walled = role === 'walled';
   const colouring = parseKey(key);
   const stubs = stubsOf(colouring);
   const rand = mulberry32(hashStr(`${key}|${role}|${variant}`));
   const plan = new Plan(stubs, rand);
-  const field = townField(key, role === 'center');
-  const squares: Square[] = [];
-  let hall: Spot | null = null, wonder: Spot | null = null;
-
-  if (isWonderRole(role)) {
-    const w = wonderPlan(plan, groupOf(role));
-    wonder = w.wonder;
-    squares.push(...w.squares);
-    if (rim) rimStreets(plan, colouring);
-  } else if (stubs.length === 0) {
-    village(plan, role === 'center');
-  } else {
+  const field = townField(key, thickInMiddle(key, role));
+  if (stubs.length === 0) village(plan, true);
+  else {
     layStreets(plan, colouring);
     connect(plan);
-    if (rim) rimStreets(plan, colouring);
+    if (!walled) rimStreets(plan, colouring);
   }
-  if (role === 'center') {
-    const c = centerPlaza(plan.streets, field);
-    squares.push(c.square);
-    hall = c.hall;
-  }
-  // (Lanes into empty ground where the town is thick; none across the hall, its square or a wonder.)
-  const center = role === 'center';
-  // (The building spots before the lanes, so they find room; no lane runs through them.)
-  const spots = isWonderRole(role) ? [] : placeSpots(plan.streets, squares, hall, rand, field, center);
-  infill(plan, field, [...(wonder ? [wonder] : []), ...(hall ? [hall] : []), ...spots], squares.filter((q) => q.paved), center ? CENTER_REACH : INNER - 0.06);
-  return { key, role, stubs, streets: plan.streets, squares, spots, hall, wonder };
+  // (The site and spots before the lanes, so they find room and no lane
+  // runs through them; spots that found no street front then go beside the lanes.)
+  const place = placer(rand, field, walled);
+  const site = place.site(plan.streets);
+  const spots = place.spots(plan.streets, [site], MAX_SPOTS);
+  infill(plan, field, [site, ...spots], [], walled ? CENTER_REACH : INNER - 0.06);
+  if (spots.length < MAX_SPOTS) spots.push(...place.spots(plan.streets, [site, ...spots], MAX_SPOTS - spots.length));
+  return { key, role, stubs, streets: plan.streets, squares: [], site, spots };
 }
 
-// No street comes in (the first tile of a town, or a block on its own): a
-// loop round the middle, where the hall and its square stand, and a few
-// tracks out toward the fields.
+// Where the town is thickest in the middle (town/field.ts): the walled
+// center, and a tile no street comes into (only ever a city's first tile:
+// every other built tile touches one).
+export const thickInMiddle = (key: string, role: Role): boolean => role === 'walled' || !key.includes('1');
+
+// No street comes in (the first tile of a town): a loop round the middle,
+// where the hall stands, and a few tracks out toward the fields.
 function village(plan: Plan, center: boolean): void {
   const rand = plan.rand;
   const R = center ? 0.21 : 0.15;
@@ -253,51 +237,6 @@ function rimStreets(plan: Plan, c: readonly EdgeValue[]): void {
       plan.add([mid, lerp(mid, end, 0.34), lerp(mid, end, 0.67), end], 'side', [null, null]);
     }
   }
-}
-
-// A wonder's tile: the wonder stands in the middle of its tile (inside
-// the safe zone, whatever its group), facing the town. Each street comes
-// in and meets a street curving round the wonder's town side (none round
-// its far side), and a forecourt opens before its front; a lawn round it.
-// With one street, that street ends at the forecourt.
-const WONDER_GAP = 0.045; // between the wonder's corners and the street round it
-function wonderPlan(plan: Plan, g: WonderGroup): { wonder: Spot; squares: Square[] } {
-  const stubs = plan.stubs;
-  const leads = stubs.map((s) => add(s.p, mul(s.into, LEAD)));
-  // (Toward the town: the mean way to its streets.)
-  const c = leads.reduce((a, l) => add(a, norm(l)), { x: 0, y: 0 });
-  const f0 = leads.length && len(c) > 0.2 * leads.length ? norm(c) : { x: 0, y: 1 };
-  const sp = wonderSpot(g, 0, 0, Math.atan2(f0.y, f0.x));
-  // (The street round it as far out as its streets' leads allow.)
-  const R = Math.max(sp.r + 0.02, Math.min(sp.r + WONDER_GAP, ...leads.map((l) => len(l) - 0.04)));
-  const arc = arcRound(sp, R, leads);
-  const f = { x: Math.cos(sp.yaw), y: Math.sin(sp.yaw) }, side = perp(f);
-  if (arc) plan.streets.push({ pts: arc, rank: 'side', ends: [null, null] });
-  stubs.forEach((s, i) => {
-    const a = add(sp, mul(norm(sub(leads[i]!, sp)), R));
-    plan.fromStub(i, a, norm(sub(sp, a)), rankOfValue(s.value));
-  });
-  // (No street comes in: a drive up to the forecourt.)
-  if (!stubs.length) {
-    const a = add(sp, mul(f, R)), b = add(sp, mul(f, Math.min(R + 0.13, 0.42)));
-    plan.streets.push({ pts: [a, lerp(a, b, 0.5), b], rank: 'lane', ends: [null, null] });
-  }
-  const depth = sp.hd ?? sp.r, half = Math.min(sp.hw ?? sp.r, 0.09);
-  const front = add(sp, mul(f, depth)), toStreet = add(sp, mul(f, R));
-  const forecourt: Square = { pts: [add(front, mul(side, half)), add(toStreet, mul(side, half)), add(toStreet, mul(side, -half)), add(front, mul(side, -half))], paved: true };
-  const lawn: Square = { pts: spotOutline({ ...sp, r: sp.r + 0.025, ...(sp.hw !== undefined ? { hw: sp.hw + 0.025, hd: sp.hd! + 0.025 } : {}) }, 0.03), paved: false };
-  return { wonder: sp, squares: [lawn, forecourt] };
-}
-// The street round a wonder at radius R on its town side: over the
-// arrivals of the streets coming in (all but the widest gap between them).
-function arcRound(c: Pt, R: number, leads: readonly Pt[]): Pt[] | null {
-  if (leads.length < 2) return null;
-  const angs = leads.map((l) => Math.atan2(l.y - c.y, l.x - c.x)).sort((a, b) => a - b);
-  let gapAt = angs.length - 1, gap = angs[0]! + 2 * Math.PI - angs[angs.length - 1]!;
-  for (let i = 0; i + 1 < angs.length; i++) if (angs[i + 1]! - angs[i]! > gap) { gap = angs[i + 1]! - angs[i]!; gapAt = i; }
-  const a0 = angs[(gapAt + 1) % angs.length]!, span = 2 * Math.PI - gap;
-  const n = Math.max(3, Math.ceil(span / (Math.PI / 18)));
-  return Array.from({ length: n + 1 }, (_, i) => { const a = a0 + (span * i) / n; return { x: c.x + R * Math.cos(a), y: c.y + R * Math.sin(a) }; });
 }
 
 // Through streets, then T junctions.
@@ -412,29 +351,6 @@ function ring(c: Pt, r: number, n: number, wobble = 0, rand?: Rng): Pt[] {
 }
 
 
-// The center's hall and its square: the hall where the town is thickest,
-// back from a street by the square's depth, facing the street across it;
-// the square runs from the hall's front to the street.
-const PLAZA_MIN = 0.035, PLAZA_MAX = 0.07;
-function centerPlaza(streets: readonly SkelStreet[], field: Field): { square: Square; hall: Spot } {
-  let at: Pt | null = null, bs = -Infinity, fallback: Pt = { x: 0, y: 0 }, clearest = -Infinity;
-  for (let x = -0.4; x <= 0.4001; x += 0.01) for (let y = -0.4; y <= 0.4001; y += 0.01) {
-    const p = { x, y };
-    if (!insideWalls(p, HALL_R)) continue;
-    const clear = Math.min(...streets.map((s) => distToLine(p, s.pts))) - WIDEST - HALL_R;
-    if (clear > clearest) { clearest = clear; fallback = p; }
-    if (clear < PLAZA_MIN) continue;
-    const score = field.at(p) - 2 * Math.max(0, clear - PLAZA_MAX) - 0.2 * len(p);
-    if (score > bs) { bs = score; at = p; }
-  }
-  const h = at ?? fallback;
-  const near = nearestStreet(streets, h)!;
-  const f = norm(sub(near.q, h)), s = perp(f), w = HALL_R * 1.25;
-  const a = add(h, mul(f, HALL_R * 0.6)), b = near.q;
-  const square: Square = { pts: [add(a, mul(s, w)), add(b, mul(s, w)), add(b, mul(s, -w)), add(a, mul(s, -w))], paved: true };
-  return { square, hall: { x: h.x, y: h.y, r: HALL_R, yaw: Math.atan2(f.y, f.x) } };
-}
-
 // Lanes into ground left far from every street, where the town is thick
 // enough for them (the farthest first); thin ground stays open.
 const LANE_FIELD = 0.42;
@@ -461,60 +377,66 @@ function infill(plan: Plan, field: Field, keep: readonly Spot[], paved: readonly
     const beyond = nearestStreet(plan.streets, end, near.s);
     const pts = bezier(near.q, out, end, norm(sub(end, near.q)), { x: 0, y: 0 }, 12);
     if (beyond && len(sub(beyond.q, end)) < 0.09 && len(sub(beyond.q, near.q)) > 0.15) pts.push(beyond.q);
-    // (Never across a wonder, the hall or its square.)
+    // (Never across the site or a spot.)
     if (pts.some((p) => blocked(p, 0.035))) { grid.splice(grid.indexOf(far), 1); n--; continue; }
     plan.add(pts, 'lane', [null, null]);
   }
 }
 
-// Two building spots beside the streets: the first where the town is
-// thickest (on a main street if there is one), the second apart from it
-// but in thick town too.
-// (Their buildings stand within the safe zone; the center's within its walls.)
-function placeSpots(streets: readonly SkelStreet[], squares: readonly Square[], hall: Spot | null, rand: Rng, field: Field, center: boolean): Spot[] {
-  const cands: { p: Pt; yaw: number; main: boolean }[] = [];
-  const widthAt = (s: SkelStreet) => HALF_WIDTH[RANK_CLASS.high[s.rank]];
-  const free = (c: Pt) => rhoOf(6, c) + SPOT_R / 0.5 <= SAFE_RHO && (!center || insideWalls(c, SPOT_R))
-    && !streets.some((s) => distToLine(c, s.pts) < SPOT_R + WIDEST + 0.006)
-    && !squares.some((q) => q.paved && (pointInPoly(c, q.pts) || distToLine(c, [...q.pts, q.pts[0]!]) < SPOT_R))
-    && !(hall && len(sub(c, hall)) < hall.r + SPOT_R + 0.02);
-  for (const st of streets) {
-    for (let i = 1; i + 1 < st.pts.length; i++) {
-      const p = st.pts[i]!, t = norm(sub(st.pts[i + 1]!, st.pts[i - 1]!));
-      for (const sg of [1, -1]) {
-        const c = add(p, mul(perp(t), sg * (SPOT_R + widthAt(st) + 0.012)));
-        if (free(c)) cands.push({ p: c, yaw: Math.atan2(p.y - c.y, p.x - c.x), main: st.rank === 'main' });
+// The site and the building spots beside the streets, facing them, inside
+// the safe zone (the walled center's within its walls) and clear of each
+// other: the site where the town is thickest, then each spot in thick town
+// apart from those before it (a low tile uses the first, a medium one the
+// first two: geometry.ts SPOTS). Each is placed where its square stands
+// clear of every street at its widest.
+function placer(rand: Rng, field: Field, walled: boolean) {
+  type Cand = { sp: Spot; main: boolean };
+  const widthAt = (s: SkelStreet) => HALF_WIDTH[WIDEST_CLASS[s.rank]];
+  // (Off every street at its widest, by its square's outline: town/checks.ts spotOnStreet.)
+  const free = (streets: readonly SkelStreet[], sp: Spot) => spotCorners(sp).every((c) => rhoOf(6, c) <= SAFE_RHO) && (!walled || insideWalls(sp, sp.r))
+    && !streets.some((s) => { const hw = widthAt(s) + 0.002; return distToLine(sp, s.pts) < sp.r + hw && (spotOutline(sp).some((p) => distToLine(p, s.pts) < hw) || s.pts.some((p) => inSpot(p, sp))); });
+  // Beside the streets, facing them (or, where no street side has room, open ground facing the nearest).
+  const cands = (streets: readonly SkelStreet[], half: number, at: (x: number, y: number, yaw: number) => Spot, open: boolean): Cand[] => {
+    const out: Cand[] = [];
+    for (const st of streets) {
+      for (let i = 1; i + 1 < st.pts.length; i++) {
+        const p = st.pts[i]!, t = norm(sub(st.pts[i + 1]!, st.pts[i - 1]!));
+        for (const sg of [1, -1]) {
+          const c = add(p, mul(perp(t), sg * (half + widthAt(st) + 0.006)));
+          const sp = at(c.x, c.y, Math.atan2(p.y - c.y, p.x - c.x));
+          if (free(streets, sp)) out.push({ sp, main: st.rank === 'main' });
+        }
       }
     }
-  }
-  // Open ground anywhere (facing its nearest street), for when the street sides are all taken.
-  const open = (): typeof cands => {
-    const out: typeof cands = [];
-    for (let x = -0.4; x <= 0.4; x += 0.02) for (let y = -0.4; y <= 0.4; y += 0.02) {
-      const c = { x, y };
-      if (!free(c)) continue;
-      const near = nearestStreet(streets, c);
-      out.push({ p: c, yaw: near ? Math.atan2(near.q.y - c.y, near.q.x - c.x) : 0, main: false });
+    if (!out.length && open) {
+      for (let x = -0.4; x <= 0.4; x += 0.02) for (let y = -0.4; y <= 0.4; y += 0.02) {
+        const near = nearestStreet(streets, { x, y });
+        const sp = at(x, y, near ? Math.atan2(near.q.y - y, near.q.x - x) : 0);
+        if (free(streets, sp)) out.push({ sp, main: false });
+      }
     }
     return out;
   };
-  if (cands.length === 0) cands.push(...open());
-  if (cands.length === 0) return [];
-  const score = (c: (typeof cands)[number]) => field.at(c.p) + (c.main ? 0.08 : 0) + 0.05 * rand();
-  let a = cands[0]!;
-  for (const c of cands) if (score(c) > score(a)) a = c;
-  const MIN = 2 * SPOT_R + 0.03;
-  const second = (list: typeof cands) => {
-    let b: (typeof cands)[number] | null = null, bv = -Infinity;
-    for (const c of list) {
-      const d = len(sub(c.p, a.p));
-      if (d < MIN) continue;
-      const v = field.at(c.p) + 0.8 * Math.min(d, 0.3);
-      if (v > bv) { bv = v; b = c; }
-    }
+  const best = (cs: readonly Cand[], value: (c: Cand) => number): Cand | null => {
+    let b: Cand | null = null, bv = -Infinity;
+    for (const c of cs) { const v = value(c); if (v > bv) { bv = v; b = c; } }
     return b;
   };
-  const b = second(cands) ?? second(open());
-  const spot = (c: { p: Pt; yaw: number }): Spot => ({ x: c.p.x, y: c.p.y, r: SPOT_R, yaw: c.yaw });
-  return b ? [spot(a), spot(b)] : [spot(a)];
+  return {
+    site: (streets: readonly SkelStreet[]): Spot =>
+      best(cands(streets, siteSpot(0, 0, 0).hw!, siteSpot, true), (c) => field.at(c.sp) + (c.main ? 0.08 : 0) + 0.05 * rand() - 0.3 * len(c.sp))?.sp ?? siteSpot(0, 0, 0),
+    // Up to n more spots, clear of those placed.
+    spots: (streets: readonly SkelStreet[], placed: readonly Spot[], n: number): Spot[] => {
+      const out: Spot[] = [];
+      const cs = cands(streets, buildingSpot(0, 0, 0).hw!, buildingSpot, false);
+      for (let k = 0; k < n; k++) {
+        const all = [...placed, ...out], mine = all.slice(1);
+        const ok = cs.filter((c) => all.every((o) => !spotsOverlap(c.sp, o, 0.012)));
+        const c = best(ok, (c) => field.at(c.sp) + 0.8 * Math.min(0.3, ...mine.map((o) => len(sub(c.sp, o)))) + (c.main ? 0.08 : 0) + 0.05 * rand());
+        if (!c) break;
+        out.push(c.sp);
+      }
+      return out;
+    },
+  };
 }

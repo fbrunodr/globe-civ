@@ -9,12 +9,11 @@
 // turned and mirrored into place. Its streets end exactly at the stubs of
 // its sides, where the neighbor's streets end too.
 
-import { HALF_WIDTH, densify, toFan, len, sub, type Density, type Floors, type LotKind, type Pt, type StreetClass } from './town/geometry.ts';
+import { HALF_WIDTH, densify, lotOnSpot, toFan, len, sub, type Density, type Floors, type LotKind, type Pt, type Spot, type StreetClass } from './town/geometry.ts';
 import { classOf, turnPoint, sideUnder, type EdgeValue, type Turn } from './town/edges.ts';
 import { pickDrawing, type Drawing, type Role } from './town/index.ts';
 import { EDGE_BLEND } from './town/skeleton.ts';
 import { wallRuns } from './town/walls.ts';
-import { groupOf, isWonderRole, type WonderGroup } from './town/wonders.ts';
 
 export interface FanPt { t: number; i: number; wa: number; wb: number }
 
@@ -36,9 +35,11 @@ export interface StampedLot {
   kind: LotKind;
   floors?: Floors;   // buildings
   spot?: number;     // the building spot it gives way to
+  onSite?: true;     // it reaches onto the tile's site (gives way to the hall or a wonder)
   seed: number;      // stable per lot, for its look
 }
-export interface StampedSpot { tile: number; k: number; at: FanPt; face: FanPt; r: number; density?: Density; hw?: number; hd?: number; group?: WonderGroup } // density: a hall's tile's (its model); hw, hd: a wonder's rectangle; group: a wonder's
+// A spot or a site: its middle, facing point, radius and square (half width, half depth); its tile's density.
+export interface StampedSpot { tile: number; k: number; at: FanPt; face: FanPt; r: number; hw: number; hd: number; density: Density }
 export interface StampedStreet { tile: number; pts: FanPt[]; hw: number[] } // half widths (tile steps), per point
 export interface StampedSquare { tile: number; pts: FanPt[]; paved: boolean }
 export interface StampedWall { tile: number; pts: FanPt[]; towers: boolean[] } // a run of wall (gates between runs), towers where true
@@ -46,8 +47,7 @@ export interface StampedWall { tile: number; pts: FanPt[]; towers: boolean[] } /
 export interface Stamp {
   lots: StampedLot[];
   spots: StampedSpot[];
-  halls: StampedSpot[];
-  wonders: StampedSpot[];
+  sites: StampedSpot[];
   streets: StampedStreet[];
   squares: StampedSquare[];
   walls: StampedWall[];
@@ -71,7 +71,7 @@ export function toTile(tile: number, turn: Turn, p: Pt): FanPt {
 }
 
 export function stamp(tiles: readonly StampTile[]): Stamp {
-  const out: Stamp = { lots: [], spots: [], halls: [], wonders: [], streets: [], squares: [], walls: [] };
+  const out: Stamp = { lots: [], spots: [], sites: [], streets: [], squares: [], walls: [] };
   for (const s of tiles) {
     const { drawing: d, turn } = drawingOf(s);
     const at = (p: Pt) => toTile(s.tile, turn, p);
@@ -80,14 +80,13 @@ export function stamp(tiles: readonly StampTile[]): Stamp {
       const lot: StampedLot = { tile: s.tile, at: at(l), face: ahead(l, l.yaw), kind: l.kind, seed: hashInts(s.tile, n, 1) };
       if (l.spot !== undefined) lot.spot = l.spot;
       if (l.floors !== undefined) lot.floors = l.floors;
+      if (l.spot === undefined && lotOnSpot(l, d.site)) lot.onSite = true;
       out.lots.push(lot);
     });
-    d.spots.forEach((sp, k) => out.spots.push({ tile: s.tile, k, at: at(sp), face: ahead(sp, sp.yaw), r: sp.r }));
-    if (d.hall) out.halls.push({ tile: s.tile, k: -1, at: at(d.hall), face: ahead(d.hall, d.hall.yaw), r: d.hall.r, density: s.density });
-    if (d.wonder) {
-      const w = d.wonder;
-      out.wonders.push({ tile: s.tile, k: -1, at: at(w), face: ahead(w, w.yaw), r: w.r, ...(w.hw !== undefined && w.hd !== undefined ? { hw: w.hw, hd: w.hd } : {}), ...(isWonderRole(s.role) ? { group: groupOf(s.role) } : {}) });
-    }
+    const spot = (sp: Spot, k: number): StampedSpot =>
+      ({ tile: s.tile, k, at: at(sp), face: ahead(sp, sp.yaw), r: sp.r, hw: sp.hw ?? sp.r, hd: sp.hd ?? sp.r, density: s.density });
+    d.spots.forEach((sp, k) => out.spots.push(spot(sp, k)));
+    out.sites.push(spot(d.site, -1));
     for (const st of d.streets) {
       const pts = densify(st.pts, STAMP_STEP);
       const own = HALF_WIDTH[st.cls];

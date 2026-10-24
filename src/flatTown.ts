@@ -7,13 +7,12 @@ import * as THREE from 'three';
 import { corner, rhoOf, LOT_SIZE, SPINS, isBuilding, type Footprint, type Pt, type Floors } from './town/geometry.ts';
 import { STUB_U, type EdgeValue } from './town/edges.ts';
 import type { FanPt, Stamp } from './cityStamp.ts';
-import type { WonderGroup } from './town/wonders.ts';
+import { wonderModelKind, type SiteModel } from './wonderModels.ts';
 import { BUILDINGS_CATALOG, PROP_MODEL, buildBuildingGeometry, modelGeometry, type BuildingKind, type ModelKind } from './buildingCatalog.ts';
 import { styleOf, type ArchCiv } from './architecture.ts';
 import { HOUSE_VARIANTS, houseKind } from './houses.ts';
 import { makePropMaterial, instanceGeometry } from './propMaterial.ts';
 import { civicKind } from './civic.ts';
-import { HALL_RADIUS } from './town/skeleton.ts';
 import { mulberry32 } from './rng.ts';
 
 // Models: render.ts draws them at 1.5 × PROP_SIZE (0.276) of a tile edge of
@@ -28,7 +27,6 @@ export const GROUND = new THREE.Color(0x7d9a55), RIM = new THREE.Color(0x76924f)
 const GREEN_RGB = new THREE.Color(0x8aa860);
 
 // A wonder to show for each group.
-const WONDER_SAMPLE: Record<WonderGroup, BuildingKind> = { monument: 'pyramids', arena: 'colosseum', hall: 'greatLibrary', tower: 'greatLighthouse' };
 const SAMPLE: readonly BuildingKind[] = ['library', 'market', 'temple', 'workshop', 'amphitheater', 'granary', 'barracks', 'odeon'];
 
 export const buildingMat = makePropMaterial(0.32);
@@ -96,12 +94,6 @@ export class FlatPainter {
   }
 
   // A model's half extents across (x) and deep (z), in model units.
-  private modelBox(kind: BuildingKind): readonly [number, number] {
-    const g = buildBuildingGeometry(kind); g.computeBoundingBox();
-    const b = g.boundingBox!;
-    g.dispose();
-    return [Math.max(-b.min.x, b.max.x), Math.max(-b.min.z, b.max.z)];
-  }
   private modelRadius(kind: BuildingKind): number {
     let r = this.radius.get(kind);
     if (r === undefined) {
@@ -128,8 +120,10 @@ export class FlatPainter {
     this.model(houseKind(styleOf(this.look.civ, floors), kind, floors, variant), at, yaw, new THREE.Vector3(1, 1, 1), 0xffffff, shade);
   }
 
-  // A stamp (cityStamp.ts) as the game would show it.
-  stamp(st: Stamp, opts: { walls?: boolean; spots?: boolean; wild?: boolean } = {}): void {
+  // A stamp (cityStamp.ts) as the game would show it: `spots`, a building
+  // on each spot (else its house); `sites`, what stands on each tile's site
+  // (the hall, a wonder; else its houses).
+  stamp(st: Stamp, opts: { walls?: boolean; spots?: boolean; wild?: boolean; sites?: (tile: number) => 'hall' | SiteModel | null } = {}): void {
     for (const q of st.squares) this.polygon(q.pts.map((p) => this.toPlane(p)), 0.0015, q.paved ? PLAZA_RGB : GREEN_RGB);
     for (const s of st.streets) this.ribbon(s.pts.map((p) => this.toPlane(p)), s.hw, 0.002, STREET_RGB);
     const used = new Set<string>();
@@ -141,20 +135,19 @@ export class FlatPainter {
         this.model(kind, at, this.yawToward(at, this.toPlane(sp.face)), new THREE.Vector3(s, s, s), BUILDINGS_CATALOG[kind].leaf);
       });
     }
-    // The hall: its civ's, for its tile's density (civic.ts), as large as its spot.
-    for (const h of st.halls) {
-      const d = h.density ?? 'medium', at = this.toPlane(h.at), s = h.r / HALL_RADIUS[d];
-      this.model(civicKind(this.look.civ, d), at, this.yawToward(at, this.toPlane(h.face)), new THREE.Vector3(s, s, s), 0xffffff);
-    }
-    // A wonder of its group, fitted to its footprint (as cityProps.ts does), facing its front.
-    for (const w of st.wonders) {
-      const kind = WONDER_SAMPLE[w.group ?? 'arena'], at = this.toPlane(w.at), box = this.modelBox(kind);
-      const fit = w.hw !== undefined && w.hd !== undefined ? Math.min(w.hw / box[0], w.hd / box[1]) : w.r / Math.hypot(box[0], box[1]);
-      const s = Math.min(HOUSE, 0.92 * fit);
-      this.model(kind, at, this.yawToward(at, this.toPlane(w.face)), new THREE.Vector3(s, s, s), BUILDINGS_CATALOG[kind].leaf);
+    // Sites: the hall (its civ's, for its tile's density: civic.ts) or a
+    // wonder (wonderModels.ts), at true size, facing the site's front.
+    const held = new Set<number>();
+    for (const sp of st.sites) {
+      const what = opts.sites?.(sp.tile) ?? null;
+      if (!what) continue;
+      held.add(sp.tile);
+      const at = this.toPlane(sp.at), yaw = this.yawToward(at, this.toPlane(sp.face)), one = new THREE.Vector3(1, 1, 1);
+      this.model(what === 'hall' ? civicKind(this.look.civ, sp.density) : wonderModelKind(what), at, yaw, one, 0xffffff);
     }
     for (const l of st.lots) {
       if (l.spot !== undefined && used.has(`${l.tile}:${l.spot}`)) continue;
+      if (l.onSite && held.has(l.tile)) continue;
       const rand = mulberry32(l.seed);
       const at = this.toPlane(l.at), yaw = this.yawToward(at, this.toPlane(l.face));
       if (!isBuilding(l.kind)) {
@@ -190,7 +183,7 @@ export class FlatPainter {
     const GAP = 0.03; // (as the game: cityProps.ts FLORA_GAP)
     const obstacles: { at: THREE.Vector3; r: number }[] = [];
     for (const l of st.lots) obstacles.push({ at: this.toPlane(l.at), r: Math.hypot(...LOT_SIZE[l.kind]) + GAP });
-    for (const s of [...st.spots, ...st.halls, ...st.wonders]) obstacles.push({ at: this.toPlane(s.at), r: s.r + GAP });
+    for (const s of [...st.spots, ...st.sites]) obstacles.push({ at: this.toPlane(s.at), r: s.r + GAP });
     const streets = st.streets.map((s) => ({ pts: s.pts.map((p) => this.toPlane(p)), hw: s.hw }));
     const squares = st.squares.map((q) => q.pts.map((p) => this.toPlane(p)));
     const segDist = (p: THREE.Vector3, a: THREE.Vector3, b: THREE.Vector3) => {

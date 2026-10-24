@@ -20,6 +20,7 @@ import { buildPropGeometry, catalogEntry, CATALOG, CATALOG_KINDS, type CatalogKi
 import { BUILDING_KINDS, buildBuildingGeometry, type BuildingKind } from './buildingCatalog.ts';
 import { houseGeometry, type HouseKind } from './houses.ts';
 import { civicGeometry, isCivicKind, type CivicKind } from './civic.ts';
+import { isWonderModelKind, wonderGeometry, type WonderModelKind } from './wonderModels.ts';
 import { CityProps, type CitySpot } from './cityProps.ts';
 import { roadLines, ROAD_HALF_WIDTH } from './roads.ts';
 import { Vegetation, type SpotEnv } from './vegetation.ts';
@@ -52,7 +53,7 @@ const PROP_CHUNKS = 8;
 
 // Flora and city buildings share the chunks; town lots (houses.ts) are
 // models of their own, made on first use.
-type PropKind = CatalogKind | BuildingKind | HouseKind | CivicKind;
+type PropKind = CatalogKind | BuildingKind | HouseKind | CivicKind | WonderModelKind;
 const PROP_KINDS: readonly PropKind[] = [...CATALOG_KINDS, ...BUILDING_KINDS];
 const isFloraKind = (k: PropKind): k is CatalogKind => k in CATALOG;
 
@@ -838,7 +839,7 @@ export class GlobeRenderer {
   // carry the scale).
   private geometryOf(kind: PropKind): THREE.BufferGeometry {
     let g = this.propGeo.get(kind);
-    if (!g) { g = isCivicKind(kind) ? civicGeometry(kind) : houseGeometry(kind as HouseKind); this.propGeo.set(kind, g); }
+    if (!g) { g = isCivicKind(kind) ? civicGeometry(kind) : isWonderModelKind(kind) ? wonderGeometry(kind) : houseGeometry(kind as HouseKind); this.propGeo.set(kind, g); }
     return g;
   }
 

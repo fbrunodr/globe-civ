@@ -17,6 +17,11 @@ export function aiTurn(g: Game, p: Player): void {
 
   for (const c of cities) {
     if (!c.building) c.building = chooseBuild(g, c, cities.length + settlers, garrisoned(c), military >= 2 + 2 * cities.length);
+    // Running out of room to grow: buy the best tile of the ring beyond (while the gold lasts).
+    while (g.growthOptions(c).filter((o) => o.kind !== 'specialist').length < 2) {
+      const t = g.governorTileToBuy(c);
+      if (t === null || !g.buyTile(c, t)) break;
+    }
   }
 
   for (const u of units) {

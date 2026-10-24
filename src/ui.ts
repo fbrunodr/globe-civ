@@ -20,12 +20,13 @@ export type Action =
   | { type: 'placeKind'; kind: GrowthKind }
   | { type: 'governorPlace' }
   | { type: 'focus'; focus: FocusKey }
+  | { type: 'buyMode' }
   | { type: 'endTurn' };
 
 // What the map shows for the selected city: where a citizen (of a kind) or
-// a completed building can go.
+// a completed building can go, or the tiles it could buy ('buy').
 // `{ wonder }`: picking the tile of a wonder to start.
-export type Placing = GrowthKind | 'building' | { readonly wonder: WonderKey } | null;
+export type Placing = GrowthKind | 'building' | 'buy' | { readonly wonder: WonderKey } | null;
 export const wonderPicked = (p: Placing): WonderKey | null => (p !== null && typeof p === 'object' ? p.wonder : null);
 
 export function assertNever(x: never): never {
@@ -38,7 +39,7 @@ const isBuildKey = (s: string): s is BuildKey => (BUILDABLE as string[]).include
 function parseAction(el: HTMLElement): Action | null {
   const type = el.dataset['act'];
   switch (type) {
-    case 'found': case 'fortify': case 'wake': case 'skip': case 'disband': case 'endTurn': case 'governorPlace': case 'pillage': case 'raze':
+    case 'found': case 'fortify': case 'wake': case 'skip': case 'disband': case 'endTurn': case 'governorPlace': case 'pillage': case 'raze': case 'buyMode':
       return { type };
     case 'placeKind': {
       const kind = el.dataset['kind'];
@@ -175,7 +176,9 @@ export class UI {
     const makeup = `Center · ${urban.length} urban · ${rural} rural${specialists ? ` · ${specialists} specialist${specialists > 1 ? 's' : ''}` : ''}`;
     let place = '';
     const pickW = wonderPicked(placing);
-    if (mine && pickW) {
+    if (mine && placing === 'buy') {
+      place = `<div class="place"><b>Buy a tile</b> <small>${g.tilePrice(c)} gold each (you have ${g.players[c.owner]!.gold}) · click a highlighted tile · <kbd>Esc</kbd> stops</small></div>`;
+    } else if (mine && pickW) {
       place = `<div class="place"><b>Where will the ${esc(WONDERS[pickW].name)} stand?</b> <small>${esc(WONDERS[pickW].desc)} Click a highlighted tile · <kbd>Esc</kbd> cancels</small></div>`;
     } else if (mine && c.pendingBuilding) {
       place = `<div class="place"><b>Place the ${esc(BUILDINGS[c.pendingBuilding].name)}</b> <small>click a highlighted tile (the bright one is the governor's pick) · <kbd>Esc</kbd> leaves it to the governor</small>
@@ -225,6 +228,7 @@ export class UI {
       <div class="desc">${makeup}</div>
       <div class="desc">Food ${c.food}/${cost} (${y.surplus >= 0 ? '+' : ''}${y.surplus}) — ${grow}</div>
       ${place}
+      ${mine && placing !== 'buy' && g.buyableTiles(c).length ? `<div class="buttons"><button data-act="buyMode" title="A city grows into the ring beyond its first by buying it">Buy tiles <small>${g.tilePrice(c)} gold</small></button></div>` : ''}
       ${focus}
       ${this.quartersHtml(c)}
       <div class="desc">Producing: <b>${current}</b></div>

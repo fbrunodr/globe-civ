@@ -28,7 +28,7 @@ export const sideLength = (k: Sides) => 2 * INR[k] * Math.tan(Math.PI / k);
 //     beach, about 0.86 out at the middles of its sides).
 export const SAFE_RHO = 0.8;
 // What a player builds keeps inside the safe zone (no river reaches it):
-// the building spots, the hall, a wonder (checks.ts spotPastRim). Houses
+// the building spots and the site (checks.ts spotPastRim). Houses
 // may stand out to the lot area's edge (LOT_INNER): where a river comes in
 // the game leaves out those at its bank.
 // Lots stay within this share of the inradius: nearly to the edge, so a
@@ -98,14 +98,55 @@ export interface Lot {
   readonly floors?: Floors; // buildings
   readonly spot?: number; // stands on building spot k (gone once a building is there)
 }
-// A place for a building (the slots, the hall, a wonder): its middle,
-// radius (round), and the way it faces.
+// A place for a building: its middle, radius (round), and the way it faces.
 export interface Spot {
   readonly x: number; readonly y: number; readonly r: number; readonly yaw: number;
-  // A rectangle instead of a circle (wonders): hw across its front, hd deep
-  // (its front faces yaw); r is then the distance to its corners.
+  // A rectangle instead of a circle: hw across its front, hd deep (its
+  // front faces yaw); r is then the distance to its corners.
   readonly hw?: number; readonly hd?: number;
 }
+// What the player builds stands on squares of the grid, inside the safe
+// zone and clear of each other: building spots (SPOT_CELLS a side: one of
+// the tile's buildings, and a house as large until one stands there) and
+// the tile's site (SITE_CELLS a side: the city hall on the center, a wonder
+// on any other tile; the houses on it give way to them).
+export const SPOT_CELLS = 4, SITE_CELLS = 7;
+export const SPOT_HOUSE: Footprint = 'b44';
+// How tall that house is, by density (a tall one where the density holds it).
+export const SPOT_HOUSE_FLOORS: Record<Density, Floors> = { low: 1, medium: 2, dense: 3, high: 4, metropolitan: 4 };
+const squareSpot = (cells: number, x: number, y: number, yaw: number): Spot => {
+  const h = (cells * CELL) / 2;
+  return { x, y, yaw, r: Math.SQRT2 * h, hw: h, hd: h };
+};
+export const buildingSpot = (x: number, y: number, yaw: number): Spot => squareSpot(SPOT_CELLS, x, y, yaw);
+export const siteSpot = (x: number, y: number, yaw: number): Spot => squareSpot(SITE_CELLS, x, y, yaw);
+// Building spots a tile has, by its density (and so its building slots:
+// density.ts).
+export const SPOTS: Record<Density, number> = { low: 1, medium: 2, dense: 2, high: 3, metropolitan: 3 };
+export const MAX_SPOTS = 3;
+// Whether two spots overlap, each grown by `pad` (separating axes; round
+// spots as their bounding squares).
+export function spotsOverlap(a: Spot, b: Spot, pad = 0): boolean {
+  if (len(sub(a, b)) > a.r + b.r + 2 * pad) return false;
+  const box = (s: Spot) => spotCorners(s, pad);
+  const ca = box(a), cb = box(b);
+  for (const poly of [ca, cb]) {
+    for (let i = 0; i < 4; i++) {
+      const e = sub(poly[(i + 1) % 4]!, poly[i]!), n = { x: -e.y, y: e.x };
+      const pa = ca.map((p) => p.x * n.x + p.y * n.y), pb = cb.map((p) => p.x * n.x + p.y * n.y);
+      if (Math.max(...pa) <= Math.min(...pb) || Math.max(...pb) <= Math.min(...pa)) return false;
+    }
+  }
+  return true;
+}
+export function spotCorners(s: Spot, grow = 0): Pt[] {
+  const hw = (s.hw ?? s.r) + grow, hd = (s.hd ?? s.r) + grow;
+  const f = { x: Math.cos(s.yaw), y: Math.sin(s.yaw) }, side = { x: -f.y, y: f.x };
+  return [[1, 1], [1, -1], [-1, -1], [-1, 1]].map(([a, b]) => add(s, add(mul(side, a! * hw), mul(f, b! * hd))));
+}
+// Whether a lot's footprint reaches into a spot.
+export const lotOnSpot = (l: Pick<Lot, 'x' | 'y' | 'yaw' | 'kind'>, s: Spot): boolean =>
+  lotsOverlap({ ...l } as Lot, { x: s.x, y: s.y, yaw: s.yaw, kind: 'b22' } as Lot, 0, [s.hw ?? s.r, s.hd ?? s.r]);
 // Whether p lies in a spot's footprint, grown by `margin`.
 export function inSpot(p: Pt, s: Spot, margin = 0): boolean {
   if (s.hw === undefined || s.hd === undefined) return len(sub(p, s)) < s.r + margin;
@@ -238,11 +279,13 @@ export function lotSamples(l: Pick<Lot, 'x' | 'y' | 'yaw' | 'kind'>): Pt[] {
   const c = lotCorners(l);
   return [...c, ...c.map((p, i) => lerp(p, c[(i + 1) % 4]!, 0.5)), { x: l.x, y: l.y }];
 }
-// Whether two footprints overlap (separating axes), each grown by `pad`.
-export function lotsOverlap(a: Lot, b: Lot, pad = 0): boolean {
-  const ra = Math.hypot(...LOT_SIZE[a.kind]) + pad, rb = Math.hypot(...LOT_SIZE[b.kind]) + pad;
+// Whether two footprints overlap (separating axes), each grown by `pad`
+// (b at size `bSize` instead of its kind's, if given).
+export function lotsOverlap(a: Lot, b: Lot, pad = 0, bSize?: readonly [number, number]): boolean {
+  const sb = bSize ?? LOT_SIZE[b.kind];
+  const ra = Math.hypot(...LOT_SIZE[a.kind]) + pad, rb = Math.hypot(...sb) + pad;
   if (Math.hypot(a.x - b.x, a.y - b.y) > ra + rb) return false;
-  const ca = lotCorners(a, pad / 2), cb = lotCorners(b, pad / 2);
+  const ca = lotCorners(a, pad / 2), cb = bSize ? spotCorners({ x: b.x, y: b.y, yaw: b.yaw, r: rb, hw: sb[0], hd: sb[1] }, pad / 2) : lotCorners(b, pad / 2);
   for (const poly of [ca, cb]) {
     for (let i = 0; i < 4; i++) {
       const e = sub(poly[(i + 1) % 4]!, poly[i]!), n = { x: -e.y, y: e.x };

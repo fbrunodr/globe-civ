@@ -14,13 +14,20 @@ export function foundCity(g: Game, tile: number, owner: number): City | null {
   return c;
 }
 
-// Adds n citizens, placed by the governor (by the city's focus).
+// Adds n citizens, placed by the governor (by the city's focus). Out of
+// room, it buys the governor's tile of the ring beyond (the lab pays).
 export function grow(g: Game, c: City, n: number): number {
   let added = 0;
   for (let i = 0; i < n; i++) {
+    while (!g.growthOptions(c).length) {
+      const t = g.governorTileToBuy(c);
+      if (t === null) return added; // nowhere to go
+      g.players[c.owner]!.gold += g.tilePrice(c);
+      g.buyTile(c, t);
+    }
     c.growth = 1;
     g.autoPlace(c);
-    if (c.growth > 0) { c.growth = 0; break; } // nowhere to go
+    if (c.growth > 0) { c.growth = 0; break; }
     added++;
   }
   return added;
@@ -100,7 +107,7 @@ export const PRESETS: readonly Preset[] = [
   { name: 'Garden city', desc: 'Size 11, Classical, on a river: the Hanging Gardens, Stonehenge.', era: 1, pop: 11, focus: 'culture', buildings: ['amphitheater', 'odeon', 'monument', 'waterMill'], wonders: ['hangingGardens', 'stonehenge'], site: (g, t) => river(g, t) && flatOpen(g, t) },
   { name: 'Lighthouse port', desc: 'Size 10, Medieval: the Great Lighthouse.', era: 2, pop: 10, focus: 'gold', buildings: ['walls', 'lighthouse', 'shipyard', 'market', 'countingHouse'], wonders: ['greatLighthouse'], site: coast },
   { name: 'Besieged city', desc: 'Size 10, Medieval: walls breached, fields burning.', era: 2, pop: 10, focus: 'production', buildings: ['walls', 'barracks', 'stable', 'workshop'], wonders: [], site: flatOpen, hp: 0.25, pillage: 3 },
-  { name: 'Metropolis', desc: 'Size 18, metropolitan density: skyscrapers (later eras), two buildings per tile.', era: 2, pop: 18, focus: 'gold', buildings: ['market', 'countingHouse', 'library', 'academy', 'workshop', 'smithy', 'odeon', 'amphitheater'], wonders: [], site: flatOpen, density: 'metropolitan' },
+  { name: 'Metropolis', desc: 'Size 18, metropolitan density: skyscrapers (later eras), three buildings per tile.', era: 2, pop: 18, focus: 'gold', buildings: ['market', 'countingHouse', 'library', 'academy', 'workshop', 'smithy', 'odeon', 'amphitheater'], wonders: [], site: flatOpen, density: 'metropolitan' },
   { name: 'Wetland town', desc: 'Size 8 on a marsh, swamp or mangrove: drained where it is built.', era: 1, pop: 8, focus: 'food', buildings: ['market', 'granary'], wonders: [], site: (g, t) => g.feature[t] === null && g.relief[t] === 'flat' && g.tiles[t].neighbors.filter((n) => wetland(g, n)).length >= 3, urbanFirst: wetland },
   { name: 'Hill town', desc: 'Size 9, Medieval, on hills: walls.', era: 2, pop: 9, focus: 'production', buildings: ['walls', 'workshop', 'shrine', 'monument'], wonders: [], site: (g, t) => g.relief[t] === 'hills' && g.tiles[t].neighbors.filter((n) => g.relief[n] === 'hills').length >= 3 },
   { name: 'Ruins', desc: 'A razed town: broken walls where houses stood.', era: 1, pop: 7, focus: 'balanced', buildings: ['market', 'shrine'], wonders: [], site: flatOpen, razed: true },

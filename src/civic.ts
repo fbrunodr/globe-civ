@@ -1,8 +1,8 @@
 // City halls: each civ's own, and grander as its tile grows denser. Four
 // tiers: a village hall (low, medium), a city hall (dense), a grand hall
 // (high), and the grand hall with a modern tower behind it (metropolitan).
-// Built at true size for the hall's spot (town/skeleton.ts HALL_RADIUS:
-// it fits the spot's circle), never stretched.
+// Built at true size (HALL_RADIUS: the circle its room fits, inside the
+// tile's site, town/geometry.ts SITE_CELLS), never stretched.
 //
 // Units are tile steps, as the lot models (houseKit.ts); the origin is the
 // middle of the spot on the ground, the front (+z) faces the square.
@@ -10,8 +10,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { cone, cyl } from './propCatalog.ts';
-import { wallHeight, type Density } from './town/geometry.ts';
-import { HALL_RADIUS } from './town/skeleton.ts';
+import { CELL, SITE_CELLS, wallHeight, type Density } from './town/geometry.ts';
 import { ARCH_CIVS, type ArchCiv } from './architecture.ts';
 import {
   BAND, E, arch, bands, box, disc, dome, drum, frustum, gable, hip, merlons, onFace, onion, patch, shade, shrub, spire, strips,
@@ -21,6 +20,10 @@ import {
 export type CivicKind = `civic|${ArchCiv}|${Density}`;
 export const civicKind = (civ: ArchCiv, d: Density): CivicKind => `civic|${civ}|${d}`;
 export const isCivicKind = (k: string): k is CivicKind => k.startsWith('civic|');
+
+// The hall grows with its tile's density, within the site's square.
+export const HALL_RADIUS: Record<Density, number> = { low: 0.045, medium: 0.045, dense: 0.054, high: 0.062, metropolitan: 0.075 };
+export const SITE_HALF = (SITE_CELLS * CELL) / 2;
 
 type Tier = 0 | 1 | 2 | 3;
 const TIER: Record<Density, Tier> = { low: 0, medium: 0, dense: 1, high: 2, metropolitan: 3 };

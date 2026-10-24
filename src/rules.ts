@@ -91,4 +91,3 @@ export type MapScriptKey = keyof typeof MAP_SCRIPTS;
 export const isMapScript = (s: string): s is MapScriptKey => s in MAP_SCRIPTS;
 
 export const growthCost = (pop: number): number => Math.floor(15 + 8 * (pop - 1) + Math.pow(pop - 1, 1.5));
-export const territoryRadius = (pop: number): number => (pop >= 6 ? 3 : pop >= 3 ? 2 : 1);

@@ -15,9 +15,10 @@
 
 import * as THREE from 'three';
 import type { Game, City } from './game.ts';
-import { USE, SLOTS, improvementFor, isWonderKey, type ImprovementKey, type BuildingKey, type WonderKey, type EraIndex } from './cities.ts';
+import { USE, SLOTS, improvementFor, type ImprovementKey, type BuildingKey, type WonderKey, type EraIndex } from './cities.ts';
 import { ROOFS, PROP_MODEL, buildingEntry, isFloraModel, isLotModel, placedGeometry, waterRule, type BuildingKind, type LotModelKind, type PlacedKind } from './buildingCatalog.ts';
 import { civicExtent, civicKind } from './civic.ts';
+import { SITE_HALF, wonderModelKind, type SiteModel } from './wonderModels.ts';
 import { CATALOG, catalogEntry, type CatalogKind } from './propCatalog.ts';
 import { biomeVariant, featureVariant } from './flora.ts';
 import { BANK_CLIMATE, RIVER_BANKS, type Entry } from './floraData.ts';
@@ -27,8 +28,7 @@ import { tileDensity, allowedDensity } from './density.ts';
 import { LOT_SIZE, PLANTS, SPINS, isBuilding, type Density, type StreetClass } from './town/geometry.ts';
 import { planRoads, roadLines, roadEntries, ROAD_HALF_WIDTH } from './roads.ts';
 import { key as colouringKey, type EdgeValue } from './town/edges.ts';
-import { edgeClass, HALL_RADIUS, type Role } from './town/skeleton.ts';
-import { WONDER_GROUP } from './town/wonders.ts';
+import { edgeClass, type Role } from './town/skeleton.ts';
 import { stamp, STAMP_STEP, type FanPt, type Stamp, type StampTile, type StampedSpot } from './cityStamp.ts';
 import { mulberry32, type Rng } from './rng.ts';
 
@@ -208,7 +208,7 @@ export class CityProps {
     const g = this.game;
     const tiles = this.built(city).map((t) => {
       const c = this.colouring(t);
-      return `${t}:${this.densityOf(t)}:${g.slots[t * SLOTS]},${g.slots[t * SLOTS + 1]}:${g.wonderAt[t]}:${colouringKey(c)}:${this.edgeClasses(t, c).join(',')}`;
+      return `${t}:${this.densityOf(t)}:${g.slots.slice(t * SLOTS, t * SLOTS + SLOTS).join(',')}:${g.wonderAt[t]}:${colouringKey(c)}:${this.edgeClasses(t, c).join(',')}`;
     }).join(';');
     const sig = `${city.id}|${city.pop}|${g.players[city.owner]!.era}|${city.buildings.has('walls') ? 'w' : ''}|${city.wonderTile ?? ''}|${this.densityVersion}|${tiles}`;
     memo?.set(city.id, sig);
@@ -296,12 +296,7 @@ export class CityProps {
   stampTiles(tiles: readonly number[], walledCenter: number | null): StampTile[] {
     const g = this.game;
     return tiles.filter((t) => isBuilt(g, t)).map((t) => {
-      const city = g.cityById.get(g.tileCity[t]!);
-      // (A wonder's tile by its wonder's group: built, or being built.)
-      const wonder = g.wonderOn(t) ?? (city?.wonderTile === t && city.building && isWonderKey(city.building) ? city.building : null);
-      const group = wonder ? WONDER_GROUP[wonder] : null;
-      const role: Role = g.use[t] === USE.center ? (t === walledCenter ? 'walled' : 'center')
-        : group ? `wonder-${group}` : 'block';
+      const role: Role = t === walledCenter ? 'walled' : 'block';
       const colouring = this.colouring(t);
       return { tile: t, colouring, edgeCls: this.edgeClasses(t, colouring), role, density: this.densityOf(t), pick: mix(t, 0x7a11) };
     });
@@ -407,14 +402,27 @@ export class CityProps {
       const kind = MODEL[b];
       placeAt(sp, kind, buildingEntry(kind).leaf, mulberry32(mix(sp.tile, sp.k + 11)));
     }
-    // The hall: its civ's, for its tile's density (civic.ts), as large as its spot.
-    for (const sp of st.halls) {
-      const s0 = at(sp.at), f = dirAt(sp.face), d = sp.density ?? 'medium', [hw, hd] = civicExtent(d);
-      // (On dry ground: where its spot is wet, the nearest dry place on its tile.)
+    // Sites: the hall on the center (its civ's, for its tile's density:
+    // civic.ts), a wonder where one stands or goes up; on other tiles the
+    // houses stay (below). The houses reaching onto an occupied site give way.
+    const siteHeld = new Set<number>();
+    for (const sp of st.sites) {
+      const s0 = at(sp.at), f = dirAt(sp.face);
+      const w = g.wonderOn(sp.tile), building = city.wonderTile === sp.tile;
+      const model: SiteModel | null = w && w !== 'machuPicchu' ? w : building ? 'scaffold' : null;
+      const hall = g.use[sp.tile] === USE.center;
+      if (!hall && !model) continue;
+      siteHeld.add(sp.tile);
+      // (On dry ground: where the site is wet, the nearest dry place on its tile.)
       const s = standsAt('hall', s0) ? s0 : this.findSpot(sp.tile, 'hall', mulberry32(mix(sp.tile, 8)), s0.dir);
       if (!s) continue;
-      const sc = local(s.dir, f) * (sp.r / HALL_RADIUS[d]), yaw = facing(s.dir, f) + Math.PI / 2;
-      put(sp.tile, ...settle((k) => this.standLot(civicKind(archCiv, d), s.dir, yaw, hw, hd, D * sc * k, mulberry32(mix(sp.tile, 7)), city.owner)));
+      const sc = local(s.dir, f), yaw = facing(s.dir, f) + Math.PI / 2, rand = mulberry32(mix(sp.tile, 7));
+      if (hall) {
+        const [hw, hd] = civicExtent(sp.density);
+        put(sp.tile, ...settle((k) => this.standLot(civicKind(archCiv, sp.density), s.dir, yaw, hw, hd, D * sc * k, rand, city.owner)));
+      } else {
+        put(sp.tile, ...settle((k) => this.standLot(wonderModelKind(model!), s.dir, yaw, SITE_HALF * 0.94, SITE_HALF * 0.94, D * sc * k, rand, city.owner)));
+      }
     }
     // Harbors: each building on the quay side of the fan toward a built-up
     // neighbor (side by side), facing it; anywhere it can stand otherwise.
@@ -433,18 +441,12 @@ export class CityProps {
         if (buildingEntry(kind).water === 'float') put(t, this.make(kind, s.dir, s.water, yaw, HOUSE_SCALE, roof, rand));
         else put(t, ...this.stand(kind, s.dir, yaw, HOUSE_SCALE, roof, rand, city.owner));
       });
-      const w = g.wonderOn(t), site = w ? WONDER_MODEL[w] : city.wonderTile === t ? 'scaffold' : null;
-      if (site) put(t, ...this.landmark(t, site, mulberry32(mix(t, 9))));
-    }
-    for (const sp of st.wonders) {
-      const w = g.wonderOn(sp.tile);
-      const kind = w ? WONDER_MODEL[w] : city.wonderTile === sp.tile ? 'scaffold' : null;
-      if (kind) placeAt(sp, kind, buildingEntry(kind).leaf, mulberry32(mix(sp.tile, 9)));
     }
 
     // Lots: homes and street furniture, never on water.
     for (const l of st.lots) {
       if (l.spot !== undefined && builtSpot.has(`${l.tile}:${l.spot}`)) continue;
+      if (l.onSite && siteHeld.has(l.tile)) continue;
       const s = at(l.at);
       if (wet(s)) continue;
       const f = dirAt(l.face);

@@ -7,7 +7,7 @@ import { generateWorld, type World } from './world.ts';
 import { tileYieldOf } from './mapRules.ts';
 import { mulberry32, type Rng } from './rng.ts';
 import {
-  unitDef, buildDef, isUnitKey, isWonder, UNITS, BUILDINGS, CIVS, growthCost, territoryRadius,
+  unitDef, buildDef, isUnitKey, isWonder, UNITS, BUILDINGS, CIVS, growthCost,
   type UnitKey, type BuildingKey, type BuildKey, type MapSizeKey, type MapScriptKey,
 } from './rules.ts';
 import {
@@ -16,7 +16,7 @@ import {
 } from './terrain.ts';
 import { aiTurn } from './ai.ts';
 import {
-  USE, MAX_SPECIALISTS, FOOD_PER_CITIZEN, SLOTS, ZERO, FAMILIES, BUILDINGS as CITY_BUILDINGS, GROWTH_TURNS,
+  USE, MAX_SPECIALISTS, FOOD_PER_CITIZEN, SLOTS, ZERO, CITY_REACH, START_REACH, tileCost, FAMILIES, BUILDINGS as CITY_BUILDINGS, GROWTH_TURNS,
   addOut, scaleOut, centerYield, ruralYield, urbanYield, improvementFor, urbanAllowed, governorScore, townsfolkWanted,
   slotsYield, quarterOf, specialistYield, slotCode, slotKey, familyOf, buildingFits, weigh, WONDERS, WONDER_KEYS, ERAS, eraOf,
   type FocusKey, type GrowthOption, type TileUse, type Output, type FamilyKey, type AdjacencySource, type WonderKey, type WonderSite, type EraIndex,
@@ -90,6 +90,7 @@ export interface City {
   growth: number; // citizens born but not yet placed (the human places them)
   pendingBuilding: BuildingKey | null; // completed, waiting for the human to place it
   wonderTile: number | null;           // where the wonder being built will stand
+  bought: number;                      // tiles bought (each costs more: cities.ts tileCost)
   hp: number;                          // the center's hit points (0: a melee unit can take it)
   founder: number;                     // the civ that founded it
   razing: boolean;                     // burning down, a citizen a turn
@@ -538,7 +539,7 @@ export class Game {
     const name = p.cityNames[p.citiesFounded] ?? `${p.name} ${p.citiesFounded + 1}`;
     p.citiesFounded++;
     const city: City = { id: this.nextId++, name, owner: u.owner, tile: u.tile, pop: 1, food: 0, prod: 0,
-      building: p.isHuman ? 'warrior' : null, buildings: new Set(), founded: this.turn, focus: 'balanced', growth: 0, pendingBuilding: null, wonderTile: null,
+      building: p.isHuman ? 'warrior' : null, buildings: new Set(), founded: this.turn, focus: 'balanced', growth: 0, pendingBuilding: null, wonderTile: null, bought: 0,
       hp: CITY_HP, founder: u.owner, razing: false };
     this.cities.push(city);
     this.cityById.set(city.id, city);
@@ -553,10 +554,43 @@ export class Game {
     return city;
   }
 
+  // A new city owns the tiles around its center (those no one owns yet).
   private claimTerritory(city: City): void {
-    for (const t of this.tilesWithin(city.tile, territoryRadius(city.pop))) {
+    for (const t of this.tilesWithin(city.tile, START_REACH)) {
       if (this.tileCity[t] === -1) this.tileCity[t] = city.id;
     }
+  }
+
+  // ---------- buying tiles ----------
+
+  // The tiles a city could buy: within its reach, owned by no one, touching
+  // a tile of its own.
+  buyableTiles(city: City): number[] {
+    return this.tilesWithin(city.tile, CITY_REACH).filter((t) => this.tileCity[t] === -1
+      && this.tiles[t].neighbors.some((n) => this.tileCity[n] === city.id));
+  }
+  tilePrice(city: City): number { return tileCost(city.bought); }
+  canBuyTile(city: City, t: number): boolean {
+    return this.players[city.owner]!.gold >= this.tilePrice(city) && this.buyableTiles(city).includes(t);
+  }
+  // The governor's pick of a tile to buy: what it would yield worked, for
+  // the city's focus (ties to the lower tile).
+  governorTileToBuy(city: City): number | null {
+    let best: number | null = null, bestS = -Infinity;
+    for (const t of this.buyableTiles(city)) {
+      const k = improvementFor(this.terrainAt(t));
+      const s = k ? weigh(city.focus, ruralYield(this.terrainAt(t), this.map.riverTile[t] === 1, this.eraAt(t))) : -1;
+      if (s > bestS) { best = t; bestS = s; }
+    }
+    return best;
+  }
+  buyTile(city: City, t: number): boolean {
+    if (!this.canBuyTile(city, t)) return false;
+    this.players[city.owner]!.gold -= this.tilePrice(city);
+    this.tileCity[t] = city.id;
+    city.bought++;
+    this.useVersion++;
+    return true;
   }
 
   private captureCity(city: City, newOwner: number): void {
@@ -591,7 +625,7 @@ export class Game {
 
   // Tiles of the city in a given use (the center excluded unless asked for).
   cityTiles(city: City, use: TileUse): number[] {
-    return this.tilesWithin(city.tile, 3).filter((t) => this.tileCity[t] === city.id && this.use[t] === use);
+    return this.tilesWithin(city.tile, CITY_REACH).filter((t) => this.tileCity[t] === city.id && this.use[t] === use);
   }
 
   // ---------- buildings ----------
@@ -652,15 +686,17 @@ export class Game {
     }
   }
 
-  // Where wonder k could stand in the city: a land urban tile with no
-  // buildings, or a rural tile touching the core, meeting its terrain need.
+  // Where wonder k could stand in the city: on the site of a land urban
+  // tile (not the center: its site holds the hall) with no wonder yet,
+  // whatever its buildings, or a rural tile touching the core, meeting its
+  // terrain need.
   wonderSpots(city: City, k: WonderKey): number[] {
     const out: number[] = [];
-    for (const t of this.tilesWithin(city.tile, 3)) {
+    for (const t of this.tilesWithin(city.tile, CITY_REACH)) {
       if (this.tileCity[t] !== city.id || this.isWater(t) || this.blockedFor(city, t) || this.wonderAt[t]) continue;
       const u = this.use[t];
       const ok = WONDERS[k].site === 'mountainTop' ? u === USE.wild && this.touchesCore(city, t)
-        : u === USE.urban ? this.slotKeys(t).every((x) => x === null)
+        : u === USE.urban ? true
         : u === USE.rural ? this.canBeUrban(t) && this.touchesCore(city, t) : false;
       if (ok && this.siteOk(t, WONDERS[k].site)) out.push(t);
     }
@@ -705,7 +741,6 @@ export class Game {
 
   private completeWonder(city: City, k: WonderKey, t: number): void {
     if (this.use[t] === USE.rural) this.setUse(t, USE.urban);
-    this.specialists[t] = 0;
     this.wonderAt[t] = WONDER_KEYS.indexOf(k) + 1;
     this.wondersBuilt.set(k, t);
     city.building = null;
@@ -744,14 +779,14 @@ export class Game {
   }
 
   // Where building k could go in the city now: an urban tile (or the center)
-  // with a free slot (a low tile has one, a denser tile two: density.ts), or
+  // with a free slot (one per building spot of its density: density.ts), or
   // a rural tile touching the core (it becomes urban; its improvement goes).
   // Harbor buildings stand on water, all others on land.
   buildingSpots(city: City, k: BuildingKey): number[] {
     if (CITY_BUILDINGS[k].role === 'walls') return [];
     const out: number[] = [];
-    for (const t of this.tilesWithin(city.tile, 3)) {
-      if (this.tileCity[t] !== city.id || this.blockedFor(city, t) || this.wonderAt[t] || t === city.wonderTile) continue;
+    for (const t of this.tilesWithin(city.tile, CITY_REACH)) {
+      if (this.tileCity[t] !== city.id || this.blockedFor(city, t)) continue;
       const u = this.use[t];
       if (!buildingFits(k, this.isWater(t), this.map.riverTile[t] === 1)) continue;
       if (u === USE.urban || u === USE.center) {
@@ -818,7 +853,7 @@ export class Game {
 
   cityYields(city: City): CityYield {
     let sum: Output = ZERO;
-    for (const t of this.tilesWithin(city.tile, 3)) {
+    for (const t of this.tilesWithin(city.tile, CITY_REACH)) {
       if (this.tileCity[t] !== city.id || (this.use[t] === USE.wild && !this.wonderAt[t])) continue;
       if (t !== city.tile && this.blockedFor(city, t)) continue;
       sum = addOut(sum, this.tileOutput(t));
@@ -831,7 +866,7 @@ export class Game {
   // specialist in an urban tile with room.
   growthOptions(city: City): GrowthOption[] {
     const out: GrowthOption[] = [];
-    for (const t of this.tilesWithin(city.tile, 3)) {
+    for (const t of this.tilesWithin(city.tile, CITY_REACH)) {
       if (this.tileCity[t] !== city.id || this.blockedFor(city, t)) continue;
       if (this.use[t] === USE.urban) {
         if (this.specialists[t] < MAX_SPECIALISTS) out.push({ kind: 'specialist', tile: t });
@@ -898,7 +933,6 @@ export class Game {
     }
     city.growth--;
     city.pop++;
-    this.claimTerritory(city);
     return true;
   }
 

@@ -14,6 +14,7 @@ import { WorldLabel, disposeLabels } from './worldLabel.ts';
 import { DENSITIES, type Density } from './town/geometry.ts';
 import { CLASSES, parseKey, type EdgeValue } from './town/edges.ts';
 import { edgeClass, type Role } from './town/skeleton.ts';
+import { SITE_MODELS, type SiteModel } from './wonderModels.ts';
 import { variantsOf } from './town/index.ts';
 import { stamp, type StampTile } from './cityStamp.ts';
 import { FlatPainter, disposeGroup, type FlatTile } from './flatTown.ts';
@@ -61,6 +62,10 @@ let townSeed = 1;
 let walls = false;
 let showBuildings = true;
 
+// A wonder to show on the n-th tile's site (one of each in turn).
+const WONDERS_SHOWN = SITE_MODELS.filter((m) => m !== 'scaffold');
+const sampleWonder = (n: number): SiteModel => WONDERS_SHOWN[n % WONDERS_SHOWN.length]!;
+
 // Every class on its own, open land round it (hand-drawn ones marked ✎).
 function classesView(): { w: number; h: number } {
   const per = 10, W = 1.3;
@@ -70,7 +75,9 @@ function classesView(): { w: number; h: number } {
     paint.tiles.set(f.id, f);
     paint.ground(f);
     const c = parseKey(key);
-    paint.stamp(stamp([{ tile: f.id, colouring: c, edgeCls: c.map((v) => (v ? edgeClass(v, classDensity, classDensity) : null)), role: role === 'center' && walls ? 'walled' : role, density: classDensity }]), { walls, spots: showBuildings });
+    // (With the buildings shown: the hall on a walled center's site, a wonder on a block's.)
+    paint.stamp(stamp([{ tile: f.id, colouring: c, edgeCls: c.map((v) => (v ? edgeClass(v, classDensity, classDensity) : null)), role, density: classDensity }]),
+      { walls: role === 'walled', spots: showBuildings, sites: () => (!showBuildings ? null : role === 'walled' ? 'hall' : sampleWonder(n)) });
     paint.marks(f, c);
     const vs = variantsOf(key, role, classDensity).length;
     label(`${key}${vs ? ` ✎${vs}` : ''}`, x, z + 0.58);
@@ -103,9 +110,10 @@ function townsView(): { w: number; h: number } {
       return (Math.imul(i * 31 + j * 7 + townSeed, 2246822519) >>> 0) % 8 === 0 ? 1 : 0;
     });
     const edgeCls = colouring.map((v, j) => (v ? edgeClass(v, density[i]!, nbs[j] !== undefined && built[nbs[j]!] ? density[nbs[j]!]! : density[i]!) : null));
-    stamps.push({ tile: i, colouring, edgeCls, role: i === 0 ? (walls ? 'walled' : 'center') : 'block', density: density[i]! });
+    stamps.push({ tile: i, colouring, edgeCls, role: i === 0 && walls ? 'walled' : 'block', density: density[i]! });
   });
-  paint.stamp(stamp(stamps), { walls, spots: showBuildings });
+  // (The hall on the center's site; with the buildings shown, a wonder on every third other tile.)
+  paint.stamp(stamp(stamps), { walls, spots: showBuildings, sites: (t) => (t === 0 ? 'hall' : showBuildings && t % 3 === 0 ? sampleWonder(t) : null) });
   return { w: 2 * C, h: 2 * C };
 }
 

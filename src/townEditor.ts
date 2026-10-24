@@ -2,7 +2,9 @@
 // hand, SimCity style: roads first (from the red stubs on the rim, where
 // the neighbors' roads come in), then buildings that front onto them
 // (footprints of 2×2 to 4×4 terrain cells, single to skyscraper), props,
-// squares, and the building spots, hall or wonder. The walled center
+// squares, the building spots (4×4, as many as the density has, each with
+// its house until its building stands) and the site (7×7: the city hall on
+// the center, a wonder elsewhere; houses on it give way). The walled center
 // also has its walls drawn by hand, with gates where streets go through.
 //
 // Drawings are files: per role and density, each of the 13 edge classes
@@ -16,14 +18,16 @@ import './style.css';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
-  CELL, DENSITY_TALLEST, FLOORS, densityAllows, SAFE_RHO, LOT_SIZE, wallHeight, FOOTPRINT_CELLS, HALF_WIDTH, ON_SQUARES, corner, distToLine, inSpot, nearestOn, spotOutline, len, sub, lotsOverlap, lotSamples, pointInPoly, rhoOf, isBuilding,
+  CELL, DENSITY_TALLEST, FLOORS, densityAllows, SAFE_RHO, LOT_SIZE, wallHeight, FOOTPRINT_CELLS, HALF_WIDTH, ON_SQUARES, SPOTS, SPOT_HOUSE_FLOORS,
+  corner, distToLine, inSpot, nearestOn, spotOutline, len, sub, lotOnSpot, lotsOverlap, lotSamples, pointInPoly, rhoOf, isBuilding, buildingSpot, siteSpot, spotsOverlap,
   type Density, type Floors, type Footprint, type Lot, type LotKind, type Pt, type Spot,
 } from './town/geometry.ts';
 import { CLASSES, STUB_U, parseKey, stubsOf, type Stub } from './town/edges.ts';
-import { edgeClass, RANK_CLASS, HALL_RADIUS, type Rank, type Role, type Skeleton } from './town/skeleton.ts';
-import { assemble, skeletonFor, recordKey, setRecord, storedRecord, allRecords, streetPath, variantsOf, fromRecord, clearance, LOT_INNER, type DrawingRecord, type Drawing } from './town/index.ts';
+import { edgeClass, RANK_CLASS, WIDEST_CLASS, type Rank, type Role, type Skeleton } from './town/skeleton.ts';
+import { assemble, skeletonFor, recordKey, setRecord, storedRecord, allRecords, streetPath, variantsOf, fromRecord, clearance, spotHouse, LOT_INNER, type DrawingRecord, type Drawing } from './town/index.ts';
 import { drawingProblems, spotOnStreet, spotPastRim } from './town/checks.ts';
-import { groupOf, isWonderRole, wonderSpot } from './town/wonders.ts';
+import { SITE_MODELS, type SiteModel } from './wonderModels.ts';
+import { WONDERS } from './cities.ts';
 import { draftWalls, GATE_HALF, ON_WALL, WALL_CLEAR, WALL_HALF } from './town/walls.ts';
 import { stamp } from './cityStamp.ts';
 import { ARCH_CIVS, STYLE_NAME, styleOf, type ArchCiv } from './architecture.ts';
@@ -69,9 +73,8 @@ const fromPlane = (v: THREE.Vector3): Pt => ({ x: v.x, y: -v.z });
 interface Doc {
   streets: { ctrl: Pt[]; rank: Rank }[];
   squares: { pts: Pt[]; paved: boolean }[];
+  site: Spot;
   spots: Spot[];
-  hall: Spot | null;
-  wonder: Spot | null;
   lots: Lot[];
   walls: Pt[][]; // the walled center's wall runs (a ring ends where it starts)
   gates: Pt[];   // on the walls
@@ -81,7 +84,7 @@ let key = CLASSES[CLASSES.length - 1]!;
 let role: Role = 'block';
 let density: Density = 'medium';
 let variant = 0; // 0: the generated draft
-let doc: Doc = { streets: [], squares: [], spots: [], hall: null, wonder: null, lots: [], walls: [], gates: [] };
+let doc: Doc = { streets: [], squares: [], site: siteSpot(0, 0, 0), spots: [], lots: [], walls: [], gates: [] };
 let stubs: Stub[] = [];
 let drawn: Drawing | null = null; // the doc as the game reads it
 const dirty = new Set<string>();
@@ -89,14 +92,13 @@ let undo: string[] = [], redo: string[] = [];
 
 const rk = (v = variant) => recordKey(key, role, density, v);
 const r4 = (v: number) => Math.round(v * 1e4) / 1e4;
-const spotRec = (s: Spot | null): [number, number, number, number] | null => (s ? [r4(s.x), r4(s.y), r4(s.r), Math.round(s.yaw / DEG)] : null);
-const spotOf = (a: [number, number, number, number] | null): Spot | null => (a ? { x: a[0], y: a[1], r: a[2], yaw: a[3] * DEG } : null);
+const spotRec = (s: Spot): [number, number, number] => [r4(s.x), r4(s.y), Math.round(s.yaw / DEG)];
 
 function recordOf(d: Doc): DrawingRecord {
   return {
     streets: d.streets.map((s) => ({ ctrl: s.ctrl.map((p) => [r4(p.x), r4(p.y)] as [number, number]), rank: s.rank })),
     squares: d.squares.map((q) => ({ pts: q.pts.map((p) => [r4(p.x), r4(p.y)] as [number, number]), paved: q.paved })),
-    spots: d.spots.map((s) => spotRec(s)!), hall: spotRec(d.hall), wonder: spotRec(d.wonder),
+    site: spotRec(d.site), spots: d.spots.map(spotRec),
     lots: d.lots.map((l) => {
       const row: (string | number)[] = [l.kind, r4(l.x), r4(l.y), Math.round(l.yaw / DEG)];
       if (isBuilding(l.kind) || l.spot !== undefined) row.push(l.floors ?? 1);
@@ -110,7 +112,7 @@ function docOf(r: DrawingRecord): Doc {
   return {
     streets: r.streets.map((s) => ({ ctrl: s.ctrl.map(([x, y]) => ({ x, y })), rank: s.rank })),
     squares: r.squares.map((q) => ({ pts: q.pts.map(([x, y]) => ({ x, y })), paved: q.paved })),
-    spots: r.spots.map((a) => spotOf(a)!), hall: spotOf(r.hall), wonder: spotOf(r.wonder),
+    site: siteSpot(r.site[0], r.site[1], r.site[2] * DEG), spots: r.spots.map(([x, y, yaw]) => buildingSpot(x, y, yaw * DEG)),
     lots: r.lots.map((row) => {
       const [kind, x, y, yaw, floors, sp] = row as [LotKind, number, number, number, number?, number?];
       return { kind, x, y, yaw: yaw * DEG, ...(isBuilding(kind) ? { floors: (floors ?? 1) as Floors } : {}), ...(sp !== undefined ? { spot: sp } : {}) };
@@ -128,7 +130,7 @@ function draftDoc(k: string, r: Role, d: Density): Doc {
       return { ctrl: n <= 4 ? [...p] : [p[0]!, ...p.slice(1, -1).filter((_, i) => i % 3 === 2), p[n - 1]!], rank: s.rank };
     }),
     squares: sk.squares.map((q) => ({ pts: [...q.pts], paved: q.paved })),
-    spots: [...sk.spots], hall: sk.hall && { ...sk.hall, r: HALL_RADIUS[d] }, wonder: sk.wonder, lots: [], walls: [], gates: [],
+    site: sk.site, spots: sk.spots.slice(0, SPOTS[d]), lots: [], walls: [], gates: [],
   };
   if (r === 'walled') { const w = draftWalls(sk.stubs); out.walls = w.walls.map((x) => [...x]); out.gates = [...w.gates]; }
   // A road that ended on another ends on that road's new curve (a curve
@@ -154,9 +156,11 @@ function lotsAlong(dc: Doc, k: string, r: Role, d: Density): Lot[] {
   const sk: Skeleton = {
     key: k, role: r, stubs: st,
     streets: dc.streets.filter((s) => s.ctrl.length >= 2).map((s) => { const { pts, ends } = streetPath(s.ctrl, st); return { pts, rank: s.rank, ends }; }),
-    squares: dc.squares, spots: dc.spots, hall: dc.hall, wonder: dc.wonder,
+    squares: dc.squares, site: dc.site, spots: dc.spots,
   };
-  return assemble(sk, d).lots.filter((l) => !nearWall(lotSamples(l), WALL_CLEAR, dc));
+  // (Each spot keeps the house it has.)
+  const houses = new Map(dc.lots.filter((l) => l.spot !== undefined).map((l) => [l.spot!, l]));
+  return assemble(sk, d).lots.map((l) => (l.spot !== undefined ? houses.get(l.spot) ?? l : l)).filter((l) => !nearWall(lotSamples(l), WALL_CLEAR, dc));
 }
 // Whether any of the points comes within `clear` of a wall.
 const nearWall = (pts: readonly Pt[], clear: number, dc: Doc = doc) => dc.walls.some((w) => w.length >= 2 && pts.some((p) => distToLine(p, w) < clear));
@@ -221,7 +225,10 @@ function rebuild(): void {
   paint.ground(f);
   const c = parseKey(key);
   drawn = fromRecord(key, role, density, recordOf(doc));
-  paint.stamp(stamp([{ tile: 0, colouring: c, edgeCls: c.map((v) => (v ? edgeClass(v, density, density) : null)), role, density, drawing: drawn }]), { spots: true, walls: true });
+  // (Built: buildings on the spots, and the hall or a wonder on the site; else their houses.)
+  const built = preview !== 'houses';
+  paint.stamp(stamp([{ tile: 0, colouring: c, edgeCls: c.map((v) => (v ? edgeClass(v, density, density) : null)), role, density, drawing: drawn }]),
+    { spots: built, walls: true, sites: () => (built ? preview as 'hall' | SiteModel : null) });
   paint.marks(f, c);
   paint.floor(-2.5, -2.5, 2.5, 2.5);
   paint.flush(world);
@@ -313,8 +320,7 @@ function drawOverlay(): void {
   doc.gates.forEach((g) => overlay.add(line(gateBar(g), new THREE.Color(0xffa23c), false, 0.022)));
   overlay.add(new THREE.Points(new THREE.BufferGeometry().setFromPoints(pts), new THREE.PointsMaterial({ color: 0xffffff, size: 6, sizeAttenuation: false, depthTest: false })));
   doc.spots.forEach((s) => overlay.add(line(spotOutline(s), new THREE.Color(0x7fd3ff))));
-  if (doc.hall) overlay.add(line(circle(doc.hall, doc.hall.r), new THREE.Color(0xffb36b)));
-  if (doc.wonder) overlay.add(line(spotOutline(doc.wonder), new THREE.Color(0xe58cff)));
+  overlay.add(line(spotOutline(doc.site), new THREE.Color(0xe58cff)));
   for (const q of doc.squares) overlay.add(line(q.pts, new THREE.Color(q.paved ? 0xd8d0c0 : 0x9fd06a)));
   // Every building's front, as a short mark in front of it.
   for (const l of doc.lots) {
@@ -357,16 +363,28 @@ function drawOverlay(): void {
 
 // ---------- picking ----------
 
+type Which = number | 'site'; // a building spot (its index), or the site
 type Sel = { t: 'lot'; i: number } | { t: 'street'; i: number } | { t: 'ctrl'; s: number; i: number }
-  | { t: 'spot'; which: number | 'hall' | 'wonder' } | { t: 'square'; i: number } | { t: 'vertex'; s: number; i: number }
+  | { t: 'spot'; which: Which } | { t: 'square'; i: number } | { t: 'vertex'; s: number; i: number }
   | { t: 'wall'; i: number } | { t: 'wallPt'; s: number; i: number } | { t: 'gate'; i: number };
 let selected: Sel | null = null;
 
-const spotRef = (w: number | 'hall' | 'wonder'): Spot | null => (w === 'hall' ? doc.hall : w === 'wonder' ? doc.wonder : doc.spots[w] ?? null);
-function setSpot(w: number | 'hall' | 'wonder', s: Spot | null): void {
-  if (w === 'hall') doc.hall = s;
-  else if (w === 'wonder') doc.wonder = s;
-  else if (s) { while (doc.spots.length < w) doc.spots.push({ ...s }); doc.spots[w] = s; } else doc.spots.splice(w, 1);
+const spotRef = (w: Which): Spot | null => (w === 'site' ? doc.site : doc.spots[w] ?? null);
+// Sets (or with null, removes) a spot or the site. A building spot brings
+// its house along (a new one: as tall as `floors`, if its density holds
+// it); a removed spot takes its house, and the spots after it move up.
+function setSpot(w: Which, s: Spot | null, houseFloors?: Floors): void {
+  if (w === 'site') { if (s) doc.site = s; return; }
+  if (!s) {
+    doc.spots.splice(w, 1);
+    doc.lots = doc.lots.filter((l) => l.spot !== w).map((l) => (l.spot !== undefined && l.spot > w ? { ...l, spot: l.spot - 1 } : l));
+    return;
+  }
+  const k = Math.min(w, doc.spots.length);
+  doc.spots[k] = s;
+  const old = doc.lots.find((l) => l.spot === k);
+  const f = houseFloors ?? old?.floors ?? SPOT_HOUSE_FLOORS[density];
+  doc.lots = [...doc.lots.filter((l) => l.spot !== k && !lotOnSpot(l, s)), { ...spotHouse(s, k, density), floors: densityAllows(density, f) ? f : SPOT_HOUSE_FLOORS[density] }];
 }
 function inLot(l: Lot, p: Pt): boolean {
   const [hw, hd] = LOT_SIZE[l.kind];
@@ -387,8 +405,9 @@ function pick(p: Pt): Sel | null {
     const q = doc.squares[si]!.pts;
     for (let i = 0; i < q.length; i++) if (len(sub(q[i]!, p)) < 0.012) return { t: 'vertex', s: si, i };
   }
-  for (let i = doc.lots.length - 1; i >= 0; i--) if (inLot(doc.lots[i]!, p)) return { t: 'lot', i };
-  for (const w of [...doc.spots.map((_, i) => i), 'hall', 'wonder'] as (number | 'hall' | 'wonder')[]) {
+  // (A spot's house picks its spot.)
+  for (let i = doc.lots.length - 1; i >= 0; i--) { const l = doc.lots[i]!; if (inLot(l, p)) return l.spot !== undefined ? { t: 'spot', which: l.spot } : { t: 'lot', i }; }
+  for (const w of [...doc.spots.map((_, i) => i), 'site'] as Which[]) {
     const s = spotRef(w);
     if (s && inSpot(p, s)) return { t: 'spot', which: w };
   }
@@ -465,7 +484,8 @@ let footprint: Footprint = 'b22';
 let floors: Floors = 1;
 let propKind: LotKind = 'well';
 let paved = true;
-let spotWhich: number | 'hall' | 'wonder' = 0;
+let spotWhich: Which = 0;
+let preview: 'houses' | 'hall' | SiteModel = 'houses';
 let wallMode: 'wall' | 'gate' = 'wall';
 let ghostYaw = Math.PI / 2;
 let drawing: Pt[] | null = null;
@@ -481,7 +501,8 @@ function setTool(t: Tool): void {
 }
 
 // Where a new lot would go, and whether it may: inside the lot area, off
-// the roads, squares, hall and wonder (it replaces the lots it lands on).
+// the roads, squares and building spots (it replaces the lots it lands on;
+// on the site it stands until the hall or a wonder does).
 // A building near a road fronts onto it, set just back from its edge.
 function ghostLot(p: Pt): Lot {
   const kind: LotKind = tool === 'building' ? footprint : propKind;
@@ -505,27 +526,19 @@ function lotOk(l: Lot): boolean {
   if (!pts.every((q) => rhoOf(6, q) <= LOT_INNER + 1e-9)) return false;
   for (const s of clearance(drawn.streets, drawn.stubs)) if (pts.some((q) => distToLine(q, s.pts) < HALF_WIDTH[s.cls])) return false;
   if (!ON_SQUARES.has(l.kind) && doc.squares.some((q) => q.paved && pts.some((v) => pointInPoly(v, q.pts)))) return false;
-  for (const s of [doc.hall, doc.wonder]) if (s && pts.some((v) => inSpot(v, s))) return false;
+  if (doc.spots.some((s) => lotOnSpot(l, s))) return false;
   if (nearWall(pts, WALL_CLEAR)) return false;
   return true;
 }
-// A new lot replaces whatever it lands on; inside a building spot it is
-// one of the spot's own lots (gone once a building stands there).
+// A new lot replaces whatever it lands on (never a spot's house).
 function placeLot(l: Lot, skip = -1): void {
-  const spot = doc.spots.findIndex((s) => len(sub(l, s)) < s.r);
-  const { spot: _old, ...rest } = l;
-  const lot: Lot = spot >= 0 ? { ...rest, spot } : rest;
-  const keep = doc.lots.filter((o, i) => i !== skip && !lotsOverlap(o, lot, 0.001));
-  doc.lots = [...keep, lot];
+  const keep = doc.lots.filter((o, i) => i !== skip && (o.spot !== undefined || !lotsOverlap(o, l, 0.001)));
+  doc.lots = [...keep, l];
 }
-// Where a spot (building spot, hall, wonder) would go: like a building,
+// Where a spot (a building spot, the site) would go: like a building,
 // fronting the nearest road (kept clear of it at its widest), or free and
 // turned by hand.
-// (A wonder's footprint is its group's: round, or a rectangle facing its front.)
-const spotAt = (w: number | 'hall' | 'wonder', x: number, y: number, yaw: number): Spot => {
-  if (w === 'wonder' && isWonderRole(role)) return wonderSpot(groupOf(role), x, y, yaw);
-  return { x, y, yaw, r: w === 'hall' ? HALL_RADIUS[density] : spotRef(w)?.r ?? 0.062 };
-};
+const spotAt = (w: Which, x: number, y: number, yaw: number): Spot => (w === 'site' ? siteSpot(x, y, yaw) : buildingSpot(x, y, yaw));
 function ghostSpot(p: Pt): Spot {
   const s0 = spotAt(spotWhich, 0, 0, 0), depth = s0.hd ?? s0.r;
   if ($<HTMLInputElement>('spotToRoad').checked) {
@@ -540,13 +553,16 @@ function ghostSpot(p: Pt): Spot {
   const at = grid(p);
   return spotAt(spotWhich, at.x, at.y, ghostYaw);
 }
-function spotOk(s: Spot): boolean {
+// Inside the safe zone, off the streets and squares, clear of the site and
+// the other spots; a building spot only as many as the density has.
+function spotOk(s: Spot, w: Which = spotWhich): boolean {
   if (!drawn) return false;
-  if (spotWhich === 'wonder' && !isWonderRole(role)) return false;
+  if (w !== 'site' && w >= SPOTS[density]) return false;
   if (spotPastRim(s)) return false;
-  if (drawn.streets.some((st) => spotOnStreet(s, st.pts, HALF_WIDTH[RANK_CLASS.high[st.rank]]))) return false;
-  if (spotWhich !== 'hall' && spotWhich !== 'wonder' && doc.squares.some((q) => q.paved && pointInPoly(s, q.pts))) return false;
-  return true;
+  if (drawn.streets.some((st) => spotOnStreet(s, st.pts, HALF_WIDTH[WIDEST_CLASS[st.rank]]))) return false;
+  if (doc.squares.some((q) => q.paved && (pointInPoly(s, q.pts) || q.pts.some((p) => inSpot(p, s))))) return false;
+  const others = [...(w === 'site' ? [] : [doc.site]), ...doc.spots.filter((_, k) => k !== w)];
+  return !others.some((o) => spotsOverlap(s, o));
 }
 
 function updateGhost(): void {
@@ -691,12 +707,8 @@ canvas.addEventListener('mousedown', (e) => {
       const s = ghostSpot(p);
       if (!spotOk(s)) break;
       const before = snapshot();
+      // (A building spot pushes aside the lots it lands on; its house goes in. Houses stay on the site.)
       setSpot(spotWhich, s);
-      // The lots it covers become its own (gone once its building stands).
-      if (typeof spotWhich === 'number') {
-        const k = spotWhich;
-        doc.lots = doc.lots.map((l) => (len(sub(l, s)) < s.r ? { ...l, spot: k } : l.spot === k && len(sub(l, s)) >= s.r ? (({ spot: _s, ...rest }) => rest)(l) : l));
-      } else doc.lots = doc.lots.filter((l) => !lotSamples(l).some((v) => inSpot(v, s)));
       commit(before);
       updateGhost();
       break;
@@ -768,7 +780,7 @@ addEventListener('mouseup', () => {
   if (sel.t === 'ctrl') clearRoads();
   if (sel.t === 'wallPt') clearWalls();
   if (sel.t === 'spot') { const sp = spotRef(sel.which)!; setSpot(sel.which, { ...sp, yaw: faceRoad(sp) ?? sp.yaw }); }
-  selected = null;
+  selected = sel.t === 'spot' ? sel : null;
   commit(before);
 });
 
@@ -953,6 +965,9 @@ function refreshPanel(): void {
   // (Heights this density does not hold cannot be picked.)
   document.querySelectorAll<HTMLButtonElement>('button[data-floors]').forEach((b) => { b.disabled = !densityAllows(density, Number(b.dataset['floors']) as Floors); });
   if (!densityAllows(density, floors)) { floors = DENSITY_TALLEST[density]; document.querySelectorAll<HTMLButtonElement>('button[data-floors]').forEach((b) => b.classList.toggle('on', Number(b.dataset['floors']) === floors)); }
+  // (Building spots beyond what the density has cannot be placed.)
+  document.querySelectorAll<HTMLButtonElement>('button[data-spot]').forEach((b) => { const v = b.dataset['spot']!; b.disabled = v !== 'site' && Number(v) >= SPOTS[density]; });
+  if (spotWhich !== 'site' && spotWhich >= SPOTS[density]) spotWhich = 0;
   const past = doc.lots.filter((l) => isBuilding(l.kind) && pastSafe(l)).length;
   $('safeNote').textContent = past ? `${past} building${past > 1 ? 's' : ''} past the safe zone (left out where a river comes in)` : 'everything inside the safe zone';
 }
@@ -983,6 +998,15 @@ group('tool', (v) => setTool(v as Tool));
 group('rank', (v) => { rank = v as Rank; });
 // Size and height: for the next building, and the selected one.
 const restyle = (f: (l: Lot) => Lot) => {
+  // (A selected spot: its house's height.)
+  if (selected?.t === 'spot' && selected.which !== 'site') {
+    const k = selected.which, sp = doc.spots[k], h = doc.lots.find((l) => l.spot === k);
+    if (!sp || !h) return;
+    const before = snapshot();
+    setSpot(k, sp, f(h).floors);
+    commit(before);
+    return;
+  }
   if (selected?.t !== 'lot') return;
   const l = doc.lots[selected.i];
   if (!l || !isBuilding(l.kind)) return;
@@ -991,15 +1015,19 @@ const restyle = (f: (l: Lot) => Lot) => {
   selected = { t: 'lot', i: doc.lots.length - 1 };
   commit(before);
 };
-group('fp', (v) => { footprint = v as Footprint; restyle((l) => ({ ...l, kind: footprint })); updateGhost(); });
+group('fp', (v) => { footprint = v as Footprint; if (selected?.t !== 'spot') restyle((l) => ({ ...l, kind: footprint })); updateGhost(); });
 group('floors', (v) => { floors = Number(v) as Floors; restyle((l) => ({ ...l, floors })); updateGhost(); });
 group('prop', (v) => { propKind = v as LotKind; updateGhost(); });
 group('paved', (v) => { paved = v === '1'; });
-group('spot', (v) => { spotWhich = v === 'hall' || v === 'wonder' ? v : Number(v); });
+group('spot', (v) => { spotWhich = v === 'site' ? 'site' : Number(v); });
 group('wallmode', (v) => { wallMode = v as 'wall' | 'gate'; drawing = null; drawOverlay(); });
 group('role', (v) => { role = v as Role; open(key, variantsOf(key, role, density)[0] ?? 0); });
 group('density', (v) => { density = v as Density; open(key, variantsOf(key, role, density)[0] ?? 0); });
 $('onlyDrawn').addEventListener('change', renderTree);
+// What the preview shows on the site (and whether the spots show buildings).
+$<HTMLSelectElement>('preview').innerHTML = [['houses', 'nothing (houses)'], ['hall', 'city hall'], ...SITE_MODELS.filter((m) => m !== 'scaffold').map((m) => [m, WONDERS[m].name]), ['scaffold', 'a wonder going up']]
+  .map(([v, n]) => `<option value="${v}">${n}</option>`).join('');
+$('preview').addEventListener('change', (e) => { preview = (e.target as HTMLSelectElement).value as typeof preview; (e.target as HTMLElement).blur(); rebuild(); });
 
 // Whose houses: only the look (the drawing is the same for every civ).
 const lookStore = (() => { try { return JSON.parse(localStorage.getItem('townEditor.look') ?? 'null') as { civ: ArchCiv } | null; } catch { return null; } })();
@@ -1054,7 +1082,7 @@ renderer.setAnimationLoop(() => {
 if (import.meta.env.DEV) {
   Object.assign(window, { __editor: {
     camera, controls, at, setTool, setTilt,
-    get doc() { return doc; }, get drawing() { return drawing; }, get tool() { return tool; },
+    get doc() { return doc; }, get drawing() { return drawing; }, get tool() { return tool; }, get selected() { return selected; },
     open: (k: string, v = 0, r: Role = role, d: Density = density) => { role = r; density = d; open(k, v); },
   } });
 }

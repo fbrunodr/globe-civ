@@ -90,8 +90,8 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
   // citizen to place, the map shows where it can go (buildings first).
   let placing: Placing = null;
   const placingCity = (): City | null =>
-    (sel?.kind === 'city' && sel.city.owner === HUMAN && (sel.city.growth > 0 || sel.city.pendingBuilding || wonderPicked(placing)) ? sel.city : null);
-  const PLACE_COLOR: Record<GrowthKind | 'building' | 'wonder', number> = { rural: 0x8ce99a, urban: 0xe6dccb, specialist: 0xffe066, building: 0x9cc8ff, wonder: 0xf5d76e };
+    (sel?.kind === 'city' && sel.city.owner === HUMAN && (sel.city.growth > 0 || sel.city.pendingBuilding || wonderPicked(placing) || placing === 'buy') ? sel.city : null);
+  const PLACE_COLOR: Record<GrowthKind | 'building' | 'wonder' | 'buy', number> = { rural: 0x8ce99a, urban: 0xe6dccb, specialist: 0xffe066, building: 0x9cc8ff, wonder: 0xf5d76e, buy: 0xd4a72c };
   // The quarters lens: urban tiles tinted by their buildings' family (tints
   // only ever appear in a lens, never on the map itself).
   let lens = false;
@@ -128,6 +128,12 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
     if (sel?.kind === 'city' && sel.city.wonderTile !== null && sel.city.owner === HUMAN) out.push({ tile: sel.city.wonderTile, color: PLACE_COLOR.wonder, opacity: 0.6 });
     const c = placingCity();
     if (!c || !placing) return out;
+    // The tiles it could buy (dimmer when it cannot pay).
+    if (placing === 'buy') {
+      const pay = game.players[c.owner]!.gold >= game.tilePrice(c);
+      for (const t of game.buyableTiles(c)) out.push({ tile: t, color: PLACE_COLOR.buy, opacity: pay ? 0.7 : 0.3 });
+      return out;
+    }
     const w = wonderPicked(placing);
     if (w) {
       const pick = game.governorWonderSpot(c, w);
@@ -178,7 +184,7 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
     if (sel?.kind === 'city' && sel.city.owner !== HUMAN) sel = { kind: 'tile', tile: sel.city.tile };
     const pc = placingCity();
     if (!pc) placing = null;
-    else if (wonderPicked(placing)) { /* picking a wonder's tile */ }
+    else if (wonderPicked(placing) || placing === 'buy') { /* picking a wonder's tile, or tiles to buy */ }
     else if (pc.pendingBuilding && placing !== 'building') placing = 'building';
     else if (!pc.pendingBuilding && (placing === 'building' || placing === null)) placing = defaultPlacing(pc);
     view.syncWorld(sel);
@@ -255,6 +261,9 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
       case 'focus':
         if (sel?.kind === 'city' && sel.city.owner === HUMAN) sel.city.focus = a.focus;
         break;
+      case 'buyMode':
+        if (sel?.kind === 'city' && sel.city.owner === HUMAN) placing = 'buy';
+        break;
       case 'endTurn': {
         game.endTurn();
         sel = null;
@@ -287,7 +296,10 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
       // Placing: a click on a highlighted tile places the building or citizen there.
       const c = placingCity();
       const w = wonderPicked(placing);
-      if (c && w) {
+      if (c && placing === 'buy') {
+        // (Buying goes on until Esc, or nothing more can be bought.)
+        if (game.buyTile(c, t)) { if (!game.buyableTiles(c).length) placing = defaultPlacing(c); refresh(); return; }
+      } else if (c && w) {
         if (game.startWonder(c, w, t)) { placing = defaultPlacing(c); refresh(); return; }
       } else if (c && placing === 'building' && c.pendingBuilding) {
         if (game.placeBuilding(c, c.pendingBuilding, t)) { placing = defaultPlacing(c); refresh(); return; }
@@ -322,8 +334,8 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
     if (a) { e.preventDefault(); act(a); return; }
     if (e.key === 'n' || e.key === 'Tab') { e.preventDefault(); selectNextUnit(); refresh(); }
     else if (e.key === 'Escape') {
-      // Cancel picking a wonder's tile first; otherwise deselect.
-      if (wonderPicked(placing) && sel?.kind === 'city') placing = defaultPlacing(sel.city);
+      // Cancel picking a wonder's tile (or buying tiles) first; otherwise deselect.
+      if ((wonderPicked(placing) || placing === 'buy') && sel?.kind === 'city') placing = defaultPlacing(sel.city);
       else { sel = null; placing = null; }
       refresh();
     }
