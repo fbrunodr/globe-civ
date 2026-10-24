@@ -7,7 +7,7 @@
 import './style.css';
 import { Game, type City } from './game.ts';
 import { GlobeRenderer, type DebugView, type TileMark } from './render.ts';
-import { MAP_SIZES, tileCount, type MapSizeKey } from './rules.ts';
+import { MAP_SCRIPTS, MAP_SIZES, isMapScript, tileCount, type MapScriptKey, type MapSizeKey } from './rules.ts';
 import { terrainName } from './terrain.ts';
 import {
   USE, SLOTS, BUILDINGS, BUILDING_KEYS, WONDERS, WONDER_KEYS, FOCUSES, ERAS, FAMILIES, IMPROVEMENTS,
@@ -25,22 +25,27 @@ const esc = (s: string) => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
 const params = new URLSearchParams(location.search);
 const pSize = params.get('size') ?? '';
 const size: MapSizeKey = isMapSize(pSize) ? pSize : 'medium';
+const pMap = params.get('map') ?? '';
+const script: MapScriptKey = isMapScript(pMap) ? pMap : 'continents';
 const seed = Number(params.get('seed')) || 7;
 
-const sizeEl = $<HTMLSelectElement>('size'), seedEl = $<HTMLInputElement>('seed');
+const sizeEl = $<HTMLSelectElement>('size'), mapEl = $<HTMLSelectElement>('map'), seedEl = $<HTMLInputElement>('seed');
+mapEl.innerHTML = (Object.keys(MAP_SCRIPTS) as MapScriptKey[])
+  .map((k) => `<option value="${k}"${k === script ? ' selected' : ''}>${MAP_SCRIPTS[k].name}</option>`).join('');
 sizeEl.innerHTML = (Object.keys(MAP_SIZES) as MapSizeKey[])
   .map((k) => `<option value="${k}"${k === size ? ' selected' : ''}>${MAP_SIZES[k].name} (${tileCount(MAP_SIZES[k].n).toLocaleString()} tiles)</option>`).join('');
 seedEl.value = String(seed);
 const rebuild = () => {
   const url = new URL(location.href);
   url.searchParams.set('size', sizeEl.value);
+  url.searchParams.set('map', mapEl.value);
   url.searchParams.set('seed', String(Number(seedEl.value) || 1));
   location.href = url.toString();
 };
 $('rebuild').addEventListener('click', rebuild);
 seedEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') rebuild(); });
 
-const game = new Game({ size, seed, everyCiv: true });
+const game = new Game({ size, seed, script, everyCiv: true });
 game.units.length = 0;
 game.explored.fill(1);
 game.visible.fill(1);

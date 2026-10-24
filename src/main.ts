@@ -3,7 +3,7 @@ import { Game, HUMAN, type City, type Unit } from './game.ts';
 import { GlobeRenderer, type DebugView, type Selection, type TileMark } from './render.ts';
 import { USE, quarterOf, familyOf, type GrowthKind, type FamilyKey } from './cities.ts';
 import { UI, assertNever, wonderPicked, type Action, type Placing } from './ui.ts';
-import { MAP_SIZES, tileCount, unitDef, isWonder, type MapSizeKey } from './rules.ts';
+import { MAP_SCRIPTS, MAP_SIZES, isMapScript, tileCount, unitDef, isWonder, type MapScriptKey, type MapSizeKey } from './rules.ts';
 
 const isMapSize = (s: string): s is MapSizeKey => s in MAP_SIZES;
 
@@ -15,19 +15,30 @@ function showStartScreen(): void {
     return `<button data-size="${k}" class="${k === 'small' ? 'active' : ''}">
       <b>${s.name}</b><span>${tileCount(s.n).toLocaleString()} tiles · ${s.players} civs</span><small>≈ ${s.civEquivalent}</small></button>`;
   }).join('');
+  const scripts = (Object.keys(MAP_SCRIPTS) as MapScriptKey[])
+    .map((k) => `<button data-script="${k}">${MAP_SCRIPTS[k].name}</button>`).join('');
   menu.innerHTML = `<div class="card">
     <h1>Globe Civ</h1>
     <p>A civilization game on a Goldberg polyhedron: 12 pentagons, the rest hexagons.</p>
     <div class="sizes">${sizes}</div>
+    <div class="scripts">Map ${scripts}</div>
     <label>Seed <input id="seed" value="${params.get('seed') ?? Math.floor(Math.random() * 1e6)}"></label>
     <button id="go" class="primary">Start game</button>
-    <p class="tools"><small>Tools: <a href="/gallery.html">Gallery</a> · <a href="/city_lab.html">City lab</a> · <a href="/city_designs.html">Town designs</a> · <a href="/world_view.html">World view</a></small></p>
+    <p class="tools"><small>Tools: <a href="/gallery.html">Gallery</a> · <a href="/city_lab.html">City lab</a> · <a href="/city_designs.html">Town designs</a> · <a href="/world_view.html">World view</a> · <a href="/map_editor.html">Map editor</a></small></p>
   </div>`;
-  let size: MapSizeKey = 'small';
-  const pSize = params.get('size');
+  let size: MapSizeKey = 'small', script: MapScriptKey = 'continents';
+  const pSize = params.get('size'), pMap = params.get('map');
   if (pSize && isMapSize(pSize)) size = pSize;
-  const mark = () => menu.querySelectorAll<HTMLElement>('[data-size]').forEach((b) => b.classList.toggle('active', b.dataset['size'] === size));
+  if (pMap && isMapScript(pMap)) script = pMap;
+  const mark = () => {
+    menu.querySelectorAll<HTMLElement>('[data-size]').forEach((b) => b.classList.toggle('active', b.dataset['size'] === size));
+    menu.querySelectorAll<HTMLElement>('[data-script]').forEach((b) => b.classList.toggle('active', b.dataset['script'] === script));
+  };
   mark();
+  menu.querySelectorAll<HTMLElement>('[data-script]').forEach((b) => b.addEventListener('click', () => {
+    const s = b.dataset['script'] ?? '';
+    if (isMapScript(s)) { script = s; mark(); }
+  }));
   menu.querySelectorAll<HTMLElement>('[data-size]').forEach((b) => b.addEventListener('click', () => {
     const s = b.dataset['size'] ?? '';
     if (isMapSize(s)) { size = s; mark(); }
@@ -35,12 +46,12 @@ function showStartScreen(): void {
   document.getElementById('go')!.addEventListener('click', () => {
     const seed = Number((document.getElementById('seed') as HTMLInputElement).value) || 1;
     menu.remove();
-    startGame(size, seed);
+    startGame(size, seed, script);
   });
 }
 
-function startGame(sizeKey: MapSizeKey, seed: number): void {
-  const game = new Game({ size: sizeKey, seed });
+function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): void {
+  const game = new Game({ size: sizeKey, seed, script });
   const view = new GlobeRenderer(document.getElementById('c') as HTMLCanvasElement, game);
   const ui = new UI(game, act);
   view.onTileHover = onHover;

@@ -81,5 +81,14 @@ export const MAP_SIZES = {
 export type MapSizeKey = keyof typeof MAP_SIZES;
 export const tileCount = (n: number): number => 10 * n * n + 2;
 
+// Map scripts: where the land comes from (mapgen.ts). Continents are grown
+// from the seed; the Earth is the real one (earth.ts).
+export const MAP_SCRIPTS = {
+  continents: { name: 'Continents' },
+  earth: { name: 'Earth' },
+} satisfies Record<string, { name: string }>;
+export type MapScriptKey = keyof typeof MAP_SCRIPTS;
+export const isMapScript = (s: string): s is MapScriptKey => s in MAP_SCRIPTS;
+
 export const growthCost = (pop: number): number => Math.floor(15 + 8 * (pop - 1) + Math.pow(pop - 1, 1.5));
 export const territoryRadius = (pop: number): number => (pop >= 6 ? 3 : pop >= 3 ? 2 : 1);

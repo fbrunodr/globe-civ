@@ -1,8 +1,9 @@
 import * as THREE from 'three';
 import { mulberry32, makePerlin, type Noise3, type Rng } from './rng.ts';
 import type { Globe } from './goldberg.ts';
-import type { MapSizeKey } from './rules.ts';
+import type { MapScriptKey, MapSizeKey } from './rules.ts';
 import { featureAllowed, type BiomeKey, type ReliefKey, type FeatureKey } from './terrain.ts';
+import { HILLS, LAND, LAKE, MOUNTAINS, PAINTED, paintingFor } from './mapPaint.ts';
 import { RIVER_DEFAULTS, borderBetween, generateRivers, type River } from './rivers.ts';
 import {
   MAP_LIMITS, FORBIDDEN_NEIGHBORS, ball, bfs, components, latDeg, isNavigable, isWorldOcean, isWaterKey, shelfLinkedGroups,
@@ -89,8 +90,10 @@ const ridged = (n: Noise3, p: THREE.Vector3, freq: number, octaves: number): num
 };
 
 // Generates one map, or null when this seed cannot satisfy a guarantee by
-// construction (the caller then retries with a derived seed).
-export function generateMap(globe: Globe, seed: number, size: MapSizeKey): MapData | null {
+// construction (the caller then retries with a derived seed). The script
+// picks the land: continents grown from the seed, or the real Earth's
+// (painted in the map editor: mapPaint.ts), whose seed only varies the details.
+export function generateMap(globe: Globe, seed: number, size: MapSizeKey, script: MapScriptKey = 'continents'): MapData | null {
   const limits = MAP_LIMITS[size];
   const rand = mulberry32(seed);
   const shapeNoise = makePerlin(rand), ridgeNoise = makePerlin(rand), detailNoise = makePerlin(rand);
@@ -98,12 +101,13 @@ export function generateMap(globe: Globe, seed: number, size: MapSizeKey): MapDa
   const o = [rand() * 50, rand() * 50, rand() * 50] as const;
   const { tiles } = globe;
   const N = tiles.length;
+  const paint = script === 'continents' ? null : paintingFor(PAINTED[script], size);
   const latArr = Float32Array.from(tiles, (t) => latDeg(globe, t.id));
   const lat = (t: number) => latArr[t];
 
   // ---------- 1. land: continents, an optional polar landmass, islands ----------
   const coastNoiseGen = makePerlin(rand), shelfNoise = makePerlin(rand);
-  const land = buildLand(globe, limits, rand, (t) => {
+  const land = paint ? Uint8Array.from(paint.terrain, (v) => (v === LAND ? 1 : 0)) : buildLand(globe, limits, rand, (t) => {
     // Domain-warped noise: warping the lookup position bends features into
     // curling, irregular shapes instead of round cells.
     const c = tiles[t].center;
@@ -127,19 +131,25 @@ export function generateMap(globe: Globe, seed: number, size: MapSizeKey): MapDa
     const c = tiles[t].center;
     const inland = 1 - Math.exp(-coastDist[t] / 3);
     const detail = 0.5 + detailNoise.fbm(c.x * 4 + o[1], c.y * 4 + o[2], c.z * 4 + o[0], 3);
-    const ridge = ridged(ridgeNoise, c, 2.0, 3);
-    raw[t] = 0.45 * inland + 0.3 * detail + 0.7 * Math.pow(ridge, 3) * smoothstep(0.15, 0.6, inland);
+    // (A painted map's hills and mountains are painted.)
+    const ridge = paint ? PAINT_RISE[paint.relief[t]]! : Math.pow(ridged(ridgeNoise, c, 2.0, 3), 3) * smoothstep(0.15, 0.6, inland);
+    raw[t] = 0.45 * inland + 0.3 * detail + 0.7 * ridge;
   }
   let maxRaw = 0;
   for (let t = 0; t < N; t++) if (isLand(t)) maxRaw = Math.max(maxRaw, raw[t]);
   const elevation = new Float32Array(N);
   for (let t = 0; t < N; t++) elevation[t] = isLand(t) ? raw[t] / maxRaw : -Math.min(1, landDist[t] / 6);
+  // Hills and mountains are the land that rises most: the highest, or on a
+  // painted map the painted ones.
+  const rise = paint ? Float32Array.from(elevation, (e, t) => (e < 0 ? e : PAINT_RISE[paint.relief[t]]!)) : elevation;
 
+  const landRise = [...rise].filter((e) => e >= 0);
+  const mountainLevel = paint ? PAINT_RISE[MOUNTAINS] : quantile(landRise, 0.93);
+  const hillLevel = paint ? PAINT_RISE[HILLS] : quantile(landRise, 0.78);
   const landElev = [...elevation].filter((e) => e >= 0);
-  const mountainLevel = quantile(landElev, 0.93);
-  const hillLevel = quantile(landElev, 0.78);
   const lowland = quantile(landElev, 0.2);   // coastal plains and deltas
   const midland = quantile(landElev, 0.6);
+  const hillHeight = quantile(landElev, 0.78); // (= hillLevel where the land rises as high as it is)
 
   // ---------- 3. climate ----------
   const seaLevelTemp = new Float32Array(N);
@@ -180,12 +190,12 @@ export function generateMap(globe: Globe, seed: number, size: MapSizeKey): MapDa
           }
           cur = best;
           if (!isLand(cur)) { windward = step < 2; if (step < 3) maritime[t] = 1; break; }
-          if (elevation[cur] >= mountainLevel && elevation[t] < mountainLevel) shadow *= 0.5;
-          else if (elevation[cur] >= hillLevel && elevation[t] < hillLevel) shadow *= 0.85;
+          if (rise[cur] >= mountainLevel && rise[t] < mountainLevel) shadow *= 0.5;
+          else if (rise[cur] >= hillLevel && rise[t] < hillLevel) shadow *= 0.85;
         }
       }
       rain *= shadow;
-      if (windward && elevation[t] >= hillLevel) rain *= 1.35; // orographic lift
+      if (windward && rise[t] >= hillLevel) rain *= 1.35; // orographic lift
     }
     rain *= 0.75 + 0.5 * (0.5 + rainNoise.fbm(c.x * 3 + o[2], c.y * 3 + o[0], c.z * 3 + o[1], 3));
     rainfall[t] = Math.max(20, rain);
@@ -210,18 +220,21 @@ export function generateMap(globe: Globe, seed: number, size: MapSizeKey): MapDa
   const relief = new Array<ReliefKey>(N).fill('flat');
   for (let t = 0; t < N; t++) {
     if (!isLand(t)) continue;
-    if (elevation[t] >= mountainLevel) relief[t] = 'mountains';
-    else if (elevation[t] >= hillLevel) relief[t] = 'hills';
+    if (rise[t] >= mountainLevel) relief[t] = 'mountains';
+    else if (rise[t] >= hillLevel) relief[t] = 'hills';
   }
   // A lone peak is just a high hill: mountains only come in ranges (R2).
-  for (let t = 0; t < N; t++) {
+  // (Painted mountains stay as painted.)
+  for (let t = 0; t < N && !paint; t++) {
     if (relief[t] === 'mountains' && !tiles[t].neighbors.some((nb) => relief[nb] === 'mountains')) relief[t] = 'hills';
   }
   // Flat land takes the climate at sea level; hills and mountains are colder,
   // but only up to hill altitude so ranges keep their region's biome (peaks
-  // get glaciers instead).
+  // get glaciers instead). (A painted map's hills feel less of it, as its
+  // heights are not the random maps': up to PAINT_HILL_KM.)
+  const hillKm = paint ? PAINT_HILL_KM : hillHeight * PEAK_KM;
   const biomeTemp = (t: number) =>
-    seaLevelTemp[t] - (relief[t] === 'flat' ? 0 : LAPSE_PER_KM * Math.min(elevation[t], hillLevel) * PEAK_KM);
+    seaLevelTemp[t] - (relief[t] === 'flat' ? 0 : LAPSE_PER_KM * Math.min(elevation[t] * PEAK_KM, hillKm));
   const biome = new Array<BiomeKey>(N);
   for (let t = 0; t < N; t++) {
     biome[t] = isLand(t)
@@ -233,9 +246,14 @@ export function generateMap(globe: Globe, seed: number, size: MapSizeKey): MapDa
   const toWater = (t: number, b: BiomeKey) => { biome[t] = b; relief[t] = 'flat'; feature[t] = null; };
 
   // ---------- 5. lakes ----------
-  // Small water bodies cut off from the world ocean become lakes.
+  // Small water bodies cut off from the world ocean become lakes. (On a
+  // painted map the painted lakes; its cut-off seas are joined to the ocean
+  // below.)
   const water = components(globe, (t) => !isLand(t));
-  for (const comp of water.slice(1)) for (const t of comp) toWater(t, 'lake');
+  for (const comp of water.slice(1)) {
+    if (paint && !comp.some((t) => paint.terrain[t] === LAKE)) continue;
+    for (const t of comp) toWater(t, 'lake');
+  }
   const touchesOcean = (t: number) => tiles[t].neighbors.some((nb) => isWorldOcean(biome[nb]));
   const touchesLake = (t: number) => tiles[t].neighbors.some((nb) => biome[nb] === 'lake');
   const lakeSite = (t: number) => !isWaterKey(biome[t]) && relief[t] === 'flat' &&
@@ -243,12 +261,13 @@ export function generateMap(globe: Globe, seed: number, size: MapSizeKey): MapDa
   // Basins that collect a lot of water.
   const basinFlow = quantile(byHeight.map((t) => flow[t]), 0.8);
   for (const t of byHeight) {
-    if (down[t] === -1 && flow[t] >= basinFlow && lakeSite(t) && rand() < 0.8) toWater(t, 'lake');
+    if (!paint && down[t] === -1 && flow[t] >= basinFlow && lakeSite(t) && rand() < 0.8) toWater(t, 'lake');
   }
   // Bring the lake count into range: add lakes where the most water flows,
   // or fill in the smallest lakes.
+  // (A painted map's lakes are as painted.)
   let lakes = components(globe, (t) => biome[t] === 'lake');
-  if (lakes.length < limits.lakes.min) {
+  if (!paint && lakes.length < limits.lakes.min) {
     const sites = byHeight.filter(lakeSite).sort((a, b) => flow[b] - flow[a]);
     for (const t of sites) {
       if (lakes.length >= limits.lakes.min) break;
@@ -257,14 +276,16 @@ export function generateMap(globe: Globe, seed: number, size: MapSizeKey): MapDa
       lakes.push([t]);
     }
   }
-  lakes = components(globe, (t) => biome[t] === 'lake');
-  for (const lake of lakes.slice(limits.lakes.max)) for (const t of lake) toLand(t);
-  for (const lake of components(globe, (t) => biome[t] === 'lake')) {
-    if (lake.length > limits.lakeMaxTiles) for (const t of lake.slice(limits.lakeMaxTiles)) toLand(t);
+  if (!paint) {
+    lakes = components(globe, (t) => biome[t] === 'lake');
+    for (const lake of lakes.slice(limits.lakes.max)) for (const t of lake) toLand(t);
+    for (const lake of components(globe, (t) => biome[t] === 'lake')) {
+      if (lake.length > limits.lakeMaxTiles) for (const t of lake.slice(limits.lakeMaxTiles)) toLand(t);
+    }
   }
 
   // ---------- 6. one connected open sea (G2) ----------
-  if (!connectSeas(globe, biome, relief, feature, limits, lat)) return null;
+  if (!connectSeas(globe, biome, relief, feature, limits, lat, !paint)) return null;
 
   // Coasts: open water touching land is shallow; here and there the shelf
   // reaches a second tile out. Open water beyond is deep.
@@ -294,12 +315,15 @@ export function generateMap(globe: Globe, seed: number, size: MapSizeKey): MapDa
       if (biome[t] === 'shallowSea' && !tiles[t].neighbors.some((nb) => isLandBiome(biome[nb]))) biome[t] = 'ocean';
     }
   }
-  if (shelfLinkedGroups(globe, { biome }, limits).length) return null;
+  // (A painted map's continents are as painted.)
+  if (!paint && shelfLinkedGroups(globe, { biome }, limits).length) return null;
 
   // ---------- 7. climate repairs ----------
   repairNeighbors(globe, biome);
   ensureBiomes(globe, biome, relief, feature, limits, biomeTemp, rainfall, lat, rand);
   repairNeighbors(globe, biome);
+  // Painted biomes, over the climate's.
+  if (paint) for (let t = 0; t < N; t++) if (paint.biome[t] && !isWaterKey(biome[t])) biome[t] = paint.biome[t]!;
 
   // ---------- 8. rivers ----------
   // Lower the water threshold step by step until the map has its required
@@ -379,6 +403,11 @@ export function generateMap(globe: Globe, seed: number, size: MapSizeKey): MapDa
 }
 
 // ---------- land ----------
+
+// How much painted flat land, hills and mountains rise.
+const PAINT_RISE = [0, 0.55, 1] as const;
+// The height whose cold a painted map's hills and mountains take for their biome.
+const PAINT_HILL_KM = 1.2;
 
 // Any two landmasses keep at least this many tiles between them (4 water
 // tiles), so their shallow shelves can always be kept apart (G7).
@@ -547,16 +576,17 @@ function buildLand(globe: Globe, limits: MapLimits, rand: Rng, roughness: (t: nu
 // ---------- seas ----------
 
 // Makes all open water (ocean + shallow sea) one connected body. Small pockets
-// cut off by polar ice freeze over; others get a channel cut to the main sea.
+// cut off by polar ice freeze over (if `freeze`); others get a channel cut
+// to the main sea.
 function connectSeas(globe: Globe, biome: BiomeKey[], relief: ReliefKey[], feature: (FeatureKey | null)[],
-  limits: MapLimits, lat: (t: number) => number): boolean {
+  limits: MapLimits, lat: (t: number) => number, freeze: boolean): boolean {
   for (let pass = 0; pass < 6; pass++) {
     const seas = components(globe, (t) => isNavigable(biome[t]));
     if (seas.length <= 1) return true;
     const main = new Set(seas[0]);
     for (const pocket of seas.slice(1)) {
       const meanLat = pocket.reduce((a, t) => a + lat(t), 0) / pocket.length;
-      if (meanLat > 60 && pocket.length <= limits.lakeMaxTiles * 3) {
+      if (freeze && meanLat > 60 && pocket.length <= limits.lakeMaxTiles * 3) {
         for (const t of pocket) { biome[t] = 'seaIce'; relief[t] = 'flat'; feature[t] = null; }
         continue;
       }

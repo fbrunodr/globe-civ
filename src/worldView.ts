@@ -5,7 +5,7 @@
 import './style.css';
 import { Game } from './game.ts';
 import { GlobeRenderer, type DebugView } from './render.ts';
-import { MAP_SIZES, tileCount, type MapSizeKey } from './rules.ts';
+import { MAP_SCRIPTS, MAP_SIZES, isMapScript, tileCount, type MapScriptKey, type MapSizeKey } from './rules.ts';
 import { terrainName } from './terrain.ts';
 import { floraLabel } from './flora.ts';
 
@@ -16,17 +16,22 @@ const esc = (s: string) => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
 const params = new URLSearchParams(location.search);
 const pSize = params.get('size') ?? '';
 const size: MapSizeKey = isMapSize(pSize) ? pSize : 'medium';
+const pMap = params.get('map') ?? '';
+const script: MapScriptKey = isMapScript(pMap) ? pMap : 'continents';
 const seed = Number(params.get('seed')) || Math.floor(Math.random() * 1e6);
 
 // Controls: a new size or seed reloads the page with them in the URL, so a
 // world can be shared or bookmarked.
-const sizeEl = $<HTMLSelectElement>('size'), seedEl = $<HTMLInputElement>('seed');
+const sizeEl = $<HTMLSelectElement>('size'), mapEl = $<HTMLSelectElement>('map'), seedEl = $<HTMLInputElement>('seed');
+mapEl.innerHTML = (Object.keys(MAP_SCRIPTS) as MapScriptKey[])
+  .map((k) => `<option value="${k}"${k === script ? ' selected' : ''}>${MAP_SCRIPTS[k].name}</option>`).join('');
 sizeEl.innerHTML = (Object.keys(MAP_SIZES) as MapSizeKey[])
   .map((k) => `<option value="${k}"${k === size ? ' selected' : ''}>${MAP_SIZES[k].name} (${tileCount(MAP_SIZES[k].n).toLocaleString()} tiles)</option>`).join('');
 seedEl.value = String(seed);
 const generate = (s: number) => {
   const url = new URL(location.href);
   url.searchParams.set('size', sizeEl.value);
+  url.searchParams.set('map', mapEl.value);
   url.searchParams.set('seed', String(s));
   location.href = url.toString();
 };
@@ -35,14 +40,14 @@ $('random').addEventListener('click', () => generate(Math.floor(Math.random() * 
 seedEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') generate(Number(seedEl.value) || 1); });
 
 // The world: everything explored and in sight, nothing on it.
-const game = new Game({ size, seed });
+const game = new Game({ size, seed, script });
 game.units.length = 0;
 game.cities.length = 0;
 game.explored.fill(1);
 game.visible.fill(1);
 const view = new GlobeRenderer($<HTMLCanvasElement>('c'), game);
 view.syncWorld(null);
-$('hint').textContent = `${MAP_SIZES[size].name} · seed ${seed}`;
+$('hint').textContent = `${MAP_SIZES[size].name} · ${MAP_SCRIPTS[script].name} · seed ${seed}`;
 if (import.meta.env.DEV) Object.assign(window, { __globe: { game, view } });
 
 // Hover: what the tile is.

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Map Editor</title>
+    <style>
+      body { user-select: none; }
+      #tools { position: fixed; top: 56px; left: 10px; width: 236px; max-height: calc(100vh - 66px); overflow: auto; padding: 10px 12px; }
+      #tools h3 { margin: 10px 0 5px; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+      #tools h3:first-child { margin-top: 0; }
+      .row { display: flex; flex-wrap: wrap; gap: 4px; }
+      .row button { padding: 3px 7px; font-size: 12px; display: flex; align-items: center; gap: 5px; }
+      .row button i { width: 11px; height: 11px; border-radius: 3px; display: inline-block; border: 1px solid rgba(0,0,0,0.4); }
+      .row button.on { background: rgba(61,139,253,0.4); border-color: #3d8bfd; }
+      #tools label { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; margin: 4px 0; }
+      #tools input[type=range] { flex: 1; }
+      #stats { position: fixed; right: 10px; bottom: 10px; width: 260px; padding: 10px 12px; font-size: 12px; line-height: 1.55; }
+      #stats .warn { color: #e6a23c; }
+      #saveInfo { color: var(--muted); font-size: 12px; }
+      #save.dirty { border-color: #e6a23c; }
+      #preview { color: var(--muted); text-decoration: none; padding: 3px 9px; border-radius: 6px; }
+      #preview:hover { color: var(--text); background: rgba(255,255,255,0.08); }
+      #hover { position: fixed; right: 10px; top: 56px; padding: 6px 10px; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+    <div id="hud">
+      <div id="topbar">
+        <span id="civ">Map editor</span>
+        <nav class="devnav"><a href="/">Game</a><a href="/gallery.html">Gallery</a><a href="/buildings.html">Buildings</a><a href="/city_lab.html">City lab</a><a href="/city_designs.html">Town designs</a><a href="/town_editor.html">Town editor</a><a href="/world_view.html">World view</a><a class="active" href="/map_editor.html">Map editor</a></nav>
+        <label>Map <select id="map"></select></label>
+        <label>Size <select id="size"></select></label>
+        <button id="save">Save <kbd>⌘S</kbd></button>
+        <span id="saveInfo"></span>
+        <span class="spacer"></span>
+        <a id="preview" target="_blank">Open in world view ↗</a>
+      </div>
+      <div id="tools" class="panel">
+        <h3>Terrain</h3>
+        <div class="row" id="terrainTools"></div>
+        <h3>Relief <small>(paints land)</small></h3>
+        <div class="row" id="reliefTools"></div>
+        <h3>Biome <small>(paints land)</small></h3>
+        <div class="row" id="biomeTools"></div>
+        <h3>Brush</h3>
+        <label>Size <input id="brush" type="range" min="1" max="6" value="1" /> <span id="brushV">1</span> <kbd>[</kbd><kbd>]</kbd></label>
+        <h3>Reference image</h3>
+        <label><input id="refFile" type="file" accept="image/*" /></label>
+        <label>Tiles <input id="opacity" type="range" min="0" max="100" value="100" /></label>
+        <small style="color:var(--muted)">An equirectangular world map (180° W at the left, north up) shows under the tiles.</small>
+        <h3>Size</h3>
+        <div class="row"><select id="copyFrom"></select><button id="copy">Copy from that size</button></div>
+        <div class="row" style="margin-top:6px"><button id="clear">Clear to ocean</button></div>
+        <h3>Keys</h3>
+        <small style="color:var(--muted)">Left-drag: paint · right-drag or <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>: turn · wheel: zoom · <kbd>⌘Z</kbd> undo · <kbd>⇧⌘Z</kbd> redo · <kbd>Alt</kbd>+click: pick</small>
+      </div>
+      <div id="hover" class="panel hidden"></div>
+      <div id="stats" class="panel"></div>
+    </div>
+    <script type="module" src="/src/mapEditor.ts"></script>
+  </body>
+</html>

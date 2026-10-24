@@ -8,7 +8,7 @@ import { tileYieldOf } from './mapRules.ts';
 import { mulberry32, type Rng } from './rng.ts';
 import {
   unitDef, buildDef, isUnitKey, isWonder, UNITS, BUILDINGS, CIVS, growthCost, territoryRadius,
-  type UnitKey, type BuildingKey, type BuildKey, type MapSizeKey,
+  type UnitKey, type BuildingKey, type BuildKey, type MapSizeKey, type MapScriptKey,
 } from './rules.ts';
 import {
   isWaterBiome, terrainMoveCost, terrainDefense,
@@ -118,6 +118,7 @@ export interface Message {
 export interface GameOptions {
   size: MapSizeKey;
   seed: number;
+  script?: MapScriptKey;
   // Every civ a player (the City Lab): those past the map's starts begin with no units.
   everyCiv?: boolean;
 }
@@ -157,9 +158,9 @@ export class Game {
   readonly players: Player[];
   over: 'victory' | 'defeat' | null = null;
 
-  constructor({ size, seed, everyCiv = false }: GameOptions) {
+  constructor({ size, seed, script = 'continents', everyCiv = false }: GameOptions) {
     this.seed = seed;
-    this.world = generateWorld(size, seed);
+    this.world = generateWorld(size, seed, script);
     this.globe = this.world.globe;
     this.tiles = this.globe.tiles;
     this.N = this.tiles.length;
