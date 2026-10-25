@@ -11,7 +11,7 @@ import { MAP_SCRIPTS, MAP_SIZES, isMapScript, tileCount, type MapScriptKey, type
 import { terrainName } from './terrain.ts';
 import {
   USE, BUILDINGS, BUILDING_KEYS, WONDERS, WONDER_KEYS, FOCUSES, ERAS, IMPROVEMENTS, SPECIALIST_KINDS,
-  improvementFor, specialistYield, type BuildingKey, type WonderKey, type EraIndex, type FocusKey, type Output, type SpecialistKind,
+  improvementFor, specialistYield, wonderBeside, type BuildingKey, type WonderKey, type EraIndex, type FocusKey, type Output, type SpecialistKind,
 } from './cities.ts';
 import { specialistName } from './ui.ts';
 import { buildPresets, foundCity, grow, shrink, setEra, addBuilding, addWonder } from './sandbox.ts';
@@ -263,8 +263,8 @@ document.body.addEventListener('click', (e) => {
     case 'wonder': {
       if (!c) break;
       const k = v as WonderKey;
-      // In the city at once; Machu Picchu on a mountain picked on the map (or bought for it).
-      if (WONDERS[k].site !== 'mountainTop' || game.wonderSpots(c, k).length <= 1) addWonder(game, c, k);
+      // In the city at once; beside it on a tile picked on the map (if there is a choice).
+      if (!wonderBeside(k) || game.wonderSpots(c, k).length <= 1) addWonder(game, c, k);
       else mode = { kind: 'wonder', key: k };
       break;
     }

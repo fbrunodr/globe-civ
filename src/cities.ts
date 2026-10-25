@@ -15,8 +15,9 @@
 // percentage bonuses to the city's output, specialist slots, the building
 // it needs first (an Academy needs a Library) and where the city must be
 // (by a river, on the coast). Each wonder is built once in the world, by
-// a city meeting its need; it stands in the city, or beside it: Machu
-// Picchu on a mountain, the Great Lighthouse on the sea.
+// a city meeting its need; it stands in the city, or beside it on a tile
+// the player picks: Machu Picchu on a mountain, the Great Lighthouse on the
+// sea, the Pyramids and Stonehenge on flat land.
 //
 // A city starts with the tiles around its center and buys the ring beyond
 // with gold (game.ts buyTile); it never reaches farther.
@@ -216,10 +217,8 @@ export function specialistSlots(keys: Iterable<BuildingKey>, kind: SpecialistKin
 
 // ---------- wonders ----------
 
-// What a wonder needs of its city (game.ts siteOk), and so where it
-// stands: mountainTop, on a mountain next to the city (the tile stays wild:
-// no citizen lives there); coast, on the sea next to it (fishing goes on
-// there); otherwise in the city.
+// What a wonder needs (game.ts siteOk): of its city's center, or of the
+// tile beside it where it stands.
 export type WonderSite = 'desertOrFloodplain' | 'coast' | 'river' | 'mountainTop' | 'hills' | 'flat' | 'any';
 
 export interface WonderDef {
@@ -227,22 +226,27 @@ export interface WonderDef {
   readonly cost: number;
   readonly site: WonderSite;
   readonly yields: Output; // to its city
+  // Where it stands beside its city (on a tile next to it, the player's
+  // pick): a mountain (the tile stays wild: no citizen lives there), the sea
+  // or flat land (fishing and farming go on round it). Else in the city.
+  readonly beside?: 'mountain' | 'sea' | 'land';
   readonly desc: string;
 }
 
 // Each is built once in the world, by one city.
 export const WONDERS = {
-  pyramids:        { name: 'Pyramids',         cost: 180, site: 'desertOrFloodplain', yields: out({ prod: 4, culture: 2 }), desc: 'On or by desert or floodplain. +4 production, +2 culture.' },
-  greatLighthouse: { name: 'Great Lighthouse', cost: 160, site: 'coast', yields: out({ food: 2, gold: 3, culture: 1 }), desc: 'On the sea beside a coastal city. +2 food, +3 gold, +1 culture.' },
+  pyramids:        { name: 'Pyramids',         cost: 180, site: 'desertOrFloodplain', beside: 'land', yields: out({ prod: 4, culture: 2 }), desc: 'On flat desert or floodplain beside the city. +4 production, +2 culture.' },
+  greatLighthouse: { name: 'Great Lighthouse', cost: 160, site: 'coast', beside: 'sea', yields: out({ food: 2, gold: 3, culture: 1 }), desc: 'On the sea beside a coastal city. +2 food, +3 gold, +1 culture.' },
   hangingGardens:  { name: 'Hanging Gardens',  cost: 180, site: 'river', yields: out({ food: 4, culture: 2 }), desc: 'A city by a river. +4 food, +2 culture.' },
-  machuPicchu:     { name: 'Machu Picchu',     cost: 200, site: 'mountainTop', yields: out({ gold: 4, faith: 2, culture: 2 }), desc: 'On top of a mountain next to the city. +4 gold, +2 faith, +2 culture.' },
+  machuPicchu:     { name: 'Machu Picchu',     cost: 200, site: 'mountainTop', beside: 'mountain', yields: out({ gold: 4, faith: 2, culture: 2 }), desc: 'On top of a mountain next to the city. +4 gold, +2 faith, +2 culture.' },
   greatLibrary:    { name: 'Great Library',    cost: 200, site: 'any', yields: out({ science: 5, culture: 2 }), desc: '+5 science, +2 culture.' },
-  stonehenge:      { name: 'Stonehenge',       cost: 140, site: 'flat', yields: out({ faith: 4, culture: 1 }), desc: 'A city on flat open land. +4 faith, +1 culture.' },
+  stonehenge:      { name: 'Stonehenge',       cost: 140, site: 'flat', beside: 'land', yields: out({ faith: 4, culture: 1 }), desc: 'On flat open land beside the city. +4 faith, +1 culture.' },
   colosseum:       { name: 'Colosseum',        cost: 180, site: 'any', yields: out({ culture: 5, gold: 1 }), desc: '+5 culture, +1 gold.' },
 } satisfies Record<string, WonderDef>;
 export type WonderKey = keyof typeof WONDERS;
 export const WONDER_KEYS = Object.keys(WONDERS) as WonderKey[];
 export const isWonderKey = (s: string): s is WonderKey => s in WONDERS;
+export const wonderBeside = (k: WonderKey): WonderDef['beside'] => (WONDERS[k] as WonderDef).beside;
 
 // ---------- eras ----------
 

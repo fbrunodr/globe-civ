@@ -797,7 +797,7 @@ export class GlobeRenderer {
             const inWater = env.water - env.ground > 0 && catalogEntry(prop.kind).water !== undefined;
             // On built ground the tile's own flora stays where it stands clear of
             // the buildings and streets (a town keeps its trees, never adds any).
-            if ((use === USE.center || isFarmland(g, u)) && !inWater) {
+            if (this.cityProps.keepsFloraClear(u) && !inWater) {
               if (!this.cityProps.floraClear(u, d)) continue;
             } else if (use !== USE.wild && !inWater) {
               const imp = use === USE.rural ? improvementFor(g.terrainAt(u)) : null;

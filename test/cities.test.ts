@@ -4,7 +4,7 @@ import { aiTurn } from '../src/ai.ts';
 import { BIOMES, FEATURE_RULES, RELIEFS, featureAllowed, type BiomeKey, type FeatureKey, type ReliefKey, type TileTerrain } from '../src/terrain.ts';
 import {
   USE, ERAS, IMPROVEMENTS, SPECIALIST_KINDS, BUILDINGS, improvementFor, buildingAllowed, specialistSlots, eraBonus,
-  WONDERS, type BuildingKey, type ImprovementKey, type EraIndex,
+  WONDERS, wonderBeside, type BuildingKey, type ImprovementKey, type EraIndex,
 } from '../src/cities.ts';
 import type { MapSizeKey } from '../src/rules.ts';
 
@@ -91,15 +91,18 @@ function checkCities(g: Game): string[] {
   }
   // Wonders: once in the world, in its city (on the center, meeting its
   // need), or beside it: Machu Picchu on a wild mountain, the Great
-  // Lighthouse on the sea.
+  // Lighthouse on the sea, the Pyramids and Stonehenge on flat land.
   for (const [w, t] of g.wondersBuilt) {
     if (t < 0) continue; // fallen with its city
     const site = WONDERS[w].site;
     const city = g.cityById.get(g.tileCity[t]);
     const beside = !!city && g.tiles[city.tile].neighbors.includes(t);
-    const ok = site === 'mountainTop' ? beside && g.relief[t] === 'mountains' && g.use[t] === USE.wild
-      : site === 'coast' ? beside && g.isSea(t) : g.use[t] === USE.center;
-    if (!ok) out.push(`WN1 tile ${t}: ${w} not where it stands (${site})`);
+    const where = wonderBeside(w);
+    const ok = where === 'mountain' ? beside && g.relief[t] === 'mountains' && g.use[t] === USE.wild
+      : where === 'sea' ? beside && g.isSea(t)
+      : where === 'land' ? beside && !g.isWater(t) && g.relief[t] === 'flat' && g.use[t] !== USE.center
+      : g.use[t] === USE.center;
+    if (!ok) out.push(`WN1 tile ${t}: ${w} not where it stands (${where ?? 'in the city'}, ${site})`);
   }
   for (const c of g.cities) {
     // Buildings: each one the city may have; specialists only in buildings of their kind, one each.

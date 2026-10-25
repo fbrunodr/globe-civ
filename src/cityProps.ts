@@ -14,17 +14,17 @@
 
 import * as THREE from 'three';
 import type { Game, City } from './game.ts';
-import { USE, improvementFor, type ImprovementKey, type EraIndex } from './cities.ts';
+import { USE, improvementFor, wonderBeside, isWonderKey, type ImprovementKey, type EraIndex } from './cities.ts';
 import { ROOFS, PROP_MODEL, buildingEntry, isFloraModel, isLotModel, placedGeometry, waterRule, type BuildingKind, type LotModelKind, type PlacedKind } from './buildingCatalog.ts';
 import { wonderModelKind, type SiteModel } from './wonderModels.ts';
 import type { CatalogKind } from './propCatalog.ts';
 import { HOUSE_VARIANTS, houseKind } from './houses.ts';
 import { styleOf } from './architecture.ts';
-import { LOT_SIZE, isBuilding, type Floors, type Footprint } from './town/geometry.ts';
+import { LOT_SIZE, isBuilding, rhoOf, pointInPoly, distToSeg, type Floors, type Footprint } from './town/geometry.ts';
 import { planRoads, roadLines, ROAD_HALF_WIDTH } from './roads.ts';
-import { classOf, key as colouringKey, type EdgeValue } from './town/edges.ts';
+import { classOf, sideUnder, key as colouringKey, type EdgeValue, type Turn } from './town/edges.ts';
 import { toTile, STAMP_STEP, type FanPt } from './tileFan.ts';
-import { pickRural, TRACK_HALF, WORK_OF, type RuralDensity, type Work } from './rural/index.ts';
+import { pickRural, TRACK_HALF, WORK_OF, type RuralDensity, type RuralDrawing, type Work } from './rural/index.ts';
 import { SCATTER_GAP, areaLook, fieldEdge, gridIn, rowsIn, scatterIn, type Fill, type RGB } from './rural/look.ts';
 import { ruralModelKind, type RuralModel } from './rural/models.ts';
 import { densify as densify2, len as len2, sub as sub2, type Pt as Pt2 } from './town/geometry.ts';
@@ -78,6 +78,10 @@ const DRY = -0.00008;      // like the flora: the water this far under the groun
 // A wonder on the sea (the Great Lighthouse): its scale (model units, tile
 // steps) and its islet's radius (model units, wonderModels.ts).
 const SEA_WONDER = 0.9, SEA_ISLET = 0.075;
+// A wonder on flat land beside its city (the Pyramids, Stonehenge): half
+// its square (tile steps: twice the size it has in a city) and the ground
+// kept clear round it.
+const LAND_WONDER_HALF = 0.12, LAND_WONDER_GAP = 0.015;
 // Models are enlarged a little over true scale so towns read from afar
 // (the drawings' lot sizes assume this scale).
 const HOUSE_SCALE = 1.5;
@@ -193,7 +197,7 @@ export class CityProps {
     const m = memo?.get(city.id);
     if (m !== undefined) return m;
     const g = this.game;
-    const wonders = g.wondersAt(city.tile).join(',');
+    const wonders = g.cityWonders(city).map((w) => `${w}@${g.wondersBuilt.get(w)}`).join(',');
     const farms = this.farmland(city).map((t) => `${t}:${improvementFor(g.terrainAt(t))}:${colouringKey(this.colouring(t))}`).join(';');
     const sig = `${city.id}|${city.pop}|${g.players[city.owner]!.era}|${city.buildings.has('walls') ? 'w' : ''}|${city.wonderTile ?? ''}|${city.building ?? ''}|${this.version}|${wonders}|${farms}`;
     memo?.set(city.id, sig);
@@ -205,6 +209,8 @@ export class CityProps {
     const g = this.game;
     const u = g.use[t];
     if (u === USE.wild) {
+      const owner = g.cityById.get(g.tileCity[t]);
+      if (owner && this.landWonderOf(t)) return `town|${this.citySig(owner, memo)}`;
       const site = g.cities.some((c) => c.wonderTile === t) ? 's' : '';
       return g.wonderOn(t) ? `w${g.wonderOn(t)}` : site || (g.ruins[t] ? 'ruins' : '');
     }
@@ -247,7 +253,10 @@ export class CityProps {
     const g = this.game;
     if (g.use[t] === USE.wild) {
       // (A wonder beside a city: Machu Picchu on its summit, the Great
-      // Lighthouse on the sea; scaffolding while one goes up.)
+      // Lighthouse on the sea, on flat land with the city's layout;
+      // scaffolding while one goes up.)
+      const owner = g.cityById.get(g.tileCity[t]);
+      if (owner && this.landWonderOf(t)) return this.layout(owner).byTile.get(t) ?? [];
       const beside = this.besideWonder(t);
       if (beside) return beside;
       return g.ruins[t] ? this.ruins(t) : [];
@@ -363,13 +372,44 @@ export class CityProps {
       });
     }
 
+    // Wonders beside the city on flat land (the Pyramids, Stonehenge, or
+    // the scaffolding of one), each on a square of its tile placed by a
+    // simple painting: the dry square clear of roads nearest the edge the
+    // tile shares with the city, facing it. The tile's farm keeps round it.
+    const keep = new Map<number, { p: Pt2; r: number }>();
+    for (const t of g.tiles[city.tile].neighbors) {
+      const m = g.tileCity[t] === city.id ? this.landWonderOf(t) : null;
+      if (!m) continue;
+      const turn: Turn = isFarmland(g, t) ? classOf(this.colouring(t)).turn : { rot: 0, flip: false };
+      const toT = (p: Pt2) => dirAt(toTile(t, turn, p));
+      const kind = wonderModelKind(m), [hw, hd] = this.modelBox(kind);
+      const sc = LAND_WONDER_HALF / Math.max(hw, hd), h = LAND_WONDER_HALF + LAND_WONDER_GAP;
+      // (The drawing's side under the tile's side toward the city.)
+      const i = g.tiles[t].neighbors.indexOf(city.tile), s = [0, 1, 2, 3, 4, 5].find((j) => sideUnder(turn, j) === i) ?? 0;
+      const u = { x: Math.cos((s * Math.PI) / 3), y: Math.sin((s * Math.PI) / 3) }, v = { x: -u.y, y: u.x }, mid = { x: 0.5 * u.x, y: 0.5 * u.y };
+      let best: Pt2 | null = null, bestD = Infinity;
+      for (let x = -0.4; x <= 0.4; x += 0.02) for (let y = -0.4; y <= 0.4; y += 0.02) {
+        const p = { x, y }, dist = len2(sub2(p, mid));
+        if (dist >= bestD) continue;
+        const pts = [-1, 0, 1].flatMap((a) => [-1, 0, 1].map((b) => ({ x: p.x + (a * u.x + b * v.x) * h, y: p.y + (a * u.y + b * v.y) * h })));
+        if (pts.some((q) => rhoOf(6, q) > 0.95)) continue;
+        const dirs = pts.map(toT);
+        if (dirs.some((dd) => wet(this.sampleDir(dd))) || !clear.free(dirs)) continue;
+        best = p; bestD = dist;
+      }
+      if (!best) continue;
+      const dir = toT(best), ahead = toT({ x: best.x + 0.01 * u.x, y: best.y + 0.01 * u.y });
+      put(t, ...this.standLot(kind, dir, facing(dir, ahead) + Math.PI / 2, hw, hd, onTile(g, t).k * sc, mulberry32(mix(t, 0x3a)), city.owner));
+      keep.set(t, { p: best, r: Math.SQRT2 * h });
+    }
+
     // The countryside: each rural tile's drawing (its tracks, worked areas,
     // homestead and building spot), its areas filled as the tile grows them.
     const density = ruralDensity(g, city);
     for (const t of this.farmland(city)) {
       const imp = improvementFor(g.terrainAt(t))!, work = WORK_OF[imp] as Work;
       const colouring = this.colouring(t), { key, turn } = classOf(colouring);
-      const d = pickRural(key, work, density, mix(t, 0x51));
+      const d = keepClear(pickRural(key, work, density, mix(t, 0x51)), keep.get(t));
       const toT = (p: Pt2) => dirAt(toTile(t, turn, p));
       // Tracks: a lane's width.
       const tracks: Street[] = [];
@@ -504,12 +544,26 @@ export class CityProps {
   }
 
   // The wonder standing on tile t beside its city, or going up there.
+  // (On a mountain or the sea; on flat land it is the city's layout's.)
   private besideWonder(t: number): PlacedBuilding[] | null {
     const g = this.game, w = g.wonderOn(t);
     if (w === 'machuPicchu') return this.summit(t, 'machuPicchu');
-    if (w) return this.seaWonder(t, wonderModelKind(w));
-    if (!g.cities.some((c) => c.wonderTile === t)) return null;
+    if (w) return wonderBeside(w) === 'sea' ? this.seaWonder(t, wonderModelKind(w)) : null;
+    if (!g.cities.some((c) => c.wonderTile === t) || this.landWonderOf(t)) return null;
     return g.isSea(t) ? this.seaWonder(t, wonderModelKind('scaffold')) : this.landmark(t, 'scaffold', mulberry32((t + 1) * 2654435761));
+  }
+
+  // The wonder on flat land on tile t beside its city (or its scaffolding).
+  landWonderOf(t: number): SiteModel | null {
+    const g = this.game, w = g.wonderOn(t);
+    if (w) return wonderBeside(w) === 'land' && w !== 'machuPicchu' ? w : null;
+    const c = g.cities.find((x) => x.wonderTile === t);
+    return c?.building && isWonderKey(c.building) && wonderBeside(c.building) === 'land' ? 'scaffold' : null;
+  }
+  // Whether the flora of tile t keeps clear of what the city's layout puts there.
+  keepsFloraClear(t: number): boolean {
+    const g = this.game;
+    return g.use[t] === USE.center || isFarmland(g, t) || (g.use[t] === USE.wild && this.landWonderOf(t) !== null);
   }
 
   // Where a wonder on the sea stands: on the line from the tile's middle to
@@ -853,6 +907,37 @@ export function standsAt(kind: BuildingKind, s: CitySpot): boolean {
   if (rule === 'float') return depth >= 0.0003;
   if (rule === 'shore') return depth >= 0.0003 || depth <= DRY;
   return depth <= DRY;
+}
+
+// A rural drawing kept clear of a circle (a wonder standing on its tile):
+// tracks bent round it, fields cut back along a line tangent to it, the
+// homestead moved out of it.
+function keepClear(d: RuralDrawing, k: { p: Pt2; r: number } | undefined): RuralDrawing {
+  if (!k) return d;
+  const away = (q: Pt2): Pt2 => { const o = sub2(q, k.p), l = len2(o) || 1e-9; return { x: k.p.x + (o.x / l) * k.r, y: k.p.y + (o.y / l) * k.r }; };
+  // (Densified first, so no stretch cuts back across the circle.)
+  const tracks = d.tracks.map((tr) => ({ ...tr, pts: densify2(tr.pts, 0.005).map((q) => (len2(sub2(q, k.p)) < k.r ? away(q) : q)) }));
+  const areas = d.areas.flatMap((poly) => {
+    const near = pointInPoly(k.p, poly) || poly.some((q, i) => distToSeg(k.p, q, poly[(i + 1) % poly.length]!) < k.r);
+    if (!near) return [poly];
+    const c = poly.reduce((a, q) => ({ x: a.x + q.x / poly.length, y: a.y + q.y / poly.length }), { x: 0, y: 0 });
+    const o = sub2(c, k.p), l = len2(o);
+    if (l < 1e-6) return [];
+    const n = { x: o.x / l, y: o.y / l }, side = (q: Pt2) => (q.x - k.p.x) * n.x + (q.y - k.p.y) * n.y - k.r;
+    const out: Pt2[] = [];
+    poly.forEach((a, i) => {
+      const b = poly[(i + 1) % poly.length]!, sa = side(a), sb = side(b);
+      if (sa >= 0) out.push(a);
+      if (sa * sb < 0) out.push({ x: a.x + ((b.x - a.x) * sa) / (sa - sb), y: a.y + ((b.y - a.y) * sa) / (sa - sb) });
+    });
+    const area = Math.abs(out.reduce((s, a, i) => { const b = out[(i + 1) % out.length]!; return s + a.x * b.y - b.x * a.y; }, 0)) / 2;
+    return out.length >= 3 && area > 0.002 ? [out] : [];
+  });
+  // (The homestead moves as one, its spot out of the circle with room for its houses.)
+  const o = sub2(d.spot, k.p), l = len2(o) || 1e-9, push = Math.max(0, k.r + 0.06 - l);
+  const shift = { x: (o.x / l) * push, y: (o.y / l) * push };
+  const lots = d.lots.map((lt) => ({ ...lt, x: lt.x + shift.x, y: lt.y + shift.y }));
+  return { ...d, tracks, areas, lots, spot: { ...d.spot, x: d.spot.x + shift.x, y: d.spot.y + shift.y } };
 }
 
 // Yaw (around the local up, matching setFromUnitVectors(UP, dir)) that turns

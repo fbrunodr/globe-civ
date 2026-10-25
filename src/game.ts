@@ -17,7 +17,7 @@ import { aiTurn } from './ai.ts';
 import {
   USE, FOOD_PER_CITIZEN, ZERO, CITY_REACH, START_REACH, tileCost, GROWTH_TURNS, SPECIALIST_KINDS, AQUEDUCT_KEEP, BUILDINGS as CITY_BUILDINGS,
   addOut, scaleOut, centerYield, ruralYield, improvementFor, governorScore, specialistsWanted,
-  buildingsYield, withPercents, specialistYield, specialistSlots, buildingAllowed, weigh, WONDERS, WONDER_KEYS, ERAS, eraOf,
+  buildingsYield, withPercents, wonderBeside, specialistYield, specialistSlots, buildingAllowed, weigh, WONDERS, WONDER_KEYS, ERAS, eraOf,
   type FocusKey, type GrowthOption, type TileUse, type Output, type SpecialistKind, type WonderKey, type WonderSite, type EraIndex, type ImprovementKey,
 } from './cities.ts';
 import { IMPROVEMENTS } from './cities.ts';
@@ -663,10 +663,10 @@ export class Game {
     return out;
   }
 
-  // What a wonder needs of its city's center (mountainTop: of the mountain).
+  // What a wonder needs of the tile it stands on (coast: of its city's center).
   private siteOk(t: number, site: WonderSite): boolean {
     switch (site) {
-      case 'desertOrFloodplain': return [t, ...this.tiles[t].neighbors].some((x) => this.biome[x] === 'hotDesert' || this.biome[x] === 'coldDesert' || this.feature[x] === 'floodplain');
+      case 'desertOrFloodplain': return this.biome[t] === 'hotDesert' || this.biome[t] === 'coldDesert' || this.feature[t] === 'floodplain';
       case 'coast': return this.tiles[t].neighbors.some((n) => this.isSea(n));
       case 'river': return this.map.riverTile[t] === 1;
       case 'mountainTop': return this.relief[t] === 'mountains' && this.feature[t] !== 'volcano';
@@ -677,13 +677,15 @@ export class Game {
   }
 
   // Where wonder k could stand: in the city (its center), if the center
-  // meets its need; beside it, on a tile of the city's with no wonder yet:
-  // Machu Picchu on a mountain (wild), the Great Lighthouse on the sea
-  // (shallow first).
+  // meets its need; beside it, on a tile of the city's next to it with no
+  // wonder yet: a wild mountain, the sea (shallow first; a coastal city),
+  // flat land (a hex, wild or worked) meeting its need.
   wonderSpots(city: City, k: WonderKey): number[] {
-    const site = WONDERS[k].site;
-    if (site !== 'mountainTop' && site !== 'coast') return this.siteOk(city.tile, site) ? [city.tile] : [];
-    const ok = (t: number) => (site === 'coast' ? this.isSea(t) : this.use[t] === USE.wild && this.siteOk(t, 'mountainTop'));
+    const site = WONDERS[k].site, beside = wonderBeside(k);
+    if (!beside) return this.siteOk(city.tile, site) ? [city.tile] : [];
+    const ok = (t: number) => (beside === 'sea' ? this.isSea(t)
+      : beside === 'mountain' ? this.use[t] === USE.wild && this.siteOk(t, 'mountainTop')
+      : !this.isWater(t) && !this.isPentagon(t) && this.relief[t] === 'flat' && this.use[t] !== USE.center && this.siteOk(t, site));
     return this.tiles[city.tile].neighbors.filter((t) => this.tileCity[t] === city.id && !this.blockedFor(city, t) && !this.wondersAt(t).length && ok(t))
       .sort((a, b) => Number(this.biome[b] === 'shallowSea') - Number(this.biome[a] === 'shallowSea') || a - b);
   }

@@ -12,6 +12,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { ARCH_CIVS, type ArchCiv } from './architecture.ts';
 import { SITE_MODELS, type SiteModel } from './wonderModels.ts';
+import { wonderBeside } from './cities.ts';
 import { corner, toFan, type Pt } from './town/geometry.ts';
 import { Game } from './game.ts';
 import { tileLook } from './look.ts';
@@ -176,8 +177,8 @@ function sample(i: number): Sample {
   const r = mulberry32(sheet * 100003 + i * 7919);
   const era = filters.era === 'any' ? pick(r, [0, 1, 2, 3] as const) : filters.era;
   const nw = filters.wonders === 'none' ? 0 : filters.wonders === 'few' ? 1 + Math.floor(r() * 3) : filters.wonders === 'many' ? 4 + Math.floor(r() * (MAX_WONDERS - 3)) : (r() < 0.45 ? 0 : 1 + Math.floor(r() * r() * MAX_WONDERS));
-  // (The Great Lighthouse stands on the sea beside its city, not in it.)
-  const kinds = SITE_MODELS.filter((m) => m !== 'scaffold' && m !== 'greatLighthouse'), start = Math.floor(r() * kinds.length);
+  // (Wonders standing beside their city, on the sea or flat land, are not in it.)
+  const kinds = SITE_MODELS.filter((m) => m !== 'scaffold' && !wonderBeside(m)), start = Math.floor(r() * kinds.length);
   return {
     civ: filters.civ === 'any' ? pick(r, ARCH_CIVS) : filters.civ,
     era, pop: 1 + Math.floor(r() * 24),
