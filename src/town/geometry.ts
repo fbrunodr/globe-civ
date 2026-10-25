@@ -14,7 +14,6 @@ export type Density = (typeof DENSITIES)[number];
 // Canonical shapes: inradius per shape, as on the globe (hexes 0.5 on
 // average, pentagons smaller). Only hexes are built up.
 export const INR: Record<Sides, number> = { 5: 0.34, 6: 0.5 };
-export const sideLength = (k: Sides) => 2 * INR[k] * Math.tan(Math.PI / k);
 // The safe zone (the hex norm, rhoOf: 0 at the center, 1 on the edges):
 // what matters most stands inside SAFE_RHO, wonders (cityPainter.ts) and
 // the rural building spot. (Water may reach into it: shores and rivers bend
@@ -45,12 +44,8 @@ export const PROPS = ['tree', 'bush', 'hedge', 'flowerbed', 'well', 'fountain', 
 export type PropKind = (typeof PROPS)[number];
 export type LotKind = Footprint | PropKind;
 export const LOT_KINDS: readonly LotKind[] = [...FOOTPRINTS, ...PROPS];
-// Props that may stand on a paved square, in a green, turned any way (not
-// facing a street), and on a river bank (plants).
+// Props that may stand on a paved square.
 export const ON_SQUARES: ReadonlySet<LotKind> = new Set<LotKind>(['tree', 'flowerbed', 'well', 'fountain', 'statue', 'bench', 'lamp', 'stall', 'crates']);
-export const ON_GREENS: ReadonlySet<LotKind> = new Set<LotKind>(['tree', 'bush', 'hedge', 'flowerbed', 'statue', 'bench', 'lamp', 'well', 'fountain']);
-export const SPINS: ReadonlySet<LotKind> = new Set<LotKind>(['tree', 'bush']);
-export const PLANTS: ReadonlySet<LotKind> = new Set<LotKind>(['tree', 'bush', 'hedge']);
 export const HOMES: ReadonlySet<LotKind> = new Set(FOOTPRINTS);
 export const isBuilding = (k: LotKind): k is Footprint => HOMES.has(k);
 // Heights: single, double, triple, quad, skyscraper.
@@ -64,17 +59,8 @@ export const FLOOR_NAME: Record<Floors, string> = { 1: 'single', 2: 'double', 3:
 // taller buildings (low and medium: doubles; dense: triples; high: quads;
 // metropolitan: skyscrapers).
 export const DENSITY_TALLEST: Record<Density, Floors> = { low: 2, medium: 2, dense: 3, high: 4, metropolitan: 12 };
-export const densityAllows = (d: Density, floors: Floors): boolean => floors <= DENSITY_TALLEST[d];
 export const WALL_CELLS: Record<Floors, number> = { 1: 0.9, 2: 1.5, 3: 2.25, 4: 3.0, 12: 9.0 };
 export const wallHeight = (floors: Floors): number => WALL_CELLS[floors] * CELL;
-// Above this many floors a building is a tall block (flat top, no gable roof).
-export const isTall = (floors: Floors): boolean => floors > 2;
-// A building's front door (tile steps: width, height), on the side facing
-// its street; a skyscraper gets a wide lobby entrance, the rest a street door.
-export function doorSize(kind: Footprint, floors: Floors): readonly [number, number] {
-  const w = FOOTPRINT_CELLS[kind][0] * CELL;
-  return floors === 12 ? [Math.min(0.018, 0.4 * w), 0.75 * wallHeight(1)] : [Math.min(0.01, 0.35 * w), 0.6 * wallHeight(1)];
-}
 // Footprint half extents: along its front, and in depth.
 export const LOT_SIZE: Record<LotKind, readonly [number, number]> = {
   ...Object.fromEntries(FOOTPRINTS.map((f) => [f, [FOOTPRINT_CELLS[f][0] * CELL / 2, FOOTPRINT_CELLS[f][1] * CELL / 2] as const])) as Record<Footprint, readonly [number, number]>,
@@ -97,40 +83,16 @@ export interface Spot {
   // front faces yaw); r is then the distance to its corners.
   readonly hw?: number; readonly hd?: number;
 }
-// What the player builds stands on squares of the grid, inside the safe
-// zone and clear of each other: building spots (SPOT_CELLS a side: one of
-// the tile's buildings, and a house as large until one stands there) and
-// the tile's site (SITE_CELLS a side: the city hall on the center, a wonder
-// on any other tile; the houses on it give way to them).
-export const SPOT_CELLS = 4, SITE_CELLS = 7;
-export const SPOT_HOUSE: Footprint = 'b44';
-// How tall that house is, by density (a tall one where the density holds it).
-export const SPOT_HOUSE_FLOORS: Record<Density, Floors> = { low: 1, medium: 2, dense: 3, high: 4, metropolitan: 4 };
+// A rural drawing's building spot: SPOT_CELLS a side, inside the safe zone.
+export const SPOT_CELLS = 4;
 const squareSpot = (cells: number, x: number, y: number, yaw: number): Spot => {
   const h = (cells * CELL) / 2;
   return { x, y, yaw, r: Math.SQRT2 * h, hw: h, hd: h };
 };
 export const buildingSpot = (x: number, y: number, yaw: number): Spot => squareSpot(SPOT_CELLS, x, y, yaw);
-export const siteSpot = (x: number, y: number, yaw: number): Spot => squareSpot(SITE_CELLS, x, y, yaw);
 // Building spots a tile has, by its density (and so its building slots:
 // density.ts).
 export const SPOTS: Record<Density, number> = { low: 1, medium: 2, dense: 2, high: 3, metropolitan: 3 };
-export const MAX_SPOTS = 3;
-// Whether two spots overlap, each grown by `pad` (separating axes; round
-// spots as their bounding squares).
-export function spotsOverlap(a: Spot, b: Spot, pad = 0): boolean {
-  if (len(sub(a, b)) > a.r + b.r + 2 * pad) return false;
-  const box = (s: Spot) => spotCorners(s, pad);
-  const ca = box(a), cb = box(b);
-  for (const poly of [ca, cb]) {
-    for (let i = 0; i < 4; i++) {
-      const e = sub(poly[(i + 1) % 4]!, poly[i]!), n = { x: -e.y, y: e.x };
-      const pa = ca.map((p) => p.x * n.x + p.y * n.y), pb = cb.map((p) => p.x * n.x + p.y * n.y);
-      if (Math.max(...pa) <= Math.min(...pb) || Math.max(...pb) <= Math.min(...pa)) return false;
-    }
-  }
-  return true;
-}
 export function spotCorners(s: Spot, grow = 0): Pt[] {
   const hw = (s.hw ?? s.r) + grow, hd = (s.hd ?? s.r) + grow;
   const f = { x: Math.cos(s.yaw), y: Math.sin(s.yaw) }, side = { x: -f.y, y: f.x };

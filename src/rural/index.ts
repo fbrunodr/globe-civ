@@ -17,12 +17,10 @@ import { mulberry32, type Rng } from '../rng.ts';
 import type { ImprovementKey } from '../cities.ts';
 import {
   HALF_WIDTH, LOT_INNER, LOT_SIZE, SAFE_RHO, add, buildingSpot, distToLine, len, lerp, lotSamples, mul, pointInPoly, rhoOf, spotCorners, spotOutline, sub, isBuilding,
-  LOT_KINDS, FLOORS, inSpot,
+  LOT_KINDS, FLOORS, inSpot, curve,
   type Floors, type Lot, type LotKind, type Pt, type Spot, type Street2,
 } from '../town/geometry.ts';
 import { parseKey, stubsOf, type Stub } from '../town/edges.ts';
-import { streetPath } from '../town/index.ts';
-import { LEAD } from '../town/skeleton.ts';
 import { draftLots } from '../town/draft.ts';
 import STORED from './drawings.json';
 
@@ -30,14 +28,12 @@ import STORED from './drawings.json';
 
 export const WORKS = ['cultivation', 'extraction', 'forest'] as const;
 export type Work = (typeof WORKS)[number];
-export const WORK_NAME: Record<Work, string> = { cultivation: 'cultivation (farms, paddies)', extraction: 'extraction (mines, quarries)', forest: 'forest (camps)' };
 // Which work an improvement is (fishing boats: none, they stand on water).
 export const WORK_OF: Record<ImprovementKey, Work | null> = {
   farm: 'cultivation', wetland: 'cultivation', mine: 'extraction', quarry: 'extraction', camp: 'forest', boats: null,
 };
 export const RURAL_DENSITIES = ['low', 'medium', 'high'] as const;
 export type RuralDensity = (typeof RURAL_DENSITIES)[number];
-export const RURAL_DENSITY_NAME: Record<RuralDensity, string> = { low: 'homestead', medium: 'hamlet', high: 'estate' };
 
 // Tracks: unpaved, a lane's width.
 export const TRACK = 'lane' as const;
@@ -75,6 +71,23 @@ const REACH: Record<Work, Record<RuralDensity, number>> = {
   extraction: { low: 0.26, medium: 0.34, high: 0.44 },
   forest: { low: 0.28, medium: 0.36, high: 0.46 },
 };
+
+// A track runs straight in from its stub this far (so it carries on
+// smoothly from the neighbour's), then on through its drawn points.
+export const LEAD = 0.125;
+export function streetPath(ctrl: readonly Pt[], stubs: readonly Stub[]): { pts: Pt[]; ends: [number | null, number | null] } {
+  const at = (p: Pt) => { const i = stubs.findIndex((s) => len(sub(s.p, p)) < 1e-4); return i < 0 ? null : i; };
+  const ends: [number | null, number | null] = [at(ctrl[0]!), ctrl.length > 1 ? at(ctrl[ctrl.length - 1]!) : null];
+  const lead = (i: number) => [stubs[i]!.p, add(stubs[i]!.p, mul(stubs[i]!.into, LEAD / 2)), add(stubs[i]!.p, mul(stubs[i]!.into, LEAD))];
+  let mid = [...ctrl];
+  if (ends[0] !== null) mid = mid.slice(1);
+  if (ends[1] !== null) mid = mid.slice(0, -1);
+  // (Drawn points too close to a lead's end are dropped.)
+  const head = ends[0] !== null ? lead(ends[0]) : [], tail = ends[1] !== null ? lead(ends[1]).reverse() : [];
+  mid = mid.filter((p) => ![...head, ...tail].some((q) => len(sub(p, q)) < 0.02));
+  const all = [...head, ...mid, ...tail];
+  return { pts: all.length >= 3 ? curve(all, 6) : all, ends };
+}
 
 export const tracksAsStreets = (tracks: readonly Track[]): Street2[] => tracks.map((t) => ({ pts: t.pts, cls: TRACK }));
 
@@ -243,20 +256,12 @@ export interface RuralRecord {
 const records: Record<string, RuralRecord> = { ...(STORED as Record<string, RuralRecord>) };
 // Stored as `class|work|density|variant` (variants from 1).
 export const ruralKey = (key: string, work: Work, density: RuralDensity, variant: number) => `${key}|${work}|${density}|${variant}`;
-export const storedRural = (k: string): RuralRecord | null => records[k] ?? null;
-export const allRural = (): Record<string, RuralRecord> => records;
-export function setRural(k: string, rec: RuralRecord | null): void {
-  if (rec) records[k] = rec; else delete records[k];
-  drawings.delete(k);
-}
 export function ruralVariants(key: string, work: Work, density: RuralDensity): number[] {
   const head = `${key}|${work}|${density}|`;
   return Object.keys(records).filter((k) => k.startsWith(head)).map((k) => Number(k.slice(head.length))).filter((n) => n > 0).sort((a, b) => a - b);
 }
 
 const DEG = Math.PI / 180;
-const r4 = (v: number) => Math.round(v * 1e4) / 1e4;
-const xy = (p: Pt): XY => [r4(p.x), r4(p.y)];
 
 export function ruralFromRecord(key: string, work: Work, density: RuralDensity, r: RuralRecord): RuralDrawing {
   const stubs = stubsOf(parseKey(key));
@@ -273,15 +278,6 @@ export function ruralFromRecord(key: string, work: Work, density: RuralDensity, 
     lots, spot: buildingSpot(r.spot[0], r.spot[1], r.spot[2] * DEG),
   };
 }
-export function ruralToRecord(d: RuralDrawing, ctrlOf: (t: Track) => readonly Pt[]): RuralRecord {
-  return {
-    tracks: d.tracks.map((t) => ({ ctrl: ctrlOf(t).map(xy) })),
-    areas: d.areas.map((a) => a.map(xy)),
-    lots: d.lots.map((l) => [l.kind, r4(l.x), r4(l.y), Math.round(l.yaw / DEG), ...(isBuilding(l.kind) ? [l.floors ?? 1] : [])]),
-    spot: [r4(d.spot.x), r4(d.spot.y), Math.round(d.spot.yaw / DEG)],
-  };
-}
-
 const drawings = new Map<string, RuralDrawing>();
 // A drawing: by hand (variant n), or the generated draft (variant 0, or one not drawn).
 export function ruralDrawing(key: string, work: Work, density: RuralDensity, variant = 0): RuralDrawing {

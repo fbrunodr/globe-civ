@@ -22,7 +22,7 @@ import { cityGround } from './terraform.ts';
 import { buildTerrainMesh } from './terrainMesh.ts';
 import { DRESS_ERA_NAME, dressCity, type DressEra } from './cityDress.ts';
 import { MAX_WONDERS } from './cityPainter.ts';
-import { FlatPainter, HOUSE, disposeGroup } from './flatTown.ts';
+import { FlatPainter, HOUSE, disposeGroup } from './flatPainter.ts';
 import { WorldLabel, disposeLabels } from './worldLabel.ts';
 import { mulberry32, type Rng } from './rng.ts';
 

@@ -5,13 +5,24 @@
 // lots, the spot and each other; lots stay in the lot area, off the tracks,
 // the spot and each other.
 
-import { SAFE_RHO, distToLine, inSpot, layoutProblems, len, lotSamples, pointInPoly, rhoOf, spotCorners, spotOutline, sub, LOT_INNER, type Pt } from '../town/geometry.ts';
-import { components } from '../town/skeleton.ts';
+import { SAFE_RHO, distToLine, linesMeet, inSpot, layoutProblems, len, lotSamples, pointInPoly, rhoOf, spotCorners, spotOutline, sub, LOT_INNER, type Pt } from '../town/geometry.ts';
 import { AREA_INNER, TRACK_HALF, inLot, polysOverlap, tracksAsStreets, type RuralDrawing } from './index.ts';
 
 export interface Problem { readonly text: string; readonly at?: Pt }
 
 const middle = (poly: readonly Pt[]): Pt => ({ x: poly.reduce((a, p) => a + p.x, 0) / poly.length, y: poly.reduce((a, p) => a + p.y, 0) / poly.length });
+
+// Groups of tracks that meet each other (by index).
+function components(tracks: readonly { readonly pts: readonly Pt[] }[]): number[][] {
+  const parent = tracks.map((_, i) => i);
+  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i]!)));
+  for (let i = 0; i < tracks.length; i++) for (let j = i + 1; j < tracks.length; j++) {
+    if (find(i) !== find(j) && linesMeet(tracks[i]!.pts, tracks[j]!.pts, 3e-3)) parent[find(i)] = find(j);
+  }
+  const groups = new Map<number, number[]>();
+  tracks.forEach((_, i) => { const r = find(i); const g = groups.get(r); if (g) g.push(i); else groups.set(r, [i]); });
+  return [...groups.values()];
+}
 
 export function ruralProblems(d: RuralDrawing): Problem[] {
   const out: Problem[] = [];
@@ -20,7 +31,7 @@ export function ruralProblems(d: RuralDrawing): Problem[] {
     if (n !== 1) out.push({ text: n === 0 ? `stub ${i + 1} (side ${s.side}) has no track` : `stub ${i + 1} has ${n} tracks`, at: s.p });
   });
   if (!d.tracks.length) out.push({ text: 'no track at all' });
-  const parts = components(d.tracks.map((t) => ({ pts: t.pts, rank: 'lane' as const, ends: t.ends })));
+  const parts = components(d.tracks);
   if (parts.length > 1) out.push({ text: `the tracks are ${parts.length} separate networks (they must all meet)` });
   for (const t of d.tracks) {
     for (const p of t.pts) {

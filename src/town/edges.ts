@@ -14,8 +14,6 @@ import { corner, type Pt } from './geometry.ts';
 
 export type EdgeValue = 0 | 1;
 export type Colouring = readonly EdgeValue[]; // per side, length 6
-export const EDGE_VALUES: readonly EdgeValue[] = [0, 1];
-
 // Where streets cross a side: shares of the way along it from its first corner.
 export const STUB_U: Record<EdgeValue, readonly number[]> = { 0: [], 1: [0.5] };
 
@@ -73,5 +71,4 @@ export function turnPoint(t: Turn, p: Pt): Pt {
   const y = t.flip ? -p.y : p.y, a = (t.rot * Math.PI) / 3;
   return { x: p.x * Math.cos(a) - y * Math.sin(a), y: p.x * Math.sin(a) + y * Math.cos(a) };
 }
-// A drawn direction (yaw, radians) under turn t.
-export const turnYaw = (t: Turn, yaw: number): number => (t.flip ? -yaw : yaw) + (t.rot * Math.PI) / 3;
+

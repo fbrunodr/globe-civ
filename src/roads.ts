@@ -114,22 +114,6 @@ export function roadLines(g: Game, planned: readonly Road[] = planRoads(g)): Roa
   return out;
 }
 
-// Where roads reach towns from open land: `${built}:${outside}` per edge.
-// A town's tile has a street through the middle of such an edge (town/edges.ts).
-export function roadEntries(g: Game, planned: readonly Road[] = planRoads(g)): Set<string> {
-  const built = (t: number) => g.use[t] === USE.urban || g.use[t] === USE.center;
-  const out = new Set<string>();
-  for (const road of planned) {
-    const t = road.tiles;
-    for (let k = 0; k + 1 < t.length; k++) {
-      const a = t[k]!, b = t[k + 1]!;
-      if (built(a) && !built(b)) out.add(`${a}:${b}`);
-      if (!built(a) && built(b)) out.add(`${b}:${a}`);
-    }
-  }
-  return out;
-}
-
 // Chaikin smoothing (ends kept), then points every `step` radians.
 function smooth(pts0: THREE.Vector3[], step: number): THREE.Vector3[] {
   let pts = pts0;

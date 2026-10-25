@@ -24,7 +24,7 @@ const densest = (g: Game, t: number): Density => densestOf(archEraOf(g.eraAt(t))
 const cap = (g: Game, t: number, d: Density): Density => (unlocked(archEraOf(g.eraAt(t)), d) ? d : densest(g, t));
 
 // A tile's density by the rules.
-export function tileDensity(g: Game, t: number): Density {
+function tileDensity(g: Game, t: number): Density {
   const city = g.cityById.get(g.tileCity[t]!);
   if (!city) return 'low';
   const built = g.slotKeys(t).filter((k) => k !== null).length;
@@ -35,14 +35,6 @@ export function tileDensity(g: Game, t: number): Density {
     d = busy && city.pop >= 8 ? 'medium' : 'low';
   }
   return cap(g, t, denser(d, roomFor(built)));
-}
-
-// A density asked for (the City Lab sets them by hand), as the tile can
-// have it: with room for its buildings, never metropolitan on hills.
-export function allowedDensity(g: Game, t: number, d: Density): Density {
-  d = denser(d, roomFor(g.slotKeys(t).filter((k) => k !== null).length));
-  if (d === 'metropolitan' && g.relief[t] === 'hills') d = 'high';
-  return d;
 }
 
 // How many building slots a tile has: one per building spot of its density.

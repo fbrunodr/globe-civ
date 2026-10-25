@@ -1,8 +1,8 @@
-// Wonders as they stand on a tile's site (town/geometry.ts SITE_CELLS: a
-// square of 7 × 7 cells), built at true size like the city halls (civic.ts)
-// and never stretched: each fills the square with room to spare, its front
-// (+z) facing the site's street. Scaffolding stands there while one is
-// built. (Machu Picchu stands on a mountain top instead: buildingCatalog.ts.)
+// Wonders, each built on a square of 7 × 7 cells (SITE_HALF) and never
+// stretched: each fills the square with room to spare, its front +z. A
+// painted city scales it to its rectangle (cityDress.ts). Scaffolding
+// stands there while one is built. (Machu Picchu stands on a mountain top
+// instead: buildingCatalog.ts.)
 //
 // Units are tile steps (the lot models' units, houseKit.ts); the origin is
 // the middle of the site on the ground.
@@ -10,11 +10,11 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { cone, cyl } from './propCatalog.ts';
-import { CELL, SITE_CELLS } from './town/geometry.ts';
+import { CELL } from './town/geometry.ts';
 import type { WonderKey } from './cities.ts';
 import { P, box, chamfered, drum, frustum, gable, hip, patch, ring, shade, shrub, type G } from './houseKit.ts';
 
-export const SITE_HALF = (SITE_CELLS * CELL) / 2; // 0.07875
+export const SITE_HALF = (7 * CELL) / 2; // 0.07875
 // What stands on a site: a wonder, or the scaffolding of one being built.
 export type SiteModel = Exclude<WonderKey, 'machuPicchu'> | 'scaffold';
 export type WonderModelKind = `wonder|${SiteModel}`;

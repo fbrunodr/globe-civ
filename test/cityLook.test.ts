@@ -1,16 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { padCuts } from '../src/terraform.ts';
 import { isFloraModel, isLotModel, waterRule, BUILDING_KINDS, buildBuildingGeometry, modelGeometry, type ModelKind } from '../src/buildingCatalog.ts';
 import { isHouseKind } from '../src/houses.ts';
 import { triangles } from '../src/propCatalog.ts';
 import { CityProps, WATER_GAP, type CitySpot } from '../src/cityProps.ts';
-import { stamp, type StampTile } from '../src/cityStamp.ts';
 import { Game } from '../src/game.ts';
 import { aiTurn } from '../src/ai.ts';
 import { USE, WONDER_KEYS, isWonderKey } from '../src/cities.ts';
 import { planRoads, roadLines, ROAD_HALF_WIDTH } from '../src/roads.ts';
-import { HOMES } from '../src/town/geometry.ts';
+import { SITE_MODELS } from '../src/wonderModels.ts';
 import { locate } from '../src/terrainMesh.ts';
 
 // City look guarantees (design doc "Cities: Feel & Play", city look v1).
@@ -20,40 +18,26 @@ describe('L1: building models', () => {
     const over = BUILDING_KINDS.map((k) => [k, triangles(buildBuildingGeometry(k))] as const).filter(([k, t]) => t > (isWonderKey(k) ? 120 : 40));
     expect(over).toEqual([]);
   });
+  // (Machu Picchu on its summit, the catalog; the others on their square, wonderModels.ts.)
   it('every wonder has a model', () => {
-    expect(WONDER_KEYS.filter((w) => !(BUILDING_KINDS as string[]).includes(w))).toEqual([]);
+    expect(WONDER_KEYS.filter((w) => !(w === 'machuPicchu' ? (BUILDING_KINDS as string[]).includes(w) : (SITE_MODELS as string[]).includes(w)))).toEqual([]);
   });
 });
 
-// (Was a housesOn(pop) bound on houses per tile; houses now come from the
-// hand-drawn tiles, so the bound is on what the drawings stamp.)
+// (Was: houses stamped by the hand-drawn tiles, by density. A city is
+// painted on its center now: 4 + 3 × size buildings, cityDress.ts.)
 describe('L2: houses grow with the city', () => {
-  const count = (tiles: StampTile[]) => stamp(tiles).lots.filter((l) => HOMES.has(l.kind)).length;
   const g = new Game({ size: 'small', seed: 5 });
   const settler = g.units.find((u) => u.owner === 0 && u.type === 'settler')!;
   const city = g.foundCity(settler)!;
-  const cp = new CityProps(g, () => ({ dir: new THREE.Vector3(0, 1, 0), ground: 0, water: 0, slope: 0, urban: 1 }), (d) => ({ dir: d, ground: 0, water: 0, slope: 0, urban: 1, t: 0 }), 1);
-  it('a small town shows a few dozen houses on its center (and its outskirts)', () => {
-    const n = count(cp.stampTiles([city.tile], null));
-    expect(n).toBeGreaterThanOrEqual(25);
-    expect(n).toBeLessThanOrEqual(90);
-  });
-  it('a capital with 5 urban tiles at medium density shows a couple of hundred', () => {
-    const tiles = [city.tile, ...g.tiles[city.tile].neighbors.slice(0, 5)];
-    for (const t of tiles) cp.setDensity(t, 'medium');
-    for (const t of tiles.slice(1)) g.use[t] = USE.urban, g.tileCity[t] = city.id;
-    // (Every building fronts a street, and the town thins away from its edge: town/field.ts.)
-    expect(count(cp.stampTiles(tiles, null))).toBeGreaterThanOrEqual(200);
-  });
-  // (Every street front is built at any density, so a denser tile holds
-  // about as many houses, built higher: more storeys in all.)
-  it('denser tiles, more storeys', () => {
-    const tiles = [city.tile, ...g.tiles[city.tile].neighbors.slice(0, 5)];
-    const storeys = (ts: StampTile[]) => stamp(ts).lots.reduce((a, l) => a + (HOMES.has(l.kind) ? l.floors ?? 1 : 0), 0);
-    for (const t of tiles) cp.setDensity(t, 'low');
-    const low = storeys(cp.stampTiles(tiles, null));
-    for (const t of tiles) cp.setDensity(t, 'medium');
-    expect(storeys(cp.stampTiles(tiles, null))).toBeGreaterThan(low);
+  // (Flat dry ground everywhere.)
+  const cp = new CityProps(g, () => ({ dir: new THREE.Vector3(0, 1, 0), ground: 0.01, water: 0, slope: 0, urban: 1 }), (d) => ({ dir: d, ground: 0.01, water: 0, slope: 0, urban: 1, t: 0 }), 1);
+  const houses = () => cp.place(city.tile).filter((b) => isHouseKind(b.kind)).length;
+  it('on open land, a city of size n shows 4 + 3n houses on its center', () => {
+    for (const pop of [1, 4, 10]) {
+      city.pop = pop;
+      expect(houses(), `size ${pop}`).toBe(4 + 3 * pop);
+    }
   });
 });
 
@@ -150,7 +134,7 @@ describe('L5: on slopes, city houses stand level: at the highest ground under th
   };
   const cp = new CityProps(g, sampler, (d) => ({ ...at(d), t: locate(g.globe, d).t }), 1);
   let homes = 0, founded = 0;
-  const sunk: string[] = [], cut: string[] = [];
+  const sunk: string[] = [];
   for (let t = 0; t < g.N; t++) {
     if (g.use[t] !== USE.center) continue;
     const items = cp.place(t);
@@ -159,13 +143,11 @@ describe('L5: on slopes, city houses stand level: at the highest ground under th
       const p = new THREE.Vector3().setFromMatrixPosition(b.matrix), floor = p.length() - 1;
       const top = Math.max(...cp.footprint(b).map((d) => ground(d)));
       if (floor < top - 0.0003) sunk.push(`tile ${t}: ${b.kind} floor ${floor.toFixed(5)} ground ${top.toFixed(5)}`);
-      if (b.pad) cut.push(`tile ${t}: ${b.kind}`);
       if (isHouseKind(b.kind)) { homes++; if (items[i + 1]?.kind === 'foundation') founded++; }
     }
   }
   it('houses still stand on the slope', () => expect(homes).toBeGreaterThan(50));
   it('nothing sinks below the highest ground under it', () => expect(sunk.slice(0, 5)).toEqual([]));
-  it('no ground is cut for a city', () => expect(cut.slice(0, 5)).toEqual([]));
   it('on the slope every house has a foundation', () => expect(founded).toBe(homes));
 });
 
@@ -261,32 +243,5 @@ describe('L6: no building stands on a street or a road', () => {
   it('checks the buildings of a grown world', () => expect(checked).toBeGreaterThan(500));
   it('no footprint touches a street or road', () => expect(Object.fromEntries(bad)).toEqual({}));
 });
-
-describe('L8: floors cut into the ground, reversibly', () => {
-  // A patch of ground round the north pole, rising along x; vertices every 0.002 rad.
-  const D = 0.057, dirs: number[] = [], heights: number[] = [];
-  for (let i = -30; i <= 30; i++) for (let j = -30; j <= 30; j++) {
-    const v = new THREE.Vector3(i * 0.002, j * 0.002, 1).normalize();
-    dirs.push(v.x, v.y, v.z); heights.push(0.01 + 0.05 * v.x);
-  }
-  const all = Array.from({ length: heights.length }, (_, k) => k);
-  const pad = (x: number, y: number, base: number) => ({ at: new THREE.Vector3(x, y, 1).normalize(), X: new THREE.Vector3(0.01, 0, 0), Z: new THREE.Vector3(0, 0.01, 0), base });
-  const pads = [pad(0, 0, 0.01), pad(0.03, 0.03, 0.0105)];
-  const cut = padCuts(dirs, heights, pads, D, () => all);
-  it('only ever lowers the ground, and only where it is above a floor', () => {
-    for (const [v, c] of cut) expect(c.height).toBeLessThan(heights[v]!);
-  });
-  it('under a lot the ground is at the floor (or lower, as it was)', () => {
-    for (const p of pads) for (const v of all) {
-      const d = new THREE.Vector3(dirs[v * 3], dirs[v * 3 + 1], dirs[v * 3 + 2]).sub(p.at);
-      if (Math.abs(d.dot(p.X)) / p.X.lengthSq() < 1 && Math.abs(d.dot(p.Z)) / p.Z.lengthSq() < 1) expect(cut.get(v)?.height ?? heights[v]!).toBeLessThanOrEqual(p.base + 1e-12);
-    }
-  });
-  it('the same floors give the same cut, from the ground as it was: one floor gone, its cut goes; none, none', () => {
-    expect([...padCuts(dirs, heights, pads, D, () => all)]).toEqual([...cut]);
-    const one = padCuts(dirs, heights, [pads[0]!], D, () => all);
-    expect([...one.keys()].every((v) => cut.has(v))).toBe(true);
-    expect(one.size).toBeLessThan(cut.size);
-    expect(padCuts(dirs, heights, [], D, () => all).size).toBe(0);
-  });
-});
+// (Was L8: floors cut into the ground. Nothing is cut now: a house stands
+// at the highest ground under it, a foundation below, L5.)

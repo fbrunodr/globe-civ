@@ -1,18 +1,22 @@
-// Building styles (dev tool, /buildings.html): every lot model of every
+// Building styles (dev tool, /buildings.html): the buildings a painted city
+// is made of (cityPainter.ts, dressed by cityDress.ts), in every
 // architectural style (houses.ts), laid out on a sheet:
-//   All styles  a row per style: small, medium and large lots at their heights
-//   By style    one style: footprints across, heights down, and which (civ, era) pairs use it
-//   By civ      what a civ builds at each height (the era that brings the height noted)
-// Lots are at the game's scale (tile steps), on a plain ground.
+//   All styles  a row per style: its buildings at each height it has
+//   By style    one style: the painter's sizes across, heights down, and the civs that use it
+//   By civ      what a civ builds at each height (the era that first builds it noted)
+// Sizes are the painter's rectangles (8 × 8, 8 × 10, 10 × 10 units; a
+// skyscraper 12 × 12 or 10 × 12), each house fitted as the game fits it, at
+// the lot models' scale (tile steps), on a plain ground.
 
 import './style.css';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { ARCH_CIVS, STYLES, STYLE_NAME, eraOfFloors, pairsOf, styleFloors, styleOf, type ArchCiv, type Style } from './architecture.ts';
-import { FLOORS, FLOOR_NAME, FOOTPRINTS, FOOTPRINT_CELLS, type Floors, type Footprint } from './town/geometry.ts';
+import { ARCH_CIVS, STYLES, STYLE_NAME, pairsOf, styleFloors, styleOf, type ArchCiv, type Style } from './architecture.ts';
+import { CELL, FLOORS, FLOOR_NAME, type Floors } from './town/geometry.ts';
 import { HOUSE_VARIANTS, houseKind } from './houses.ts';
-import { civicKind } from './civic.ts';
-import { FlatPainter, disposeGroup } from './flatTown.ts';
+import { SIZES, UNITS_PER_CELL } from './cityPainter.ts';
+import { DRESS_ERA_NAME, firstEra, fitHouse } from './cityDress.ts';
+import { FlatPainter, disposeGroup } from './flatPainter.ts';
 import { WorldLabel, disposeLabels } from './worldLabel.ts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -37,14 +41,18 @@ let world = new THREE.Group();
 scene.add(world);
 const paint = new FlatPainter();
 
-type Mode = 'overview' | 'style' | 'civ' | 'halls';
+type Mode = 'overview' | 'style' | 'civ';
 let mode: Mode = 'overview';
 let style: Style = 'mediterranean';
 let civ: ArchCiv = 'Romans';
 let variant: number | 'all' = 0;
 
 const GAP = 0.03; // between lots (tile steps)
-const size = (fp: Footprint) => FOOTPRINT_CELLS[fp].map((c) => c * 0.0225) as [number, number];
+// The painter's rectangles for a height (front × depth, units; one way round each).
+const sizesFor = (f: Floors): readonly (readonly [number, number])[] => (f === 12 ? SIZES.skyscraper : SIZES.building).filter(([a, b]) => a <= b);
+const COLS = Math.max(sizesFor(1).length, sizesFor(12).length);
+// A rectangle's size on the sheet (tile steps, at the lot models' scale).
+const size = ([front, depth]: readonly [number, number]) => [(front / UNITS_PER_CELL) * CELL, (depth / UNITS_PER_CELL) * CELL] as const;
 
 // A label standing on the ground (a sign in the scene, LABEL tall).
 const LABEL = 0.01;
@@ -53,30 +61,30 @@ function label(text: string, x: number, z: number, cls = ''): void {
   o.position.set(x, LABEL / 2 + 0.001, z);
   world.add(o);
 }
-// One cell: the lot (or its variants side by side) at x, z (its front toward +z, the viewer).
-function cell(s: Style, fp: Footprint, floors: Floors, x: number, z: number): number {
-  const [w] = size(fp), vs = variant === 'all' ? Array.from({ length: HOUSE_VARIANTS }, (_, i) => i) : [variant];
-  vs.forEach((v, i) => paint.model(houseKind(s, fp, floors, v), new THREE.Vector3(x + i * (w + 0.01), 0, z), 0, new THREE.Vector3(1, 1, 1), 0xffffff));
+// One building: a painted rectangle's house (or its variants side by side)
+// at x, z, fitted as the game fits it (its front toward +z, the viewer).
+function cell(s: Style, rect: readonly [number, number], floors: Floors, x: number, z: number): number {
+  const [w] = size(rect), { fp, sx, sz } = fitHouse(rect[0], rect[1]);
+  const vs = variant === 'all' ? Array.from({ length: HOUSE_VARIANTS }, (_, i) => i) : [variant];
+  vs.forEach((v, i) => paint.model(houseKind(s, fp, floors, v), new THREE.Vector3(x + i * (w + 0.01), 0, z), 0, new THREE.Vector3(sx, 1, sz), 0xffffff));
   return vs.length * (w + 0.01) - 0.01;
 }
-// A table of lots: footprints across, heights down; heights not built marked.
-function table(styleAt: (f: Floors) => Style, heights: readonly Floors[], allowed: (f: Floors) => boolean, x0: number, z0: number, rowName: (f: Floors) => string = (f) => FLOOR_NAME[f]): { w: number; d: number } {
-  const colW = FOOTPRINTS.map((fp) => (variant === 'all' ? HOUSE_VARIANTS : 1) * (size(fp)[0] + 0.01) + GAP);
-  const rowD = heights.map(() => Math.max(...FOOTPRINTS.map((fp) => size(fp)[1])) + GAP * 1.6);
-  let x = x0;
-  FOOTPRINTS.forEach((fp, i) => { label(`${FOOTPRINT_CELLS[fp][0]}×${FOOTPRINT_CELLS[fp][1]}`, x + colW[i]! / 2 - GAP / 2, z0 - 0.04, 'head'); x += colW[i]!; });
+// A table: the painter's sizes across, heights down.
+function table(styleAt: (f: Floors) => Style, heights: readonly Floors[], x0: number, z0: number, rowName: (f: Floors) => string = (f) => FLOOR_NAME[f]): { w: number; d: number } {
+  const colW = Array.from({ length: COLS }, (_, i) => Math.max(...heights.map((f) => { const r = sizesFor(f)[i]; return r ? (variant === 'all' ? HOUSE_VARIANTS : 1) * (size(r)[0] + 0.01) : 0; })) + GAP);
+  const rowD = heights.map((f) => Math.max(...sizesFor(f).map((r) => size(r)[1])) + GAP * 1.6);
   let z = z0;
   heights.forEach((f, r) => {
-    label(rowName(f), x0 - 0.09, z + rowD[r]! / 2, allowed(f) ? 'head' : 'head off');
+    label(rowName(f), x0 - 0.12, z + rowD[r]! / 2, 'head');
     let cx = x0;
-    FOOTPRINTS.forEach((fp, i) => {
-      if (allowed(f)) cell(styleAt(f), fp, f, cx + size(fp)[0] / 2, z + size(fp)[1] / 2);
-      else if (i === 2) label('not in this era', cx + colW[i]! / 2, z + rowD[r]! / 2, 'off');
+    sizesFor(f).forEach((rect, i) => {
+      label(`${rect[0]}×${rect[1]}`, cx + size(rect)[0] / 2, z - 0.012);
+      cell(styleAt(f), rect, f, cx + size(rect)[0] / 2, z + size(rect)[1] / 2);
       cx += colW[i]!;
     });
     z += rowD[r]!;
   });
-  return { w: x - x0, d: z - z0 };
+  return { w: colW.reduce((a, c) => a + c, 0), d: z - z0 };
 }
 
 function build(): { w: number; d: number } {
@@ -88,39 +96,29 @@ function build(): { w: number; d: number } {
   let dims = { w: 1, d: 1 };
   let pairs = '';
   if (mode === 'overview') {
-    // A row per style: a 2×2, a 3×3 and a 4×4 lot at each height it has.
+    // A row per style: its buildings, each size the painter draws, at each height it has.
     let z = 0, w = 0;
     for (const s of STYLES) {
       label(STYLE_NAME[s], -0.08, z + 0.05, 'head');
       let x = 0;
-      for (const f of styleFloors(s)) for (const fp of ['b22', 'b33', 'b44'] as Footprint[]) {
-        const used = cell(s, fp, f, x + size(fp)[0] / 2, z + size(fp)[1] / 2);
+      for (const f of styleFloors(s)) for (const rect of sizesFor(f)) {
+        const used = cell(s, rect, f, x + size(rect)[0] / 2, z + size(rect)[1] / 2);
         x += used + GAP;
       }
       w = Math.max(w, x);
       z += 0.13;
     }
     dims = { w, d: z };
-    pairs = 'Every style at its heights: a 2×2, a 3×3 and a 4×4 lot each.';
+    pairs = "Every style at its heights, in each of the painter's sizes (8×8, 8×10, 10×10 units; skyscrapers 12×12, 10×12).";
   } else if (mode === 'style') {
     const hs = styleFloors(style);
-    dims = table(() => style, hs, () => true, 0, 0);
+    dims = table(() => style, hs, 0, 0);
     const by = new Map<string, Set<ArchCiv>>();
     for (const p of pairsOf(style)) { const k = `${FLOOR_NAME[p.floors]}s`; by.set(k, (by.get(k) ?? new Set()).add(p.civ)); }
     pairs = `<b>${STYLE_NAME[style]}</b> is built by: ${[...by].map(([k, cs]) => `<br>${k}: ${[...cs].join(', ')}`).join('')}`;
-  } else if (mode === 'halls') {
-    // Every civ's city hall (a row each) at each tier (civic.ts).
-    const ds = ['low', 'dense', 'high', 'metropolitan'] as const, colW = 0.2, rowD = 0.2;
-    ds.forEach((d, i) => label(`${d === 'low' ? 'low · medium' : d}`, 0.1 + i * colW, -0.04, 'head'));
-    ARCH_CIVS.forEach((c, r) => {
-      label(c, -0.09, r * rowD + 0.08, 'head');
-      ds.forEach((d, i) => paint.model(civicKind(c, d), new THREE.Vector3(0.1 + i * colW, 0, r * rowD + 0.08), 0, new THREE.Vector3(1, 1, 1), 0xffffff));
-    });
-    dims = { w: ds.length * colW, d: ARCH_CIVS.length * rowD };
-    pairs = 'City halls by civ, as the town grows (civic.ts).';
   } else {
-    // (Each height in the civ's style for it, in every era that builds it.)
-    dims = table((f) => styleOf(civ, f), FLOORS, () => true, 0, 0, (f) => `${FLOOR_NAME[f]} · ${eraOfFloors(f)}`);
+    // (Each height in the civ's style for it, and the era that first builds it.)
+    dims = table((f) => styleOf(civ, f), FLOORS, 0, 0, (f) => `${FLOOR_NAME[f]} · from ${DRESS_ERA_NAME[firstEra(f)]}${f === 12 ? ', size 10' : ''}`);
     pairs = `<b>${civ}</b>: ${FLOORS.map((f) => `${FLOOR_NAME[f]}: <b>${STYLE_NAME[styleOf(civ, f)]}</b>`).join(' · ')}`;
   }
   $('pairs').innerHTML = pairs;

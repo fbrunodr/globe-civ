@@ -4,8 +4,6 @@
 // faces that flicker.
 
 import { describe, it, expect } from 'vitest';
-import { CIVIC_KINDS, HALL_RADIUS, civicGeometry } from '../src/civic.ts';
-import type { Density } from '../src/town/geometry.ts';
 import { ARCH_CIVS, ARCH_ERAS, DENSITY_ERA, SLOTS, STYLES, eraOfFloors, unlocked, pairsOf, styleFloors, styleOf } from '../src/architecture.ts';
 import { DENSITIES, DENSITY_TALLEST, FLOORS, FOOTPRINTS, FOOTPRINT_CELLS, CELL } from '../src/town/geometry.ts';
 import { HOUSE_VARIANTS, houseGeometry, houseKind } from '../src/houses.ts';
@@ -77,23 +75,7 @@ describe('AR5: no faces fight for the same pixels', () => {
   });
 });
 
-describe('AR6: city halls', () => {
-  it("every civ's hall at every tier builds, fits its room (civic.ts HALL_RADIUS), stands up, keeps within 2000 triangles, and has no faces fighting", () => {
-    const bad: string[] = [];
-    for (const k of CIVIC_KINDS) {
-      const g = civicGeometry(k), d = k.split('|')[2] as Density;
-      g.computeBoundingBox();
-      const b = g.boundingBox!, r = HALL_RADIUS[d];
-      // (Within its circle: the corners of its box, eaves a little over.)
-      if (Math.hypot(Math.max(b.max.x, -b.min.x), Math.max(b.max.z, -b.min.z)) > r * 1.12) bad.push(`${k}: off its spot`);
-      if (b.max.y < 0.02 || b.min.y < -0.002) bad.push(`${k}: height ${b.min.y.toFixed(4)}..${b.max.y.toFixed(4)}`);
-      if (triangles(g) > 2000) bad.push(`${k}: ${triangles(g)} triangles`);
-      const c = coplanarClashes(g, 1);
-      if (c.length) bad.push(`${k}: ${c[0]!.colorA} on ${c[0]!.colorB} in plane ${c[0]!.plane} at ${c[0]!.at.map((v) => v.toFixed(4))}`);
-    }
-    expect(bad.slice(0, 20)).toEqual([]);
-  });
-});
+// (Was AR6: city halls. A painted city has none.)
 
 describe('AR7: wonders on their site', () => {
   it('every wonder (and the scaffolding) builds within its 7×7 site, stands up, keeps within 2000 triangles, and has no faces fighting', async () => {

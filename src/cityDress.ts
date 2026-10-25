@@ -53,8 +53,22 @@ export type DressEra = 0 | 1 | 2 | 3;
 export const DRESS_ERA_NAME: readonly string[] = ['Ancient', 'Classical', 'Medieval', 'Modern'];
 // Roads by era: dirt, paving, asphalt.
 const ROAD_RGB: Record<DressEra, RGB> = { 0: [0.55, 0.49, 0.39], 1: [0.58, 0.57, 0.54], 2: [0.58, 0.57, 0.54], 3: [0.3, 0.3, 0.31] };
-// Skyscrapers: one per this many citizens, from the Modern era (none before).
+// Skyscrapers: one per this many citizens, from the Modern era (none
+// before) and from this size (none in a smaller city).
 const SKYSCRAPER_PER = 3;
+const SKYSCRAPER_FROM = 10;
+
+// The heights each era builds (floorsOf below; the Buildings page shows them).
+export const ERA_HEIGHTS: Record<DressEra, readonly Floors[]> = { 0: [1, 2], 1: [1, 2], 2: [1, 2, 3], 3: [2, 3, 4, 12] };
+// The first era that builds a height.
+export const firstEra = (f: Floors): DressEra => ([0, 1, 2, 3] as const).find((e) => ERA_HEIGHTS[e].includes(f)) ?? 3;
+// The house model for a painted rectangle (front × depth, units): the
+// footprint of whole cells that covers it (UNITS_PER_CELL units a cell),
+// squeezed to it across its floor plan where it falls short (by a sixth at most).
+export function fitHouse(front: number, depth: number): { fp: Footprint; sx: number; sz: number } {
+  const cf = Math.ceil(front / UNITS_PER_CELL), cd = Math.ceil(depth / UNITS_PER_CELL);
+  return { fp: `b${cf}${cd}` as Footprint, sx: front / (UNITS_PER_CELL * cf), sz: depth / (UNITS_PER_CELL * cd) };
+}
 
 const box = new Map<LotModelKind, readonly [number, number]>();
 const halfExtents = (k: LotModelKind): readonly [number, number] => {
@@ -72,7 +86,7 @@ const halfExtents = (k: LotModelKind): readonly [number, number] => {
 export function dressCity(c: CityLook): DressedCity {
   const wonders = c.wonders.slice(0, MAX_WONDERS);
   const total = Math.round(4 + 3 * c.pop);
-  const skyscrapers = c.era >= 3 ? Math.min(total, Math.floor(c.pop / SKYSCRAPER_PER)) : 0;
+  const skyscrapers = c.era >= 3 && c.pop >= SKYSCRAPER_FROM ? Math.min(total, Math.floor(c.pop / SKYSCRAPER_PER)) : 0;
   const painting = paintCity({ wonders: wonders.length, skyscrapers, buildings: total - skyscrapers, seed: c.seed, free: c.free, ...(c.walled ? { limit: WALLED_LIMIT } : {}) });
   const tall = Math.min(0.8, Math.max(0.15, c.pop / 20));
   const floorsOf = (b: Painted): Floors => {
@@ -92,12 +106,9 @@ export function dressCity(c: CityLook): DressedCity {
       const scale = 0.95 * Math.min((b.front * UNIT) / (2 * hw), (b.depth * UNIT) / (2 * hd));
       return { model, at: b.at, yaw: b.yaw, hw, hd, scale, sx: 1, sz: 1, variant: rand() };
     }
-    // The footprint of whole cells that covers its rectangle (UNITS_PER_CELL
-    // units a cell), squeezed to it where it falls short (by a sixth at most).
-    const cf = Math.ceil(b.front / UNITS_PER_CELL), cd = Math.ceil(b.depth / UNITS_PER_CELL);
-    const fp = `b${cf}${cd}` as Footprint, floors = floorsOf(b);
+    const { fp, sx, sz } = fitHouse(b.front, b.depth), floors = floorsOf(b);
     const model = houseKind(styleOf(c.civ, floors), fp, floors, Math.floor(rand() * HOUSE_VARIANTS));
-    const sx = b.front / (UNITS_PER_CELL * cf), sz = b.depth / (UNITS_PER_CELL * cd), [hw, hd] = LOT_SIZE[fp];
+    const [hw, hd] = LOT_SIZE[fp];
     return { model, at: b.at, yaw: b.yaw, hw: hw * sx, hd: hd * sz, scale: CITY_CELL / CELL, sx, sz, variant: rand() };
   });
   // The walls: a ring round the town, inside the safe zone.

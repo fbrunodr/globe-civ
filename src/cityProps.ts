@@ -1,41 +1,36 @@
-// What stands on a city's tiles. Built-up tiles (the center and urban
-// tiles) are stamped with town drawings (src/town, laid onto the tiles by
-// cityStamp.ts): every edge of a built-up tile carries 0, 1 or 2 streets
-// (edgeValue below; both tiles of the edge agree), and the tile shows the
-// drawing for its six values, turned into place, so streets always meet.
-// The drawings fix the skeleton (streets, building spots); the density
-// picks the lots, the era and climate the models (houses, roofs, walls).
+// What stands on a city's tiles. A city is painted on its center tile
+// (cityPainter.ts, dressed by cityDress.ts): its houses, skyscrapers and
+// wonders, the roads between them, its walls, laid evenly on the tile
+// (onTile). Its other tiles show what is worked there.
 //
-// Nothing is built on water or right beside it: lots there are left out,
-// streets stop at the water (or bridge a narrow river).
+// Nothing is built on water or right beside it.
 //
 // Rural land tiles show a rural drawing (src/rural: tracks, worked areas,
 // the homestead, a building spot) chosen by the tracks that cross their
 // sides; what the areas hold is the tile's (rural/look.ts). A city's rural
-// tracks form a tree that joins its town at a few sides (ruralLinks).
+// tracks form a tree that joins its center at a few sides (ruralLinks).
 // Fishing boats stay on their water tiles. Everything is a pure function of
 // the city's state and the seed, so a reload looks identical.
 
 import * as THREE from 'three';
 import type { Game, City } from './game.ts';
-import { USE, SLOTS, improvementFor, type ImprovementKey, type WonderKey, type EraIndex } from './cities.ts';
+import { USE, improvementFor, type ImprovementKey, type EraIndex } from './cities.ts';
 import { ROOFS, PROP_MODEL, buildingEntry, isFloraModel, isLotModel, placedGeometry, waterRule, type BuildingKind, type LotModelKind, type PlacedKind } from './buildingCatalog.ts';
 import type { SiteModel } from './wonderModels.ts';
 import type { CatalogKind } from './propCatalog.ts';
 import { HOUSE_VARIANTS, houseKind } from './houses.ts';
 import { styleOf } from './architecture.ts';
-import { tileDensity, allowedDensity } from './density.ts';
-import { HALF_WIDTH, LOT_SIZE, isBuilding, type Density, type Floors, type Footprint, type StreetClass } from './town/geometry.ts';
-import { planRoads, roadLines, roadEntries, ROAD_HALF_WIDTH } from './roads.ts';
-import { classOf, key as colouringKey, sideUnder, type EdgeValue } from './town/edges.ts';
-import { edgeClass, EDGE_BLEND, type Role } from './town/skeleton.ts';
-import { stamp, toTile, STAMP_STEP, type FanPt, type Stamp, type StampTile } from './cityStamp.ts';
+import { LOT_SIZE, isBuilding, type Floors, type Footprint } from './town/geometry.ts';
+import { planRoads, roadLines, ROAD_HALF_WIDTH } from './roads.ts';
+import { classOf, key as colouringKey, type EdgeValue } from './town/edges.ts';
+import { toTile, STAMP_STEP, type FanPt } from './tileFan.ts';
 import { pickRural, TRACK_HALF, WORK_OF, type RuralDensity, type Work } from './rural/index.ts';
 import { SCATTER_GAP, areaLook, fieldEdge, gridIn, rowsIn, scatterIn, type Fill, type RGB } from './rural/look.ts';
 import { ruralModelKind, type RuralModel } from './rural/models.ts';
 import { densify as densify2, len as len2, sub as sub2, type Pt as Pt2 } from './town/geometry.ts';
 import { mulberry32, type Rng } from './rng.ts';
 import { dressCity } from './cityDress.ts';
+import { paintCity } from './cityPainter.ts';
 
 // The ground at a spot of a tile (render.ts samples the terrain).
 export interface CitySpot {
@@ -71,15 +66,8 @@ interface CityLayout {
 // (tile steps) from every building and street, off the squares.
 export const FLORA_GAP = 0.03;
 
-// Where a building's floor is cut into the ground: its middle, its half
-// extents (tangent vectors, radians) and its floor's height (above radius
-// 1). The ground under it higher than its floor is dug down to it
-// (render.ts); lower ground gets a foundation (the building's own parts).
-export interface Pad { at: THREE.Vector3; X: THREE.Vector3; Z: THREE.Vector3; base: number }
-
 export interface PlacedBuilding {
   kind: PlacedKind; // (a town's trees are its tile's own flora)
-  pad?: Pad;
   matrix: THREE.Matrix4;
   color: THREE.Color; // per-instance shade
   leaf: THREE.Color;  // roof
@@ -102,10 +90,6 @@ const PROP_SCALE = 1.5 * 0.276;
 // Dry ground a land building keeps round its footprint (tile steps).
 export const WATER_GAP = 0.012;
 
-const WONDER_MODEL: Record<WonderKey, BuildingKind> = {
-  pyramids: 'pyramids', greatLighthouse: 'greatLighthouse', hangingGardens: 'hangingGardens', machuPicchu: 'machuPicchu',
-  greatLibrary: 'greatLibrary', stonehenge: 'stonehenge', colosseum: 'colosseum',
-};
 
 const RURAL: Record<ImprovementKey, BuildingKind> = {
   farm: 'farmstead', mine: 'mineHead', camp: 'lodge', quarry: 'quarryStones', wetland: 'stiltHut', boats: 'fishingBoat',
@@ -124,15 +108,6 @@ function roofOf(temp: number, pop: number, era: EraIndex, rand: Rng): number {
 }
 
 
-// ---------- which drawing a tile gets ----------
-
-// A tile's density (for now a look; the mechanics come later): villages
-// are low, a grown town's center and its busiest tiles medium; high
-// density (towers) only where set by hand (the City Lab) until later
-// eras exist. A tile with two buildings is never low (low tiles have one
-// building spot); hills are never high.
-export { tileDensity, allowedDensity };
-
 const mix = (a: number, b: number) => { let h = Math.imul(a ^ 0x9e3779b9, 0x85ebca6b) ^ b; h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35); return (h ^ (h >>> 16)) >>> 0; };
 
 // A rural tile drawn with a rural drawing: land, a hex, its improvement a kind of work.
@@ -141,12 +116,8 @@ export const isFarmland = (g: Game, t: number): boolean => g.use[t] === USE.rura
 // How far a city's countryside has filled up: by its civ's era (until the tech tree).
 const ruralDensity = (g: Game, city: City): RuralDensity => (['low', 'medium', 'high'] as const)[g.players[city.owner]!.era] ?? 'high';
 
-// Built-up tiles: the centers and urban tiles (never pentagons, which have no drawings).
-// Built-up: a center or urban land hex, stamped with a town drawing. An
-// urban water tile is a harbor: no streets cross into it (its edges read 0
-// from the land), its buildings stand by the quay.
+// Built-up tiles: the centers and urban land hexes.
 export const isBuilt = (g: Game, t: number): boolean => (g.use[t] === USE.urban || g.use[t] === USE.center) && g.tiles[t].corners.length === 6 && !g.isWater(t);
-export const isHarbor = (g: Game, t: number): boolean => g.use[t] === USE.urban && g.isWater(t);
 
 
 export class CityProps {
@@ -154,24 +125,14 @@ export class CityProps {
   private readonly layouts = new Map<number, CityLayout>();
   private readonly box = new Map<PlacedKind, readonly [number, number]>();
   private roads: THREE.Vector3[][] = [];
-  private entries = new Set<string>();
   private roadsKey = '';
-  // Densities set by hand (the City Lab), per tile.
-  readonly density = new Map<number, Density>();
-  private densityVersion = 0;
+  private version = 0;
 
   constructor(private readonly game: Game, private readonly sample: SpotSampler, private readonly sampleDir: DirSampler,
     private readonly scale: number) {}
 
-  setDensity(t: number, d: Density | null): void {
-    if (d === null) this.density.delete(t); else this.density.set(t, d);
-    this.densityVersion++;
-  }
   // Forget every layout (the ground under them changed).
-  invalidate(): void { this.densityVersion++; }
-  densityOf(t: number): Density {
-    return allowedDensity(this.game, t, this.density.get(t) ?? tileDensity(this.game, t));
-  }
+  invalidate(): void { this.version++; }
 
   // The built-up tiles of a city (its center first).
   private built(city: City): number[] {
@@ -215,29 +176,13 @@ export class CityProps {
     return !!city && this.ruralLinks(city).has(`${t}:${n}`);
   }
 
-  // Whether a street crosses the edge between built-up tile t and its
-  // neighbor n: always to another built-up tile (of any city); to open land
-  // where a road comes in. The same from either side.
-  // (On a rural tile: where its tracks cross: ruralLinks.)
+  // Whether a rural tile's track crosses its edge with neighbor n
+  // (ruralLinks): the same from either side.
   edgeValue(t: number, n: number): EdgeValue {
-    const g = this.game;
-    if (this.linked(t, n)) return 1;
-    if (!isBuilt(g, t)) return 0;
-    if (isBuilt(g, n)) return 1;
-    this.roadLines();
-    return this.entries.has(`${t}:${n}`) ? 1 : 0;
+    return this.linked(t, n) ? 1 : 0;
   }
   colouring(t: number): EdgeValue[] {
     return this.game.tiles[t].neighbors.map((n) => this.edgeValue(t, n));
-  }
-  // How wide an edge's streets are where they cross it (by the denser tile).
-  private edgeClasses(t: number, c: readonly EdgeValue[]): (StreetClass | null)[] {
-    const g = this.game, d = this.densityOf(t);
-    return c.map((v, i) => {
-      if (v === 0) return null;
-      const n = g.tiles[t].neighbors[i]!;
-      return edgeClass(v, d, isBuilt(g, n) ? this.densityOf(n) : d);
-    });
   }
 
   // Everything the town's layout depends on.
@@ -245,12 +190,9 @@ export class CityProps {
     const m = memo?.get(city.id);
     if (m !== undefined) return m;
     const g = this.game;
-    const tiles = this.built(city).map((t) => {
-      const c = this.colouring(t);
-      return `${t}:${this.densityOf(t)}:${g.slots.slice(t * SLOTS, t * SLOTS + SLOTS).join(',')}:${g.wonderAt[t]}:${colouringKey(c)}:${this.edgeClasses(t, c).join(',')}`;
-    }).join(';');
+    const tiles = [...g.cityTiles(city, USE.urban), ...g.cityTiles(city, USE.rural)].map((t) => `${t}:${g.wonderAt[t]}`).join(';');
     const farms = this.farmland(city).map((t) => `${t}:${improvementFor(g.terrainAt(t))}:${colouringKey(this.colouring(t))}`).join(';');
-    const sig = `${city.id}|${city.pop}|${g.players[city.owner]!.era}|${city.buildings.has('walls') ? 'w' : ''}|${city.wonderTile ?? ''}|${this.densityVersion}|${tiles}|${farms}`;
+    const sig = `${city.id}|${city.pop}|${g.players[city.owner]!.era}|${city.buildings.has('walls') ? 'w' : ''}|${city.wonderTile ?? ''}|${city.building ?? ''}|${this.version}|${tiles}|${farms}`;
     memo?.set(city.id, sig);
     return sig;
   }
@@ -279,10 +221,6 @@ export class CityProps {
     return out;
   }
 
-  // Every building's pad (where the ground is dug down to its floor).
-  pads(): Pad[] {
-    return this.game.cities.flatMap((c) => [...this.layout(c).byTile.values()].flat().flatMap((b) => (b.pad ? [b.pad] : [])));
-  }
   // Every city's streets (for the ground ribbons) and squares.
   streets(): Street[] {
     return this.game.cities.flatMap((c) => this.layout(c).streets);
@@ -303,8 +241,8 @@ export class CityProps {
   private build(t: number): PlacedBuilding[] {
     const g = this.game;
     if (g.use[t] === USE.wild) {
-      const w = g.wonderOn(t);
-      if (w) return this.summit(t, WONDER_MODEL[w]);
+      // (The one wonder on a wild tile: Machu Picchu, on its summit.)
+      if (g.wonderOn(t) === 'machuPicchu') return this.summit(t, 'machuPicchu');
       return g.ruins[t] ? this.ruins(t) : [];
     }
     const city = g.cityById.get(g.tileCity[t]);
@@ -330,17 +268,6 @@ export class CityProps {
   }
 
   // ---------- the town ----------
-
-  // The tiles to stamp: each built-up tile's edge values, role and density.
-  // (A center with walls is the walled center, its walls drawn with it.)
-  stampTiles(tiles: readonly number[], walledCenter: number | null): StampTile[] {
-    const g = this.game;
-    return tiles.filter((t) => isBuilt(g, t)).map((t) => {
-      const role: Role = t === walledCenter ? 'walled' : 'block';
-      const colouring = this.colouring(t);
-      return { tile: t, colouring, edgeCls: this.edgeClasses(t, colouring), role, density: this.densityOf(t), pick: mix(t, 0x7a11) };
-    });
-  }
 
   private buildLayout(city: City, sig: string): CityLayout {
     const g = this.game, D = g.globe.avgEdgeAngle;
@@ -409,7 +336,7 @@ export class CityProps {
     dressed.buildings.forEach((b, n) => {
       const s = this.sampleDir(toDir(b.at)), rand = mulberry32(mix(city.id, n + 1));
       if (wet(s)) return;
-      put(city.tile, ...this.standLot(b.model, s.dir, facing(s.dir, ahead(b.at, b.yaw)) + Math.PI / 2, b.hw, b.hd, unit * b.scale, rand, city.owner, 'top', [b.sx, b.sz]));
+      put(city.tile, ...this.standLot(b.model, s.dir, facing(s.dir, ahead(b.at, b.yaw)) + Math.PI / 2, b.hw, b.hd, unit * b.scale, rand, city.owner, [b.sx, b.sz]));
     });
     // (Exactly where painted: they meet the buildings' sides.)
     for (const r of dressed.painting.roads) pavings.push({ points: r.map(toDir), paved: era > 0, rgb: dressed.roadRgb, exact: true });
@@ -440,24 +367,12 @@ export class CityProps {
       const colouring = this.colouring(t), { key, turn } = classOf(colouring);
       const d = pickRural(key, work, density, mix(t, 0x51));
       const toT = (p: Pt2) => dirAt(toTile(t, turn, p));
-      // Tracks: a lane's width, widening to the street they meet at a town's edge.
+      // Tracks: a lane's width.
       const tracks: Street[] = [];
       for (const tr of d.tracks) {
         const pts = densify2(tr.pts, STAMP_STEP);
-        const hw = pts.map((p) => {
-          let w = TRACK_HALF;
-          for (const e of tr.ends) {
-            if (e === null) continue;
-            const stub = d.stubs[e]!, n = g.tiles[t].neighbors[sideUnder(turn, stub.side)]!;
-            if (!isBuilt(g, n)) continue;
-            const cls = this.edgeClasses(n, this.colouring(n))[g.tiles[n].neighbors.indexOf(t)];
-            if (!cls) continue;
-            const f = Math.min(1, len2(sub2(p, stub.p)) / EDGE_BLEND);
-            w = HALF_WIDTH[cls] * (1 - f) + w * f;
-          }
-          return w;
-        });
-        // (Scaled with the tile, as town streets are.)
+        const hw = pts.map(() => TRACK_HALF);
+        // (Scaled with the tile.)
         const wd = widths({ pts: pts.map((p) => toTile(t, turn, p)), hw });
         tracks.push({ points: wd.pts, halfWidth: wd.hw, paved: false });
       }
@@ -531,7 +446,7 @@ export class CityProps {
         if (imp === 'mine') {
           const near = poly.reduce((a, p) => (len2(sub2(p, d.spot)) < len2(sub2(a, d.spot)) ? p : a));
           const da = toT(near), smp = this.sampleDir(da);
-          if (!wet(smp)) put(t, ...settle((k) => this.standLot(ruralModelKind('adit'), da, facing(da, toT(d.spot)) + Math.PI / 2, 0.004, 0.002, D * k, rand, city.owner, 'top'), false));
+          if (!wet(smp)) put(t, ...settle((k) => this.standLot(ruralModelKind('adit'), da, facing(da, toT(d.spot)) + Math.PI / 2, 0.004, 0.002, D * k, rand, city.owner), false));
         }
       });
       // The homestead: houses in the civ's style, sheds.
@@ -541,7 +456,7 @@ export class CityProps {
         const f = toT({ x: p.x + 0.01 * Math.cos(yaw), y: p.y + 0.01 * Math.sin(yaw) });
         const hk = houseKind(styleOf(g.players[city.owner]!.name, floors), kind, floors, Math.floor(lr() * HOUSE_VARIANTS));
         const [lw, ld] = LOT_SIZE[kind];
-        put(t, ...settleHere((k) => this.standLot(hk, s0.dir, facing(s0.dir, f) + Math.PI / 2, lw, ld, D * local(s0.dir, f) * k, lr, city.owner, 'top')));
+        put(t, ...settleHere((k) => this.standLot(hk, s0.dir, facing(s0.dir, f) + Math.PI / 2, lw, ld, D * local(s0.dir, f) * k, lr, city.owner)));
       };
       for (const l of d.lots) {
         const lr = mulberry32(mix(t, Math.round(l.x * 1e4) ^ Math.round(l.y * 1e4)));
@@ -600,17 +515,17 @@ export class CityProps {
     return out;
   }
 
-  // What is left of a razed city's built-up tile: broken walls where some
-  // of a village drawing's houses stood.
+  // What is left of a razed city: broken walls where some of a small
+  // town's houses stood (a town painted as cityPainter.ts would).
   private ruins(t: number): PlacedBuilding[] {
     const g = this.game, rand = mulberry32((t + 7) * 2246822519);
     if (g.tiles[t].corners.length !== 6) return [];
-    const none: EdgeValue[] = [0, 0, 0, 0, 0, 0];
-    const { lots } = stamp([{ tile: t, colouring: none, edgeCls: none.map(() => null), role: 'block', density: 'low' }]);
+    const { toDir } = onTile(g, t);
+    const town = paintCity({ wonders: 0, skyscrapers: 0, buildings: 12, seed: mix(t, 0x7ab), free: (p) => { const s = this.sampleDir(toDir(p)); return s.water - s.ground <= DRY; } });
     const out: PlacedBuilding[] = [];
-    for (const l of lots) {
-      if (l.tile !== t || !isBuilding(l.kind) || rand() > 0.35) continue;
-      const sp = this.sample(l.at.t, l.at.i, l.at.wa, l.at.wb);
+    for (const b of town.buildings) {
+      if (rand() > 0.35) continue;
+      const sp = this.sampleDir(toDir(b.at));
       if (!standsAt('ruins', sp)) continue;
       out.push(this.make('ruins', sp.dir, sp.ground, rand() * Math.PI * 2, HOUSE_SCALE * (0.7 + 0.4 * rand()), buildingEntry('ruins').leaf, rand));
     }
@@ -712,7 +627,6 @@ export class CityProps {
       this.roadsKey = key;
       const planned = planRoads(g);
       this.roads = roadLines(g, planned).map((r) => r.points);
-      this.entries = roadEntries(g, planned);
     }
     return this.roads;
   }
@@ -781,18 +695,12 @@ export class CityProps {
     return [b, f];
   }
 
-  // A town lot (houses.ts: the building in its yard, in tile steps; or a
-  // city hall, civic.ts) on the ground, scaled by s (radians per tile
-  // step). Its floor is at the street: the ground at its door, where the
-  // lot meets its street. Where the ground under it is lower, a foundation
-  // (in its civ's style) fills up to the floor; where it is higher, the
-  // ground is dug down to the floor (its pad: render.ts cuts it, from the
-  // ground as it was, so the cut goes when the building does).
-  // ('top': in a city's diorama, with no street to stand at and no ground
-  // cut for it, its floor is level with the highest ground under it, the
-  // foundation filling the rest.)
-  // (`stretch`: across its front and deep, as a painted city fits a model to its rectangle.)
-  private standLot(kind: LotModelKind, dir: THREE.Vector3, yaw: number, lw: number, ld: number, s: number, rand: Rng, owner: number, level: 'street' | 'top' = 'street', stretch: readonly [number, number] = [1, 1]): PlacedBuilding[] {
+  // A lot model (a house in its yard, a wonder, a rural model: in tile
+  // steps) on the ground, scaled by s (radians per tile step), its floor
+  // level with the highest ground under it, a foundation (in its civ's
+  // style) filling down to the lowest. (`stretch`: across its front and
+  // deep, as a painted city fits a model to its rectangle.)
+  private standLot(kind: LotModelKind, dir: THREE.Vector3, yaw: number, lw: number, ld: number, s: number, rand: Rng, owner: number, stretch: readonly [number, number] = [1, 1]): PlacedBuilding[] {
     const q = new THREE.Quaternion().setFromUnitVectors(UP, dir).multiply(new THREE.Quaternion().setFromAxisAngle(UP, yaw));
     const X = new THREE.Vector3(1, 0, 0).applyQuaternion(q).multiplyScalar(lw * s);
     const Z = new THREE.Vector3(0, 0, 1).applyQuaternion(q).multiplyScalar(ld * s);
@@ -801,14 +709,13 @@ export class CityProps {
       const g = this.sampleDir(dir.clone().addScaledVector(X, a).addScaledVector(Z, b).normalize()).ground;
       low = Math.min(low, g); high = Math.max(high, g);
     }
-    const base = level === 'top' ? high : this.sampleDir(dir.clone().addScaledVector(Z, 1.04).normalize()).ground;
+    const base = high;
     const sink = 0.00012 * this.scale, shade = 0.92 + 0.12 * rand();
     const out: PlacedBuilding[] = [{
       kind,
       matrix: new THREE.Matrix4().compose(dir.clone().multiplyScalar(1 + base - sink), q, new THREE.Vector3(s * stretch[0], s, s * stretch[1])),
       color: new THREE.Color(shade, shade, shade),
       leaf: new THREE.Color(1, 1, 1),
-      ...(high > base + sink ? { pad: { at: dir.clone(), X, Z, base: base - sink } } : {}),
     }];
     if (base - low >= FOUNDATION_MIN * this.scale) {
       const fu = this.scale * PROP_SCALE * FOUNDATION_UNIT, fs = 0.0002 * this.scale;
@@ -914,4 +821,3 @@ export function facing(dir: THREE.Vector3, target: THREE.Vector3): number {
   return Math.atan2(-local.z, local.x);
 }
 
-export type { Stamp };

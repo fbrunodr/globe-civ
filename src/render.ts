@@ -10,8 +10,6 @@ import { buildPaintData, fanCoords, fanFrames, paintAt, softAt, warpAt, FAN_COOR
 import { buildRelief, CONE_RADIUS, CRATER, CRATER_DEPTH, type Relief } from './relief.ts';
 import { buildSurface, meshLevels, type SurfaceLayers } from './surface.ts';
 import { cityGround } from './terraform.ts';
-import { buildTownGround, interpolate, type TownGround } from './townGround.ts';
-import type { Density } from './town/geometry.ts';
 import { makeWaterMaterial, type WaterMaterial } from './water.ts';
 import { WalkCamera } from './walk.ts';
 import { makeSky, makeHalo, installHaze, HAZE, HAZE_DENSITY, AIR } from './sky.ts';
@@ -19,7 +17,6 @@ import { makeWeather, type Weather } from './weather.ts';
 import { buildPropGeometry, catalogEntry, CATALOG, CATALOG_KINDS, type CatalogKind, type Layer } from './propCatalog.ts';
 import { BUILDING_KINDS, buildBuildingGeometry, type BuildingKind } from './buildingCatalog.ts';
 import { houseGeometry, isHouseKind, type HouseKind } from './houses.ts';
-import { civicGeometry, isCivicKind, type CivicKind } from './civic.ts';
 import { isWonderModelKind, wonderGeometry, type WonderModelKind } from './wonderModels.ts';
 import { isRuralModelKind, ruralGeometry, type RuralModelKind } from './rural/models.ts';
 import { CityProps, isFarmland, type CitySpot } from './cityProps.ts';
@@ -35,9 +32,6 @@ const UP = new THREE.Vector3(0, 1, 0);
 // Subdivisions per tile fan; higher = smoother relief, more triangles. Tiles
 // near water and relief get 2× or 4× this (see the mesh levels below).
 const SUBDIV = 4;
-// Built-up ground is redrawn with each coarse triangle's edges split this
-// many times on a coarse tile (fewer on finer ones: the same fine size).
-const TOWN_SPLITS = 12;
 // Props: size relative to the original models, and the number of chunks they
 // are grouped in for horizon culling. (Variant densities are per flat tile at
 // the reference tile size.)
@@ -54,13 +48,13 @@ const PROP_CHUNKS = 8;
 
 // Flora and city buildings share the chunks; town lots (houses.ts) are
 // models of their own, made on first use.
-type PropKind = CatalogKind | BuildingKind | HouseKind | CivicKind | WonderModelKind | RuralModelKind;
+type PropKind = CatalogKind | BuildingKind | HouseKind | WonderModelKind | RuralModelKind;
 const PROP_KINDS: readonly PropKind[] = [...CATALOG_KINDS, ...BUILDING_KINDS];
 const isFloraKind = (k: PropKind): k is CatalogKind => k in CATALOG;
 // The triangle counter's category for a prop kind.
 const statOf = (k: PropKind): string =>
   isFloraKind(k) ? `flora · ${CATALOG[k].layer.toLowerCase()}` : isRuralModelKind(k) ? 'rural' : isHouseKind(k) ? 'houses'
-    : isCivicKind(k) ? 'civic' : isWonderModelKind(k) ? 'wonders' : 'buildings';
+    : isWonderModelKind(k) ? 'wonders' : 'buildings';
 
 interface PropChunk {
   dir: THREE.Vector3;  // chunk center
@@ -235,12 +229,6 @@ export class GlobeRenderer {
   private readonly origHeight: Float32Array;
   private reshaped = new Set<number>();
   private groundKey = '';
-  // Built-up ground drawn fine (townGround.ts), its houses' floors cut in;
-  // what it was made for; the terrain's full triangle list (some hidden under it).
-  private town: { ground: TownGround; mesh: THREE.Mesh } | null = null;
-  private townKey = '';
-  private fullIndex: Uint32Array | null = null;
-  private levels: Uint8Array | null = null;
   private readonly textures = new Map<string, THREE.CanvasTexture>();
 
   private pointer = { x: 0, y: 0, dirty: false };
@@ -331,7 +319,6 @@ export class GlobeRenderer {
     this.relief = buildRelief(g.globe, g.map, L, g.seed, params.r0);
     const frames = this.frames, fans = this.paint.fans;
     const levels = meshLevels(g.globe, g.map, L);
-    this.levels = levels;
     let coast: Float32Array | null = null;
     let layers: SurfaceLayers | null = null;
     this.terrain = buildTerrainMesh(g.globe, {
@@ -500,14 +487,6 @@ export class GlobeRenderer {
     this.renderer.forceContextLoss();
   }
 
-  // A density set by hand for a built-up tile (null: the rules decide).
-  setDensity(t: number, d: Density | null): void {
-    this.cityProps.setDensity(t, d);
-  }
-  densityOf(t: number): Density {
-    return this.cityProps.densityOf(t);
-  }
-
   focusOn(tile: number): void {
     this.cam.focus(this.game.tiles[tile].center);
   }
@@ -549,8 +528,8 @@ export class GlobeRenderer {
     // (The flora on a town's tiles stays clear of what the town builds.)
     for (const t of townChanged) for (const x of [t, ...g.tiles[t].neighbors]) { this.propCache.delete(x); dirty.add(this.tileChunk[x]!); }
     if (changed.length) this.updateProps(); else if (dirty.size) this.updateProps(dirty);
-    // (The buildings now placed: their floors cut into the fine town ground.)
-    this.updateTownGround();
+    // (Buildings moved: their shadows with them.)
+    if (townChanged.length) this.shadowsDirty = true;
     this.updateRoads(changed.length > 0 || townChanged.length > 0);
     this.updateSmoke();
     this.updateCities();
@@ -725,7 +704,6 @@ export class GlobeRenderer {
       fogArr[v] = hidden / n;
     }
     fogAttr.needsUpdate = true;
-    if (this.town) interpolate(this.terrain.geometry, this.town.ground, 'unexplored');
     // Water: per shared vertex, from the tiles it touches.
     const owners = this.terrain.topo.owners;
     const wFog = this.terrain.water.getAttribute('unexplored') as THREE.BufferAttribute;
@@ -864,7 +842,7 @@ export class GlobeRenderer {
   // carry the scale).
   private geometryOf(kind: PropKind): THREE.BufferGeometry {
     let g = this.propGeo.get(kind);
-    if (!g) { g = isCivicKind(kind) ? civicGeometry(kind) : isWonderModelKind(kind) ? wonderGeometry(kind) : isRuralModelKind(kind) ? ruralGeometry(kind) : houseGeometry(kind as HouseKind); this.propGeo.set(kind, g); }
+    if (!g) { g = isWonderModelKind(kind) ? wonderGeometry(kind) : isRuralModelKind(kind) ? ruralGeometry(kind) : houseGeometry(kind as HouseKind); this.propGeo.set(kind, g); }
     return g;
   }
 
@@ -903,8 +881,10 @@ export class GlobeRenderer {
           if (items.length === 0) { chunk.meshes.delete(kind); continue; }
           const cap = Math.ceil(items.length * 1.3) + 8;
           mesh = new THREE.InstancedMesh(instanceGeometry(this.geometryOf(kind), cap), isFloraKind(kind) ? this.propMat : this.buildingMat, cap);
-          // Ground cover is too small to cast a visible shadow (and skipping it saves draw calls).
-          mesh.castShadow = !isFloraKind(kind) || CATALOG[kind].layer !== 'Ground';
+          // Only flora casts shadows: ground cover is too small to cast a
+          // visible one (and skipping it saves draw calls); buildings read
+          // better without, as on the City samples page.
+          mesh.castShadow = isFloraKind(kind) && CATALOG[kind].layer !== 'Ground';
           mesh.userData['hideAbove'] = isFloraKind(kind) ? HIDE_ABOVE[CATALOG[kind].layer] : Infinity;
           mesh.userData['stat'] = statOf(kind);
           chunk.meshes.set(kind, mesh);
@@ -1047,42 +1027,6 @@ export class GlobeRenderer {
     return [...tiles];
   }
 
-  // Redraws built-up ground fine (townGround.ts) with every house's floor
-  // cut in (cityProps.ts pads), when the town or its houses changed; the
-  // coarse triangles under it are hidden. Made anew each time from the
-  // coarse ground: a house gone, its cut goes with it.
-  private updateTownGround(): void {
-    const g = this.game;
-    // (Cities are dioramas standing level on the coarse ground, cityProps.ts:
-    // no tile is redrawn fine any more.)
-    const built = new Set<number>();
-    const pads = this.cityProps.pads();
-    const key = `${[...built].join(',')}#${pads.map((p) => `${p.at.x.toFixed(6)},${p.at.y.toFixed(6)},${p.base.toFixed(7)}`).join(';')}`;
-    if (key === this.townKey) return;
-    this.townKey = key;
-    const geo = this.terrain.geometry;
-    this.fullIndex ??= Uint32Array.from(geo.getIndex()!.array as ArrayLike<number>);
-    if (this.town) { this.scene.remove(this.town.mesh); this.town.ground.geometry.dispose(); this.town = null; }
-    geo.setIndex(new THREE.BufferAttribute(this.fullIndex, 1));
-    if (built.size) {
-      const pc1 = geo.getAttribute('pc1');
-      // (Fine triangles about 0.012 tile steps on a side, whatever the coarse level.)
-      const ground = buildTownGround({
-        coarse: geo, triToTile: this.terrain.triToTile, built, pads, D: g.globe.avgEdgeAngle,
-        splits: (t) => TOWN_SPLITS / (this.levels![t] ?? 1), group: (v) => pc1.getY(v),
-      });
-      const keep: number[] = [];
-      for (let tr = 0; tr < this.fullIndex.length / 3; tr++) if (!ground.hidden.has(tr)) keep.push(this.fullIndex[tr * 3]!, this.fullIndex[tr * 3 + 1]!, this.fullIndex[tr * 3 + 2]!);
-      geo.setIndex(new THREE.BufferAttribute(Uint32Array.from(keep), 1));
-      const mesh = new THREE.Mesh(ground.geometry, this.terrainMat.material);
-      mesh.castShadow = true; mesh.receiveShadow = true;
-      mesh.userData['stat'] = 'terrain · town ground';
-      this.scene.add(mesh);
-      this.town = { ground, mesh };
-    }
-    this.shadowsDirty = true;
-  }
-
   // Levels the top of a mountain tile for a wonder: within LEVEL_R of the
   // peak the ground is cut down to LEVEL_AT of the way up, easing back into
   // the slopes beyond; the cut is flat (its normals straight up).
@@ -1126,10 +1070,9 @@ export class GlobeRenderer {
     this.tileTex.needsUpdate = true;
   }
 
-  // Smoke and fire in sight: damaged and burning cities, pillaged fields,
-  // forge chimneys.
+  // Smoke and fire in sight: damaged and burning cities, pillaged fields.
   private updateSmoke(): void {
-    const g = this.game, s = this.scale;
+    const g = this.game;
     const out: Emitter[] = [];
     const at = (t: number, i: number, wa: number, wb: number) => {
       const p = this.terrain.samplePoint(t, i, wa, wb);
@@ -1144,15 +1087,6 @@ export class GlobeRenderer {
           const p = at(c.tile, (k * 2) % g.tiles[c.tile].corners.length, 0.3, 0.15);
           out.push({ pos: p, kind: 'smoke' });
           if (c.razing || hurt > 0.5) out.push({ pos: p.clone(), kind: 'fire' });
-        }
-      }
-      // Forges smoke from their chimneys.
-      for (const t of [c.tile, ...g.cityTiles(c, USE.urban)]) {
-        if (!g.visible[t]) continue;
-        for (const b of this.cityProps.place(t)) {
-          if (b.kind !== 'workshop' && b.kind !== 'smithy') continue;
-          const p = new THREE.Vector3().setFromMatrixPosition(b.matrix);
-          out.push({ pos: p.addScaledVector(p.clone().normalize(), 0.0045 * s), kind: 'chimney' });
         }
       }
     }
