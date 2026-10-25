@@ -108,7 +108,8 @@ const SQUARE_GROW = 0.022; // squares reach this far (tile steps) under the stre
 const WALK_FOV = 55;
 // The look: a 35° lens from further back (flatter perspective, less of a
 // small planet); the City samples page's light (a maquette's): a strong
-// pale sky fill and a warm sun fairly high, no shadows, no tone mapping.
+// pale sky fill and a warm sun fairly high, no shadows; neutral tone
+// mapping.
 const LENS = 35;
 const LIGHT = { sunColor: 0xfff4e0, sun: 2.1, sunHeight: 50, fill: 1.4, fillSky: 0xdfeeff, fillGround: 0x6a5a40 };
 // Bridges (heights × the world scale; spans in tile steps): the deck stands
@@ -247,9 +248,12 @@ export class GlobeRenderer {
     this.game = game;
     this.scale = game.globe.avgEdgeAngle / REF_EDGE;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-    // Pixels are the main cost: 1.5 keeps Retina screens sharp at about half
-    // the work of 2.
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+    // Full Retina sharpness (up to 2 pixels per CSS pixel).
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    // Neutral tone mapping: what makes the colours read crisp and rich
+    // (compared by eye against none and ACES).
+    this.renderer.toneMapping = THREE.NeutralToneMapping;
+    this.renderer.toneMappingExposure = 1;
     this.scene.background = new THREE.Color(0x04050a);
 
     this.camera = new THREE.PerspectiveCamera(40, 1, 0.005, 200);
