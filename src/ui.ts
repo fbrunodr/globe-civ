@@ -4,7 +4,7 @@ import { terrainName } from './terrain.ts';
 import { HUMAN, BUILDABLE, PILLAGE_GOLD, type Game, type City, type Unit } from './game.ts';
 import type { Selection } from './render.ts';
 import {
-  USE, FOCUSES, FAMILIES, IMPROVEMENTS, ERAS, SPECIALIST_KINDS, improvementFor, isFocusKey, quartersOf, familyOf, specialistYield,
+  USE, FOCUSES, IMPROVEMENTS, ERAS, SPECIALISTS, SPECIALIST_KINDS, improvementFor, isFocusKey, specialistYield,
   type FocusKey, type GrowthKind, type GrowthOption, type Output, type BuildingKey, type SpecialistKind, type WonderKey,
 } from './cities.ts';
 
@@ -83,7 +83,7 @@ const yieldStr = (food: number, prod: number, gold: number) =>
   `<span class="y food">🌾 ${food}</span><span class="y prod">⚒ ${prod}</span><span class="y gold">● ${gold}</span>`;
 
 const KIND_NAME: Record<GrowthKind, string> = { rural: 'Rural', specialist: 'Specialist' };
-export const specialistName = (k: SpecialistKind): string => (k === 'civic' ? 'Craftsman' : `${FAMILIES[k].name} specialist`);
+export const specialistName = (k: SpecialistKind): string => SPECIALISTS[k].name;
 export const optionName = (o: GrowthOption): string =>
   o.kind === 'rural' ? IMPROVEMENTS[o.improvement].name : specialistName(o.specialist);
 
@@ -223,16 +223,14 @@ export class UI {
       ${raze}`;
   }
 
-  // The city's buildings, quarters, specialists and wonders.
+  // The city's buildings, specialists and wonders.
   private buildingsHtml(c: City): string {
     const g = this.game;
     const rows: string[] = [];
-    const blds = [...c.buildings].filter((b) => BUILDINGS[b].role !== 'walls');
+    const blds = [...c.buildings].filter((b) => b !== 'walls');
     if (blds.length) rows.push(`<div class="qrow"><b>Buildings</b> ${blds.map((b) => BUILDINGS[b].name).join(' · ')}</div>`);
-    const qs = quartersOf(c.buildings);
-    if (qs.length) rows.push(`<div class="qrow"><b>Quarters</b> ${qs.map((q) => FAMILIES[q].name).join(' · ')}</div>`);
     const specs = SPECIALIST_KINDS.filter((k) => c.specialists[k] > 0);
-    if (specs.length) rows.push(`<div class="qrow"><b>Specialists</b> ${specs.map((k) => `${c.specialists[k]} ${specialistName(k).toLowerCase()}`).join(' · ')}</div>`);
+    if (specs.length) rows.push(`<div class="qrow"><b>Specialists</b> ${specs.map((k) => `${c.specialists[k]} ${specialistName(k).toLowerCase()}${c.specialists[k] > 1 ? 's' : ''}`).join(' · ')}</div>`);
     const ws = g.cityWonders(c);
     if (ws.length) rows.push(`<div class="qrow"><b>Wonders</b> ${ws.map((w) => `★ ${WONDERS[w].name}`).join(' · ')}</div>`);
     if (c.buildings.has('walls')) rows.push('<div class="qrow"><b>Walls</b> around the city</div>');
@@ -295,8 +293,8 @@ export class UI {
   }
 }
 
-// A building's family, as a small tag in the build list.
+// A building's specialist slots, as a small tag in the build list.
 function buildingTag(k: BuildingKey): string {
-  const f = familyOf(k);
-  return f ? ` <small>${FAMILIES[f].name}</small>` : BUILDINGS[k].role === 'civic' ? ' <small>civic</small>' : '';
+  const s = BUILDINGS[k].specialists;
+  return s ? ` <small>${s.slots} ${SPECIALISTS[s.kind].name.toLowerCase()}${s.slots > 1 ? 's' : ''}</small>` : '';
 }

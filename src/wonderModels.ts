@@ -12,7 +12,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { cone, cyl } from './propCatalog.ts';
 import { CELL } from './town/geometry.ts';
 import type { WonderKey } from './cities.ts';
-import { P, box, chamfered, drum, frustum, gable, hip, patch, ring, shade, shrub, type G } from './houseKit.ts';
+import { P, box, chamfered, drum, frustum, gable, hip, patch, shade, shrub, type G } from './houseKit.ts';
 
 export const SITE_HALF = (7 * CELL) / 2; // 0.07875
 // What stands on a site: a wonder, or the scaffolding of one being built.
@@ -22,7 +22,7 @@ export const wonderModelKind = (m: SiteModel): WonderModelKind => `wonder|${m}`;
 export const isWonderModelKind = (k: string): k is WonderModelKind => k.startsWith('wonder|');
 
 const LIMESTONE = 0xe2d6b8, SANDSTONE = 0xc9ad7f, MARBLE = 0xddd6c6, STONE = 0xb8b0a0, DARK = 0x8d877c;
-const GRASS = 0x7f9a58, LEAF = 0x5b7a3a, WATER = 0x6f97a8, TIMBER = 0x7a5f45, IRON = 0x4a4744, BRONZE = 0x9a7a4a;
+const ROCK = 0x7d776c, GRASS = 0x7f9a58, LEAF = 0x5b7a3a, WATER = 0x6f97a8, TIMBER = 0x7a5f45, IRON = 0x4a4744, BRONZE = 0x9a7a4a;
 const H = SITE_HALF * 0.94; // the most a wonder spreads from the middle
 
 const seg = (a: THREE.Vector3, b: THREE.Vector3, r: number, c: number): G => {
@@ -43,16 +43,18 @@ const MODELS: Record<SiteModel, () => G[]> = {
     ];
   },
   // Pharos: a square tower, an octagonal one on it, a round lantern with
-  // its fire, on a walled platform.
+  // its fire, on a rocky islet in the sea (its origin at the water line:
+  // it stands beside a coastal city, cityProps.ts).
   greatLighthouse: () => [
-    ...box(2 * H, 0.006, 2 * H, STONE, {}, shade(STONE, 1.05)),
-    ring(2 * H, 0.012, 2 * H, DARK, { y: 0.006 }),
+    P(new THREE.CylinderGeometry(0.068, 0.075, 0.0078, 9).translate(0, 0.0021, 0), ROCK, { ry: 0.3 }),
+    ...[[0.06, 0.025, 1.1], [-0.045, 0.05, 0.9], [-0.03, -0.058, 1], [0.035, -0.055, 0.8]].map(([x, z, s]) =>
+      P(new THREE.DodecahedronGeometry(0.011 * s!, 0).scale(1, 0.7, 1), shade(ROCK, 0.9 + 0.1 * s!), { x: x!, y: 0.0065, z: z!, ry: x! * 40 })),
     ...frustum(0.06, 0.06, 0.05, 0.05, 0.075, LIMESTONE, { y: 0.006 }, shade(LIMESTONE, 0.95)),
     ...chamfered(0.036, 0.04, 0.036, 0.3, LIMESTONE, { y: 0.081 }),
     ...drum(0.012, 0.011, 0.022, 10, LIMESTONE, { y: 0.121 }),
     cone(0.013, 0.012, 10, BRONZE, { y: 0.143 }),
     P(new THREE.OctahedronGeometry(0.006, 0), 0xf2b65a, { y: 0.16 }),
-    ...[-1, 1].flatMap((s) => box(0.012, 0.03, 0.012, LIMESTONE, { x: s * 0.06, y: 0.006, z: 0.06 })),
+    ...[-1, 1].flatMap((s) => box(0.01, 0.026, 0.01, LIMESTONE, { x: s * 0.042, y: 0.006, z: 0.042 })),
   ],
   // Babylon: terraces stepping up, planted on every level, a stair up the front.
   hangingGardens: () => {

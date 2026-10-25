@@ -15,12 +15,11 @@ import {
 } from './terrain.ts';
 import { aiTurn } from './ai.ts';
 import {
-  USE, FOOD_PER_CITIZEN, ZERO, CITY_REACH, START_REACH, tileCost, GROWTH_TURNS, SPECIALIST_KINDS,
+  USE, FOOD_PER_CITIZEN, ZERO, CITY_REACH, START_REACH, tileCost, GROWTH_TURNS, SPECIALIST_KINDS, AQUEDUCT_KEEP, BUILDINGS as CITY_BUILDINGS,
   addOut, scaleOut, centerYield, ruralYield, improvementFor, governorScore, specialistsWanted,
-  buildingsYield, specialistYield, specialistKindOf, familyOf, buildingAllowed, weigh, WONDERS, WONDER_KEYS, ERAS, eraOf,
-  type FocusKey, type GrowthOption, type TileUse, type Output, type SpecialistKind, type WonderKey, type WonderSite, type EraIndex,
+  buildingsYield, withPercents, specialistYield, specialistSlots, buildingAllowed, weigh, WONDERS, WONDER_KEYS, ERAS, eraOf,
+  type FocusKey, type GrowthOption, type TileUse, type Output, type SpecialistKind, type WonderKey, type WonderSite, type EraIndex, type ImprovementKey,
 } from './cities.ts';
-import { isWorldOcean } from './mapRules.ts';
 import { IMPROVEMENTS } from './cities.ts';
 
 const IMPROVEMENT_NAME = (t: TileTerrain): string => {
@@ -79,7 +78,7 @@ export interface City {
   founded: number;
   focus: FocusKey;
   growth: number; // citizens born but not yet placed (the human places them)
-  specialists: Record<SpecialistKind, number>; // by the kind of building they work in
+  specialists: Record<SpecialistKind, number>; // in its buildings' slots, by kind
   wonderTile: number | null;           // where the wonder being built will stand (the center, or a mountain top)
   bought: number;                      // tiles bought (each costs more: cities.ts tileCost)
   hp: number;                          // the center's hit points (0: a melee unit can take it)
@@ -585,10 +584,7 @@ export class Game {
     city.growth = 0;
     city.wonderTile = null;
     // Temples and garrisons do not survive a conquest; the rest change hands.
-    for (const b of [...city.buildings]) {
-      const f = familyOf(b);
-      if (f === 'temple' || f === 'garrison') this.removeBuilding(city, b);
-    }
+    for (const b of [...city.buildings]) if (CITY_BUILDINGS[b].lostOnCapture) this.removeBuilding(city, b);
     this.useVersion++;
     city.food = 0;
     city.prod = 0;
@@ -608,17 +604,19 @@ export class Game {
 
   // ---------- buildings ----------
 
-  // Whether the city stands by a river, or on the coast (some buildings and
-  // wonders need it).
+  // Whether the city stands by a river, or on the coast (beside the sea:
+  // some buildings and wonders need it).
   cityRiver(city: City): boolean { return this.map.riverTile[city.tile] === 1; }
-  cityCoast(city: City): boolean { return this.tiles[city.tile].neighbors.some((n) => isWorldOcean(this.biome[n])); }
+  cityCoast(city: City): boolean { return this.tiles[city.tile].neighbors.some((n) => this.isSea(n)); }
+  isSea(t: number): boolean { return this.biome[t] === 'shallowSea' || this.biome[t] === 'ocean'; }
 
-  // How many more specialists of a kind the city's buildings have room for
-  // (one per building of the kind).
+  // How many more specialists of a kind the city's buildings have slots for.
   specialistRoom(city: City, k: SpecialistKind): number {
-    let n = 0;
-    for (const b of city.buildings) if (specialistKindOf(b) === k) n++;
-    return n - city.specialists[k];
+    return specialistSlots(city.buildings, k) - city.specialists[k];
+  }
+  // The city's rural tiles worked with an improvement.
+  private worked(city: City, k: ImprovementKey): number {
+    return this.cityTiles(city, USE.rural).filter((t) => !this.pillaged[t] && improvementFor(this.terrainAt(t)) === k).length;
   }
   specialistCount(city: City): number { return SPECIALIST_KINDS.reduce((n, k) => n + city.specialists[k], 0); }
 
@@ -636,29 +634,29 @@ export class Game {
     city.buildings.add(k);
     this.useVersion++;
   }
-  // Removes building k (a conquest, the City Lab); its specialist, if it
-  // had one, goes back to the fields or leaves.
+  // Removes building k (a conquest, the City Lab) and those that need it;
+  // specialists left without a slot leave the city.
   removeBuilding(city: City, k: BuildingKey): void {
     if (!city.buildings.delete(k)) return;
-    const s = specialistKindOf(k);
-    if (s && city.specialists[s] > 0 && this.specialistRoom(city, s) < 0) {
-      city.specialists[s]--;
-      city.pop--;
-      if (city.pop < 1) city.pop = 1;
+    for (const b of [...city.buildings]) if (CITY_BUILDINGS[b].requires === k) this.removeBuilding(city, b);
+    for (const s of SPECIALIST_KINDS) {
+      const over = -this.specialistRoom(city, s);
+      if (over > 0) { city.specialists[s] -= over; city.pop = Math.max(1, city.pop - over); }
     }
     this.useVersion++;
   }
 
   // ---------- wonders ----------
 
-  // The wonders standing on tile t (a city's center: any number).
+  // The wonders standing on tile t (a city's center: any number; a tile
+  // beside it: one).
   wondersAt(t: number): WonderKey[] {
     const out: WonderKey[] = [];
     for (const [k, at] of this.wondersBuilt) if (at === t) out.push(k);
     return out;
   }
   wonderOn(t: number): WonderKey | null { return this.wondersAt(t)[0] ?? null; }
-  // The wonders a city has (on its center, and Machu Picchu beside it).
+  // The wonders a city has (on its center, and beside it).
   cityWonders(city: City): WonderKey[] {
     const out: WonderKey[] = [];
     for (const [k, t] of this.wondersBuilt) if (t !== FALLEN && this.tileCity[t] === city.id) out.push(k);
@@ -669,7 +667,7 @@ export class Game {
   private siteOk(t: number, site: WonderSite): boolean {
     switch (site) {
       case 'desertOrFloodplain': return [t, ...this.tiles[t].neighbors].some((x) => this.biome[x] === 'hotDesert' || this.biome[x] === 'coldDesert' || this.feature[x] === 'floodplain');
-      case 'coast': return this.tiles[t].neighbors.some((n) => isWorldOcean(this.biome[n]));
+      case 'coast': return this.tiles[t].neighbors.some((n) => this.isSea(n));
       case 'river': return this.map.riverTile[t] === 1;
       case 'mountainTop': return this.relief[t] === 'mountains' && this.feature[t] !== 'volcano';
       case 'hills': return this.relief[t] === 'hills';
@@ -679,11 +677,15 @@ export class Game {
   }
 
   // Where wonder k could stand: in the city (its center), if the center
-  // meets its need; Machu Picchu on a mountain of the city's next to it.
+  // meets its need; beside it, on a tile of the city's with no wonder yet:
+  // Machu Picchu on a mountain (wild), the Great Lighthouse on the sea
+  // (shallow first).
   wonderSpots(city: City, k: WonderKey): number[] {
-    if (WONDERS[k].site !== 'mountainTop') return this.siteOk(city.tile, WONDERS[k].site) ? [city.tile] : [];
-    return this.tiles[city.tile].neighbors.filter((t) => this.tileCity[t] === city.id && this.use[t] === USE.wild && !this.blockedFor(city, t)
-      && !this.wondersAt(t).length && this.siteOk(t, 'mountainTop'));
+    const site = WONDERS[k].site;
+    if (site !== 'mountainTop' && site !== 'coast') return this.siteOk(city.tile, site) ? [city.tile] : [];
+    const ok = (t: number) => (site === 'coast' ? this.isSea(t) : this.use[t] === USE.wild && this.siteOk(t, 'mountainTop'));
+    return this.tiles[city.tile].neighbors.filter((t) => this.tileCity[t] === city.id && !this.blockedFor(city, t) && !this.wondersAt(t).length && ok(t))
+      .sort((a, b) => Number(this.biome[b] === 'shallowSea') - Number(this.biome[a] === 'shallowSea') || a - b);
   }
 
   // Starts wonder k on tile t (production goes on).
@@ -733,14 +735,14 @@ export class Game {
   tileOutput(t: number): Output {
     const terrain = this.terrainAt(t), river = this.map.riverTile[t] === 1;
     const u = this.use[t];
-    if (u === USE.rural) return this.pillaged[t] ? ZERO : ruralYield(terrain, river, this.eraAt(t));
+    if (u === USE.rural) return addOut(this.pillaged[t] ? ZERO : ruralYield(terrain, river, this.eraAt(t)), this.wondersAt(t).reduce((o, w) => addOut(o, WONDERS[w].yields), ZERO));
     const wonders = this.wondersAt(t).reduce((o, w) => addOut(o, WONDERS[w].yields), ZERO);
-    if (u === USE.wild) return wonders; // a wonder on a mountain top
+    if (u === USE.wild) return wonders; // a wonder beside the city
     // The center: the city, its buildings, wonders and specialists.
     const city = this.cityByTile.get(t);
     if (!city) return ZERO;
     const specialists = SPECIALIST_KINDS.reduce((o, k) => addOut(o, scaleOut(specialistYield(k), city.specialists[k])), ZERO);
-    return addOut(addOut(addOut(centerYield(terrain, river), buildingsYield(city.buildings)), wonders), specialists);
+    return addOut(addOut(addOut(centerYield(terrain, river), buildingsYield(city.buildings, city.pop, (k) => this.worked(city, k))), wonders), specialists);
   }
 
   // A tile an enemy unit stands on yields nothing to its city.
@@ -755,6 +757,8 @@ export class Game {
       if (t !== city.tile && this.blockedFor(city, t)) continue;
       sum = addOut(sum, this.tileOutput(t));
     }
+    // (Buildings' percentages count everything the city makes.)
+    sum = withPercents(sum, city.buildings);
     return { ...sum, surplus: sum.food - FOOD_PER_CITIZEN * city.pop };
   }
 
@@ -838,7 +842,7 @@ export class Game {
   canBuild(city: City, key: BuildKey): boolean {
     if (isUnitKey(key)) return true;
     if (isWonder(key)) return !this.wondersBuilt.has(key) && (this.wonderSpots(city, key).length > 0 || city.wonderTile !== null && city.building === key);
-    return !city.buildings.has(key) && buildingAllowed(key, this.cityRiver(city), this.cityCoast(city));
+    return buildingAllowed(key, city.buildings, this.cityRiver(city), this.cityCoast(city));
   }
 
   private processCity(city: City): void {
@@ -857,7 +861,7 @@ export class Game {
         city.food = cost; // nowhere to put a new citizen: the city stagnates
       } else {
         city.growth++;
-        city.food = city.buildings.has('granary') ? Math.floor(cost / 2) : 0;
+        city.food = city.buildings.has('aqueduct') ? Math.floor(cost * AQUEDUCT_KEEP) : 0;
         if (p.isHuman) this.log(`${city.name} grew: place a citizen.`);
         else this.autoPlace(city);
       }

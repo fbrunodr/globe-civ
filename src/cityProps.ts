@@ -16,7 +16,7 @@ import * as THREE from 'three';
 import type { Game, City } from './game.ts';
 import { USE, improvementFor, type ImprovementKey, type EraIndex } from './cities.ts';
 import { ROOFS, PROP_MODEL, buildingEntry, isFloraModel, isLotModel, placedGeometry, waterRule, type BuildingKind, type LotModelKind, type PlacedKind } from './buildingCatalog.ts';
-import type { SiteModel } from './wonderModels.ts';
+import { wonderModelKind, type SiteModel } from './wonderModels.ts';
 import type { CatalogKind } from './propCatalog.ts';
 import { HOUSE_VARIANTS, houseKind } from './houses.ts';
 import { styleOf } from './architecture.ts';
@@ -75,6 +75,9 @@ export interface PlacedBuilding {
 
 const UP = new THREE.Vector3(0, 1, 0);
 const DRY = -0.00008;      // like the flora: the water this far under the ground
+// A wonder on the sea (the Great Lighthouse): its scale (model units, tile
+// steps) and its islet's radius (model units, wonderModels.ts).
+const SEA_WONDER = 0.9, SEA_ISLET = 0.075;
 // Models are enlarged a little over true scale so towns read from afar
 // (the drawings' lot sizes assume this scale).
 const HOUSE_SCALE = 1.5;
@@ -243,10 +246,10 @@ export class CityProps {
   private build(t: number): PlacedBuilding[] {
     const g = this.game;
     if (g.use[t] === USE.wild) {
-      // (The one wonder on a wild tile: Machu Picchu, on its summit; its
-      // scaffolding while it goes up.)
-      if (g.wonderOn(t) === 'machuPicchu') return this.summit(t, 'machuPicchu');
-      if (g.cities.some((c) => c.wonderTile === t)) return this.landmark(t, 'scaffold', mulberry32((t + 1) * 2654435761));
+      // (A wonder beside a city: Machu Picchu on its summit, the Great
+      // Lighthouse on the sea; scaffolding while one goes up.)
+      const beside = this.besideWonder(t);
+      if (beside) return beside;
       return g.ruins[t] ? this.ruins(t) : [];
     }
     const city = g.cityById.get(g.tileCity[t]);
@@ -255,7 +258,7 @@ export class CityProps {
     const rand = mulberry32((t + 1) * 2654435761 ^ city.id * 40503);
     if (u === USE.rural && !isFarmland(g, t)) {
       const k = improvementFor(g.terrainAt(t));
-      return k ? this.rural(t, RURAL[k], rand) : [];
+      return [...(k ? this.rural(t, RURAL[k], rand) : []), ...(this.besideWonder(t) ?? [])];
     }
     return this.layout(city).byTile.get(t) ?? [];
   }
@@ -500,6 +503,43 @@ export class CityProps {
     return this.stand(kind, best.dir, rand() * Math.PI * 2, HOUSE_SCALE, buildingEntry(kind).leaf, rand, this.game.ownerOf(t));
   }
 
+  // The wonder standing on tile t beside its city, or going up there.
+  private besideWonder(t: number): PlacedBuilding[] | null {
+    const g = this.game, w = g.wonderOn(t);
+    if (w === 'machuPicchu') return this.summit(t, 'machuPicchu');
+    if (w) return this.seaWonder(t, wonderModelKind(w));
+    if (!g.cities.some((c) => c.wonderTile === t)) return null;
+    return g.isSea(t) ? this.seaWonder(t, wonderModelKind('scaffold')) : this.landmark(t, 'scaffold', mulberry32((t + 1) * 2654435761));
+  }
+
+  // Where a wonder on the sea stands: on the line from the tile's middle to
+  // the middle of the edge it shares with its city, as near that edge as
+  // its islet keeps wholly in the water; facing the city.
+  private seaSpot(t: number): { dir: THREE.Vector3; toward: THREE.Vector3; r: number; k: number } | null {
+    const g = this.game, city = g.cityById.get(g.tileCity[t]!);
+    if (!city) return null;
+    const tl = g.tiles[t]!, i = tl.neighbors.indexOf(city.tile);
+    if (i < 0) return null;
+    const n = tl.corners.length, c = tl.center;
+    const edge = g.globe.triCenters[tl.corners[i]!]!.clone().add(g.globe.triCenters[tl.corners[(i + 1) % n]!]!).normalize();
+    const { k } = onTile(g, t), r = SEA_ISLET * SEA_WONDER * k;
+    const wet = (d: THREE.Vector3) => { const s = this.sampleDir(d); return s.water - s.ground >= 0.0003; };
+    for (let f = 0.75; f >= 0; f -= 0.05) {
+      const dir = c.clone().lerp(edge, f).normalize();
+      const q = new THREE.Quaternion().setFromUnitVectors(UP, dir);
+      const ring = Array.from({ length: 8 }, (_, j) => dir.clone().add(new THREE.Vector3(Math.cos(j * Math.PI / 4) * r, 0, Math.sin(j * Math.PI / 4) * r).applyQuaternion(q)).normalize());
+      if (wet(dir) && ring.every(wet)) return { dir, toward: g.tiles[city.tile]!.center, r, k };
+    }
+    return null;
+  }
+  private seaWonder(t: number, kind: LotModelKind): PlacedBuilding[] {
+    const s = this.seaSpot(t);
+    if (!s) return [];
+    const water = this.sampleDir(s.dir).water;
+    const q = new THREE.Quaternion().setFromUnitVectors(UP, s.dir).multiply(new THREE.Quaternion().setFromAxisAngle(UP, facing(s.dir, s.toward) + Math.PI / 2));
+    return [{ kind, matrix: new THREE.Matrix4().compose(s.dir.clone().multiplyScalar(1 + water), q, new THREE.Vector3().setScalar(SEA_WONDER * s.k)), color: new THREE.Color(1, 1, 1), leaf: new THREE.Color(1, 1, 1) }];
+  }
+
   private tileSpots(t: number, rows: number, rand: Rng): { i: number; wa: number; wb: number }[] {
     const k = this.game.tiles[t].corners.length;
     const out: { i: number; wa: number; wb: number }[] = [];
@@ -650,13 +690,15 @@ export class CityProps {
   // One structure per rural tile (two boats on the water), off the roads.
   private rural(t: number, kind: BuildingKind, rand: Rng): PlacedBuilding[] {
     const out: PlacedBuilding[] = [];
+    // (Boats keep clear of a wonder standing on their sea.)
+    const clearOf = this.game.wonderOn(t) || this.game.cities.some((c) => c.wonderTile === t) ? this.seaSpot(t) : null;
     const want = kind === 'fishingBoat' ? 2 : 1;
     const water = buildingEntry(kind).water === 'float';
     for (let tries = 0; tries < 24 && out.length < want; tries++) {
       const i = Math.floor(rand() * this.game.tiles[t].corners.length);
       const wa = 0.15 + 0.4 * rand(), wb = 0.1 + 0.3 * rand();
       const s = this.sample(t, i, wa, wb);
-      if (!standsAt(kind, s) || this.onRoad(s.dir, kind)) continue;
+      if (!standsAt(kind, s) || this.onRoad(s.dir, kind) || (clearOf && s.dir.angleTo(clearOf.dir) < clearOf.r * 1.6)) continue;
       const roof = kind === 'farmstead' ? roofOf(this.game.map.temperature[t], 6, this.game.eraAt(t), rand) : buildingEntry(kind).leaf;
       const yaw = rand() * Math.PI * 2, size = HOUSE_SCALE * (0.9 + 0.2 * rand());
       if (water) out.push(this.make(kind, s.dir, s.water, yaw, size, roof, rand));

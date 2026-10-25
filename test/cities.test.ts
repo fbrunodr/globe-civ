@@ -3,8 +3,8 @@ import { Game, type City } from '../src/game.ts';
 import { aiTurn } from '../src/ai.ts';
 import { BIOMES, FEATURE_RULES, RELIEFS, featureAllowed, type BiomeKey, type FeatureKey, type ReliefKey, type TileTerrain } from '../src/terrain.ts';
 import {
-  USE, ERAS, IMPROVEMENTS, SPECIALIST_KINDS, improvementFor, buildingAllowed, quartersOf, specialistKindOf, eraBonus,
-  WONDERS, type ImprovementKey, type EraIndex,
+  USE, ERAS, IMPROVEMENTS, SPECIALIST_KINDS, BUILDINGS, improvementFor, buildingAllowed, specialistSlots, eraBonus,
+  WONDERS, type BuildingKey, type ImprovementKey, type EraIndex,
 } from '../src/cities.ts';
 import type { MapSizeKey } from '../src/rules.ts';
 
@@ -13,7 +13,8 @@ import type { MapSizeKey } from '../src/rules.ts';
 // (Cities are one tile now, Civ V style: no urban tiles. Gone with them:
 // C1's "urban tiles never on mountains, ice or deep ocean", C5 "the core is
 // in one piece", Q3 "buildings fit their tile's slot", and C7 "a big city
-// has a built-up core", now about specialists.)
+// has a built-up core", now about specialists. Buildings are Civ V's: no
+// quarters, so Q1 and Q4 are about prerequisites now.)
 
 // ---------- C1: every terrain has an improvement or is explicitly wild-only ----------
 
@@ -89,19 +90,26 @@ function checkCities(g: Game): string[] {
     if (u === USE.rural && !improvementFor(g.terrainAt(t))) out.push(`C3 tile ${t}: rural on wild-only terrain`);
   }
   // Wonders: once in the world, in its city (on the center, meeting its
-  // need), Machu Picchu on a wild mountain beside it.
+  // need), or beside it: Machu Picchu on a wild mountain, the Great
+  // Lighthouse on the sea.
   for (const [w, t] of g.wondersBuilt) {
     if (t < 0) continue; // fallen with its city
-    const top = WONDERS[w].site === 'mountainTop';
+    const site = WONDERS[w].site;
     const city = g.cityById.get(g.tileCity[t]);
-    if (top ? g.relief[t] !== 'mountains' || g.use[t] !== USE.wild || !city || !g.tiles[city.tile].neighbors.includes(t) : g.use[t] !== USE.center)
-      out.push(`WN1 tile ${t}: ${w} not ${top ? 'on a wild mountain beside its city' : "on a city's center"}`);
+    const beside = !!city && g.tiles[city.tile].neighbors.includes(t);
+    const ok = site === 'mountainTop' ? beside && g.relief[t] === 'mountains' && g.use[t] === USE.wild
+      : site === 'coast' ? beside && g.isSea(t) : g.use[t] === USE.center;
+    if (!ok) out.push(`WN1 tile ${t}: ${w} not where it stands (${site})`);
   }
   for (const c of g.cities) {
     // Buildings: each one the city may have; specialists only in buildings of their kind, one each.
-    for (const b of c.buildings) if (!buildingAllowed(b, g.cityRiver(c), g.cityCoast(c))) out.push(`Q2 ${c.name}: ${b} where it may not stand`);
+    for (const b of c.buildings) {
+      const others = new Set(c.buildings);
+      others.delete(b);
+      if (!buildingAllowed(b, others, g.cityRiver(c), g.cityCoast(c))) out.push(`Q2 ${c.name}: ${b} without what it needs`);
+    }
     for (const k of SPECIALIST_KINDS) {
-      const room = [...c.buildings].filter((b) => specialistKindOf(b) === k).length;
+      const room = specialistSlots(c.buildings, k);
       if (c.specialists[k] < 0 || c.specialists[k] > room) out.push(`C4 ${c.name}: ${c.specialists[k]} ${k} specialists, room for ${room}`);
     }
     if (centers.get(c.id) !== 1) out.push(`C3 ${c.name}: ${centers.get(c.id) ?? 0} centers`);
@@ -139,22 +147,26 @@ describe('cities in simulated games', () => {
     expect(median).toBeLessThanOrEqual(12);
   });
 
-  it('Q1: a quarter needs two buildings of one family', () => {
-    expect(quartersOf(['library', 'academy'])).toEqual(['campus']);
-    expect(quartersOf(['library', 'market'])).toEqual([]);
-    expect(quartersOf(['library'])).toEqual([]);
-    expect(quartersOf(['granary', 'monument'])).toEqual([]);
+  it('Q1: a building needs what it requires, and where it must be', () => {
+    const has = (...ks: BuildingKey[]) => new Set<BuildingKey>(ks);
+    expect(buildingAllowed('academy', has(), false, false)).toBe(false);
+    expect(buildingAllowed('academy', has('library'), false, false)).toBe(true);
+    expect(buildingAllowed('library', has('library'), false, false)).toBe(false);
+    expect(buildingAllowed('lighthouse', has(), false, false)).toBe(false);
+    expect(buildingAllowed('lighthouse', has(), false, true)).toBe(true);
+    expect(buildingAllowed('waterMill', has(), false, true)).toBe(false);
+    expect(buildingAllowed('waterMill', has(), true, false)).toBe(true);
   });
 
-  it('Q4: cities build, and some form quarters', () => {
+  it('Q4: cities build, some of them the buildings that need another first', () => {
     let buildings = 0, quarters = 0;
     for (const { game: g } of sims) {
       for (const c of g.cities) {
         buildings += c.buildings.size;
-        quarters += quartersOf(c.buildings).length;
+        quarters += [...c.buildings].filter((b) => BUILDINGS[b].requires).length;
       }
     }
-    console.log(`buildings ${buildings}, quarters ${quarters}`);
+    console.log(`buildings ${buildings}, of them needing another ${quarters}`);
     expect(buildings).toBeGreaterThan(50);
     expect(quarters).toBeGreaterThan(3);
   });
@@ -166,12 +178,13 @@ describe('cities in simulated games', () => {
   });
 
   // (Tall cities grow through specialists, design doc.)
-  // (As many as its buildings have room for, if fewer.)
+  // (As many as its buildings have room for, if fewer; one short is fine:
+  // a slot built since the city last grew.)
   it('C7: a big city (size 10+) has specialists: at least a quarter of its citizens', () => {
-    const room = (c: City) => [...c.buildings].filter((b) => specialistKindOf(b) !== null).length;
+    const room = (c: City) => SPECIALIST_KINDS.reduce((n, k) => n + specialistSlots(c.buildings, k), 0);
     const thin = sims.flatMap((s) => s.game.cities
-      .filter((c) => c.pop >= 10 && s.game.specialistCount(c) < Math.min(room(c), Math.floor(c.pop / 4)))
-      .map((c) => `${c.name} size ${c.pop}: ${s.game.specialistCount(c)} specialists, ${c.buildings.size} buildings`));
+      .filter((c) => c.pop >= 10 && s.game.specialistCount(c) < Math.min(room(c), Math.floor(c.pop / 4)) - 1)
+      .map((c) => `${c.name} size ${c.pop}: ${s.game.specialistCount(c)} specialists, ${room(c)} slots, surplus ${s.game.cityYields(c).surplus}`));
     expect(thin).toEqual([]);
   });
 });

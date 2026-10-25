@@ -10,8 +10,8 @@ import { GlobeRenderer, type DebugView, type TileMark } from './render.ts';
 import { MAP_SCRIPTS, MAP_SIZES, isMapScript, tileCount, type MapScriptKey, type MapSizeKey } from './rules.ts';
 import { terrainName } from './terrain.ts';
 import {
-  USE, BUILDINGS, BUILDING_KEYS, WONDERS, WONDER_KEYS, FOCUSES, ERAS, FAMILIES, IMPROVEMENTS, SPECIALIST_KINDS,
-  familyOf, improvementFor, specialistYield, type BuildingKey, type WonderKey, type EraIndex, type FocusKey, type Output, type SpecialistKind,
+  USE, BUILDINGS, BUILDING_KEYS, WONDERS, WONDER_KEYS, FOCUSES, ERAS, IMPROVEMENTS, SPECIALIST_KINDS,
+  improvementFor, specialistYield, type BuildingKey, type WonderKey, type EraIndex, type FocusKey, type Output, type SpecialistKind,
 } from './cities.ts';
 import { specialistName } from './ui.ts';
 import { buildPresets, foundCity, grow, shrink, setEra, addBuilding, addWonder } from './sandbox.ts';
@@ -147,8 +147,7 @@ function renderBuilder(): void {
       .filter((_, i) => opts.some((o) => o.kind === 'specialist' && o.specialist === SPECIALIST_KINDS[i]))].join('');
   const blds = BUILDING_KEYS.filter((k) => k !== 'walls').map((k) => {
     const has = c.buildings.has(k);
-    const f = familyOf(k);
-    return btn(`data-lab="building" data-v="${k}"`, BUILDINGS[k].name, { active: has, disabled: !has && !game.canBuild(c, k), title: `${f ? FAMILIES[f].name : 'Civic'} · ${has ? 'click to remove' : BUILDINGS[k].desc}` });
+    return btn(`data-lab="building" data-v="${k}"`, BUILDINGS[k].name, { active: has, disabled: !has && !game.canBuild(c, k), title: has ? 'Click to remove (and what needs it)' : BUILDINGS[k].desc });
   }).join('');
   const wonders = WONDER_KEYS.map((k) => {
     const here = game.cityWonders(c).includes(k);
