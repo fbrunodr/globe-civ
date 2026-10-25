@@ -105,15 +105,12 @@ const ROAD_SURFACE = 0.84;  // the surface layer's share of the street's width (
 const ROAD_LAYER = 0.00002; // how far the surface sits above the edges
 const ROAD_KERB = [0.62, 0.59, 0.54] as const;
 const SQUARE_GROW = 0.022; // squares reach this far (tile steps) under the streets round them
-const SHADOW_NORMAL_TEXELS = 1.5;
 const WALK_FOV = 55;
-// The look (chosen by comparing in a now-removed panel): a 35° lens from
-// further back (flatter perspective, less of a small planet); a white sun
-// fairly low in the sky over an even, cool sky fill; the sun cooler toward
-// the poles.
+// The look: a 35° lens from further back (flatter perspective, less of a
+// small planet); the City samples page's light (a maquette's): a strong
+// pale sky fill and a warm sun fairly high, no shadows, no tone mapping.
 const LENS = 35;
-const LIGHT = { sunColor: 0xffffff, sun: 2.5, sunHeight: 35, fill: 1.0, fillSky: 0xb9cdea, fillGround: 0x4f4232, exposure: 1.0, cool: 2 / 3 };
-const SUN_COOL = new THREE.Color(0xe4edff);
+const LIGHT = { sunColor: 0xfff4e0, sun: 2.1, sunHeight: 50, fill: 1.4, fillSky: 0xdfeeff, fillGround: 0x6a5a40 };
 // Bridges (heights × the world scale; spans in tile steps): the deck stands
 // at least BRIDGE_CLEAR over the water and arches up to BRIDGE_ARCH more on
 // a long span; parapets rise BRIDGE_PARAPET over the deck, the slab is
@@ -161,7 +158,6 @@ export class GlobeRenderer {
   // The sky fill: light from every direction (cool sky above, dark earth below).
   private readonly fill = new THREE.HemisphereLight(LIGHT.fillSky, LIGHT.fillGround, LIGHT.fill);
   private readonly lastView = { pos: new THREE.Vector3(), quat: new THREE.Quaternion() };
-  private shadowsDirty = true;
   private readonly cam: GlobeCamera;
   private readonly walk: WalkCamera;
   private readonly sky = makeSky();
@@ -241,11 +237,9 @@ export class GlobeRenderer {
   private fpsWork = 0;
   private fpsTris = 0;
   private fpsSince = performance.now();
-  // Triangles drawn per category this frame (main pass and shadow passes),
-  // tallied by hooks on every mesh (installed at each counter refresh).
-  // (The shadow map re-renders only when the view or the world changes, so
-  // the shadow column keeps the last pass that drew it.)
-  private readonly statTris = new Map<string, { main: number; shadow: number; lastShadow: number }>();
+  // Triangles drawn per category this frame, tallied by hooks on every mesh
+  // (installed at each counter refresh).
+  private readonly statTris = new Map<string, number>();
   // Whether the counter shows the breakdown (clicking it toggles; remembered per viewer).
   private statsOpen = ((): boolean => { try { return localStorage.getItem('trisBreakdown') === '1'; } catch { return false; } })();
 
@@ -256,28 +250,14 @@ export class GlobeRenderer {
     // Pixels are the main cost: 1.5 keeps Retina screens sharp at about half
     // the work of 2.
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
-    // Neutral tone mapping keeps the pastel palette saturated (ACES washes it out).
-    this.renderer.toneMapping = THREE.NeutralToneMapping;
-    this.renderer.toneMappingExposure = LIGHT.exposure;
     this.scene.background = new THREE.Color(0x04050a);
 
     this.camera = new THREE.PerspectiveCamera(40, 1, 0.005, 200);
     this.camera.position.set(0, 0, 3.4);
     this.scene.add(this.camera);
-    // The sun keeps a fixed angle to the camera (behind it, a little to the left) so the
-    // visible side is always lit; it is repositioned every frame (see
-    // updateSun) so its shadow map only covers what is on screen. The
-    // hemisphere light fills shadows with a cool sky tone.
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFShadowMap;
-    // Shadows re-render only when the view or the world changes (laptops).
-    this.renderer.shadowMap.autoUpdate = false;
+    // The sun keeps a fixed angle to the camera (behind it, a little to the
+    // left) so the visible side is always lit (updateSun).
     this.sun = new THREE.DirectionalLight(LIGHT.sunColor, LIGHT.sun);
-    this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(2048, 2048);
-    this.sun.shadow.bias = -0.0004;
-    this.sun.shadow.normalBias = 0.003;
-    this.sun.shadow.radius = 3;
     this.scene.add(this.sun, this.sun.target);
     this.scene.add(this.fill);
 
@@ -405,8 +385,6 @@ export class GlobeRenderer {
       r0: params.r0, fine: FINE_MAX * params.r0, fineFreq: 1 / (FINE_WAVELENGTH * params.r0),
     });
     this.globeMesh = new THREE.Mesh(this.terrain.geometry, this.terrainMat.material);
-    this.globeMesh.castShadow = true;
-    this.globeMesh.receiveShadow = true;
     this.globeMesh.userData['stat'] = 'terrain';
     this.scene.add(this.globeMesh);
     // The water surface, hidden under fog of war like the ground.
@@ -415,7 +393,6 @@ export class GlobeRenderer {
     this.terrain.water.setAttribute('dim', new THREE.BufferAttribute(new Float32Array(W), 1));
     this.waterMat = makeWaterMaterial();
     this.waterMesh = new THREE.Mesh(this.terrain.water, this.waterMat.material);
-    this.waterMesh.receiveShadow = true;
     this.waterMesh.renderOrder = 1;
     this.waterMesh.userData['stat'] = 'water';
     this.scene.add(this.waterMesh);
@@ -499,7 +476,6 @@ export class GlobeRenderer {
 
   // Redraw everything that depends on game state.
   syncWorld(sel: Selection): void {
-    this.shadowsDirty = true;
     const changed = this.changedTiles();
     if (changed.length) {
       this.updateColors(changed);
@@ -528,8 +504,6 @@ export class GlobeRenderer {
     // (The flora on a town's tiles stays clear of what the town builds.)
     for (const t of townChanged) for (const x of [t, ...g.tiles[t].neighbors]) { this.propCache.delete(x); dirty.add(this.tileChunk[x]!); }
     if (changed.length) this.updateProps(); else if (dirty.size) this.updateProps(dirty);
-    // (Buildings moved: their shadows with them.)
-    if (townChanged.length) this.shadowsDirty = true;
     this.updateRoads(changed.length > 0 || townChanged.length > 0);
     this.updateSmoke();
     this.updateCities();
@@ -578,7 +552,6 @@ export class GlobeRenderer {
     this.waterMat.setView(m);
     this.waterMesh.visible = mode !== 'height';
     this.weather.group.visible = mode === 'normal' && this.clouds;
-    this.shadowsDirty = true;
   }
 
   // Clouds and rain on or off (the debug views always hide them).
@@ -611,7 +584,6 @@ export class GlobeRenderer {
     }
     this.cam.enabled = !on;
     this.camera.updateProjectionMatrix();
-    this.shadowsDirty = true;
     if (on && !this.walkHint) {
       this.walkHint = document.createElement('div');
       this.walkHint.id = 'walkhint';
@@ -881,10 +853,6 @@ export class GlobeRenderer {
           if (items.length === 0) { chunk.meshes.delete(kind); continue; }
           const cap = Math.ceil(items.length * 1.3) + 8;
           mesh = new THREE.InstancedMesh(instanceGeometry(this.geometryOf(kind), cap), isFloraKind(kind) ? this.propMat : this.buildingMat, cap);
-          // Only flora casts shadows: ground cover is too small to cast a
-          // visible one (and skipping it saves draw calls); buildings read
-          // better without, as on the City samples page.
-          mesh.castShadow = isFloraKind(kind) && CATALOG[kind].layer !== 'Ground';
           mesh.userData['hideAbove'] = isFloraKind(kind) ? HIDE_ABOVE[CATALOG[kind].layer] : Infinity;
           mesh.userData['stat'] = statOf(kind);
           chunk.meshes.set(kind, mesh);
@@ -1020,7 +988,6 @@ export class GlobeRenderer {
       }
       this.vertSlope[v] = best;
     }
-    this.shadowsDirty = true;
     const tiles = new Set<number>();
     for (const v of changes.keys()) tiles.add(topo.tile[v]!);
     for (const t of [...tiles]) for (const n of g.tiles[t].neighbors) tiles.add(n);
@@ -1050,7 +1017,6 @@ export class GlobeRenderer {
       changes.set(v, { height: H[v]! - k * (H[v]! - cut), up: k });
     }
     this.terrain.reshape(changes);
-    this.shadowsDirty = true;
   }
 
   // City ground in the tile table (row 5, see terrainMaterial.ts): urban
@@ -1133,7 +1099,6 @@ export class GlobeRenderer {
       windOutward(geo);
       geo.computeVertexNormals();
       const mesh = new THREE.Mesh(geo, this.roadMats[i]!);
-      mesh.receiveShadow = true;
       mesh.renderOrder = 1 + i;
       mesh.userData['stat'] = 'roads & fields';
       this.scene.add(mesh);
@@ -1149,8 +1114,6 @@ export class GlobeRenderer {
     windOutward(bgeo);
     bgeo.computeVertexNormals();
     this.bridges = new THREE.Mesh(bgeo, this.bridgeMat);
-    this.bridges.castShadow = true;
-    this.bridges.receiveShadow = true;
     this.bridges.userData['stat'] = 'roads & fields';
     this.scene.add(this.bridges);
   }
@@ -1503,47 +1466,27 @@ export class GlobeRenderer {
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 
-  // Places the sun at a fixed angle to the view and fits its shadow camera to
-  // the visible patch of globe: tight when zoomed in (crisp shadows), the
-  // whole hemisphere when zoomed out.
+  // Places the sun at a fixed angle to the view.
   private updateSun(): void {
     const cam = this.camera;
     const moved = cam.position.distanceToSquared(this.lastView.pos) > 1e-10 || cam.quaternion.angleTo(this.lastView.quat) > 1e-5;
-    if (!moved && !this.shadowsDirty) return;
+    if (!moved && !this.walk.active) return;
     this.lastView.pos.copy(cam.position);
     this.lastView.quat.copy(cam.quaternion);
-    this.shadowsDirty = false;
     // The sun shines from behind the camera, a little to the left (we see the
-    // lit faces, shadows fall away from us, and a slant keeps faces modelled),
-    // whatever the camera's tilt. Walking, it stays put in the sky (north-west).
+    // lit faces, and a slant keeps faces modelled), whatever the camera's
+    // tilt. Walking, it stays put in the sky (north-west).
     const walking = this.walk.active;
     const focus = (walking ? this.walk.position : this.cam.target).clone();
     const up = walking ? northAt(focus) : cam.up.clone().addScaledVector(focus, -cam.up.dot(focus)).normalize();
     const right = up.clone().cross(focus);
-    // LIGHT.sunHeight above the horizon (fairly low: long shadows).
+    // LIGHT.sunHeight above the horizon.
     const side = walking ? up.clone().multiplyScalar(1.4).addScaledVector(right, -1.0) : up.clone().multiplyScalar(-1.4).addScaledVector(right, -0.6);
     const dir = focus.clone().multiplyScalar(Math.tan((LIGHT.sunHeight * Math.PI) / 180) * side.length()).add(side).normalize();
     this.sunDir.copy(dir);
-    // The sun cools toward the poles: white at the equator, LIGHT.cool cool
-    // white at the poles, smoothly between (sin²φ of the latitude looked
-    // at; the poles are on y).
-    const lat = focus.clone().normalize().y;
-    this.sun.color.set(LIGHT.sunColor).lerp(SUN_COOL, LIGHT.cool * lat * lat);
     this.sun.position.copy(focus).addScaledVector(dir, 3);
     this.sun.target.position.copy(focus);
     this.sun.target.updateMatrixWorld();
-    // Fit the shadow map to the ground in view (more of it when tilted).
-    const span = this.cam.distance * Math.tan(THREE.MathUtils.degToRad(cam.fov / 2)) * Math.max(1, cam.aspect) * 1.3;
-    const half = walking ? 0.05 : Math.min(1.15, Math.max(0.08, span * (1 + 1.5 * Math.sin(this.cam.tilt))));
-    const sc = this.sun.shadow.camera;
-    sc.left = -half; sc.right = half; sc.top = half; sc.bottom = -half;
-    sc.near = 1; sc.far = 5;
-    sc.updateProjectionMatrix();
-    // The normal offset follows the shadow map's texel size: enough to keep
-    // slopes free of acne, small enough up close for houses to shadow the
-    // ground beside them (a fixed offset was taller than a house).
-    this.sun.shadow.normalBias = SHADOW_NORMAL_TEXELS * (2 * half) / this.sun.shadow.mapSize.x;
-    this.renderer.shadowMap.needsUpdate = true;
   }
 
   // The camera's height above sea level as the reference lens would have
@@ -1613,8 +1556,7 @@ export class GlobeRenderer {
       }
     }
 
-    // Every display frame: water, clouds and rain keep moving smoothly. (The
-    // shadow map still re-renders only when the view or the world changes.)
+    // Every display frame: water, clouds and rain keep moving smoothly.
     const now = performance.now();
     this.updateSun();
     this.updateAir();
@@ -1628,15 +1570,14 @@ export class GlobeRenderer {
     const alt = this.viewAltitude();
     this.weather.update(now / 1000, this.sunDir, this.walk.active ? [0, 0] : [0.15, 0.6],
       this.walk.active ? 1 : smoothstep(0.2, 0.55, alt / AIR.height), { color: fog.color, density: fog.density });
-    for (const v of this.statTris.values()) { v.main = 0; v.shadow = 0; }
+    for (const k of this.statTris.keys()) this.statTris.set(k, 0);
     const t0 = performance.now();
     this.renderer.render(this.scene, this.camera);
-    if ([...this.statTris.values()].some((v) => v.shadow > 0)) for (const v of this.statTris.values()) v.lastShadow = v.shadow;
     this.countFrame(performance.now() - t0, this.renderer.info.render.triangles);
   }
 
   // FPS counter: frames drawn per second, CPU time per frame and triangles
-  // drawn per frame (shadow passes included).
+  // drawn per frame.
   private countFrame(ms: number, tris: number): void {
     if (!this.fpsEl) return;
     this.fpsFrames++;
@@ -1649,12 +1590,11 @@ export class GlobeRenderer {
     const head = `${this.statsOpen ? '▾' : '▸'} ${fps.toFixed(0)} fps · ${(this.fpsWork / this.fpsFrames).toFixed(1)} ms · ${fmtTris(this.fpsTris)} tris`;
     if (!this.statsOpen) this.fpsEl.textContent = head;
     else {
-      const rows = [...this.statTris].filter(([, v]) => v.main + v.lastShadow > 0).sort((a, b) => b[1].main + b[1].lastShadow - (a[1].main + a[1].lastShadow));
-      const other = this.fpsTris - rows.reduce((a, [, v]) => a + v.main + v.shadow, 0);
-      if (other > 0) rows.push(['other', { main: other, shadow: 0, lastShadow: 0 }]);
-      const cell = (n: number) => `<td>${n ? fmtTris(n) : '–'}</td>`;
-      this.fpsEl.innerHTML = `<div>${head}</div><table class="tris"><tr><th></th><th>main</th><th title="the last shadow-map pass (it re-renders only when the view or the world changes)">shadow</th></tr>`
-        + `${rows.map(([k, v]) => `<tr><th>${k}</th>${cell(v.main)}${cell(v.lastShadow)}</tr>`).join('')}</table>`;
+      const rows = [...this.statTris].filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+      const other = this.fpsTris - rows.reduce((a, [, v]) => a + v, 0);
+      if (other > 0) rows.push(['other', other]);
+      this.fpsEl.innerHTML = `<div>${head}</div><table class="tris">`
+        + `${rows.map(([k, v]) => `<tr><th>${k}</th><td>${fmtTris(v)}</td></tr>`).join('')}</table>`;
     }
     this.fpsFrames = 0; this.fpsWork = 0; this.fpsSince = now;
     this.hookStats();
@@ -1670,14 +1610,10 @@ export class GlobeRenderer {
       o.userData['statHooked'] = true;
       let a: THREE.Object3D | null = o, stat = 'other';
       for (; a; a = a.parent) if (typeof a.userData['stat'] === 'string') { stat = a.userData['stat']; break; }
-      let row = this.statTris.get(stat);
-      if (!row) { row = { main: 0, shadow: 0, lastShadow: 0 }; this.statTris.set(stat, row); }
-      const r = row;
+      if (!this.statTris.has(stat)) this.statTris.set(stat, 0);
       let before = 0;
       o.onBeforeRender = () => { before = info.triangles; };
-      o.onAfterRender = () => { r.main += info.triangles - before; };
-      o.onBeforeShadow = () => { before = info.triangles; };
-      o.onAfterShadow = () => { r.shadow += info.triangles - before; };
+      o.onAfterRender = () => { this.statTris.set(stat, this.statTris.get(stat)! + info.triangles - before); };
     });
   }
 }
