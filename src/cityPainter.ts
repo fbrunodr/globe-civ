@@ -1,8 +1,8 @@
 // The city painter: what a city's center tile shows, grown from its middle
 // rather than drawn by hand. Three kinds of building, each a rectangle of
-// the grid (UNIT = half a cell; SIZES): a building 4 × 4, 4 × 5 or 5 × 5
-// units, a skyscraper 6 × 6 or 5 × 6 (from the Modern era), a wonder 7 × 7
-// to 8 × 8. Guarantees (test/cityPainter.test.ts):
+// the grid (UNIT = a quarter of a cell; SIZES): a building 8 × 8, 8 × 10
+// or 10 × 10 units, a skyscraper 12 × 12 or 10 × 12 (from the Modern era),
+// a wonder 14 × 14 to 16 × 16. Guarantees (test/cityPainter.test.ts):
 //   1. no two buildings touch, not even at a corner: at least 1 unit apart;
 //   2. two buildings are joined when their facing sides are exactly 1 unit
 //      apart and overlap (side by side, not corner to corner);
@@ -14,8 +14,9 @@
 //      as near the middle as they fit, then the other buildings;
 //   5. the tallest stand nearest the middle (heights: cityDress.ts);
 //   6. roads fill the gap between each joined pair, from the end of one
-//      building to the end of the other, and the corners where they meet;
-//      painted once (a set of grid squares), never under a building.
+//      building to the end of the other, the corners where they meet, and
+//      every gap inside the town (on dry ground); painted once (a set of
+//      grid squares), never under a building.
 // Where the ground allows it (the `free` test: dry land inside the tile,
 // with a margin round every building), as many buildings as asked; fewer
 // if the ground runs out.
@@ -29,14 +30,16 @@ import { rhoOf, SAFE_RHO, type Pt } from './town/geometry.ts';
 // A cell as the city is drawn (lot models' 0.0225 tile steps, drawn 1.3 ×
 // larger so a town reads from the board), and the grid's unit: half of it.
 export const CITY_CELL = 0.0225 * 1.3;
-export const UNIT = CITY_CELL / 2;
+// (A quarter of a cell: the streets, a unit wide, as narrow as a quarter cell.)
+export const UNITS_PER_CELL = 4;
+export const UNIT = CITY_CELL / UNITS_PER_CELL;
 export const MAX_WONDERS = 10;
 export type Kind = 'building' | 'skyscraper' | 'wonder';
 // Each kind's rectangles (units, either way round), the first most often.
 export const SIZES: Record<Kind, readonly (readonly [number, number])[]> = {
-  building: [[4, 4], [4, 5], [5, 4], [5, 5]],
-  skyscraper: [[6, 6], [5, 6], [6, 5]],
-  wonder: [[8, 8], [7, 8], [8, 7], [7, 7]],
+  building: [[8, 8], [8, 10], [10, 8], [10, 10]],
+  skyscraper: [[12, 12], [10, 12], [12, 10]],
+  wonder: [[16, 16], [14, 16], [16, 14], [14, 14]],
 };
 // How far out each kind may stand (share of the inradius): wonders inside
 // the safe zone, the rest short of the rim.
@@ -73,6 +76,10 @@ export interface PaintInput {
   readonly limit?: number;
 }
 
+// Gaps in a town this narrow or less (units, each side) are paved over.
+const CLOSE = 2;
+// Dry ground kept round every building (units).
+const MARGIN = Math.ceil(0.013 / UNIT);
 // How much a building lined up with its neighbours is passed over.
 const STAGGER = 0.01;
 // The grid spans the tile: units from -H to H on each axis.
@@ -89,11 +96,11 @@ export function paintCity(inp: PaintInput): Painting {
 
   // Which grid squares each kind may cover: its middle in reach, and free
   // with the squares round it (a margin of dry ground round every building,
-  // a unit, more than cityProps.ts WATER_GAP).
+  // MARGIN units, more than cityProps.ts WATER_GAP).
   const free = new Uint8Array(N * N);
   for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) free[j * N + i] = inp.free(toTile(i - H + 0.5, j - H + 0.5)) ? 1 : 0;
   const dry = (i: number, j: number) => {
-    for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+    for (let dj = -MARGIN; dj <= MARGIN; dj++) for (let di = -MARGIN; di <= MARGIN; di++) {
       const a = i + di, b = j + dj;
       if (a >= 0 && b >= 0 && a < N && b < N && !free[b * N + a]) return false;
     }
@@ -218,6 +225,37 @@ export function paintCity(inp: PaintInput): Painting {
     if ((at(i - 1, j) || at(i + 1, j)) && (at(i, j - 1) || at(i, j + 1))) corners.push(j * N + i);
   }
   for (const k of corners) road[k] = 1;
+  // Everything inside painted too, so the town has no gaps: the buildings
+  // and roads closed (grown by CLOSE squares, then shrunk back: narrow gaps
+  // between them fill, the town's outline stays), and the holes enclosed
+  // within; never on water.
+  const grow = (a: Uint8Array, on: 0 | 1): Uint8Array => {
+    const out = new Uint8Array(N * N);
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+      let hit = false;
+      for (let dj = -CLOSE; dj <= CLOSE && !hit; dj++) for (let di = -CLOSE; di <= CLOSE; di++) {
+        const x = i + di, y = j + dj, v = x >= 0 && y >= 0 && x < N && y < N ? a[y * N + x]! : 0;
+        if (v === on) { hit = true; break; }
+      }
+      out[j * N + i] = (on ? hit : !hit) ? 1 : 0;
+    }
+    return out;
+  };
+  const town = new Uint8Array(N * N);
+  for (let q = 0; q < N * N; q++) town[q] = road[q] || inBuilding[q] ? 1 : 0;
+  const closed = grow(grow(town, 1), 0);
+  const outside = new Uint8Array(N * N), stack: number[] = [];
+  for (let q = 0; q < N; q++) for (const k of [q, (N - 1) * N + q, q * N, q * N + N - 1]) if (!closed[k] && !outside[k]) { outside[k] = 1; stack.push(k); }
+  while (stack.length) {
+    const q = stack.pop()!, qi = q % N, qj = (q - qi) / N;
+    for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+      const ni = qi + di, nj = qj + dj, nq = nj * N + ni;
+      if (ni < 0 || nj < 0 || ni >= N || nj >= N || closed[nq] || outside[nq]) continue;
+      outside[nq] = 1;
+      stack.push(nq);
+    }
+  }
+  for (let q = 0; q < N * N; q++) if (!outside[q] && !inBuilding[q] && free[q]) road[q] = 1;
   // Merged into rectangles: runs along each row, then runs of equal rows.
   const roads: Pt[][] = [];
   const done = new Uint8Array(N * N);

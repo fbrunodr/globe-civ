@@ -128,6 +128,35 @@ describe('CP2: roads', () => {
     }
     expect(bad.slice(0, 5)).toEqual([]);
   });
+  it('no ground is left unpaved inside a town: every dry square it encloses is road or building', () => {
+    const bad: string[] = [];
+    for (const { c, p } of paint) {
+      const sq = roadSquares(p), built = new Set<string>();
+      for (const b of p.buildings) for (let y = b.y0; y < b.y1; y++) for (let x = b.x0; x < b.x1; x++) built.add(`${x},${y}`);
+      // From outside the town's box, over ground neither road nor building: what it cannot reach is enclosed.
+      const xs = p.buildings.flatMap((b) => [b.x0, b.x1]), ys = p.buildings.flatMap((b) => [b.y0, b.y1]);
+      if (!xs.length) continue;
+      const x0 = Math.min(...xs) - 1, x1 = Math.max(...xs) + 1, y0 = Math.min(...ys) - 1, y1 = Math.max(...ys) + 1;
+      const open = (x: number, y: number) => !sq.has(`${x},${y}`) && !built.has(`${x},${y}`);
+      const seen = new Set<string>(), todo: [number, number][] = [];
+      for (let x = x0; x < x1; x++) todo.push([x, y0], [x, y1 - 1]);
+      for (let y = y0; y < y1; y++) todo.push([x0, y], [x1 - 1, y]);
+      while (todo.length) {
+        const [x, y] = todo.pop()!, k = `${x},${y}`;
+        if (x < x0 || y < y0 || x >= x1 || y >= y1 || seen.has(k) || !open(x, y)) continue;
+        seen.add(k);
+        todo.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
+      }
+      let holes = 0;
+      for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
+        const k = `${x},${y}`;
+        const mid = { x: p.origin.x + ((x + 0.5) * p.u.x + (y + 0.5) * p.v.x) * UNIT, y: p.origin.y + ((x + 0.5) * p.u.y + (y + 0.5) * p.v.y) * UNIT };
+        if (open(x, y) && !seen.has(k) && c.free(mid)) holes++;
+      }
+      if (holes) bad.push(`seed ${c.seed}: ${holes} unpaved squares enclosed`);
+    }
+    expect(bad.slice(0, 5)).toEqual([]);
+  });
   it('the same city paints the same way', () => {
     const a = paintCity(CASES[5]!), b = paintCity(CASES[5]!);
     expect(JSON.stringify(b)).toBe(JSON.stringify(a));
