@@ -1466,7 +1466,7 @@ export class GlobeRenderer {
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 
-  // Places the sun at a fixed angle to the view.
+  // Places the sun at a fixed angle to the view, and the sky fill above it.
   private updateSun(): void {
     const cam = this.camera;
     const moved = cam.position.distanceToSquared(this.lastView.pos) > 1e-10 || cam.quaternion.angleTo(this.lastView.quat) > 1e-5;
@@ -1484,6 +1484,10 @@ export class GlobeRenderer {
     const side = walking ? up.clone().multiplyScalar(1.4).addScaledVector(right, -1.0) : up.clone().multiplyScalar(-1.4).addScaledVector(right, -0.6);
     const dir = focus.clone().multiplyScalar(Math.tan((LIGHT.sunHeight * Math.PI) / 180) * side.length()).add(side).normalize();
     this.sunDir.copy(dir);
+    // The sky fill's up is the ground's up where we look (a hemisphere light
+    // has one up: left at the world's +y it lit the far side of the globe
+    // with its ground colour, muddying every colour there).
+    this.fill.position.copy(focus).normalize();
     this.sun.position.copy(focus).addScaledVector(dir, 3);
     this.sun.target.position.copy(focus);
     this.sun.target.updateMatrixWorld();
@@ -1502,7 +1506,9 @@ export class GlobeRenderer {
     this.sky.update(this.camera, this.sunDir, alt);
     this.halo.update(this.sunDir, smoothstep(0.1, 0.6, alt / AIR.height));
     this.stars.opacity = smoothstep(0.02, 0.3, alt / AIR.height);
-
+    // The haze only from high up (the planet's atmosphere seen from orbit):
+    // over the board and walking there is none, so nothing is veiled.
+    (this.scene.fog as THREE.FogExp2).density = this.walk.active ? 0 : HAZE_DENSITY * smoothstep(0.25, 0.7, alt / AIR.height);
   }
 
   // The tile under a screen point: intersect the view ray with a sphere at
