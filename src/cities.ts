@@ -1,29 +1,26 @@
-// City rules (design doc "Cities: Feel & Play").
-//
-// A city is a patch of the globe. Every tile it owns is in one of four uses:
-//   center  the founding tile
-//   urban   built up; must join the center through other urban tiles
+// City rules (design doc "Cities: Feel & Play"), Civ V style: a city is
+// its center tile, which holds all of its buildings and wonders (painted
+// there: cityPainter.ts), and the land around it. Every tile it owns is in
+// one of three uses:
+//   center  the city
 //   rural   an improvement the terrain decides (farm, mine, camp, ...)
 //   wild    owned but untouched; yields nothing
-// One citizen, one tile: a city's population is its center plus its urban
-// and rural tiles plus its specialists (who live in urban tiles, up to 2
-// each). Each new citizen is a growth placement the player (or the city's
-// governor) makes. There are no workers.
+// One citizen, one tile: a city's population is its center plus its rural
+// tiles plus its specialists. Each new citizen is a growth placement the
+// player (or the city's governor) makes: a rural tile, or a specialist in
+// one of the city's buildings (each building has room for one, of its
+// family). There are no workers.
 //
-// Buildings sit in slots, as many as the tile's density gives it (one on a
-// low tile, two medium or dense, three high or metropolitan: town/geometry.ts
-// SPOTS), on urban tiles and the center. Two buildings of one family on a
-// tile make a quarter (Campus, Market, ...), which adds its yield, and each
-// family building gains from what surrounds its tile (adjacency). Civic
-// buildings fit any land slot and never form a quarter; walls stand around
-// the center and take no slot. Any urban tile but the center may also hold
-// one wonder, beside its buildings (on its site: town/geometry.ts).
+// A city's buildings form a list (one of each). Two buildings of one family
+// make a quarter (Campus, Market, ...), which adds its yield. Some need the
+// city by a river (the Water mill) or on the coast (Harbor buildings).
+// Each wonder is built once in the world, in a city whose center meets its
+// site's need; Machu Picchu stands on a mountain next to the city instead.
 //
 // A city starts with the tiles around its center and buys the ring beyond
 // with gold (game.ts buyTile); it never reaches farther.
 //
-// Pure rules only: the state lives in Game (typed arrays per tile), the look
-// in render.ts.
+// Pure rules only: the state lives in Game, the look in render.ts.
 
 import { BIOMES, FEATURES, RIVER_GOLD, terrainYield, type TileTerrain, type Yields } from './terrain.ts';
 
@@ -43,7 +40,7 @@ export const fromYields = (y: Yields): Output => out({ food: y.food, prod: y.pro
 
 // ---------- tile uses ----------
 
-export const USE = { wild: 0, rural: 1, urban: 2, center: 3 } as const;
+export const USE = { wild: 0, rural: 1, center: 2 } as const;
 export type TileUse = (typeof USE)[keyof typeof USE];
 
 // ---------- rural improvements ----------
@@ -94,19 +91,7 @@ const BIOME_IMPROVEMENT: Record<keyof typeof BIOMES, ImprovementKey | null> = {
   steppe: 'farm', prairie: 'farm', mediterranean: 'farm', savanna: 'farm',
 };
 
-// ---------- urban tiles ----------
-
-// An urban tile may stand on land a city could be founded on, or on coast or
-// lake water (a harbor).
-export function urbanAllowed(t: TileTerrain): boolean {
-  if (BIOMES[t.biome].water) return t.biome === 'shallowSea' || t.biome === 'lake';
-  if (t.relief === 'mountains' || t.biome === 'iceSheet') return false;
-  return t.feature !== 'volcano' && t.feature !== 'glacier';
-}
-
-export const MAX_SPECIALISTS = 2; // per urban tile
-export const SLOTS = 3;           // building slots stored per tile (as many as the densest has: density.ts openSlots)
-export const QUARTER = 2;         // buildings of one family on a tile that make a quarter
+export const QUARTER = 2;         // buildings of one family that make a quarter
 
 // ---------- territory ----------
 
@@ -115,10 +100,8 @@ export const START_REACH = 1;     // what a new city owns
 // What buying a tile costs: more for each the city has bought already.
 export const tileCost = (bought: number): number => 25 + 15 * bought;
 
-// An urban tile's own yield (workshops and trade), a specialist's outside a
-// quarter (a craftsman or merchant), and the center's.
-export const URBAN_YIELD = out({ prod: 2, gold: 1 });
-export const SPECIALIST_YIELD = out({ prod: 1, gold: 2 });
+// A specialist's yield in a civic building (a craftsman or merchant), and the center's.
+export const SPECIALIST_YIELD = out({ prod: 2, gold: 2 });
 export const CENTER_BONUS = out({ food: 2, prod: 1, gold: 1, science: 1, culture: 1 });
 export const CENTER_MIN = out({ food: 3, prod: 2, gold: 1 });
 export const FOOD_PER_CITIZEN = 2;
@@ -136,37 +119,29 @@ export function ruralYield(t: TileTerrain, river: boolean, era: EraIndex = 0): O
   return withRiver(k ? addOut(addOut(base, IMPROVEMENTS[k].bonus), eraBonus(k, era)) : base, river);
 }
 
-export const urbanYield = (river: boolean): Output => withRiver(URBAN_YIELD, river);
-
 // ---------- building families (quarters) ----------
 
 export type FamilyKey = 'campus' | 'market' | 'forge' | 'harbor' | 'temple' | 'theater' | 'garrison';
 
-// What a neighboring tile can give a family building's tile: terrain, a
-// rural improvement, the center (with or without walls), or another quarter.
-export type AdjacencySource = 'mountain' | 'river' | 'forest' | 'mine' | 'quarry' | 'boats' | 'center' | 'walls' | 'wonder' | FamilyKey;
-
 export interface FamilyDef {
   readonly name: string;
-  readonly unit: Output;          // one point of the family's yield (adjacency, quarter bonus)
-  readonly adjacency: readonly AdjacencySource[];
-  readonly water: boolean;        // its buildings stand on water urban tiles (harbors)
+  readonly unit: Output;          // one point of the family's yield (quarter bonus, specialists)
+  readonly coast: boolean;        // its buildings need the city on the coast (harbors)
 }
 
 export const FAMILIES: Record<FamilyKey, FamilyDef> = {
-  campus:   { name: 'Campus',   unit: out({ science: 1 }), adjacency: ['mountain', 'campus'], water: false },
-  market:   { name: 'Market',   unit: out({ gold: 1 }), adjacency: ['river', 'harbor', 'market'], water: false },
-  forge:    { name: 'Forge',    unit: out({ prod: 1 }), adjacency: ['mine', 'quarry', 'forge'], water: false },
-  harbor:   { name: 'Harbor',   unit: out({ food: 1, gold: 1 }), adjacency: ['boats', 'market'], water: true },
-  temple:   { name: 'Temple',   unit: out({ faith: 1 }), adjacency: ['mountain', 'forest'], water: false },
-  theater:  { name: 'Theater',  unit: out({ culture: 1 }), adjacency: ['wonder', 'theater'], water: false },
-  garrison: { name: 'Garrison', unit: out({ prod: 1 }), adjacency: ['center', 'walls'], water: false },
+  campus:   { name: 'Campus',   unit: out({ science: 1 }), coast: false },
+  market:   { name: 'Market',   unit: out({ gold: 1 }), coast: false },
+  forge:    { name: 'Forge',    unit: out({ prod: 1 }), coast: false },
+  harbor:   { name: 'Harbor',   unit: out({ food: 1, gold: 1 }), coast: true },
+  temple:   { name: 'Temple',   unit: out({ faith: 1 }), coast: false },
+  theater:  { name: 'Theater',  unit: out({ culture: 1 }), coast: false },
+  garrison: { name: 'Garrison', unit: out({ prod: 1 }), coast: false },
 };
 export const FAMILY_KEYS = Object.keys(FAMILIES) as FamilyKey[];
 
-export const QUARTER_BONUS = 2;    // units of the family's yield for a full quarter
-export const ADJACENCY_CAP = 4;    // most adjacency points a tile's family gets
-export const QUARTER_SPECIALIST = 2; // units per specialist living in a quarter
+export const QUARTER_BONUS = 2;      // units of the family's yield for a quarter
+export const FAMILY_SPECIALIST = 3;  // units per specialist in one of the family's buildings
 
 // ---------- buildings ----------
 
@@ -178,29 +153,29 @@ export interface BuildingDef {
   readonly role: BuildingRole;
   readonly yields: Output;
   readonly desc: string;
-  readonly river?: true; // its tile must be beside a river
+  readonly river?: true; // the city must be by a river
 }
 
 export const BUILDINGS = {
-  library:       { name: 'Library',        cost: 45, role: 'campus', yields: out({ science: 2 }), desc: 'Campus. +2 science; +1 per neighboring mountain or Campus.' },
+  library:       { name: 'Library',        cost: 45, role: 'campus', yields: out({ science: 2 }), desc: 'Campus. +2 science.' },
   academy:       { name: 'Academy',        cost: 70, role: 'campus', yields: out({ science: 3 }), desc: 'Campus. +3 science. With a Library: a Campus quarter (+2).' },
-  market:        { name: 'Market',         cost: 45, role: 'market', yields: out({ gold: 2 }), desc: 'Market. +2 gold; +1 beside a river, Harbor or Market.' },
+  market:        { name: 'Market',         cost: 45, role: 'market', yields: out({ gold: 2 }), desc: 'Market. +2 gold.' },
   countingHouse: { name: 'Counting house', cost: 70, role: 'market', yields: out({ gold: 3 }), desc: 'Market. +3 gold. With a Market: a Market quarter (+2).' },
-  workshop:      { name: 'Workshop',       cost: 45, role: 'forge', yields: out({ prod: 2 }), desc: 'Forge. +2 production; +1 per neighboring mine, quarry or Forge.' },
+  workshop:      { name: 'Workshop',       cost: 45, role: 'forge', yields: out({ prod: 2 }), desc: 'Forge. +2 production.' },
   smithy:        { name: 'Smithy',         cost: 70, role: 'forge', yields: out({ prod: 3 }), desc: 'Forge. +3 production. With a Workshop: a Forge quarter (+2).' },
-  lighthouse:    { name: 'Lighthouse',     cost: 45, role: 'harbor', yields: out({ food: 1, gold: 1 }), desc: 'Harbor (on water). +1 food, +1 gold; more beside fishing boats or a Market.' },
-  shipyard:      { name: 'Shipyard',       cost: 70, role: 'harbor', yields: out({ food: 1, prod: 1, gold: 1 }), desc: 'Harbor (on water). With a Lighthouse: a Harbor quarter.' },
-  shrine:        { name: 'Shrine',         cost: 35, role: 'temple', yields: out({ faith: 2 }), desc: 'Temple. +2 faith; +1 per neighboring mountain or forest.' },
+  lighthouse:    { name: 'Lighthouse',     cost: 45, role: 'harbor', yields: out({ food: 1, gold: 1 }), desc: 'Harbor (coastal city). +1 food, +1 gold.' },
+  shipyard:      { name: 'Shipyard',       cost: 70, role: 'harbor', yields: out({ food: 1, prod: 1, gold: 1 }), desc: 'Harbor (coastal city). With a Lighthouse: a Harbor quarter.' },
+  shrine:        { name: 'Shrine',         cost: 35, role: 'temple', yields: out({ faith: 2 }), desc: 'Temple. +2 faith.' },
   temple:        { name: 'Temple',         cost: 60, role: 'temple', yields: out({ faith: 3 }), desc: 'Temple. +3 faith. With a Shrine: a Temple quarter (+2).' },
-  amphitheater:  { name: 'Amphitheater',   cost: 50, role: 'theater', yields: out({ culture: 2 }), desc: 'Theater. +2 culture; +1 per neighboring wonder or Theater.' },
+  amphitheater:  { name: 'Amphitheater',   cost: 50, role: 'theater', yields: out({ culture: 2 }), desc: 'Theater. +2 culture.' },
   odeon:         { name: 'Odeon',          cost: 70, role: 'theater', yields: out({ culture: 3 }), desc: 'Theater. +3 culture. With an Amphitheater: a Theater quarter (+2).' },
   barracks:      { name: 'Barracks',       cost: 40, role: 'garrison', yields: ZERO, desc: 'Garrison. +25% defense for units in the city.' },
   stable:        { name: 'Stable',         cost: 55, role: 'garrison', yields: ZERO, desc: 'Garrison. +25% defense. With Barracks: a Garrison quarter.' },
   granary:       { name: 'Granary',        cost: 40, role: 'civic', yields: out({ food: 1 }), desc: 'Civic. +1 food; keeps half the food when the city grows.' },
   monument:      { name: 'Monument',       cost: 30, role: 'civic', yields: out({ culture: 2 }), desc: 'Civic. +2 culture.' },
-  waterMill:     { name: 'Water mill',     cost: 50, role: 'civic', yields: out({ food: 1, prod: 1 }), river: true, desc: 'Civic, beside a river. +1 food, +1 production.' },
+  waterMill:     { name: 'Water mill',     cost: 50, role: 'civic', yields: out({ food: 1, prod: 1 }), river: true, desc: 'Civic, in a city by a river. +1 food, +1 production.' },
   aqueduct:      { name: 'Aqueduct',       cost: 70, role: 'civic', yields: out({ food: 2 }), desc: 'Civic. +2 food.' },
-  walls:         { name: 'Walls',          cost: 30, role: 'walls', yields: ZERO, desc: '+100% defense for units in the city. Stand around the center; no slot.' },
+  walls:         { name: 'Walls',          cost: 30, role: 'walls', yields: ZERO, desc: '+100% defense for units in the city.' },
 } satisfies Record<string, BuildingDef>;
 export type BuildingKey = keyof typeof BUILDINGS;
 export const BUILDING_KEYS = Object.keys(BUILDINGS) as BuildingKey[];
@@ -209,76 +184,67 @@ export const familyOf = (k: BuildingKey): FamilyKey | null => {
   const r = BUILDINGS[k].role;
   return r === 'civic' || r === 'walls' ? null : r;
 };
-// Buildings stored in a tile slot: 0 = empty, else index + 1 in BUILDING_KEYS.
-export const slotCode = (k: BuildingKey): number => BUILDING_KEYS.indexOf(k) + 1;
-export const slotKey = (code: number): BuildingKey | null => (code > 0 ? BUILDING_KEYS[code - 1] ?? null : null);
-
-// Whether building k may stand on a tile of this kind (water: a harbor tile).
-export function buildingFits(k: BuildingKey, water: boolean, river: boolean): boolean {
+// Whether building k may stand in a city (by a river, on the coast).
+export function buildingAllowed(k: BuildingKey, river: boolean, coast: boolean): boolean {
   const d: BuildingDef = BUILDINGS[k];
-  if (d.role === 'walls') return false;
   if (d.river && !river) return false;
-  const harbor = d.role !== 'civic' && FAMILIES[d.role].water;
-  return harbor === water;
+  return d.role === 'civic' || d.role === 'walls' || !FAMILIES[d.role].coast || coast;
 }
 
-// What a tile's buildings yield: each building's own yield, a quarter's
-// bonus, and each family's adjacency (`adjacency[f]`: points from what
-// surrounds the tile).
-export function slotsYield(keys: readonly (BuildingKey | null)[], adjacency: (f: FamilyKey) => number): Output {
+// What a city's buildings yield: each building's own yield and each
+// quarter's bonus.
+export function buildingsYield(keys: Iterable<BuildingKey>): Output {
   let sum = ZERO;
   const families = new Map<FamilyKey, number>();
   for (const k of keys) {
-    if (!k) continue;
     sum = addOut(sum, BUILDINGS[k].yields);
     const f = familyOf(k);
     if (f) families.set(f, (families.get(f) ?? 0) + 1);
   }
-  for (const [f, n] of families) {
-    const pts = Math.min(ADJACENCY_CAP, adjacency(f)) + (n >= QUARTER ? QUARTER_BONUS : 0);
-    sum = addOut(sum, scaleOut(FAMILIES[f].unit, pts));
-  }
+  for (const [f, n] of families) if (n >= QUARTER) sum = addOut(sum, scaleOut(FAMILIES[f].unit, QUARTER_BONUS));
   return sum;
 }
 
-// The quarter a tile's buildings form: a family with QUARTER of them there
-// (with three slots, at most one family can).
-export function quarterOf(keys: readonly (BuildingKey | null)[]): FamilyKey | null {
+// The quarters a city's buildings form: families with QUARTER of them.
+export function quartersOf(keys: Iterable<BuildingKey>): FamilyKey[] {
   const n = new Map<FamilyKey, number>();
-  for (const k of keys) { const f = k ? familyOf(k) : null; if (f) n.set(f, (n.get(f) ?? 0) + 1); }
-  for (const [f, c] of n) if (c >= QUARTER) return f;
-  return null;
+  for (const k of keys) { const f = familyOf(k); if (f) n.set(f, (n.get(f) ?? 0) + 1); }
+  return [...n].filter(([, c]) => c >= QUARTER).map(([f]) => f);
 }
 
-// What a specialist living in a tile yields: its quarter's kind, else generic.
-export const specialistYield = (quarter: FamilyKey | null): Output =>
-  quarter ? scaleOut(FAMILIES[quarter].unit, QUARTER_SPECIALIST) : SPECIALIST_YIELD;
+// ---------- specialists ----------
+
+// A specialist works in one of the city's buildings: one per building, of
+// its family ('civic': a civic building's craftsman or merchant).
+export type SpecialistKind = FamilyKey | 'civic';
+export const SPECIALIST_KINDS: readonly SpecialistKind[] = ['campus', 'market', 'forge', 'harbor', 'temple', 'theater', 'garrison', 'civic'];
+export const specialistKindOf = (k: BuildingKey): SpecialistKind | null => (BUILDINGS[k].role === 'walls' ? null : familyOf(k) ?? 'civic');
+export const specialistYield = (k: SpecialistKind): Output => (k === 'civic' ? SPECIALIST_YIELD : scaleOut(FAMILIES[k].unit, FAMILY_SPECIALIST));
 
 // ---------- wonders ----------
 
-// What a wonder's tile needs (checked on the tile and its neighbors).
-// mountainTop: the wonder stands on a mountain next to the city's core (the
-// tile stays wild: no citizen lives there).
+// What a wonder needs of its city's center (game.ts siteOk). mountainTop:
+// the wonder stands on a mountain next to the city (the tile stays wild: no
+// citizen lives there).
 export type WonderSite = 'desertOrFloodplain' | 'coast' | 'river' | 'mountainTop' | 'hills' | 'flat' | 'any';
 
 export interface WonderDef {
   readonly name: string;
   readonly cost: number;
   readonly site: WonderSite;
-  readonly yields: Output; // on its tile
+  readonly yields: Output; // to its city
   readonly desc: string;
 }
 
-// Each is built once in the world, on the site of an urban tile that is
-// not the center, beside its buildings (Machu Picchu: on a mountain top
-// next to the city, the tile staying wild), placed explicitly.
+// Each is built once in the world, in its city (Machu Picchu: on a
+// mountain top next to it, the tile staying wild).
 export const WONDERS = {
-  pyramids:        { name: 'Pyramids',         cost: 180, site: 'desertOrFloodplain', yields: out({ prod: 4, culture: 2 }), desc: 'On desert or floodplain. +4 production, +2 culture.' },
-  greatLighthouse: { name: 'Great Lighthouse', cost: 160, site: 'coast', yields: out({ food: 2, gold: 3, culture: 1 }), desc: 'On the coast. +2 food, +3 gold, +1 culture.' },
-  hangingGardens:  { name: 'Hanging Gardens',  cost: 180, site: 'river', yields: out({ food: 4, culture: 2 }), desc: 'Beside a river. +4 food, +2 culture.' },
+  pyramids:        { name: 'Pyramids',         cost: 180, site: 'desertOrFloodplain', yields: out({ prod: 4, culture: 2 }), desc: 'On or by desert or floodplain. +4 production, +2 culture.' },
+  greatLighthouse: { name: 'Great Lighthouse', cost: 160, site: 'coast', yields: out({ food: 2, gold: 3, culture: 1 }), desc: 'A coastal city. +2 food, +3 gold, +1 culture.' },
+  hangingGardens:  { name: 'Hanging Gardens',  cost: 180, site: 'river', yields: out({ food: 4, culture: 2 }), desc: 'A city by a river. +4 food, +2 culture.' },
   machuPicchu:     { name: 'Machu Picchu',     cost: 200, site: 'mountainTop', yields: out({ gold: 4, faith: 2, culture: 2 }), desc: 'On top of a mountain next to the city. +4 gold, +2 faith, +2 culture.' },
   greatLibrary:    { name: 'Great Library',    cost: 200, site: 'any', yields: out({ science: 5, culture: 2 }), desc: '+5 science, +2 culture.' },
-  stonehenge:      { name: 'Stonehenge',       cost: 140, site: 'flat', yields: out({ faith: 4, culture: 1 }), desc: 'On flat open land. +4 faith, +1 culture.' },
+  stonehenge:      { name: 'Stonehenge',       cost: 140, site: 'flat', yields: out({ faith: 4, culture: 1 }), desc: 'A city on flat open land. +4 faith, +1 culture.' },
   colosseum:       { name: 'Colosseum',        cost: 180, site: 'any', yields: out({ culture: 5, gold: 1 }), desc: '+5 culture, +1 gold.' },
 } satisfies Record<string, WonderDef>;
 export type WonderKey = keyof typeof WONDERS;
@@ -319,10 +285,7 @@ export function eraBonus(k: ImprovementKey, era: EraIndex): Output {
 
 export type GrowthOption =
   | { readonly kind: 'rural'; readonly tile: number; readonly improvement: ImprovementKey }
-  // Over a farm (or any rural tile) touching the core: its farmers move into
-  // town and the newcomer becomes the new urban tile's first specialist.
-  | { readonly kind: 'urban'; readonly tile: number; readonly over: ImprovementKey | null }
-  | { readonly kind: 'specialist'; readonly tile: number };
+  | { readonly kind: 'specialist'; readonly specialist: SpecialistKind };
 export type GrowthKind = GrowthOption['kind'];
 
 // ---------- governor ----------
@@ -349,21 +312,20 @@ export const weigh = (focus: FocusKey, o: Output): number => {
   return OUTPUT_KEYS.reduce((s, k) => s + o[k] * w[k], 0);
 };
 
-// Townsfolk (urban tiles and specialists) the governor keeps: about a third
-// of the citizens, so a size-10 city has 3 urban tiles.
-export const townsfolkWanted = (pop: number): number => Math.floor(pop / 3);
-const TOWN_PULL = 8;
+// Specialists the governor keeps: about a third of the citizens.
+export const specialistsWanted = (pop: number): number => Math.floor(pop / 3);
+const TOWN_PULL = 10;
 
 // How much the governor likes an option, given its yields, the city's food
 // surplus after it, the surplus it wants (enough to grow in about
-// GROWTH_TURNS) and whether it is short of townsfolk. Every focus guards
+// GROWTH_TURNS) and whether it is short of specialists. Every focus guards
 // growth: a citizen who would leave the city short of food is worth much
 // less, and food beyond what the city wants is worth little.
 export const GROWTH_TURNS = 8;
-export function governorScore(focus: FocusKey, kind: GrowthKind, gain: Output, surplusAfter: number, wantSurplus: number, shortOfTown: boolean): number {
+export function governorScore(focus: FocusKey, kind: GrowthKind, gain: Output, surplusAfter: number, wantSurplus: number, shortOfSpecialists: boolean): number {
   const w = FOCUSES[focus].weights;
   const starving = surplusAfter < 1 ? 3 * (1 - surplusAfter) : 0;
-  const town = shortOfTown && kind !== 'rural' ? TOWN_PULL : 0;
+  const town = shortOfSpecialists && kind === 'specialist' ? TOWN_PULL : 0;
   const foodW = surplusAfter - gain.food >= wantSurplus ? 0.3 * w.food : w.food;
   return weigh(focus, gain) - gain.food * w.food + gain.food * foodW - starving + town;
 }

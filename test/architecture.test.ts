@@ -1,11 +1,13 @@
-// Guarantees of the town's architecture (architecture.ts, houses.ts): what
-// each density holds, every civ has a style for every height, every slot a
-// town can need has a model, densities unlock in order, and no model has
-// faces that flicker.
+// Guarantees of the town's architecture (architecture.ts, houses.ts): every
+// civ has a style for every height, every slot a town can need has a model,
+// and no model has faces that flicker.
+// (Was also AR1's and AR4's densities: what each holds, when each unlocks.
+// Cities have no densities now: their era and size set their heights,
+// cityDress.ts.)
 
 import { describe, it, expect } from 'vitest';
-import { ARCH_CIVS, ARCH_ERAS, DENSITY_ERA, SLOTS, STYLES, eraOfFloors, unlocked, pairsOf, styleFloors, styleOf } from '../src/architecture.ts';
-import { DENSITIES, DENSITY_TALLEST, FLOORS, FOOTPRINTS, FOOTPRINT_CELLS, CELL } from '../src/town/geometry.ts';
+import { ARCH_CIVS, ARCH_ERAS, SLOTS, STYLES, eraOfFloors, pairsOf, styleFloors, styleOf } from '../src/architecture.ts';
+import { FLOORS, FOOTPRINTS, FOOTPRINT_CELLS, CELL } from '../src/town/geometry.ts';
 import { HOUSE_VARIANTS, houseGeometry, houseKind } from '../src/houses.ts';
 import { triangles, part, CATALOG_KINDS, buildCatalogGeometry } from '../src/propCatalog.ts';
 import { BUILDING_KINDS, buildBuildingGeometry } from '../src/buildingCatalog.ts';
@@ -13,20 +15,9 @@ import { coplanarClashes } from '../src/coplanar.ts';
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
-describe('AR1: what each density holds', () => {
-  it('low and medium hold up to doubles, dense triples, high quads, metropolitan skyscrapers; each density holds every height of the ones before', () => {
-    expect(DENSITY_TALLEST).toEqual({ low: 2, medium: 2, dense: 3, high: 4, metropolitan: 12 });
-    DENSITIES.forEach((d, i) => { if (i) expect(DENSITY_TALLEST[d]).toBeGreaterThanOrEqual(DENSITY_TALLEST[DENSITIES[i - 1]!]); });
-  });
+describe('AR1: heights and eras', () => {
   it('the era each height is named for comes in order', () => {
     for (let i = 1; i < FLOORS.length; i++) expect(ARCH_ERAS.indexOf(eraOfFloors(FLOORS[i]!))).toBeGreaterThan(ARCH_ERAS.indexOf(eraOfFloors(FLOORS[i - 1]!)));
-  });
-});
-
-describe('AR4: densities unlock with their heights', () => {
-  it('low in the ancient era, medium in the classical, dense in the renaissance, high in the industrial, metropolitan in the modern; each era has every density before', () => {
-    expect(DENSITY_ERA).toEqual({ low: 'ancient', medium: 'classical', dense: 'renaissance', high: 'industrial', metropolitan: 'modern' });
-    for (const e of ARCH_ERAS) expect(DENSITIES.filter((d) => unlocked(e, d)).length).toBe(ARCH_ERAS.indexOf(e) + 1);
   });
 });
 

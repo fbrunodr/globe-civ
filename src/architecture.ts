@@ -2,13 +2,12 @@
 // civ has one style for each height (houses.ts: one parametric model per
 // style, built to each lot's footprint and height): its singles, doubles,
 // triples, quads and towers (singles and doubles share a style). Every
-// civ's row is its own. What stands on a tile follows its density (techs unlock
-// denser tiles; a density holds buildings up to a height: town/geometry.ts
-// DENSITY_TALLEST); nothing built before changes its look, so a civ keeps
-// its identity. A style serves many civs. Pure data: no geometry here.
+// civ's row is its own; how tall a city builds follows its era and size
+// (cityDress.ts). A civ keeps its identity across eras. A style serves many
+// civs. Pure data: no geometry here.
 
-import type { Density, Floors, Footprint } from './town/geometry.ts';
-import { DENSITIES, FLOORS, FOOTPRINTS } from './town/geometry.ts';
+import type { Floors, Footprint } from './town/geometry.ts';
+import { FLOORS, FOOTPRINTS } from './town/geometry.ts';
 
 // The civs: Civilization I's (the Hebrews and the Ethiopians in place of the Americans and the
 // Zulus), and the Spanish, the Persians and the Vikings of Civilization II.
@@ -18,18 +17,13 @@ export const ARCH_CIVS = [
 ] as const;
 export type ArchCiv = (typeof ARCH_CIVS)[number];
 
-// Eras, as a reference only: about when each height (and the density that
-// holds it) is unlocked. They name the styles' place in history; the
-// buildings themselves follow density.
+// Eras, as a reference only: about when each height is first built. They
+// name the styles' place in history.
 export const ARCH_ERAS = ['ancient', 'classical', 'renaissance', 'industrial', 'modern'] as const;
 export type ArchEra = (typeof ARCH_ERAS)[number];
 // The era a height belongs to (a label).
 export const eraOfFloors = (floors: Floors): ArchEra =>
   floors >= 12 ? 'modern' : floors >= 4 ? 'industrial' : floors >= 3 ? 'renaissance' : floors >= 2 ? 'classical' : 'ancient';
-// The era that unlocks a density (until there is a tech tree), and the densest an era has.
-export const DENSITY_ERA: Record<Density, ArchEra> = { low: 'ancient', medium: 'classical', dense: 'renaissance', high: 'industrial', metropolitan: 'modern' };
-export const unlocked = (era: ArchEra, d: Density): boolean => ARCH_ERAS.indexOf(DENSITY_ERA[d]) <= ARCH_ERAS.indexOf(era);
-export const densestOf = (era: ArchEra): Density => DENSITIES.filter((d) => unlocked(era, d)).pop()!;
 
 // ---------- styles ----------
 
@@ -146,11 +140,3 @@ export const styleFloors = (style: Style): Floors[] => FLOORS.filter((f) => pair
 
 // Every slot a town can need: (civ, footprint, height).
 export const SLOTS = ARCH_CIVS.flatMap((civ) => FOOTPRINTS.flatMap((fp: Footprint) => FLOORS.map((floors) => ({ civ, fp, floors }))));
-
-// ---------- the game's civs and eras ----------
-
-// The game's eras (cities.ts ERAS: Ancient, Classical, Medieval; then the
-// Renaissance, the Industrial era and the Modern one, to come). For now the
-// Medieval era already builds triples (dense towns), as the Renaissance will.
-export const archEraOf = (gameEra: number): ArchEra =>
-  (gameEra <= 0 ? 'ancient' : gameEra === 1 ? 'classical' : gameEra <= 3 ? 'renaissance' : gameEra === 4 ? 'industrial' : 'modern');

@@ -3,13 +3,17 @@ import { Game, type City } from '../src/game.ts';
 import { aiTurn } from '../src/ai.ts';
 import { BIOMES, FEATURE_RULES, RELIEFS, featureAllowed, type BiomeKey, type FeatureKey, type ReliefKey, type TileTerrain } from '../src/terrain.ts';
 import {
-  USE, MAX_SPECIALISTS, SLOTS, ERAS, IMPROVEMENTS, improvementFor, urbanAllowed, buildingFits, quarterOf, slotKey, eraBonus,
-  BUILDINGS, WONDERS, type BuildingKey, type ImprovementKey, type EraIndex,
+  USE, ERAS, IMPROVEMENTS, SPECIALIST_KINDS, improvementFor, buildingAllowed, quartersOf, specialistKindOf, eraBonus,
+  WONDERS, type ImprovementKey, type EraIndex,
 } from '../src/cities.ts';
 import type { MapSizeKey } from '../src/rules.ts';
 
 // City guarantees (design doc "Cities: Feel & Play"). Like the map rules,
 // they state intent: loosen them when the design changes.
+// (Cities are one tile now, Civ V style: no urban tiles. Gone with them:
+// C1's "urban tiles never on mountains, ice or deep ocean", C5 "the core is
+// in one piece", Q3 "buildings fit their tile's slot", and C7 "a big city
+// has a built-up core", now about specialists.)
 
 // ---------- C1: every terrain has an improvement or is explicitly wild-only ----------
 
@@ -42,9 +46,6 @@ describe('C1: improvements follow the terrain', () => {
   it('every terrain gets an improvement unless it is wild-only (mountains, ice, deep ocean)', () => {
     const wrong = allTerrains().filter((t) => (improvementFor(t) === null) !== wildOnly(t));
     expect(wrong).toEqual([]);
-  });
-  it('urban tiles never stand on mountains, ice or deep ocean', () => {
-    expect(allTerrains().filter((t) => urbanAllowed(t) && wildOnly(t))).toEqual([]);
   });
 });
 
@@ -81,81 +82,38 @@ function checkCities(g: Game): string[] {
   const centers = new Map<number, number>();
   for (let t = 0; t < g.N; t++) {
     const u = g.use[t];
-    if (g.specialists[t] && u !== USE.urban) out.push(`C4 tile ${t}: specialists outside an urban tile`);
-    if (g.specialists[t] > MAX_SPECIALISTS) out.push(`C4 tile ${t}: ${g.specialists[t]} specialists`);
     if (u === USE.wild) continue;
     const city = g.cityById.get(g.tileCity[t]);
     if (!city) { out.push(`C3 tile ${t}: developed but owned by no city`); continue; }
-    const terrain = g.terrainAt(t);
     if (u === USE.center) { centers.set(city.id, (centers.get(city.id) ?? 0) + 1); if (city.tile !== t) out.push(`C3 tile ${t}: a center that is not ${city.name}'s`); }
-    if (u === USE.rural && !improvementFor(terrain)) out.push(`C3 tile ${t}: rural on wild-only terrain`);
-    if (u === USE.urban && !urbanAllowed(terrain)) out.push(`C3 tile ${t}: urban where it may not stand`);
+    if (u === USE.rural && !improvementFor(g.terrainAt(t))) out.push(`C3 tile ${t}: rural on wild-only terrain`);
   }
-  // Buildings: slots only on urban tiles and centers, fitting the tile, once per city.
-  const placed = new Map<number, BuildingKey[]>();
-  for (let t = 0; t < g.N; t++) {
-    for (let k = 0; k < SLOTS; k++) {
-      const b = slotKey(g.slots[t * SLOTS + k]!);
-      if (!b) continue;
-      const u = g.use[t];
-      if (u !== USE.urban && u !== USE.center) { out.push(`Q3 tile ${t}: ${b} on a ${u === USE.rural ? 'rural' : 'wild'} tile`); continue; }
-      if (!buildingFits(b, g.isWater(t), g.map.riverTile[t] === 1)) out.push(`Q3 tile ${t}: ${b} does not fit (water ${g.isWater(t)})`);
-      const id = g.tileCity[t];
-      placed.set(id, [...(placed.get(id) ?? []), b]);
-    }
-  }
-  // Wonders: once in the world, on a land urban tile with no other buildings.
-  const seenW = new Set<string>();
-  for (let t = 0; t < g.N; t++) {
-    const w = g.wonderOn(t);
-    if (!w) continue;
-    if (seenW.has(w)) out.push(`WN1 ${w} built twice`);
-    seenW.add(w);
+  // Wonders: once in the world, in its city (on the center, meeting its
+  // need), Machu Picchu on a wild mountain beside it.
+  for (const [w, t] of g.wondersBuilt) {
+    if (t < 0) continue; // fallen with its city
     const top = WONDERS[w].site === 'mountainTop';
-    if (top ? g.relief[t] !== 'mountains' || g.use[t] !== USE.wild : g.use[t] !== USE.urban || g.isWater(t)) out.push(`WN1 tile ${t}: ${w} not on ${top ? 'a wild mountain' : 'a land urban tile'}`);
-    // (A wonder stands beside its tile's buildings, but never on a center: its site holds the hall.)
-    if (g.use[t] === USE.center) out.push(`WN1 tile ${t}: ${w} on a city's center`);
-    if (g.wondersBuilt.get(w) !== t) out.push(`WN1 ${w}: recorded on tile ${g.wondersBuilt.get(w)}, stands on ${t}`);
+    const city = g.cityById.get(g.tileCity[t]);
+    if (top ? g.relief[t] !== 'mountains' || g.use[t] !== USE.wild || !city || !g.tiles[city.tile].neighbors.includes(t) : g.use[t] !== USE.center)
+      out.push(`WN1 tile ${t}: ${w} not ${top ? 'on a wild mountain beside its city' : "on a city's center"}`);
   }
   for (const c of g.cities) {
-    const bs = placed.get(c.id) ?? [];
-    if (new Set(bs).size !== bs.length) out.push(`Q2 ${c.name}: a building twice (${bs.join(', ')})`);
-    const inSet = [...c.buildings].filter((b) => BUILDINGS[b].role !== 'walls').sort();
-    if (inSet.join() !== [...bs].sort().join()) out.push(`Q2 ${c.name}: buildings ${inSet.join(', ')} but slots hold ${bs.join(', ')}`);
-  }
-  for (const c of g.cities) {
+    // Buildings: each one the city may have; specialists only in buildings of their kind, one each.
+    for (const b of c.buildings) if (!buildingAllowed(b, g.cityRiver(c), g.cityCoast(c))) out.push(`Q2 ${c.name}: ${b} where it may not stand`);
+    for (const k of SPECIALIST_KINDS) {
+      const room = [...c.buildings].filter((b) => specialistKindOf(b) === k).length;
+      if (c.specialists[k] < 0 || c.specialists[k] > room) out.push(`C4 ${c.name}: ${c.specialists[k]} ${k} specialists, room for ${room}`);
+    }
     if (centers.get(c.id) !== 1) out.push(`C3 ${c.name}: ${centers.get(c.id) ?? 0} centers`);
     const counted = population(g, c);
-    if (counted !== c.pop) out.push(`C2 ${c.name}: pop ${c.pop} but ${counted} citizens on its tiles`);
-    const loose = unjoinedUrban(g, c);
-    if (loose.length) out.push(`C5 ${c.name}: urban tiles ${loose.join(', ')} do not join the center`);
+    if (counted !== c.pop) out.push(`C2 ${c.name}: pop ${c.pop} but ${counted} citizens`);
   }
   return out;
 }
 
-// Center + urban + rural + specialists.
+// Center + rural tiles + specialists.
 function population(g: Game, c: City): number {
-  let n = 0;
-  for (let t = 0; t < g.N; t++) {
-    if (g.tileCity[t] !== c.id || g.use[t] === USE.wild) continue;
-    n += 1 + g.specialists[t];
-  }
-  return n;
-}
-
-// Urban tiles not reachable from the center through urban tiles.
-function unjoinedUrban(g: Game, c: City): number[] {
-  const seen = new Set([c.tile]);
-  const stack = [c.tile];
-  while (stack.length) {
-    const t = stack.pop()!;
-    for (const n of g.tiles[t].neighbors) {
-      if (!seen.has(n) && g.tileCity[n] === c.id && g.use[n] === USE.urban) { seen.add(n); stack.push(n); }
-    }
-  }
-  const out: number[] = [];
-  for (let t = 0; t < g.N; t++) if (g.tileCity[t] === c.id && g.use[t] === USE.urban && !seen.has(t)) out.push(t);
-  return out;
+  return 1 + g.cityTiles(c, USE.rural).length + g.specialistCount(c);
 }
 
 const SEEDS = [11, 222, 3333, 44444];
@@ -165,7 +123,7 @@ describe('cities in simulated games', () => {
   let sims: Sim[];
   beforeAll(() => { sims = SEEDS.map((s) => simulate('small', s, TURNS)); });
 
-  it('C2-C5: population matches citizens, tiles are owned and legal, the core is in one piece', () => {
+  it('C2-C4: population matches citizens, tiles are owned and legal', () => {
     expect(sims.flatMap((s) => s.violations)).toEqual([]);
   });
 
@@ -175,26 +133,25 @@ describe('cities in simulated games', () => {
     console.log(`growth gaps: n=${gaps.length} median=${median} p10=${gaps[Math.floor(gaps.length * 0.1)]} p90=${gaps[Math.floor(gaps.length * 0.9)]}`);
     const sizes = sims.flatMap((s) => s.game.cities.map((c) => c.pop)).sort((a, b) => a - b);
     const uses = sims.flatMap((s) => [...s.game.use]).reduce((m, u) => { m[u] = (m[u] ?? 0) + 1; return m; }, {} as Record<number, number>);
-    const spec = sims.reduce((n, s) => n + s.game.specialists.reduce((a, b) => a + b, 0), 0);
-    console.log(`sizes at turn ${TURNS}: ${sizes.join(' ')} | rural ${uses[USE.rural]} urban ${uses[USE.urban]} specialists ${spec}`);
+    const spec = sims.reduce((n, s) => n + s.game.cities.reduce((a, c) => a + s.game.specialistCount(c), 0), 0);
+    console.log(`sizes at turn ${TURNS}: ${sizes.join(' ')} | rural ${uses[USE.rural]} specialists ${spec}`);
     expect(median).toBeGreaterThanOrEqual(5);
     expect(median).toBeLessThanOrEqual(12);
   });
 
   it('Q1: a quarter needs two buildings of one family', () => {
-    expect(quarterOf(['library', 'academy'])).toBe('campus');
-    expect(quarterOf(['library', 'market'])).toBe(null);
-    expect(quarterOf(['library', null])).toBe(null);
-    expect(quarterOf(['granary', 'monument'])).toBe(null);
+    expect(quartersOf(['library', 'academy'])).toEqual(['campus']);
+    expect(quartersOf(['library', 'market'])).toEqual([]);
+    expect(quartersOf(['library'])).toEqual([]);
+    expect(quartersOf(['granary', 'monument'])).toEqual([]);
   });
 
   it('Q4: cities build, and some form quarters', () => {
     let buildings = 0, quarters = 0;
     for (const { game: g } of sims) {
-      for (let t = 0; t < g.N; t++) {
-        const keys = Array.from({ length: SLOTS }, (_, k) => slotKey(g.slots[t * SLOTS + k]!));
-        buildings += keys.filter((k) => k !== null).length;
-        if (quarterOf(keys)) quarters++;
+      for (const c of g.cities) {
+        buildings += c.buildings.size;
+        quarters += quartersOf(c.buildings).length;
       }
     }
     console.log(`buildings ${buildings}, quarters ${quarters}`);
@@ -208,13 +165,13 @@ describe('cities in simulated games', () => {
     expect(built).toBeGreaterThan(2);
   });
 
-  // Townsfolk: urban tiles and the specialists living in them (tall cities
-  // grow through specialists, design doc).
-  it('C7: a big city (size 10+) has a built-up core: at least a quarter of its citizens townsfolk', () => {
-    const townsfolk = (g: Game, c: City) => g.cityTiles(c, USE.urban).reduce((n, t) => n + 1 + g.specialists[t]!, 0);
+  // (Tall cities grow through specialists, design doc.)
+  // (As many as its buildings have room for, if fewer.)
+  it('C7: a big city (size 10+) has specialists: at least a quarter of its citizens', () => {
+    const room = (c: City) => [...c.buildings].filter((b) => specialistKindOf(b) !== null).length;
     const thin = sims.flatMap((s) => s.game.cities
-      .filter((c) => c.pop >= 10 && townsfolk(s.game, c) < Math.floor(c.pop / 4))
-      .map((c) => `${c.name} size ${c.pop}: ${townsfolk(s.game, c)} townsfolk`));
+      .filter((c) => c.pop >= 10 && s.game.specialistCount(c) < Math.min(room(c), Math.floor(c.pop / 4)))
+      .map((c) => `${c.name} size ${c.pop}: ${s.game.specialistCount(c)} specialists, ${c.buildings.size} buildings`));
     expect(thin).toEqual([]);
   });
 });

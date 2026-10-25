@@ -116,8 +116,8 @@ export const isFarmland = (g: Game, t: number): boolean => g.use[t] === USE.rura
 // How far a city's countryside has filled up: by its civ's era (until the tech tree).
 const ruralDensity = (g: Game, city: City): RuralDensity => (['low', 'medium', 'high'] as const)[g.players[city.owner]!.era] ?? 'high';
 
-// Built-up tiles: the centers and urban land hexes.
-export const isBuilt = (g: Game, t: number): boolean => (g.use[t] === USE.urban || g.use[t] === USE.center) && g.tiles[t].corners.length === 6 && !g.isWater(t);
+// Built-up tiles: the cities' centers.
+export const isBuilt = (g: Game, t: number): boolean => g.use[t] === USE.center && g.tiles[t].corners.length === 6 && !g.isWater(t);
 
 
 export class CityProps {
@@ -134,9 +134,9 @@ export class CityProps {
   // Forget every layout (the ground under them changed).
   invalidate(): void { this.version++; }
 
-  // The built-up tiles of a city (its center first).
+  // The built-up tiles of a city: its center.
   private built(city: City): number[] {
-    return [city.tile, ...this.game.cityTiles(city, USE.urban)].filter((t) => isBuilt(this.game, t));
+    return [city.tile].filter((t) => isBuilt(this.game, t));
   }
   // Its rural tiles with drawings.
   private farmland(city: City): number[] {
@@ -190,9 +190,9 @@ export class CityProps {
     const m = memo?.get(city.id);
     if (m !== undefined) return m;
     const g = this.game;
-    const tiles = [...g.cityTiles(city, USE.urban), ...g.cityTiles(city, USE.rural)].map((t) => `${t}:${g.wonderAt[t]}`).join(';');
+    const wonders = g.wondersAt(city.tile).join(',');
     const farms = this.farmland(city).map((t) => `${t}:${improvementFor(g.terrainAt(t))}:${colouringKey(this.colouring(t))}`).join(';');
-    const sig = `${city.id}|${city.pop}|${g.players[city.owner]!.era}|${city.buildings.has('walls') ? 'w' : ''}|${city.wonderTile ?? ''}|${city.building ?? ''}|${this.version}|${tiles}|${farms}`;
+    const sig = `${city.id}|${city.pop}|${g.players[city.owner]!.era}|${city.buildings.has('walls') ? 'w' : ''}|${city.wonderTile ?? ''}|${city.building ?? ''}|${this.version}|${wonders}|${farms}`;
     memo?.set(city.id, sig);
     return sig;
   }
@@ -201,12 +201,14 @@ export class CityProps {
   private signature(t: number, memo?: Map<number, string>): string {
     const g = this.game;
     const u = g.use[t];
-    if (u === USE.wild) return g.wonderAt[t] ? `w${g.wonderAt[t]}` : g.ruins[t] ? 'ruins' : '';
+    if (u === USE.wild) {
+      const site = g.cities.some((c) => c.wonderTile === t) ? 's' : '';
+      return g.wonderOn(t) ? `w${g.wonderOn(t)}` : site || (g.ruins[t] ? 'ruins' : '');
+    }
     const city = g.cityById.get(g.tileCity[t]);
     if (!city) return '';
-    if (u === USE.urban || u === USE.center || isFarmland(g, t)) return `town|${this.citySig(city, memo)}`;
-    const site = city.wonderTile === t ? 's' : '';
-    return `${u}|${city.id}|${site}|${g.eraAt(t)}|${g.useVersion}`;
+    if (u === USE.center || isFarmland(g, t)) return `town|${this.citySig(city, memo)}`;
+    return `${u}|${city.id}|${g.eraAt(t)}|${g.useVersion}`;
   }
 
   // The tiles whose buildings changed since they were last placed.
@@ -241,8 +243,10 @@ export class CityProps {
   private build(t: number): PlacedBuilding[] {
     const g = this.game;
     if (g.use[t] === USE.wild) {
-      // (The one wonder on a wild tile: Machu Picchu, on its summit.)
+      // (The one wonder on a wild tile: Machu Picchu, on its summit; its
+      // scaffolding while it goes up.)
       if (g.wonderOn(t) === 'machuPicchu') return this.summit(t, 'machuPicchu');
+      if (g.cities.some((c) => c.wonderTile === t)) return this.landmark(t, 'scaffold', mulberry32((t + 1) * 2654435761));
       return g.ruins[t] ? this.ruins(t) : [];
     }
     const city = g.cityById.get(g.tileCity[t]);
@@ -251,9 +255,7 @@ export class CityProps {
     const rand = mulberry32((t + 1) * 2654435761 ^ city.id * 40503);
     if (u === USE.rural && !isFarmland(g, t)) {
       const k = improvementFor(g.terrainAt(t));
-      const items = k ? this.rural(t, RURAL[k], rand) : [];
-      if (city.wonderTile === t) items.push(...this.landmark(t, 'scaffold', rand));
-      return items;
+      return k ? this.rural(t, RURAL[k], rand) : [];
     }
     return this.layout(city).byTile.get(t) ?? [];
   }
@@ -324,10 +326,9 @@ export class CityProps {
     // shear the painting), sized to the tile.
     const { toDir, k: unit } = onTile(g, city.tile);
     const ahead = (p: Pt2, yaw: number) => toDir({ x: p.x + 0.01 * Math.cos(yaw), y: p.y + 0.01 * Math.sin(yaw) });
-    // Every wonder the city has (Machu Picchu stands on its summit, a wild
+    // Every wonder in the city (Machu Picchu stands on its summit, a wild
     // tile) and the one going up, as scaffolding.
-    const wonderTiles = [...g.cityTiles(city, USE.urban), ...g.cityTiles(city, USE.rural)].filter((t) => { const w = g.wonderOn(t); return w !== null && w !== 'machuPicchu'; });
-    const wonders: SiteModel[] = [...wonderTiles.map((t) => g.wonderOn(t)! as SiteModel), ...(city.wonderTile !== null ? ['scaffold' as const] : [])];
+    const wonders: SiteModel[] = [...g.wondersAt(city.tile).flatMap((w) => (w === 'machuPicchu' ? [] : [w])), ...(city.wonderTile === city.tile ? ['scaffold' as const] : [])];
     const dressed = dressCity({
       civ: g.players[city.owner]!.name, era, pop: city.pop, wonders, walled, seed: mix(city.id, 0xc17),
       free: (p) => !wet(this.sampleDir(toDir(p))),

@@ -66,7 +66,7 @@ describe('L3: city buildings stand on dry ground (boats on water)', () => {
   const dirSampler = (dir: THREE.Vector3) => {
     const t = locate(g.globe, dir).t;
     const h = Math.abs(Math.sin(dir.x * 12989.8 + dir.y * 78233.1 + dir.z * 37719.3)) * 1000 % 1;
-    const s: CitySpot = { dir, ground: 0.01, water: h < 0.2 ? 0.0105 : 0.009, slope: h > 0.93 ? 0.5 : 0.05, urban: g.use[t] === USE.urban || g.use[t] === USE.center ? 0.9 : 0.1 };
+    const s: CitySpot = { dir, ground: 0.01, water: h < 0.2 ? 0.0105 : 0.009, slope: h > 0.93 ? 0.5 : 0.05, urban: g.use[t] === USE.center ? 0.9 : 0.1 };
     // (The two fake samplers disagree at the same point; keep the one placement used.)
     if (!spots.has(key(dir))) spots.set(key(dir), s);
     return { ...s, t };
@@ -166,7 +166,7 @@ describe('L7: no land building touches water: its footprint and a margin round i
   let homes = 0;
   const bad: string[] = [];
   for (let t = 0; t < g.N; t++) {
-    if (g.use[t] !== USE.urban && g.use[t] !== USE.center) continue;
+    if (g.use[t] !== USE.center) continue;
     for (const b of cp.place(t)) {
       // (Walls may follow a bank and garden trees grow on it; roofs, doors and foundations sit with their walls.)
       // (Town lots: the house and its yard.)

@@ -520,7 +520,7 @@ export class GlobeRenderer {
     for (const t of this.terraform()) { this.propCache.delete(t); dirty.add(this.tileChunk[t]!); }
     // Summits levelled for wonders standing on them (before anything is placed there).
     for (const [w, t] of g.wondersBuilt) {
-      if (WONDERS[w].site !== 'mountainTop' || this.levelled.has(t) || !g.wonderAt[t]) continue;
+      if (WONDERS[w].site !== 'mountainTop' || this.levelled.has(t) || t < 0) continue;
       this.levelSummit(t);
       for (const x of [t, ...g.tiles[t].neighbors]) { this.propCache.delete(x); dirty.add(this.tileChunk[x]!); }
     }
@@ -797,7 +797,7 @@ export class GlobeRenderer {
             const inWater = env.water - env.ground > 0 && catalogEntry(prop.kind).water !== undefined;
             // On built ground the tile's own flora stays where it stands clear of
             // the buildings and streets (a town keeps its trees, never adds any).
-            if ((use === USE.urban || use === USE.center || isFarmland(g, u)) && !inWater) {
+            if ((use === USE.center || isFarmland(g, u)) && !inWater) {
               if (!this.cityProps.floraClear(u, d)) continue;
             } else if (use !== USE.wild && !inWater) {
               const imp = use === USE.rural ? improvementFor(g.terrainAt(u)) : null;
@@ -994,7 +994,7 @@ export class GlobeRenderer {
   // whole) when what is built up changed. Returns the tiles whose ground moved.
   private terraform(): number[] {
     const g = this.game;
-    const built = (t: number) => g.use[t] === USE.urban || g.use[t] === USE.center || g.ruins[t] === 1;
+    const built = (t: number) => g.use[t] === USE.center || g.ruins[t] === 1;
     let key = '';
     for (let t = 0; t < g.N; t++) if (built(t)) key += `${t},`;
     if (key === this.groundKey) return [];
@@ -1063,7 +1063,7 @@ export class GlobeRenderer {
       const u = g.use[t];
       // (Farmland is drawn, cityProps.ts: only fishing grounds keep a painted pattern.)
       const imp = u === USE.rural && !isFarmland(g, t) ? improvementFor(g.terrainAt(t)) : null;
-      td[o] = u === USE.urban || u === USE.center ? 1 : 0;
+      td[o] = u === USE.center ? 1 : 0;
       td[o + 2] = g.pillaged[t] ? BURNT_CODE : imp ? IMPROVEMENT_CODE[imp] : IMPROVEMENT_CODE.none;
       td[o + 3] = u === USE.center ? 1 : 0;
     }
@@ -1397,7 +1397,7 @@ export class GlobeRenderer {
     let urban = 0;
     for (let c = 0; c < 4; c++) {
       const u = g.use[fan.ids[c]];
-      if (u === USE.urban || u === USE.center) urban += w[c];
+      if (u === USE.center) urban += w[c];
     }
     const lv = this.terrain.at(t, i, wa, wb);
     this.terrain.topo.sample(t, i, wa, wb, this.spotSmp);

@@ -52,17 +52,15 @@ function chooseBuild(g: Game, city: City, expansion: number, garrisoned: boolean
   return pool[Math.floor(g.rng() * pool.length)];
 }
 
-// The building worth most for the city's focus per point of cost, at the
-// governor's best spot (one of the top three, so cities differ).
+// The building worth most for the city's focus per point of cost (one of
+// the top three, so cities differ).
 function bestBuilding(g: Game, city: City): BuildingKey | null {
   const scored: { k: BuildingKey; s: number }[] = [];
   for (const k of BUILDING_KEYS) {
     if (k === 'walls' || !g.canBuild(city, k)) continue;
-    const t = g.governorBuildingSpot(city, k);
-    if (t === null) continue;
-    const gain = weigh(city.focus, g.buildingGain(city, k, t));
+    const gain = weigh(city.focus, g.buildingGain(city, k));
     const defense = k === 'barracks' || k === 'stable' ? 3 : 0;
-    if (gain + defense <= 0) continue; // e.g. it would cost a farm worth more
+    if (gain + defense <= 0) continue;
     scored.push({ k, s: (gain + defense) / buildDef(k).cost });
   }
   scored.sort((a, b) => b.s - a.s);

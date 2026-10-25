@@ -1,13 +1,12 @@
-// Plain 2D geometry for the town drawings (see index.ts): the canonical
-// hex, street widths, lot footprints, and small helpers to draw with.
+// Plain 2D geometry for drawing on a tile (the rural drawings, src/rural;
+// the city painter): the canonical hex, street widths, lot footprints, and
+// small helpers to draw with.
 // Distances are in tile steps (neighboring tile centers are 1 apart).
 
 export interface Pt { readonly x: number; readonly y: number }
 export type Sides = 5 | 6;
-// low: mostly single storeys (a village); medium: double (a town); dense:
-// three storeys (a Renaissance city of townhouses and palazzi); high:
-// quads, Industrial blocks (Haussmann's Paris); metropolitan: skyscrapers
-// among quads (a modern downtown).
+// How built up a drafted row of lots is (town/draft.ts): low, mostly
+// single storeys; up to metropolitan, skyscrapers among quads.
 export const DENSITIES = ['low', 'medium', 'dense', 'high', 'metropolitan'] as const;
 export type Density = (typeof DENSITIES)[number];
 
@@ -55,10 +54,6 @@ export const FLOOR_NAME: Record<Floors, string> = { 1: 'single', 2: 'double', 3:
 // How tall a building's walls are, in cells (chosen by eye: a double is
 // not twice a single, nor a skyscraper twelve times one). Low buildings get
 // a roof on top.
-// The tallest building a density holds: what a density unlocks is room for
-// taller buildings (low and medium: doubles; dense: triples; high: quads;
-// metropolitan: skyscrapers).
-export const DENSITY_TALLEST: Record<Density, Floors> = { low: 2, medium: 2, dense: 3, high: 4, metropolitan: 12 };
 export const WALL_CELLS: Record<Floors, number> = { 1: 0.9, 2: 1.5, 3: 2.25, 4: 3.0, 12: 9.0 };
 export const wallHeight = (floors: Floors): number => WALL_CELLS[floors] * CELL;
 // Footprint half extents: along its front, and in depth.
@@ -90,9 +85,6 @@ const squareSpot = (cells: number, x: number, y: number, yaw: number): Spot => {
   return { x, y, yaw, r: Math.SQRT2 * h, hw: h, hd: h };
 };
 export const buildingSpot = (x: number, y: number, yaw: number): Spot => squareSpot(SPOT_CELLS, x, y, yaw);
-// Building spots a tile has, by its density (and so its building slots:
-// density.ts).
-export const SPOTS: Record<Density, number> = { low: 1, medium: 2, dense: 2, high: 3, metropolitan: 3 };
 export function spotCorners(s: Spot, grow = 0): Pt[] {
   const hw = (s.hw ?? s.r) + grow, hd = (s.hd ?? s.r) + grow;
   const f = { x: Math.cos(s.yaw), y: Math.sin(s.yaw) }, side = { x: -f.y, y: f.x };

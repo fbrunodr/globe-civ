@@ -1,11 +1,11 @@
 import { floraLabel } from './flora.ts';
 import { unitDef, buildDef, isUnitKey, isWonder, growthCost, BUILDINGS, WONDERS, type BuildKey } from './rules.ts';
 import { terrainName } from './terrain.ts';
-import { HUMAN, BUILDABLE, PILLAGE_GOLD, type Game, type City, type Unit, type AdjacencyHit } from './game.ts';
+import { HUMAN, BUILDABLE, PILLAGE_GOLD, type Game, type City, type Unit } from './game.ts';
 import type { Selection } from './render.ts';
 import {
-  USE, FOCUSES, FAMILIES, IMPROVEMENTS, ERAS, improvementFor, isFocusKey, quarterOf, familyOf,
-  type FocusKey, type GrowthKind, type GrowthOption, type Output, type BuildingKey, type AdjacencySource, type WonderKey,
+  USE, FOCUSES, FAMILIES, IMPROVEMENTS, ERAS, SPECIALIST_KINDS, improvementFor, isFocusKey, quartersOf, familyOf, specialistYield,
+  type FocusKey, type GrowthKind, type GrowthOption, type Output, type BuildingKey, type SpecialistKind, type WonderKey,
 } from './cities.ts';
 
 export type Action =
@@ -18,15 +18,16 @@ export type Action =
   | { type: 'raze' }
   | { type: 'build'; key: BuildKey | null }
   | { type: 'placeKind'; kind: GrowthKind }
+  | { type: 'specialist'; specialist: SpecialistKind }
   | { type: 'governorPlace' }
   | { type: 'focus'; focus: FocusKey }
   | { type: 'buyMode' }
   | { type: 'endTurn' };
 
-// What the map shows for the selected city: where a citizen (of a kind) or
-// a completed building can go, or the tiles it could buy ('buy').
-// `{ wonder }`: picking the tile of a wonder to start.
-export type Placing = GrowthKind | 'building' | 'buy' | { readonly wonder: WonderKey } | null;
+// What the map shows for the selected city: where a citizen can go
+// ('rural'; a specialist is placed from the panel), or the tiles it could
+// buy ('buy'). `{ wonder }`: picking the mountain of a wonder to start.
+export type Placing = GrowthKind | 'buy' | { readonly wonder: WonderKey } | null;
 export const wonderPicked = (p: Placing): WonderKey | null => (p !== null && typeof p === 'object' ? p.wonder : null);
 
 export function assertNever(x: never): never {
@@ -43,7 +44,11 @@ function parseAction(el: HTMLElement): Action | null {
       return { type };
     case 'placeKind': {
       const kind = el.dataset['kind'];
-      return kind === 'rural' || kind === 'urban' || kind === 'specialist' ? { type, kind } : null;
+      return kind === 'rural' || kind === 'specialist' ? { type, kind } : null;
+    }
+    case 'specialist': {
+      const k = el.dataset['specialist'] ?? '';
+      return (SPECIALIST_KINDS as readonly string[]).includes(k) ? { type, specialist: k as SpecialistKind } : null;
     }
     case 'focus': {
       const focus = el.dataset['focus'] ?? '';
@@ -77,23 +82,10 @@ const outStr = (o: Output, sign = false) => (Object.keys(ICONS) as (keyof Output
 const yieldStr = (food: number, prod: number, gold: number) =>
   `<span class="y food">🌾 ${food}</span><span class="y prod">⚒ ${prod}</span><span class="y gold">● ${gold}</span>`;
 
-const KIND_NAME: Record<GrowthKind, string> = { rural: 'Rural', urban: 'Urban', specialist: 'Specialist' };
+const KIND_NAME: Record<GrowthKind, string> = { rural: 'Rural', specialist: 'Specialist' };
+export const specialistName = (k: SpecialistKind): string => (k === 'civic' ? 'Craftsman' : `${FAMILIES[k].name} specialist`);
 export const optionName = (o: GrowthOption): string =>
-  o.kind === 'rural' ? IMPROVEMENTS[o.improvement].name
-    : o.kind === 'urban' ? (o.over ? `Urban (replaces the ${IMPROVEMENTS[o.over].name.toLowerCase()}; +1 specialist)` : 'Urban')
-    : 'Specialist';
-
-const SOURCE_NAME: Record<AdjacencySource, string> = {
-  mountain: 'mountain', river: 'river', forest: 'forest', mine: 'mine', quarry: 'quarry', boats: 'fishing boats',
-  center: 'city center', walls: 'walls', wonder: 'wonder',
-  campus: 'Campus', market: 'Market', forge: 'Forge', harbor: 'Harbor', temple: 'Temple', theater: 'Theater', garrison: 'Garrison',
-};
-// "+2 mountain, +1 Campus"
-export const hitsStr = (hits: readonly AdjacencyHit[]): string => {
-  const n = new Map<AdjacencySource, number>();
-  for (const h of hits) n.set(h.source, (n.get(h.source) ?? 0) + 1);
-  return [...n].map(([s, k]) => `+${k} ${SOURCE_NAME[s]}`).join(', ');
-};
+  o.kind === 'rural' ? IMPROVEMENTS[o.improvement].name : specialistName(o.specialist);
 
 export class UI {
   private readonly game: Game;
@@ -170,27 +162,23 @@ export class UI {
     const cost = growthCost(c.pop + c.growth);
     const grow = c.growth > 0 ? 'a citizen waits to be placed'
       : y.surplus > 0 ? `grows in ${Math.ceil((cost - c.food) / y.surplus)} turns` : y.surplus < 0 ? 'starving!' : 'stagnant';
-    const urban = g.cityTiles(c, USE.urban);
-    const specialists = urban.reduce((n, t) => n + g.specialists[t], 0);
+    const specialists = g.specialistCount(c);
     const rural = g.cityTiles(c, USE.rural).length;
-    const makeup = `Center · ${urban.length} urban · ${rural} rural${specialists ? ` · ${specialists} specialist${specialists > 1 ? 's' : ''}` : ''}`;
+    const makeup = `Center · ${rural} rural${specialists ? ` · ${specialists} specialist${specialists > 1 ? 's' : ''}` : ''}`;
     let place = '';
     const pickW = wonderPicked(placing);
     if (mine && placing === 'buy') {
       place = `<div class="place"><b>Buy a tile</b> <small>${g.tilePrice(c)} gold each (you have ${g.players[c.owner]!.gold}) · click a highlighted tile · <kbd>Esc</kbd> stops</small></div>`;
     } else if (mine && pickW) {
       place = `<div class="place"><b>Where will the ${esc(WONDERS[pickW].name)} stand?</b> <small>${esc(WONDERS[pickW].desc)} Click a highlighted tile · <kbd>Esc</kbd> cancels</small></div>`;
-    } else if (mine && c.pendingBuilding) {
-      place = `<div class="place"><b>Place the ${esc(BUILDINGS[c.pendingBuilding].name)}</b> <small>click a highlighted tile (the bright one is the governor's pick) · <kbd>Esc</kbd> leaves it to the governor</small>
-        <div class="buttons"><button data-act="governorPlace">Governor</button></div></div>`;
     } else if (mine && c.growth > 0) {
       const opts = g.growthOptions(c);
-      const kinds = (['rural', 'urban', 'specialist'] as const).map((k) => {
-        const n = opts.filter((o) => o.kind === k).length;
-        return `<button data-act="placeKind" data-kind="${k}" class="${placing === k ? 'active' : ''}" ${n ? '' : 'disabled'}>${KIND_NAME[k]} <small>${n}</small></button>`;
-      }).join('');
-      place = `<div class="place"><b>Place a citizen</b> <small>click a highlighted tile · <kbd>Esc</kbd> leaves it to the governor</small>
-        <div class="buttons">${kinds}<button data-act="governorPlace">Governor</button></div></div>`;
+      const rural = opts.filter((o) => o.kind === 'rural').length;
+      const specs = opts.flatMap((o) => (o.kind === 'specialist' ? [o.specialist] : []));
+      const buttons = [`<button data-act="placeKind" data-kind="rural" class="${placing === 'rural' ? 'active' : ''}" ${rural ? '' : 'disabled'}>${KIND_NAME.rural} <small>${rural}</small></button>`,
+        ...specs.map((k) => `<button data-act="specialist" data-specialist="${k}">${specialistName(k)} ${outStr(specialistYield(k), true)}</button>`)].join('');
+      place = `<div class="place"><b>Place a citizen</b> <small>a highlighted tile, or a specialist · <kbd>Esc</kbd> leaves it to the governor</small>
+        <div class="buttons">${buttons}<button data-act="governorPlace">Governor</button></div></div>`;
     }
     const focus = mine
       ? `<div class="focus">Governor <span>${(Object.keys(FOCUSES) as FocusKey[]).map((k) =>
@@ -202,8 +190,7 @@ export class UI {
       const item = buildDef(c.building);
       current = `${item.name} ${Math.min(c.prod, item.cost)}/${item.cost} (${turnsFor(c.building)} turns)`;
       if (c.building === 'settler' && c.pop < 2) current += ' — needs size 2';
-      if (g.waitingForSlot(c)) current = `${item.name} — finished, waiting for a free slot`;
-      if (isWonder(c.building)) current += ' — on the marked tile';
+      if (isWonder(c.building) && c.wonderTile !== c.tile) current += ' — on the marked tile';
     }
     const units = BUILDABLE.filter((k) => isUnitKey(k) && g.canBuild(c, k));
     const blds = BUILDABLE.filter((k) => !isUnitKey(k) && !isWonder(k) && g.canBuild(c, k));
@@ -216,8 +203,8 @@ export class UI {
     };
     const options = mine
       ? `<div class="build">${units.map(button).join('')}<button data-act="build" data-key="" class="${c.building ? '' : 'active'}">Wealth<span class="turns">→ gold</span></button></div>
-         ${blds.length ? `<div class="desc">Buildings <small>(placed on a tile when finished)</small></div><div class="build">${blds.map(button).join('')}</div>` : ''}
-         ${wonders.length ? `<div class="desc">Wonders <small>(pick their tile first; one in the world)</small></div><div class="build">${wonders.map(button).join('')}</div>` : ''}`
+         ${blds.length ? `<div class="desc">Buildings</div><div class="build">${blds.map(button).join('')}</div>` : ''}
+         ${wonders.length ? `<div class="desc">Wonders <small>(one in the world)</small></div><div class="build">${wonders.map(button).join('')}</div>` : ''}`
       : '';
     const maxHp = g.cityMaxHp(c);
     const defense = `<div class="desc">Defense ${g.cityStrength(c).toFixed(1)} · HP ${c.hp}/${maxHp}${c.hp < maxHp ? ' <span class="warn">(damaged)</span>' : ''}${c.razing ? ' · <span class="bad">being razed</span>' : ''}</div>`;
@@ -230,25 +217,25 @@ export class UI {
       ${place}
       ${mine && placing !== 'buy' && g.buyableTiles(c).length ? `<div class="buttons"><button data-act="buyMode" title="A city grows into the ring beyond its first by buying it">Buy tiles <small>${g.tilePrice(c)} gold</small></button></div>` : ''}
       ${focus}
-      ${this.quartersHtml(c)}
+      ${this.buildingsHtml(c)}
       <div class="desc">Producing: <b>${current}</b></div>
       ${options}
       ${raze}`;
   }
 
-  // The city's built tiles: each tile's buildings, its quarter and yield.
-  private quartersHtml(c: City): string {
+  // The city's buildings, quarters, specialists and wonders.
+  private buildingsHtml(c: City): string {
     const g = this.game;
     const rows: string[] = [];
-    for (const t of [c.tile, ...g.cityTiles(c, USE.urban)]) {
-      const keys = g.slotKeys(t);
-      if (keys.every((k) => k === null) && t !== c.tile) continue;
-      const q = quarterOf(keys);
-      const names = keys.map((k) => (k ? BUILDINGS[k].name : '<small>free slot</small>')).join(' · ');
-      const where = t === c.tile ? 'Center' : q ? `${FAMILIES[q].name} quarter` : g.isWater(t) ? 'Harbor tile' : 'Urban tile';
-      rows.push(`<div class="qrow"><b>${where}</b> ${names}</div>`);
-    }
-    if (c.buildings.has('walls')) rows.push('<div class="qrow"><b>Walls</b> around the center</div>');
+    const blds = [...c.buildings].filter((b) => BUILDINGS[b].role !== 'walls');
+    if (blds.length) rows.push(`<div class="qrow"><b>Buildings</b> ${blds.map((b) => BUILDINGS[b].name).join(' · ')}</div>`);
+    const qs = quartersOf(c.buildings);
+    if (qs.length) rows.push(`<div class="qrow"><b>Quarters</b> ${qs.map((q) => FAMILIES[q].name).join(' · ')}</div>`);
+    const specs = SPECIALIST_KINDS.filter((k) => c.specialists[k] > 0);
+    if (specs.length) rows.push(`<div class="qrow"><b>Specialists</b> ${specs.map((k) => `${c.specialists[k]} ${specialistName(k).toLowerCase()}`).join(' · ')}</div>`);
+    const ws = g.cityWonders(c);
+    if (ws.length) rows.push(`<div class="qrow"><b>Wonders</b> ${ws.map((w) => `★ ${WONDERS[w].name}`).join(' · ')}</div>`);
+    if (c.buildings.has('walls')) rows.push('<div class="qrow"><b>Walls</b> around the city</div>');
     return rows.length ? `<div class="quarters">${rows.join('')}</div>` : '';
   }
 
@@ -267,39 +254,18 @@ export class UI {
       const u = g.use[t];
       const k = improvementFor(g.terrainAt(t));
       const o = g.tileOutput(t);
-      const keys = g.slotKeys(t);
-      const q = quarterOf(keys);
-      const what = u === USE.center ? 'City center' : u === USE.urban ? `${q ? `${FAMILIES[q].name} quarter` : 'Urban'}${g.specialists[t] ? ` · ${g.specialists[t]} specialist${g.specialists[t] > 1 ? 's' : ''}` : ''}`
-        : u === USE.rural && k ? IMPROVEMENTS[k].name : `Wild${k ? ` <small>(${IMPROVEMENTS[k].name.toLowerCase()} if developed)</small>` : ''}`;
-      lines.push(`${what} of ${esc(tc.name)}${u === USE.wild ? '' : ` ${outStr(o)}`}`);
-      const built = keys.filter((x): x is BuildingKey => x !== null);
-      if (built.length) {
-        lines.push(built.map((b) => BUILDINGS[b].name).join(', '));
-        const fams = [...new Set(built.map(familyOf).filter((f) => f !== null))];
-        for (const f of fams) {
-          const hits = g.adjacencyHits(t, f);
-          if (hits.length) lines.push(`<small>${FAMILIES[f].name} adjacency: ${hitsStr(hits)}</small>`);
-        }
-      }
+      const what = u === USE.center ? esc(tc.name)
+        : `${u === USE.rural && k ? IMPROVEMENTS[k].name : `Wild${k ? ` <small>(${IMPROVEMENTS[k].name.toLowerCase()} if developed)</small>` : ''}`} of ${esc(tc.name)}`;
+      lines.push(`${what}${u === USE.wild && !g.wondersAt(t).length ? '' : ` ${outStr(o)}`}`);
     }
-    const w = g.wonderOn(t);
-    if (w) lines.push(`<b>★ ${esc(WONDERS[w].name)}</b> <small>${esc(WONDERS[w].desc)}</small>`);
+    for (const w of g.wondersAt(t)) lines.push(`<b>★ ${esc(WONDERS[w].name)}</b> <small>${esc(WONDERS[w].desc)}</small>`);
     const site = g.cities.find((c) => c.wonderTile === t);
     if (site && site.building && isWonder(site.building)) lines.push(`<small>${esc(WONDERS[site.building].name)} under construction</small>`);
     const pickW = wonderPicked(placing);
     if (sel?.kind === 'city' && pickW && g.wonderSpots(sel.city, pickW).includes(t)) {
       lines.push(`<span class="warn">Click: build the ${esc(WONDERS[pickW].name)} here</span> ${outStr(WONDERS[pickW].yields, true)}`);
-    } else if (sel?.kind === 'city' && placing === 'building' && sel.city.pendingBuilding) {
-      const k = sel.city.pendingBuilding;
-      if (g.buildingSpots(sel.city, k).includes(t)) {
-        const f = familyOf(k);
-        const hits = f ? g.adjacencyHits(t, f) : [];
-        const conv = g.use[t] === USE.rural ? ` <small>(replaces the ${IMPROVEMENTS[improvementFor(g.terrainAt(t))!].name.toLowerCase()})</small>` : '';
-        lines.push(`<span class="warn">Click: ${BUILDINGS[k].name} here${conv}</span> ${outStr(g.buildingGain(sel.city, k, t), true)}`);
-        if (hits.length) lines.push(`<small>${hitsStr(hits)}</small>`);
-      }
     } else if (placing && typeof placing === 'string' && sel?.kind === 'city') {
-      const opts = g.growthOptions(sel.city).filter((o) => o.tile === t);
+      const opts = g.growthOptions(sel.city).filter((o) => o.kind === 'rural' && o.tile === t);
       for (const o of opts) lines.push(`<span class="${o.kind === placing ? 'warn' : ''}">${o.kind === placing ? 'Click: ' : ''}${optionName(o)} ${outStr(g.optionYield(o), true)}</span>`);
     }
     if (!g.isWater(t)) {

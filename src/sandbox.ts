@@ -1,10 +1,10 @@
 // Building cities by hand, for the City Lab (city_lab.html): found a city
 // anywhere, grow it, set its era, put buildings and wonders on it, damage
-// it. Everything goes through the game's own rules (growth options,
-// building spots, wonder sites), so a lab city is a city the game could make.
+// it. Everything goes through the game's own rules (growth options, what a
+// city may build, wonder sites), so a lab city is a city the game could make.
 
 import type { Game, City } from './game.ts';
-import { ERAS, BUILDINGS, type BuildingKey, type WonderKey, type FocusKey, type EraIndex } from './cities.ts';
+import { ERAS, USE, WONDERS, type BuildingKey, type WonderKey, type FocusKey, type EraIndex } from './cities.ts';
 
 export function foundCity(g: Game, tile: number, owner: number): City | null {
   const settler = g.createUnit('settler', owner, tile);
@@ -43,31 +43,22 @@ export function setEra(g: Game, owner: number, era: EraIndex): void {
   g.useVersion++;
 }
 
-// Puts building k at tile t, or where the governor would. Harbor buildings
-// need water by the core: a fishing-boats tile is developed first if needed.
-export function addBuilding(g: Game, c: City, k: BuildingKey, t?: number): boolean {
-  if (c.buildings.has(k)) return false;
-  if (BUILDINGS[k].role === 'walls') { c.buildings.add(k); g.useVersion++; return true; }
-  if (!g.buildingSpots(c, k).length && BUILDINGS[k].role === 'harbor') developWaterByCore(g, c);
-  c.pendingBuilding = k;
-  const ok = t === undefined ? (g.autoPlaceBuilding(c), c.buildings.has(k)) : g.placeBuilding(c, k, t);
-  c.pendingBuilding = null;
-  return ok;
+// Adds building k, if the city may have it.
+export function addBuilding(g: Game, c: City, k: BuildingKey): boolean {
+  if (!g.canBuild(c, k)) return false;
+  g.addBuilding(c, k);
+  return true;
 }
 
-function developWaterByCore(g: Game, c: City): void {
-  const o = g.growthOptions(c).find((x) => x.kind === 'rural' && x.improvement === 'boats' && g.tiles[x.tile].neighbors.includes(c.tile));
-  if (!o) return;
-  c.growth = 1;
-  g.placeGrowth(c, o);
-}
-
-// Builds wonder k at tile t, or at the governor's site (growing the city a
-// little if no tile fits yet).
+// Builds wonder k (Machu Picchu: on tile t, or the governor's mountain,
+// bought for it if the city has none yet; the lab pays).
 export function addWonder(g: Game, c: City, k: WonderKey, t?: number): boolean {
   if (g.wondersBuilt.has(k)) return false;
-  let spot = t ?? g.governorWonderSpot(c, k);
-  for (let i = 0; spot === null && i < 4; i++) { grow(g, c, 1); spot = g.governorWonderSpot(c, k); }
+  if (WONDERS[k].site === 'mountainTop' && !g.wonderSpots(c, k).length) {
+    const m = g.buyableTiles(c).find((x) => g.tiles[c.tile].neighbors.includes(x) && g.relief[x] === 'mountains' && g.feature[x] !== 'volcano');
+    if (m !== undefined) { g.players[c.owner]!.gold += g.tilePrice(c); g.buyTile(c, m); }
+  }
+  const spot = t ?? g.governorWonderSpot(c, k);
   return spot !== null && g.placeWonder(c, k, spot);
 }
 
@@ -85,7 +76,6 @@ export interface Preset {
   readonly hp?: number;        // share of max HP (a siege)
   readonly pillage?: number;   // rural tiles burnt
   readonly razed?: boolean;    // built, then razed to ruins
-  readonly urbanFirst?: (g: Game, t: number) => boolean; // grows onto these tiles as urban first  // every built tile drawn at this density (the renderer's choice, for now)
 }
 
 const flatOpen = (g: Game, t: number) => g.relief[t] === 'flat' && g.feature[t] === null && ['prairie', 'savanna', 'steppe', 'mediterranean'].includes(g.biome[t]);
@@ -97,7 +87,7 @@ export const PRESETS: readonly Preset[] = [
   { name: 'Hamlet', desc: 'Size 2, Ancient: a few huts and fields.', era: 0, pop: 2, focus: 'food', buildings: [], wonders: [], site: flatOpen },
   { name: 'Village', desc: 'Size 4, Ancient: a monument and a granary.', era: 0, pop: 4, focus: 'balanced', buildings: ['monument', 'granary'], wonders: [], site: flatOpen },
   { name: 'Market town', desc: 'Size 8, Classical, on a river: a Market quarter.', era: 1, pop: 8, focus: 'gold', buildings: ['market', 'countingHouse', 'granary', 'shrine'], wonders: [], site: (g, t) => river(g, t) && g.relief[t] === 'flat' },
-  { name: 'Harbor town', desc: 'Size 9, Classical, on the coast: a Harbor quarter on the water.', era: 1, pop: 9, focus: 'food', buildings: ['lighthouse', 'shipyard', 'market'], wonders: [], site: (g, t) => coast(g, t) && g.relief[t] === 'flat' },
+  { name: 'Harbor town', desc: 'Size 9, Classical, on the coast: a Harbor quarter.', era: 1, pop: 9, focus: 'food', buildings: ['lighthouse', 'shipyard', 'market'], wonders: [], site: (g, t) => coast(g, t) && g.relief[t] === 'flat' },
   { name: 'Walled city', desc: 'Size 14, Medieval: walls, Campus, Forge and Temple quarters.', era: 2, pop: 14, focus: 'production', buildings: ['walls', 'library', 'academy', 'workshop', 'smithy', 'shrine', 'temple', 'granary'], wonders: [], site: flatOpen },
   { name: 'Capital', desc: 'Size 20, Medieval: walls, every quarter, two wonders.', era: 2, pop: 20, focus: 'balanced', buildings: ['walls', 'library', 'academy', 'market', 'countingHouse', 'workshop', 'smithy', 'amphitheater', 'odeon', 'barracks', 'stable', 'granary', 'monument', 'aqueduct'], wonders: ['greatLibrary', 'colosseum'], site: (g, t) => flatOpen(g, t) },
   { name: 'Desert city', desc: 'Size 10, Classical: the Pyramids on desert or floodplain.', era: 1, pop: 10, focus: 'production', buildings: ['market', 'workshop', 'shrine'], wonders: ['pyramids'], site: (g, t) => g.relief[t] === 'flat' && g.tilesWithin(t, 1).some((x) => g.biome[x] === 'hotDesert' || g.feature[x] === 'floodplain') },
@@ -106,7 +96,7 @@ export const PRESETS: readonly Preset[] = [
   { name: 'Lighthouse port', desc: 'Size 10, Medieval: the Great Lighthouse.', era: 2, pop: 10, focus: 'gold', buildings: ['walls', 'lighthouse', 'shipyard', 'market', 'countingHouse'], wonders: ['greatLighthouse'], site: coast },
   { name: 'Besieged city', desc: 'Size 10, Medieval: walls breached, fields burning.', era: 2, pop: 10, focus: 'production', buildings: ['walls', 'barracks', 'stable', 'workshop'], wonders: [], site: flatOpen, hp: 0.25, pillage: 3 },
   { name: 'Metropolis', desc: 'Size 18, Medieval: a market, a campus, a forge and a theater.', era: 2, pop: 18, focus: 'gold', buildings: ['market', 'countingHouse', 'library', 'academy', 'workshop', 'smithy', 'odeon', 'amphitheater'], wonders: [], site: flatOpen },
-  { name: 'Wetland town', desc: 'Size 8 on a marsh, swamp or mangrove: drained where it is built.', era: 1, pop: 8, focus: 'food', buildings: ['market', 'granary'], wonders: [], site: (g, t) => g.feature[t] === null && g.relief[t] === 'flat' && g.tiles[t].neighbors.filter((n) => wetland(g, n)).length >= 3, urbanFirst: wetland },
+  { name: 'Wetland town', desc: 'Size 8 among marshes, swamps or mangroves.', era: 1, pop: 8, focus: 'food', buildings: ['market', 'granary'], wonders: [], site: (g, t) => g.feature[t] === null && g.relief[t] === 'flat' && g.tiles[t].neighbors.filter((n) => wetland(g, n)).length >= 3 },
   { name: 'Hill town', desc: 'Size 9, Medieval, on hills: walls.', era: 2, pop: 9, focus: 'production', buildings: ['walls', 'workshop', 'shrine', 'monument'], wonders: [], site: (g, t) => g.relief[t] === 'hills' && g.tiles[t].neighbors.filter((n) => g.relief[n] === 'hills').length >= 3 },
   { name: 'Ruins', desc: 'A razed town: broken walls where houses stood.', era: 1, pop: 7, focus: 'balanced', buildings: ['market', 'shrine'], wonders: [], site: flatOpen, razed: true },
 ];
@@ -141,19 +131,12 @@ export function buildPresets(g: Game, presets: readonly Preset[] = PRESETS): Bui
     if (!c) continue;
     used.push(best);
     c.focus = p.focus;
-    if (p.urbanFirst) {
-      for (;;) {
-        const o = g.growthOptions(c).find((x) => x.kind === 'urban' && p.urbanFirst!(g, x.tile));
-        if (!o || c.pop >= p.pop) break;
-        c.growth = 1;
-        g.placeGrowth(c, o);
-      }
-    }
+    // (Buildings first: specialists work in them.)
+    for (const b of p.buildings) addBuilding(g, c, b);
     grow(g, c, p.pop - c.pop);
     for (const w of p.wonders) addWonder(g, c, w);
-    for (const b of p.buildings) addBuilding(g, c, b);
     if (p.hp !== undefined) c.hp = Math.round(g.cityMaxHp(c) * p.hp);
-    if (p.pillage) for (const t of g.cityTiles(c, 1).slice(0, p.pillage)) g.pillaged[t] = 3;
+    if (p.pillage) for (const t of g.cityTiles(c, USE.rural).slice(0, p.pillage)) g.pillaged[t] = 3;
     if (p.razed) { g.destroyCity(c); out.push({ preset: p, tile: best, city: null }); continue; }
     g.useVersion++;
     out.push({ preset: p, tile: best, city: c });

@@ -83,14 +83,13 @@ function route(g: Game, from: number, to: number): number[] | null {
   return path.reverse();
 }
 
-// A road as drawn: smooth lines between towns. Roads stay out of built-up
-// tiles (they would run over the houses): each stretch outside the towns
-// ends at the middle of the edge where it reaches a town, which is where
-// a street of the town comes out to open land (src/town/edges.ts).
+// A road as drawn: smooth lines between cities. Roads stay out of a city's
+// tile (they would run over the houses): each stretch ends at the middle of
+// the edge where it reaches a city.
 export interface RoadLine { a: number; b: number; points: THREE.Vector3[] }
 
 export function roadLines(g: Game, planned: readonly Road[] = planRoads(g)): RoadLine[] {
-  const built = (t: number) => g.use[t] === USE.urban || g.use[t] === USE.center;
+  const built = (t: number) => g.use[t] === USE.center;
   const edgeMid = (a: number, b: number) => {
     const tl = g.tiles[a]!, i = tl.neighbors.indexOf(b), k = tl.corners.length;
     return g.globe.triCenters[tl.corners[i]!]!.clone().add(g.globe.triCenters[tl.corners[(i + 1) % k]!]!).normalize();
