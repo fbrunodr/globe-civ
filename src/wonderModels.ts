@@ -21,7 +21,7 @@ export type WonderModelKind = `wonder|${SiteModel}`;
 export const wonderModelKind = (m: SiteModel): WonderModelKind => `wonder|${m}`;
 export const isWonderModelKind = (k: string): k is WonderModelKind => k.startsWith('wonder|');
 
-const SAND = 0xd9c79a, LIMESTONE = 0xe2d6b8, SANDSTONE = 0xc9ad7f, MARBLE = 0xddd6c6, STONE = 0xb8b0a0, DARK = 0x8d877c;
+const LIMESTONE = 0xe2d6b8, SANDSTONE = 0xc9ad7f, MARBLE = 0xddd6c6, STONE = 0xb8b0a0, DARK = 0x8d877c;
 const GRASS = 0x7f9a58, LEAF = 0x5b7a3a, WATER = 0x6f97a8, TIMBER = 0x7a5f45, IRON = 0x4a4744, BRONZE = 0x9a7a4a;
 const H = SITE_HALF * 0.94; // the most a wonder spreads from the middle
 
@@ -36,14 +36,10 @@ const MODELS: Record<SiteModel, () => G[]> = {
   // Giza: the great pyramid at the back, two queens' pyramids before it,
   // on a paved desert terrace (as high as 0.64 of its base).
   pyramids: () => {
-    const b = 0.112, q = 0.034;
+    const b = 2 * H;
     return [
-      patch(2 * H, 2 * H, SAND),
-      hip(b, b, 0.64 * b, LIMESTONE, { z: -0.012 }),
-      hip(0.012, 0.012, 0.0077, 0xd9b45a, { y: 0.64 * b - 0.0077, z: -0.012 }),
-      hip(q, q, 0.64 * q, shade(LIMESTONE, 0.95), { x: -0.045, z: 0.058 }),
-      hip(q * 0.8, q * 0.8, 0.64 * q * 0.8, shade(LIMESTONE, 0.92), { x: 0.05, z: 0.06 }),
-      ...box(0.03, 0.004, 0.012, SANDSTONE, { z: 0.068 }), // the causeway's foot
+      hip(b, b, 0.64 * b, LIMESTONE),
+      hip(0.012, 0.012, 0.0077, 0xd9b45a, { y: 0.64 * b - 0.0077 }),
     ];
   },
   // Pharos: a square tower, an octagonal one on it, a round lantern with

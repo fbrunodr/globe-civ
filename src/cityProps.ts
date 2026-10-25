@@ -57,7 +57,7 @@ export interface Street {
 }
 // A square, drawn by render.ts as paving on the ground (or a worked rural
 // area, in its ground colour).
-export interface Paving { points: THREE.Vector3[]; paved: boolean; rgb?: RGB }
+export interface Paving { points: THREE.Vector3[]; paved: boolean; rgb?: RGB; exact?: boolean }
 
 interface CityLayout {
   sig: string;
@@ -348,7 +348,6 @@ export class CityProps {
     const put = (t: number, ...bs: PlacedBuilding[]) => { const l = byTile.get(t); if (l) l.push(...bs); else byTile.set(t, bs); };
     const era = g.players[city.owner]!.era;
     const walled = city.buildings.has('walls');
-    const at = (p: FanPt) => this.sample(p.t, p.i, p.wa, p.wb);
     const dirAt = (p: FanPt) => {
       const tl = g.tiles[p.t], k = tl.corners.length;
       const A = g.globe.triCenters[tl.corners[p.i]!]!, B = g.globe.triCenters[tl.corners[(p.i + 1) % k]!]!;
@@ -393,28 +392,32 @@ export class CityProps {
     };
 
     // The city: painted on its center tile (cityPainter.ts), dressed in
-    // its civ's style for its size and era (cityDress.ts).
-    const toC = (p: Pt2) => toTile(city.tile, { rot: 0, flip: false }, p);
+    // its civ's style for its size and era (cityDress.ts). Laid on the tile
+    // evenly (onTile: no tile is a perfect hex, and the fans' mapping would
+    // shear the painting), sized to the tile.
+    const { toDir, k: unit } = onTile(g, city.tile);
+    const ahead = (p: Pt2, yaw: number) => toDir({ x: p.x + 0.01 * Math.cos(yaw), y: p.y + 0.01 * Math.sin(yaw) });
     // Every wonder the city has (Machu Picchu stands on its summit, a wild
     // tile) and the one going up, as scaffolding.
     const wonderTiles = [...g.cityTiles(city, USE.urban), ...g.cityTiles(city, USE.rural)].filter((t) => { const w = g.wonderOn(t); return w !== null && w !== 'machuPicchu'; });
     const wonders: SiteModel[] = [...wonderTiles.map((t) => g.wonderOn(t)! as SiteModel), ...(city.wonderTile !== null ? ['scaffold' as const] : [])];
     const dressed = dressCity({
       civ: g.players[city.owner]!.name, era, pop: city.pop, wonders, walled, seed: mix(city.id, 0xc17),
-      free: (p) => !wet(this.sampleDir(dirAt(toC(p)))),
+      free: (p) => !wet(this.sampleDir(toDir(p))),
     });
+    // (The painter keeps them apart and off the water: each stands where painted.)
     dressed.buildings.forEach((b, n) => {
-      const s = at(toC(b.at)), rand = mulberry32(mix(city.id, n + 1));
+      const s = this.sampleDir(toDir(b.at)), rand = mulberry32(mix(city.id, n + 1));
       if (wet(s)) return;
-      const f = dirAt(toC({ x: b.at.x + 0.01 * Math.cos(b.yaw), y: b.at.y + 0.01 * Math.sin(b.yaw) }));
-      put(city.tile, ...settle((k) => this.standLot(b.model, s.dir, facing(s.dir, f) + Math.PI / 2, b.hw, b.hd, D * local(s.dir, f) * b.scale * k, rand, city.owner, 'top')));
+      put(city.tile, ...this.standLot(b.model, s.dir, facing(s.dir, ahead(b.at, b.yaw)) + Math.PI / 2, b.hw, b.hd, unit * b.scale, rand, city.owner, 'top', [b.sx, b.sz]));
     });
-    for (const r of dressed.painting.roads) pavings.push({ points: r.map((p) => dirAt(toC(p))), paved: era > 0, rgb: dressed.roadRgb });
+    // (Exactly where painted: they meet the buildings' sides.)
+    for (const r of dressed.painting.roads) pavings.push({ points: r.map(toDir), paved: era > 0, rgb: dressed.roadRgb, exact: true });
 
     // Walls: a segment between each pair of the ring's points, a tower at every other.
     if (dressed.wall) {
       const rand = mulberry32(city.id * 7919 + 5);
-      const pts = dressed.wall.map((p) => at(toC(p)));
+      const pts = dressed.wall.map((p) => this.sampleDir(toDir(p)));
       pts.forEach((s, n) => {
         if (n % 2 === 0 && n < pts.length - 1 && standsAt('wallTower', s)) {
           put(city.tile, ...settle((k) => this.stand('wallTower', s.dir, 0, HOUSE_SCALE * k, buildingEntry('wallTower').leaf, rand, city.owner), false));
@@ -788,7 +791,8 @@ export class CityProps {
   // ('top': in a city's diorama, with no street to stand at and no ground
   // cut for it, its floor is level with the highest ground under it, the
   // foundation filling the rest.)
-  private standLot(kind: LotModelKind, dir: THREE.Vector3, yaw: number, lw: number, ld: number, s: number, rand: Rng, owner: number, level: 'street' | 'top' = 'street'): PlacedBuilding[] {
+  // (`stretch`: across its front and deep, as a painted city fits a model to its rectangle.)
+  private standLot(kind: LotModelKind, dir: THREE.Vector3, yaw: number, lw: number, ld: number, s: number, rand: Rng, owner: number, level: 'street' | 'top' = 'street', stretch: readonly [number, number] = [1, 1]): PlacedBuilding[] {
     const q = new THREE.Quaternion().setFromUnitVectors(UP, dir).multiply(new THREE.Quaternion().setFromAxisAngle(UP, yaw));
     const X = new THREE.Vector3(1, 0, 0).applyQuaternion(q).multiplyScalar(lw * s);
     const Z = new THREE.Vector3(0, 0, 1).applyQuaternion(q).multiplyScalar(ld * s);
@@ -801,7 +805,7 @@ export class CityProps {
     const sink = 0.00012 * this.scale, shade = 0.92 + 0.12 * rand();
     const out: PlacedBuilding[] = [{
       kind,
-      matrix: new THREE.Matrix4().compose(dir.clone().multiplyScalar(1 + base - sink), q, new THREE.Vector3(s, s, s)),
+      matrix: new THREE.Matrix4().compose(dir.clone().multiplyScalar(1 + base - sink), q, new THREE.Vector3(s * stretch[0], s, s * stretch[1])),
       color: new THREE.Color(shade, shade, shade),
       leaf: new THREE.Color(1, 1, 1),
       ...(high > base + sink ? { pad: { at: dir.clone(), X, Z, base: base - sink } } : {}),
@@ -877,6 +881,21 @@ class StreetIndex {
     }
     return true;
   }
+}
+
+// A tile's canonical hex (tile steps, inradius 0.5) laid evenly on the
+// globe: its middle at the tile's center, its x axis toward the middle of
+// the tile's first side, one tile step `k` radians (twice the tile's mean
+// inner radius). Unlike the fans' mapping (cityStamp.ts toTile) it never
+// shears, so a painted city keeps its shapes on an uneven tile.
+export function onTile(g: Game, t: number): { toDir: (p: Pt2) => THREE.Vector3; k: number } {
+  const tl = g.tiles[t]!, c = tl.center, n = tl.corners.length;
+  const mids = tl.corners.map((cn, j) => g.globe.triCenters[cn]!.clone().add(g.globe.triCenters[tl.corners[(j + 1) % n]!]!).normalize());
+  const k = (2 * mids.reduce((a, m) => a + m.angleTo(c), 0)) / n;
+  const e1 = mids[0]!.clone().addScaledVector(c, -mids[0]!.dot(c)).normalize();
+  let e2 = c.clone().cross(e1);
+  if (e2.dot(mids[1]!) < 0) e2 = e2.negate();
+  return { toDir: (p) => c.clone().addScaledVector(e1, p.x * k).addScaledVector(e2, p.y * k).normalize(), k };
 }
 
 export function standsAt(kind: BuildingKind, s: CitySpot): boolean {

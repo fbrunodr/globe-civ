@@ -92,6 +92,21 @@ describe('CP1: buildings', () => {
   });
 });
 
+describe('CP3: water cutting the tile', () => {
+  it('where water cuts the tile in two, the whole city stands in the larger part', () => {
+    const bad: string[] = [];
+    for (let seed = 1; seed <= 12; seed++) {
+      // A river across the tile, off the middle: the larger part holds the middle.
+      const off = 0.04 + 0.01 * (seed % 5), a = seed * 0.7, d = { x: Math.cos(a), y: Math.sin(a) };
+      const side = (p: Pt) => p.x * d.x + p.y * d.y - off;
+      const p = paintCity({ wonders: seed % 4, skyscrapers: 2, buildings: 30, seed, free: (q) => Math.abs(side(q)) > 0.025 });
+      const wrong = p.buildings.filter((b) => side(b.at) > 0);
+      if (wrong.length) bad.push(`seed ${seed}: ${wrong.length} across the river`);
+    }
+    expect(bad).toEqual([]);
+  });
+});
+
 describe('CP2: roads', () => {
   it('each joined pair has its road: the gap between them, end to end', () => {
     const bad: string[] = [];

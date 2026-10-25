@@ -17,7 +17,8 @@ import { Game } from './game.ts';
 import { tileLook } from './look.ts';
 import { buildPaintData, warpAt } from './paint.ts';
 import { buildRelief } from './relief.ts';
-import { buildSurface, meshLevels } from './surface.ts';
+import { buildSurface, meshLevels, type SurfaceLayers } from './surface.ts';
+import { cityGround } from './terraform.ts';
 import { buildTerrainMesh } from './terrainMesh.ts';
 import { DRESS_ERA_NAME, dressCity, type DressEra } from './cityDress.ts';
 import { MAX_WONDERS } from './cityPainter.ts';
@@ -55,9 +56,10 @@ const looks = game.tiles.map((t) => tileLook(game.map, t.id));
 const paintData = buildPaintData(game.globe, game.map, game.seed);
 const relief = buildRelief(game.globe, game.map, looks, game.seed, paintData.params.r0);
 const levels = meshLevels(game.globe, game.map, looks);
+let layers: SurfaceLayers | null = null;
 const mesh = buildTerrainMesh(game.globe, {
   level: (t) => levels[t] as 1 | 2 | 4,
-  surface: (topo) => buildSurface(game.globe, game.map, looks, paintData, relief, game.seed, topo).fields,
+  surface: (topo) => { const sf = buildSurface(game.globe, game.map, looks, paintData, relief, game.seed, topo); layers = sf.layers; return sf.fields; },
   warp: (dir, out) => { warpAt(paintData.params, dir.x, dir.y, dir.z, out); },
   fanAttributes: [],
 }, SUBDIV);
@@ -77,6 +79,12 @@ const TILES: readonly number[] = (() => {
   for (let i = ok.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [ok[i], ok[j]] = [ok[j]!, ok[i]!]; }
   return ok.slice(0, 200);
 })();
+// Each tile a city stands on, as the game reshapes it (terraform.ts:
+// wetlands drained).
+{
+  const built = new Set(TILES);
+  mesh.reshape(cityGround(game.globe, mesh.topo, layers!, mesh.fields.height.slice(), mesh.fields.water, (t) => built.has(t), 1));
+}
 // A point of a tile (its canonical hex): its ground and water, tile steps above the tile's middle.
 const levelAt = (t: number, p: Pt, base: number) => {
   const f = toFan(6, p), lv = mesh.at(t, f.j, f.wa, f.wb);
@@ -121,7 +129,7 @@ function drawSample(s: Sample, cx: number, cz: number): void {
     // Level with the highest ground under it, a foundation below (as in the game: cityProps.ts 'top').
     const cs = corners(b.at, b.yaw, b.hw * b.scale, b.hd * b.scale), hs = [...cs, b.at].map(ground);
     const top = Math.max(...hs), low = Math.min(...hs), yaw = b.yaw + Math.PI / 2;
-    paint.model(b.model, to3(b.at, top), yaw, new THREE.Vector3(b.scale, b.scale, b.scale), 0xffffff, 0.92 + 0.12 * b.variant);
+    paint.model(b.model, to3(b.at, top), yaw, new THREE.Vector3(b.scale * b.sx, b.scale, b.scale * b.sz), 0xffffff, 0.92 + 0.12 * b.variant);
     if (top - low > 0.0005) paint.model('foundation', to3(b.at, low - 0.001), yaw, new THREE.Vector3((2 * b.hw * b.scale) / 0.01, (top - low + 0.001) / 0.01, (2 * b.hd * b.scale) / 0.01), 0x8d877c);
   }
   // Roads: on the ground, in small pieces so they follow it.

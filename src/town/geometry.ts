@@ -15,17 +15,10 @@ export type Density = (typeof DENSITIES)[number];
 // average, pentagons smaller). Only hexes are built up.
 export const INR: Record<Sides, number> = { 5: 0.34, 6: 0.5 };
 export const sideLength = (k: Sides) => 2 * INR[k] * Math.tan(Math.PI / k);
-// Water and the tiles (the hex norm, rhoOf: 0 at the center, 1 on the
-// edges; src/waterChecks.ts W7, W8). Shores follow the hex edges a little
-// inside the water tile (paint.ts SHORE_RULE, SHORE_SHIFT), rivers run
-// along the edges (RIVER_RULE):
-//   - a land tile keeps its safe zone dry: no sea, lake or river water
-//     inside SAFE_RHO. Almost every land tile has no sea or lake water at
-//     all; rivers along its edges, and rarely a sliver of sea where two
-//     land tiles meet at a coast, come in past it, where a building may be
-//     left out (wetland pools are not bounded: cities drain them);
-//   - a water tile is open water inside HARBOR_RHO (its rim is a strip of
-//     beach, about 0.86 out at the middles of its sides).
+// The safe zone (the hex norm, rhoOf: 0 at the center, 1 on the edges):
+// what matters most stands inside SAFE_RHO, wonders (cityPainter.ts) and
+// the rural building spot. (Water may reach into it: shores and rivers bend
+// freely, and a city keeps off the water wherever it lies.)
 export const SAFE_RHO = 0.8;
 // What a player builds keeps inside the safe zone (no river reaches it):
 // the building spots and the site (checks.ts spotPastRim). Houses
@@ -34,7 +27,6 @@ export const SAFE_RHO = 0.8;
 // Lots stay within this share of the inradius: nearly to the edge, so a
 // town reads as one across its tiles (no strip of rim between them).
 export const LOT_INNER = 0.995;
-export const HARBOR_RHO = 0.75;
 
 export type StreetClass = 'lane' | 'street' | 'main' | 'avenue';
 // Half widths.

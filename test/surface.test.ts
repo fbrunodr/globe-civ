@@ -7,19 +7,15 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { generateWorld } from '../src/world.ts';
 import { buildPaintData, warpAt } from '../src/paint.ts';
-import { waterProblems, waterWorld } from '../src/waterChecks.ts';
-import surfaceRegressions from './surfaceRegressions.json' with { type: 'json' };
 import { buildRelief } from '../src/relief.ts';
 import { tileLook } from '../src/look.ts';
 import { buildTerrainMesh, locate } from '../src/terrainMesh.ts';
 import { buildSurface, meshLevels, waterLevels, LOWLAND, type Surface } from '../src/surface.ts';
 import type { MapSizeKey } from '../src/rules.ts';
-import { SAFE_RHO, HARBOR_RHO } from '../src/town/geometry.ts';
 
-// Shores follow the hex edges a little inside the water tile, rivers run
-// along the edges (paint.ts SHORE_RULE, RIVER_RULE): land tiles keep water
-// out of their safe zone, water tiles keep their water
-// (src/town/geometry.ts SAFE_RHO, HARBOR_RHO; src/waterChecks.ts).
+// (Was also W7, W8: water kept out of land tiles' safe zones and inside
+// water tiles. Shores and rivers bend freely again: a city keeps off the
+// water wherever it lies, cityPainter.ts.)
 
 const SEEDS: Record<MapSizeKey, number[]> = { small: [1, 2], medium: [4], large: [6] };
 
@@ -44,7 +40,7 @@ function setup(size: MapSizeKey, seed: number) {
 describe('surface', () => {
   for (const [size, seeds] of Object.entries(SEEDS) as [MapSizeKey, number[]][]) {
     for (const seed of seeds) {
-      const { w, looks, relief, mesh, paint, surface, r0 } = setup(size, seed);
+      const { w, looks, relief, mesh, surface, r0 } = setup(size, seed);
       const { globe, map } = w;
 
       it(`W1 ${size} seed ${seed}: water tiles are under water at their center, land tiles dry`, () => {
@@ -172,16 +168,6 @@ describe('surface', () => {
         expect(checked).toBeGreaterThan(200);
       });
 
-      // (src/waterChecks.ts, also run on many worlds by npm run surfacecheck.)
-      const water = waterProblems({ globe, map, looks, paint, mesh });
-      it(`W7 ${size} seed ${seed}: land tiles keep their safe zone dry: no sea, lake or river water inside ${SAFE_RHO} of the way to the edge`, () => {
-        expect(water.checked.land).toBeGreaterThan(50);
-        expect(water.problems.filter((p) => p.id === 'W7').slice(0, 10).map((p) => p.message)).toEqual([]);
-      });
-      it(`W8 ${size} seed ${seed}: water tiles keep their water (harbors): open water out to ${HARBOR_RHO} of the way to the edge`, () => {
-        expect(water.problems.filter((p) => p.id === 'W8').slice(0, 10).map((p) => p.message)).toEqual([]);
-      });
-
       it(`W3 ${size} seed ${seed}: every river's water is unbroken from near its source to its end`, () => {
         let hint = 0;
         const mid = new THREE.Vector3();
@@ -201,15 +187,5 @@ describe('surface', () => {
         }
       });
     }
-  }
-});
-
-// Seeds the deep sweep (npm run surfacecheck) found failing, checked forever.
-const waterRegressions = surfaceRegressions as { size: MapSizeKey; seed: number }[];
-if (waterRegressions.length) describe('W7/W8 regressions', () => {
-  for (const { size, seed } of waterRegressions) {
-    it(`${size} seed ${seed}: water keeps out of land tiles' safe zones and stays in water tiles`, () => {
-      expect(waterProblems(waterWorld(size, seed)).problems.slice(0, 10).map((p) => `${p.id} ${p.message}`)).toEqual([]);
-    });
   }
 });

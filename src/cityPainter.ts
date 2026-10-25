@@ -1,12 +1,14 @@
 // The city painter: what a city's center tile shows, grown from its middle
-// rather than drawn by hand. Three kinds of building, each a square of the
-// grid (UNIT = half a cell): a building 4 × 4 units (2 × 2 cells), a
-// skyscraper 6 × 6 (3 × 3 cells; from the Modern era), a wonder 8 × 8 (4 × 4
-// cells). Guarantees (test/cityPainter.test.ts):
+// rather than drawn by hand. Three kinds of building, each a rectangle of
+// the grid (UNIT = half a cell; SIZES): a building 4 × 4, 4 × 5 or 5 × 5
+// units, a skyscraper 6 × 6 or 5 × 6 (from the Modern era), a wonder 7 × 7
+// to 8 × 8. Guarantees (test/cityPainter.test.ts):
 //   1. no two buildings touch, not even at a corner: at least 1 unit apart;
 //   2. two buildings are joined when their facing sides are exactly 1 unit
 //      apart and overlap (side by side, not corner to corner);
-//   3. every building is joined, through others, to the first, at the middle;
+//   3. every building is joined, through others, to the first, which stands
+//      as near the middle as it fits in the largest stretch of dry land
+//      (where water cuts the tile in pieces, the city keeps to one);
 //   4. every wonder the city has is placed (at most MAX_WONDERS), wholly
 //      inside the safe zone; they are placed first, then the skyscrapers
 //      as near the middle as they fit, then the other buildings;
@@ -14,8 +16,9 @@
 //   6. roads fill the gap between each joined pair, from the end of one
 //      building to the end of the other, and the corners where they meet;
 //      painted once (a set of grid squares), never under a building.
-// Where the ground allows it (the `free` test: dry land inside the tile),
-// as many buildings as asked; fewer if the ground runs out.
+// Where the ground allows it (the `free` test: dry land inside the tile,
+// with a margin round every building), as many buildings as asked; fewer
+// if the ground runs out.
 //
 // Pure: the tile's canonical hex (tile steps, inradius 0.5), a seed, and
 // the ground test. Each city turns the grid its own way, so towns differ.
@@ -29,18 +32,25 @@ export const CITY_CELL = 0.0225 * 1.3;
 export const UNIT = CITY_CELL / 2;
 export const MAX_WONDERS = 10;
 export type Kind = 'building' | 'skyscraper' | 'wonder';
-export const SIZE: Record<Kind, number> = { building: 4, skyscraper: 6, wonder: 8 };
+// Each kind's rectangles (units, either way round), the first most often.
+export const SIZES: Record<Kind, readonly (readonly [number, number])[]> = {
+  building: [[4, 4], [4, 5], [5, 4], [5, 5]],
+  skyscraper: [[6, 6], [5, 6], [6, 5]],
+  wonder: [[8, 8], [7, 8], [8, 7], [7, 7]],
+};
 // How far out each kind may stand (share of the inradius): wonders inside
 // the safe zone, the rest short of the rim.
 const REACH: Record<Kind, number> = { wonder: SAFE_RHO, skyscraper: 0.88, building: 0.92 };
 
-// A building: its square on the grid (units, [x0, x1) × [y0, y1)) and its
-// middle and front in the tile (front: the way it faces, toward a road).
+// A building: its rectangle on the grid (units, [x0, x1) × [y0, y1)) and
+// its middle and front in the tile (front: the way it faces, toward a road;
+// `front` its width along that side, `depth` back from it, units).
 export interface Painted {
   readonly kind: Kind;
   readonly x0: number; readonly y0: number; readonly x1: number; readonly y1: number;
   readonly at: Pt;
   readonly yaw: number;
+  readonly front: number; readonly depth: number;
   readonly order: number;   // 0 at the middle, 1 the farthest: how tall it stands
 }
 export interface Painting {
@@ -77,10 +87,21 @@ export function paintCity(inp: PaintInput): Painting {
   const toTile = (x: number, y: number): Pt => ({ x: origin.x + (x * u.x + y * v.x) * UNIT, y: origin.y + (x * u.y + y * v.y) * UNIT });
   const limit = inp.limit ?? 1;
 
-  // Which grid squares each kind may cover (its square's middle in reach and free).
+  // Which grid squares each kind may cover: its middle in reach, and free
+  // with the squares round it (a margin of dry ground round every building,
+  // a unit, more than cityProps.ts WATER_GAP).
+  const free = new Uint8Array(N * N);
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) free[j * N + i] = inp.free(toTile(i - H + 0.5, j - H + 0.5)) ? 1 : 0;
+  const dry = (i: number, j: number) => {
+    for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+      const a = i + di, b = j + dj;
+      if (a >= 0 && b >= 0 && a < N && b < N && !free[b * N + a]) return false;
+    }
+    return true;
+  };
   const ok: Record<Kind, Uint8Array> = { wonder: new Uint8Array(N * N), skyscraper: new Uint8Array(N * N), building: new Uint8Array(N * N) };
   for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
-    const c = toTile(i - H + 0.5, j - H + 0.5), r = rhoOf(6, c), f = inp.free(c);
+    const r = rhoOf(6, toTile(i - H + 0.5, j - H + 0.5)), f = dry(i, j);
     for (const k of ['wonder', 'skyscraper', 'building'] as const) ok[k][j * N + i] = f && r <= Math.min(REACH[k], limit) ? 1 : 0;
   }
   // Sums over the grid, to ask whether a square is all allowed, or all clear, at once.
@@ -95,58 +116,82 @@ export function paintCity(inp: PaintInput): Painting {
     return s[d * (N + 1) + c]! - s[b * (N + 1) + c]! - s[d * (N + 1) + a]! + s[b * (N + 1) + a]!;
   };
   const allowed = Object.fromEntries((['wonder', 'skyscraper', 'building'] as const).map((k) => [k, sums(ok[k])])) as Record<Kind, Int32Array>;
-  const fits = (k: Kind, x0: number, y0: number) => {
-    const n = SIZE[k];
-    return x0 >= -H && y0 >= -H && x0 + n <= H && y0 + n <= H && area(allowed[k], x0, y0, x0 + n, y0 + n) === n * n;
-  };
+  const fits = (k: Kind, x0: number, y0: number, w: number, h: number) =>
+    x0 >= -H && y0 >= -H && x0 + w <= H && y0 + h <= H && area(allowed[k], x0, y0, x0 + w, y0 + h) === w * h;
+  // The stretches of dry land (4-connected squares where a building may
+  // stand); the city keeps to the largest.
+  const piece = new Int32Array(N * N).fill(-1);
+  let largest = -1, largestSize = 0;
+  for (let st = 0, label = 0; st < N * N; st++) {
+    if (!ok.building[st] || piece[st] >= 0) continue;
+    const stack = [st];
+    piece[st] = label;
+    let size = 0;
+    while (stack.length) {
+      const q = stack.pop()!, qi = q % N, qj = (q - qi) / N;
+      size++;
+      for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        const ni = qi + di, nj = qj + dj, nq = nj * N + ni;
+        if (ni < 0 || nj < 0 || ni >= N || nj >= N || !ok.building[nq] || piece[nq] >= 0) continue;
+        piece[nq] = label;
+        stack.push(nq);
+      }
+    }
+    if (size > largestSize) { largestSize = size; largest = label; }
+    label++;
+  }
+  const inLargest = (x0: number, y0: number) => piece[(y0 + H) * N + x0 + H] === largest;
 
   // Taken: every building's square grown by 1 (nothing may stand there: guarantee 1).
   const taken = new Uint8Array(N * N);
   let takenSums = sums(taken);
-  const placed: { kind: Kind; x0: number; y0: number; n: number }[] = [];
-  const clear = (x0: number, y0: number, n: number) => area(takenSums, x0, y0, x0 + n, y0 + n) === 0;
-  const take = (x0: number, y0: number, n: number) => {
-    for (let j = y0 - 1; j < y0 + n + 1; j++) for (let i = x0 - 1; i < x0 + n + 1; i++) if (i >= -H && j >= -H && i < H && j < H) taken[(j + H) * N + i + H] = 1;
+  const placed: { kind: Kind; x0: number; y0: number; w: number; h: number }[] = [];
+  const clear = (x0: number, y0: number, w: number, h: number) => area(takenSums, x0, y0, x0 + w, y0 + h) === 0;
+  const take = (x0: number, y0: number, w: number, h: number) => {
+    for (let j = y0 - 1; j < y0 + h + 1; j++) for (let i = x0 - 1; i < x0 + w + 1; i++) if (i >= -H && j >= -H && i < H && j < H) taken[(j + H) * N + i + H] = 1;
     takenSums = sums(taken);
   };
-  // How many placed buildings a square at (x0, y0) of side n joins (guarantee 2).
-  const joins = (x0: number, y0: number, n: number) => placed.reduce((a, p) => a + (joined(x0, y0, x0 + n, y0 + n, p.x0, p.y0, p.x0 + p.n, p.y0 + p.n) ? 1 : 0), 0);
+  // How many placed buildings a rectangle joins (guarantee 2).
+  const joins = (x0: number, y0: number, w: number, h: number) => placed.reduce((a, p) => a + (joined(x0, y0, x0 + w, y0 + h, p.x0, p.y0, p.x0 + p.w, p.y0 + p.h) ? 1 : 0), 0);
 
-  // Where a square of side n may go: beside a placed building, 1 unit
-  // away on one of its sides, overlapping it along that side by at least
-  // a unit; aligned with it (a row) or slid along it (a lane that jogs).
-  const candidates = (n: number): [number, number][] => {
+  // Where a w × h rectangle may go: beside a placed building, 1 unit away
+  // on one of its sides, overlapping it along that side by at least a
+  // unit; aligned with it (a row) or slid along it (a lane that jogs).
+  const candidates = (w: number, h: number): [number, number][] => {
     const out: [number, number][] = [];
     for (const p of placed) {
-      for (let s = -(n - 1); s <= p.n - 1; s++) {
-        out.push([p.x0 + p.n + 1, p.y0 + s], [p.x0 - 1 - n, p.y0 + s], [p.x0 + s, p.y0 + p.n + 1], [p.x0 + s, p.y0 - 1 - n]);
-      }
+      for (let s = -(h - 1); s <= p.h - 1; s++) out.push([p.x0 + p.w + 1, p.y0 + s], [p.x0 - 1 - w, p.y0 + s]);
+      for (let s = -(w - 1); s <= p.w - 1; s++) out.push([p.x0 + s, p.y0 + p.h + 1], [p.x0 + s, p.y0 - 1 - h]);
     }
     return out;
   };
   const place = (k: Kind, centre: number, r: Rng): boolean => {
-    const n = SIZE[k];
-    let best: [number, number] | null = null, bs = -Infinity;
-    const pool: [number, number][] = placed.length ? candidates(n) : (() => {
-      // The first: as near the middle as it fits.
-      const out: [number, number][] = [];
-      for (let y = -H; y + n <= H; y++) for (let x = -H; x + n <= H; x++) out.push([x, y]);
-      return out;
-    })();
-    for (const [x0, y0] of pool) {
-      if (!fits(k, x0, y0) || !clear(x0, y0, n)) continue;
-      const cx = x0 + n / 2, cy = y0 + n / 2, d = Math.hypot(cx, cy) * UNIT;
-      // Near the middle (the skyscrapers most), joining more neighbours (the
-      // town fills in), and staggered against the ones beside it rather
-      // than squared up in rows (a grown town, not a grid).
-      const aligned = placed.some((p) => p.x0 === x0 || p.y0 === y0 || p.x0 + p.n === x0 + n || p.y0 + p.n === y0 + n) ? 1 : 0;
-      const sc = -centre * d + 0.012 * joins(x0, y0, n) - STAGGER * aligned + 0.03 * r();
-      if (sc > bs) { bs = sc; best = [x0, y0]; }
+    // (A size drawn for it, the first of the kind's most often; another if that one finds no room.)
+    const sizes = SIZES[k], first = r() < 0.4 ? 0 : 1 + Math.floor(r() * (sizes.length - 1));
+    for (const [w, h] of [sizes[first]!, ...sizes.filter((_, i) => i !== first)]) {
+      let best: [number, number] | null = null, bs = -Infinity;
+      const pool: [number, number][] = placed.length ? candidates(w, h) : (() => {
+        // The first: as near the middle as it fits, in the largest stretch of land.
+        const out: [number, number][] = [];
+        for (let y = -H; y + h <= H; y++) for (let x = -H; x + w <= H; x++) if (inLargest(x, y)) out.push([x, y]);
+        return out;
+      })();
+      for (const [x0, y0] of pool) {
+        if (!fits(k, x0, y0, w, h) || !clear(x0, y0, w, h)) continue;
+        const cx = x0 + w / 2, cy = y0 + h / 2, d = Math.hypot(cx, cy) * UNIT;
+        // Near the middle (the skyscrapers most), joining more neighbours (the
+        // town fills in), and staggered against the ones beside it rather
+        // than squared up in rows (a grown town, not a grid).
+        const aligned = placed.some((p) => p.x0 === x0 || p.y0 === y0 || p.x0 + p.w === x0 + w || p.y0 + p.h === y0 + h) ? 1 : 0;
+        const sc = -centre * d + 0.012 * joins(x0, y0, w, h) - STAGGER * aligned + 0.03 * r();
+        if (sc > bs) { bs = sc; best = [x0, y0]; }
+      }
+      if (!best) continue;
+      placed.push({ kind: k, x0: best[0], y0: best[1], w, h });
+      take(best[0], best[1], w, h);
+      return true;
     }
-    if (!best) return false;
-    placed.push({ kind: k, x0: best[0], y0: best[1], n });
-    take(best[0], best[1], n);
-    return true;
+    return false;
   };
   const wonders = Math.min(MAX_WONDERS, inp.wonders);
   for (let i = 0; i < wonders; i++) place('wonder', 1, rand);
@@ -160,12 +205,12 @@ export function paintCity(inp: PaintInput): Painting {
   };
   for (let a = 0; a < placed.length; a++) for (let b = a + 1; b < placed.length; b++) {
     const p = placed[a]!, q = placed[b]!;
-    const strip = gapBetween(p.x0, p.y0, p.x0 + p.n, p.y0 + p.n, q.x0, q.y0, q.x0 + q.n, q.y0 + q.n);
+    const strip = gapBetween(p.x0, p.y0, p.x0 + p.w, p.y0 + p.h, q.x0, q.y0, q.x0 + q.w, q.y0 + q.h);
     if (strip) mark(...strip);
   }
   // The corners where roads meet (a road on one side across and one along).
   const inBuilding = new Uint8Array(N * N);
-  for (const p of placed) for (let j = p.y0; j < p.y0 + p.n; j++) for (let i = p.x0; i < p.x0 + p.n; i++) inBuilding[(j + H) * N + i + H] = 1;
+  for (const p of placed) for (let j = p.y0; j < p.y0 + p.h; j++) for (let i = p.x0; i < p.x0 + p.w; i++) inBuilding[(j + H) * N + i + H] = 1;
   const at = (i: number, j: number) => (i >= 0 && j >= 0 && i < N && j < N ? road[j * N + i]! : 0);
   const corners: number[] = [];
   for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
@@ -189,29 +234,30 @@ export function paintCity(inp: PaintInput): Painting {
 
   // Each building faces the joined neighbour nearest the middle (its road
   // there), or out; its order: how far it stands from the middle, ranked.
-  const middle = (p: { x0: number; y0: number; n: number }) => ({ x: p.x0 + p.n / 2, y: p.y0 + p.n / 2 });
+  const middle = (p: { x0: number; y0: number; w: number; h: number }) => ({ x: p.x0 + p.w / 2, y: p.y0 + p.h / 2 });
   const ranked = [...placed].sort((a, b) => Math.hypot(middle(a).x, middle(a).y) - Math.hypot(middle(b).x, middle(b).y));
   const buildings: Painted[] = placed.map((p) => {
     const m = middle(p);
     let face: { x: number; y: number } | null = null, fd = Infinity;
     for (const q of placed) {
-      if (q === p || !joined(p.x0, p.y0, p.x0 + p.n, p.y0 + p.n, q.x0, q.y0, q.x0 + q.n, q.y0 + q.n)) continue;
+      if (q === p || !joined(p.x0, p.y0, p.x0 + p.w, p.y0 + p.h, q.x0, q.y0, q.x0 + q.w, q.y0 + q.h)) continue;
       const mq = middle(q), d = Math.hypot(mq.x, mq.y);
       if (d < fd) { fd = d; face = { x: Math.abs(mq.x - m.x) > Math.abs(mq.y - m.y) ? Math.sign(mq.x - m.x) : 0, y: Math.abs(mq.x - m.x) > Math.abs(mq.y - m.y) ? 0 : Math.sign(mq.y - m.y) }; }
     }
     face ??= Math.abs(m.x) > Math.abs(m.y) ? { x: Math.sign(m.x) || 1, y: 0 } : { x: 0, y: Math.sign(m.y) || 1 };
     const dir = { x: face.x * u.x + face.y * v.x, y: face.x * u.y + face.y * v.y };
     return {
-      kind: p.kind, x0: p.x0, y0: p.y0, x1: p.x0 + p.n, y1: p.y0 + p.n,
+      kind: p.kind, x0: p.x0, y0: p.y0, x1: p.x0 + p.w, y1: p.y0 + p.h,
       at: toTile(m.x, m.y), yaw: Math.atan2(dir.y, dir.x),
+      front: face.x ? p.h : p.w, depth: face.x ? p.w : p.h,
       order: placed.length > 1 ? ranked.indexOf(p) / (placed.length - 1) : 0,
     };
   });
-  const reach = placed.reduce((a, p) => Math.max(a, ...[[p.x0, p.y0], [p.x0 + p.n, p.y0], [p.x0, p.y0 + p.n], [p.x0 + p.n, p.y0 + p.n]].map(([x, y]) => Math.hypot(toTile(x!, y!).x, toTile(x!, y!).y))), 0);
+  const reach = placed.reduce((a, p) => Math.max(a, ...[[p.x0, p.y0], [p.x0 + p.w, p.y0], [p.x0, p.y0 + p.h], [p.x0 + p.w, p.y0 + p.h]].map(([x, y]) => Math.hypot(toTile(x!, y!).x, toTile(x!, y!).y))), 0);
   return { buildings, roads, reach, origin, u, v };
 }
 
-// Whether two squares are joined: facing sides exactly 1 unit apart,
+// Whether two rectangles are joined: facing sides exactly 1 unit apart,
 // overlapping along them.
 export function joined(ax0: number, ay0: number, ax1: number, ay1: number, bx0: number, by0: number, bx1: number, by1: number): boolean {
   return gapBetween(ax0, ay0, ax1, ay1, bx0, by0, bx1, by1) !== null;

@@ -1190,7 +1190,7 @@ export class GlobeRenderer {
     }
     // Streets and squares inside towns (cityProps.ts lays them out).
     for (const st of this.cityProps.streets()) this.drape(st.points, st.halfWidth, st.paved ? PAVED_RGB : DIRT_RGB, batches, at, lift, bridges, st.paved);
-    for (const pv of this.cityProps.pavings()) this.pave(pv.points, pv.rgb ?? (pv.paved ? PAVED_RGB : DIRT_RGB), at, lift + ROAD_LAYER * this.scale, batches.top.pos, batches.top.col);
+    for (const pv of this.cityProps.pavings()) this.pave(pv.points, pv.rgb ?? (pv.paved ? PAVED_RGB : DIRT_RGB), at, lift + ROAD_LAYER * this.scale, batches.top.pos, batches.top.col, pv.exact);
     for (const m of this.roads) { this.scene.remove(m); m.geometry.dispose(); }
     this.roads = [batches.edge, batches.top].map((bt, i) => {
       const geo = new THREE.BufferGeometry();
@@ -1224,10 +1224,11 @@ export class GlobeRenderer {
   // A paved square: a fan from its middle, each point on the ground.
   // Squares are part of the street surface: the streets' own color, and
   // grown a little so they overlap the streets round them (no kerb between).
-  private pave(corners: readonly THREE.Vector3[], rgb: readonly [number, number, number], at: Ground, lift: number, pos: number[], col: number[]): void {
+  // (`exact`: as given, not grown under the streets round it: a painted city's roads.)
+  private pave(corners: readonly THREE.Vector3[], rgb: readonly [number, number, number], at: Ground, lift: number, pos: number[], col: number[], exact = false): void {
     if (corners.length < 3 || !this.game.explored[at(corners[0]!).t]) return;
     const mid = corners.reduce((a, p) => a.add(p), new THREE.Vector3()).normalize();
-    const grow = SQUARE_GROW * this.game.globe.avgEdgeAngle;
+    const grow = exact ? 0 : SQUARE_GROW * this.game.globe.avgEdgeAngle;
     const pts = corners.map((p) => { const out = p.clone().sub(mid); return p.clone().addScaledVector(out, grow / Math.max(1e-9, out.length())).normalize(); });
     const on = (d: THREE.Vector3) => { const h = at(d); return d.clone().multiplyScalar(Math.max(h.ground, h.water) + lift); };
     // A fine fan (rings in from the edge, the edge subdivided) so the paving
