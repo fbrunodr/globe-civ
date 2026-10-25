@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import { CATALOG, buildCatalogGeometry, buildModel, cone, cyl, part, seg, tf, V, type CatalogKind, type Palette, type Tf } from './propCatalog.ts';
-import type { PropKind } from './town/geometry.ts';
 import { houseGeometry, isHouseKind, type HouseKind } from './houses.ts';
 import { isWonderModelKind, wonderGeometry, type WonderModelKind } from './wonderModels.ts';
 import { isRuralModelKind, ruralGeometry, type RuralModelKind } from './rural/models.ts';
@@ -28,7 +27,6 @@ const PLASTER = 0xcfc2a8;
 const STONE = 0xb8b0a0;
 const DARK_STONE = 0x8d877c;
 const TIMBER = 0x7a5f45;
-const MARBLE = 0xd8d2c4;
 const IRON = 0x4a4744;
 
 // Four walls (open box: no floor, the roof covers the top), w along x, d along z.
@@ -67,8 +65,6 @@ function hip(w: number, d: number, h: number, color: number, o: Tf = {}): THREE.
   return part(g, color, tf(o));
 }
 
-// A column (3-sided, 6 triangles).
-const column = (h: number, r: number, color: number, o: Tf = {}) => cyl(r, r * 0.85, h, 3, color, o);
 
 // A house: walls plus a gable roof with a small overhang.
 function house(w: number, d: number, h: number, roofH: number, wall: number, roof: number, o: Tf = {}): THREE.BufferGeometry[] {
@@ -76,60 +72,6 @@ function house(w: number, d: number, h: number, roofH: number, wall: number, roo
 }
 
 export const BUILDINGS_CATALOG = {
-  // ---------- street furniture ----------
-  gardenTree: { name: 'Garden tree', leaf: 0x5b7a3e, build: (p) => [
-    cyl(0.00028, 0.0002, 0.0022, 3, 0x6a5038),
-    part(new THREE.OctahedronGeometry(0.0021, 0), p.leaf, tf({ y: 0.0034, sy: 1.15 })),
-  ] },
-  well: { name: 'Well', leaf: 0x7a5a48, build: (p) => [
-    cyl(0.0011, 0.0011, 0.0008, 6, STONE),
-    ...[-0.0009, 0.0009].map((x) => column(0.0022, 0.00012, TIMBER, { x })),
-    gable(0.0024, 0.0016, 0.0008, p.leaf, { y: 0.0022 }),
-  ] },
-  fountain: { name: 'Fountain', leaf: 0x8fa6b0, build: (p) => [
-    cyl(0.0022, 0.0024, 0.0006, 8, STONE),
-    flat(0.0036, 0.0036, p.leaf, { y: 0.00055, ry: Math.PI / 8 }),
-    column(0.0026, 0.00035, MARBLE),
-  ] },
-  shed: { name: 'Garden shed', leaf: 0x6a5a48, build: (p) => house(0.0022, 0.0016, 0.0013, 0.0008, TIMBER, p.leaf) },
-  stall: { name: 'Market stall', leaf: 0xa86a4a, build: (p) => [
-    ...[[-0.0009, -0.0006], [0.0009, -0.0006], [-0.0009, 0.0006], [0.0009, 0.0006]].map(([x, z]) => column(0.0016, 0.0001, TIMBER, { x, z })),
-    gable(0.0024, 0.0018, 0.0007, p.leaf, { y: 0.0016 }),
-    flat(0.0018, 0.0011, 0xb08a5a, { y: 0.0008 }),
-  ] },
-  statue: { name: 'Statue', leaf: 0x7a6a50, build: (p) => [
-    ...block(0.0013, 0.0013, 0.0008, STONE),
-    cyl(0.00028, 0.0002, 0.0012, 5, p.leaf, { y: 0.0008 }),
-    part(new THREE.IcosahedronGeometry(0.0002, 0), p.leaf, tf({ y: 0.00225 })),
-  ] },
-  // A bench, facing its front (+z).
-  bench: { name: 'Bench', leaf: TIMBER, build: (p) => [
-    ...block(0.0018, 0.0005, 0.0001, p.leaf, { y: 0.0003 }),
-    ...[-0.0008, 0.0008].flatMap((x) => block(0.0001, 0.0004, 0.0003, IRON, { x })),
-    ...block(0.0018, 0.0001, 0.0004, p.leaf, { y: 0.0004, z: -0.0002 }),
-  ] },
-  lampPost: { name: 'Lamp post', leaf: 0xe8d8a0, build: (p) => [
-    column(0.0026, 0.00007, IRON),
-    ...block(0.00035, 0.00035, 0.0004, p.leaf, { y: 0.0026 }),
-    cone(0.00028, 0.00018, 4, IRON, { y: 0.003, ry: Math.PI / 4 }),
-  ] },
-  crates: { name: 'Crates and barrels', leaf: 0x9a7a52, build: (p) => [
-    ...block(0.0008, 0.0008, 0.0007, p.leaf, { x: -0.0004, z: 0.0002 }),
-    ...block(0.0006, 0.0006, 0.0005, 0x8a6a48, { x: 0.0004, z: 0.0003, ry: 0.4 }),
-    cyl(0.00035, 0.00035, 0.0008, 6, 0x6a4a32, { x: 0.0002, z: -0.0004 }),
-    part(new THREE.CircleGeometry(0.00035, 6).rotateX(-Math.PI / 2), 0x5a3e2a, tf({ x: 0.0002, y: 0.0008, z: -0.0004 })),
-  ] },
-  flowerBed: { name: 'Flower bed', leaf: 0xc96a7a, build: (p) => [
-    walls(0.0026, 0.0012, 0.0003, STONE),
-    flat(0.0026, 0.0012, 0x5a4a38, { y: 0.00025 }),
-    ...[[-0.0008, 0], [0, 0.0001], [0.0008, -0.0001]].map(([x, z], i) =>
-      part(new THREE.OctahedronGeometry(0.00032, 0), i === 1 ? 0x5e8a44 : p.leaf, tf({ x, y: 0.0004, z, sy: 0.7 }))),
-  ] },
-  hedge: { name: 'Hedge', leaf: 0x4f6e38, build: (p) => block(0.003, 0.0006, 0.0008, p.leaf) },
-  bush: { name: 'Bush', leaf: 0x5b7a3e, build: (p) => [
-    part(new THREE.IcosahedronGeometry(0.0008, 0), p.leaf, tf({ y: 0.0006, sy: 0.8 })),
-    part(new THREE.IcosahedronGeometry(0.0006, 0), p.leaf, tf({ x: 0.0006, y: 0.00045, sy: 0.8 })),
-  ] },
   // ---------- rural ----------
   farmstead: { name: 'Farmstead', leaf: 0x8a5a44, build: (p) => [
     ...house(0.0042, 0.003, 0.0024, 0.0016, PLASTER, p.leaf),
@@ -193,11 +135,6 @@ export const BUILDINGS_CATALOG = {
 } satisfies Record<string, BuildingEntry>;
 
 export type BuildingKind = keyof typeof BUILDINGS_CATALOG;
-// The model of each prop a town drawing places (town/geometry.ts PROPS).
-export const PROP_MODEL: Record<PropKind, BuildingKind> = {
-  tree: 'gardenTree', bush: 'bush', hedge: 'hedge', flowerbed: 'flowerBed', well: 'well', fountain: 'fountain', statue: 'statue',
-  bench: 'bench', lamp: 'lampPost', stall: 'stall', crates: 'crates', shed: 'shed',
-};
 export const BUILDING_KINDS = Object.keys(BUILDINGS_CATALOG) as BuildingKind[];
 export const buildingEntry = (k: BuildingKind): BuildingEntry => BUILDINGS_CATALOG[k];
 

@@ -5,29 +5,25 @@
 //
 // Nothing is built on water or right beside it.
 //
-// Rural land tiles show a rural drawing (src/rural: tracks, worked areas,
-// the homestead, a building spot) chosen by the tracks that cross their
-// sides; what the areas hold is the tile's (rural/look.ts). A city's rural
-// tracks form a tree that joins its center at a few sides (ruralLinks).
-// Fishing boats stay on their water tiles. Everything is a pure function of
+// Rural land tiles show a farm painted on them (farmPainter.ts: a
+// homestead, worked areas round it); what the areas hold is the tile's
+// (rural/look.ts). Fishing boats stay on their water tiles. Everything is a pure function of
 // the city's state and the seed, so a reload looks identical.
 
 import * as THREE from 'three';
 import type { Game, City } from './game.ts';
 import { USE, improvementFor, wonderBeside, isWonderKey, type ImprovementKey, type EraIndex } from './cities.ts';
-import { ROOFS, PROP_MODEL, buildingEntry, isFloraModel, isLotModel, placedGeometry, waterRule, type BuildingKind, type LotModelKind, type PlacedKind } from './buildingCatalog.ts';
+import { ROOFS, buildingEntry, isFloraModel, isLotModel, placedGeometry, waterRule, type BuildingKind, type LotModelKind, type PlacedKind } from './buildingCatalog.ts';
 import { wonderModelKind, type SiteModel } from './wonderModels.ts';
 import type { CatalogKind } from './propCatalog.ts';
 import { HOUSE_VARIANTS, houseKind } from './houses.ts';
 import { styleOf } from './architecture.ts';
-import { LOT_SIZE, isBuilding, rhoOf, pointInPoly, distToSeg, type Floors, type Footprint } from './town/geometry.ts';
+import { LOT_SIZE, rhoOf, type Floors, type Footprint } from './town/geometry.ts';
 import { planRoads, roadLines, ROAD_HALF_WIDTH } from './roads.ts';
-import { classOf, sideUnder, key as colouringKey, type EdgeValue, type Turn } from './town/edges.ts';
-import { toTile, STAMP_STEP, type FanPt } from './tileFan.ts';
-import { pickRural, TRACK_HALF, WORK_OF, type RuralDensity, type RuralDrawing, type Work } from './rural/index.ts';
-import { SCATTER_GAP, areaLook, fieldEdge, gridIn, rowsIn, scatterIn, type Fill, type RGB } from './rural/look.ts';
+import { paintFarm, WORK_OF, type RuralDensity } from './farmPainter.ts';
+import { SCATTER_GAP, areaLook, fieldEdge, gridIn, scatterIn, type Fill, type RGB } from './rural/look.ts';
 import { ruralModelKind, type RuralModel } from './rural/models.ts';
-import { densify as densify2, len as len2, sub as sub2, type Pt as Pt2 } from './town/geometry.ts';
+import { len as len2, sub as sub2, type Pt as Pt2 } from './town/geometry.ts';
 import { mulberry32, type Rng } from './rng.ts';
 import { dressCity } from './cityDress.ts';
 import { paintCity } from './cityPainter.ts';
@@ -82,6 +78,8 @@ const SEA_WONDER = 0.9, SEA_ISLET = 0.075;
 // its square (tile steps: twice the size it has in a city) and the ground
 // kept clear round it.
 const LAND_WONDER_HALF = 0.12, LAND_WONDER_GAP = 0.015;
+// The lowest a field's crop block stands (tile steps; a house's storey is 0.02).
+const CROP_LOW = 0.012;
 // Models are enlarged a little over true scale so towns read from afar
 // (the drawings' lot sizes assume this scale).
 const HOUSE_SCALE = 1.5;
@@ -141,55 +139,9 @@ export class CityProps {
   // Forget every layout (the ground under them changed).
   invalidate(): void { this.version++; }
 
-  // The built-up tiles of a city: its center.
-  private built(city: City): number[] {
-    return [city.tile].filter((t) => isBuilt(this.game, t));
-  }
   // Its rural tiles with drawings.
   private farmland(city: City): number[] {
     return this.game.cityTiles(city, USE.rural).filter((t) => isFarmland(this.game, t));
-  }
-
-  // The tracks of a city's countryside: a tree over its rural tiles, joined
-  // to the town at as few sides as it can (one per piece of countryside
-  // that touches the town), each link the edge a track crosses. (`a:b`,
-  // both ways.)
-  private readonly linkCache = new Map<number, { key: string; links: Set<string> }>();
-  private ruralLinks(city: City): Set<string> {
-    const g = this.game, rural = this.farmland(city), built = new Set(this.built(city));
-    const key = `${[...built].join(',')}|${rural.join(',')}`;
-    const hit = this.linkCache.get(city.id);
-    if (hit && hit.key === key) return hit.links;
-    const links = new Set<string>(), R = new Set(rural), done = new Set<number>();
-    const link = (a: number, b: number) => { links.add(`${a}:${b}`); links.add(`${b}:${a}`); };
-    for (const start of [...rural].sort((a, b) => a - b)) {
-      if (done.has(start)) continue;
-      const into = g.tiles[start].neighbors.filter((n) => built.has(n)).sort((a, b) => a - b)[0];
-      if (into === undefined) continue;
-      link(start, into);
-      done.add(start);
-      const queue = [start];
-      while (queue.length) {
-        const u = queue.shift()!;
-        for (const n of g.tiles[u].neighbors) if (R.has(n) && !done.has(n)) { done.add(n); link(u, n); queue.push(n); }
-      }
-    }
-    this.linkCache.set(city.id, { key, links });
-    return links;
-  }
-  ruralLink(t: number, n: number): boolean { return this.linked(t, n); }
-  private linked(t: number, n: number): boolean {
-    const g = this.game, city = g.cityById.get(g.tileCity[t]!) ?? g.cityById.get(g.tileCity[n]!);
-    return !!city && this.ruralLinks(city).has(`${t}:${n}`);
-  }
-
-  // Whether a rural tile's track crosses its edge with neighbor n
-  // (ruralLinks): the same from either side.
-  edgeValue(t: number, n: number): EdgeValue {
-    return this.linked(t, n) ? 1 : 0;
-  }
-  colouring(t: number): EdgeValue[] {
-    return this.game.tiles[t].neighbors.map((n) => this.edgeValue(t, n));
   }
 
   // Everything the town's layout depends on.
@@ -198,7 +150,7 @@ export class CityProps {
     if (m !== undefined) return m;
     const g = this.game;
     const wonders = g.cityWonders(city).map((w) => `${w}@${g.wondersBuilt.get(w)}`).join(',');
-    const farms = this.farmland(city).map((t) => `${t}:${improvementFor(g.terrainAt(t))}:${colouringKey(this.colouring(t))}`).join(';');
+    const farms = this.farmland(city).map((t) => `${t}:${improvementFor(g.terrainAt(t))}:${g.pillaged[t]}`).join(';');
     const sig = `${city.id}|${city.pop}|${g.players[city.owner]!.era}|${city.buildings.has('walls') ? 'w' : ''}|${city.wonderTile ?? ''}|${city.building ?? ''}|${this.version}|${wonders}|${farms}`;
     memo?.set(city.id, sig);
     return sig;
@@ -289,27 +241,13 @@ export class CityProps {
     const put = (t: number, ...bs: PlacedBuilding[]) => { const l = byTile.get(t); if (l) l.push(...bs); else byTile.set(t, bs); };
     const era = g.players[city.owner]!.era;
     const walled = city.buildings.has('walls');
-    const dirAt = (p: FanPt) => {
-      const tl = g.tiles[p.t], k = tl.corners.length;
-      const A = g.globe.triCenters[tl.corners[p.i]!]!, B = g.globe.triCenters[tl.corners[(p.i + 1) % k]!]!;
-      const w0 = 1 - p.wa - p.wb;
-      return new THREE.Vector3(tl.center.x * w0 + A.x * p.wa + B.x * p.wb, tl.center.y * w0 + A.y * p.wa + B.y * p.wb, tl.center.z * w0 + A.z * p.wa + B.z * p.wb).normalize();
-    };
     const wet = (s: CitySpot) => s.water - s.ground > DRY;
     // How much a drawing is stretched or squeezed here (tiles vary in size).
     const local = (a: THREE.Vector3, b: THREE.Vector3) => Math.min(1.25, Math.max(0.7, a.angleTo(b) / (0.01 * D)));
 
-    // No streets in the city (its diorama suggests them); farm tracks below.
+    // No streets in a city (its diorama suggests them) or a farm.
     const streets: Street[] = [];
     const pavings: Paving[] = [];
-    // Street widths follow the local tile size (tiles vary in size).
-    const widths = (x: { pts: FanPt[]; hw: number[] }) => {
-      const dirs = x.pts.map(dirAt);
-      return { pts: dirs, hw: dirs.map((d, i) => {
-        const o = dirs[i + 1] ?? dirs[i - 1];
-        return x.hw[i]! * D * (o ? Math.min(1.25, Math.max(0.7, d.angleTo(o) / (STAMP_STEP * D))) : 1);
-      }) };
-    };
     // Nothing may stand on the roads between cities: every building's
     // footprint is checked (shrunk a little if it touches one, left out if
     // it still does). Roads run up to the city's diorama.
@@ -374,144 +312,118 @@ export class CityProps {
 
     // Wonders beside the city on flat land (the Pyramids, Stonehenge, or
     // the scaffolding of one), each on a square of its tile placed by a
-    // simple painting: the dry square clear of roads nearest the edge the
+    // simple painting: the dry spot clear of roads nearest the edge the
     // tile shares with the city, facing it. The tile's farm keeps round it.
     const keep = new Map<number, { p: Pt2; r: number }>();
     for (const t of g.tiles[city.tile].neighbors) {
       const m = g.tileCity[t] === city.id ? this.landWonderOf(t) : null;
       if (!m) continue;
-      const turn: Turn = isFarmland(g, t) ? classOf(this.colouring(t)).turn : { rot: 0, flip: false };
-      const toT = (p: Pt2) => dirAt(toTile(t, turn, p));
+      const { toDir, k } = onTile(g, t);
       const kind = wonderModelKind(m), [hw, hd] = this.modelBox(kind);
-      const sc = LAND_WONDER_HALF / Math.max(hw, hd), h = LAND_WONDER_HALF + LAND_WONDER_GAP;
-      // (The drawing's side under the tile's side toward the city.)
-      const i = g.tiles[t].neighbors.indexOf(city.tile), s = [0, 1, 2, 3, 4, 5].find((j) => sideUnder(turn, j) === i) ?? 0;
-      const u = { x: Math.cos((s * Math.PI) / 3), y: Math.sin((s * Math.PI) / 3) }, v = { x: -u.y, y: u.x }, mid = { x: 0.5 * u.x, y: 0.5 * u.y };
-      let best: Pt2 | null = null, bestD = Infinity;
-      for (let x = -0.4; x <= 0.4; x += 0.02) for (let y = -0.4; y <= 0.4; y += 0.02) {
-        const p = { x, y }, dist = len2(sub2(p, mid));
-        if (dist >= bestD) continue;
-        const pts = [-1, 0, 1].flatMap((a) => [-1, 0, 1].map((b) => ({ x: p.x + (a * u.x + b * v.x) * h, y: p.y + (a * u.y + b * v.y) * h })));
-        if (pts.some((q) => rhoOf(6, q) > 0.95)) continue;
-        const dirs = pts.map(toT);
+      const sc = LAND_WONDER_HALF / Math.max(hw, hd), r = Math.SQRT2 * (LAND_WONDER_HALF + LAND_WONDER_GAP);
+      const tl = g.tiles[t]!, i = tl.neighbors.indexOf(city.tile), n = tl.corners.length;
+      const edge = g.globe.triCenters[tl.corners[i]!]!.clone().add(g.globe.triCenters[tl.corners[(i + 1) % n]!]!).normalize();
+      // (Spots nearest the edge first; the first whose circle is all dry
+      // and clear of roads, checked every 0.02 across it.)
+      const disk: Pt2[] = [];
+      for (let x = -r; x <= r; x += 0.02) for (let y = -r; y <= r; y += 0.02) if (Math.hypot(x, y) <= r) disk.push({ x, y });
+      const spots: { p: Pt2; dist: number }[] = [];
+      for (let x = -0.4; x <= 0.4; x += 0.02) for (let y = -0.4; y <= 0.4; y += 0.02) spots.push({ p: { x, y }, dist: toDir({ x, y }).angleTo(edge) });
+      spots.sort((a, b) => a.dist - b.dist);
+      let best: Pt2 | null = null;
+      for (const { p } of spots) {
+        if ([0, 1, 2, 3, 4, 5].some((j) => rhoOf(6, { x: p.x + r * Math.cos((j * Math.PI) / 3), y: p.y + r * Math.sin((j * Math.PI) / 3) }) > 0.95)) continue;
+        const dirs = disk.map((q) => toDir({ x: p.x + q.x, y: p.y + q.y }));
         if (dirs.some((dd) => wet(this.sampleDir(dd))) || !clear.free(dirs)) continue;
-        best = p; bestD = dist;
+        best = p;
+        break;
       }
       if (!best) continue;
-      const dir = toT(best), ahead = toT({ x: best.x + 0.01 * u.x, y: best.y + 0.01 * u.y });
-      put(t, ...this.standLot(kind, dir, facing(dir, ahead) + Math.PI / 2, hw, hd, onTile(g, t).k * sc, mulberry32(mix(t, 0x3a)), city.owner));
-      keep.set(t, { p: best, r: Math.SQRT2 * h });
+      const dir = toDir(best);
+      put(t, ...this.standLot(kind, dir, facing(dir, edge) + Math.PI / 2, hw, hd, k * sc, mulberry32(mix(t, 0x3a)), city.owner));
+      keep.set(t, { p: best, r });
     }
 
-    // The countryside: each rural tile's drawing (its tracks, worked areas,
-    // homestead and building spot), its areas filled as the tile grows them.
+    // The countryside: each worked land tile's farm (farmPainter.ts: a
+    // homestead, worked areas round it), laid evenly on the tile; its areas
+    // filled as the tile grows them (rural/look.ts).
     const density = ruralDensity(g, city);
     for (const t of this.farmland(city)) {
-      const imp = improvementFor(g.terrainAt(t))!, work = WORK_OF[imp] as Work;
-      const colouring = this.colouring(t), { key, turn } = classOf(colouring);
-      const d = keepClear(pickRural(key, work, density, mix(t, 0x51)), keep.get(t));
-      const toT = (p: Pt2) => dirAt(toTile(t, turn, p));
-      // Tracks: a lane's width.
-      const tracks: Street[] = [];
-      for (const tr of d.tracks) {
-        const pts = densify2(tr.pts, STAMP_STEP);
-        const hw = pts.map(() => TRACK_HALF);
-        // (Scaled with the tile.)
-        const wd = widths({ pts: pts.map((p) => toTile(t, turn, p)), hw });
-        tracks.push({ points: wd.pts, halfWidth: wd.hw, paved: false });
-      }
-      streets.push(...tracks);
-      // What the homestead keeps clear of: its tracks too.
-      const clearHere = new StreetIndex([...tracks, ...streets, ...roads], D);
+      const imp = improvementFor(g.terrainAt(t))!, work = WORK_OF[imp]!;
+      const { toDir: toT } = onTile(g, t);
+      const ko = keep.get(t);
+      const farm = paintFarm({ work, density, seed: mix(t, 0x51), free: (p) => (!ko || len2(sub2(p, ko.p)) > ko.r) && !wet(this.sampleDir(toT(p))) && clear.free([toT(p)]) });
+      if (!farm) continue;
+      const clearHere = new StreetIndex([...streets, ...roads], D);
       const settleHere = (make: (shrink: number) => PlacedBuilding[]): PlacedBuilding[] => {
         for (const shrink of [1, 0.85]) { const bs = make(shrink); if (clearHere.free(this.footprint(bs[0]!)) && dryAround(bs[0]!)) return bs; }
         return [];
       };
-      const rand = mulberry32(mix(t, 0x77));
       const one = (m: RuralModel, p: Pt2, yaw: number, s: number, leaf: number, sx = 1, sy = 1, sz = 1) => {
         const dir = toT(p), smp = this.sampleDir(dir);
         if (wet(smp)) return;
         const q = new THREE.Quaternion().setFromUnitVectors(UP, dir).multiply(new THREE.Quaternion().setFromAxisAngle(UP, yaw));
         const pos = dir.clone().multiplyScalar(1 + smp.ground - 0.00005 * this.scale);
         const b: PlacedBuilding = { kind: ruralModelKind(m), matrix: new THREE.Matrix4().compose(pos, q, new THREE.Vector3(s * sx, s * sy, s * sz)), color: new THREE.Color(1, 1, 1), leaf: new THREE.Color(leaf) };
-        // (Never on a track or a road crossing the farm.)
+        // (Never on a road crossing the farm.)
         if (clearHere.free(this.footprint(b))) put(t, b);
       };
-      // (A drawing's yaw turns with the tile: the angle of its x axis there.)
+      // (Yaws on the tile: the angle of a direction drawn there.)
       const yawOf = (a: Pt2, b: Pt2) => { const da = toT(a), db = toT(b); return facing(da, db) + Math.PI / 2; };
-      const sc = D;
-      const fillWith = (f: Fill, poly: readonly Pt2[], seed: number) => {
-        if (f.t === 'rows') {
-          // (Each row a shade of its own, so the field ripples.)
-          const r = mulberry32(seed + 2), base = new THREE.Color(f.color);
-          for (const [a, b] of rowsIn(poly, f.spacing, 0.002)) {
-            const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, k = 0.9 + 0.2 * r();
-            one('ridge', mid, yawOf(a, b) - Math.PI / 2, sc, base.clone().multiplyScalar(k).getHex(), len2(sub2(b, a)), f.height * (0.9 + 0.2 * r()), f.width);
-          }
-        } else if (f.t === 'trees') {
+      const sc = onTile(g, t).k;
+      const fillWith = (fl: Fill, poly: readonly Pt2[], seed: number) => {
+        if (fl.t === 'rows') {
+          // A crop: one low block over the field, about half a house's
+          // storey high (a shade of its own, so fields differ).
+          const r = mulberry32(seed + 2), c = poly.reduce((a, p) => ({ x: a.x + p.x / poly.length, y: a.y + p.y / poly.length }), { x: 0, y: 0 });
+          const long = len2(sub2(poly[1]!, poly[0]!)), wide = len2(sub2(poly[3]!, poly[0]!));
+          one('crop', c, yawOf(poly[0]!, poly[1]!) - Math.PI / 2, sc, new THREE.Color(fl.color).multiplyScalar(0.9 + 0.2 * r()).getHex(), long - 0.012, Math.max(CROP_LOW, fl.height * 2.5), wide - 0.012);
+        } else if (fl.t === 'trees') {
           const r = mulberry32(seed);
-          for (const p of gridIn(poly, f.spacing)) one(f.model, p, r() * 6.28, sc * (0.85 + 0.3 * r()), f.color);
-        } else if (f.t === 'scatter') {
+          for (const p of gridIn(poly, fl.spacing)) one(fl.model, p, r() * 6.28, D * (0.85 + 0.3 * r()), fl.color);
+        } else if (fl.t === 'scatter') {
           const r = mulberry32(seed + 1);
-          for (const p of scatterIn(poly, f.per, seed, SCATTER_GAP[f.model])) one(f.model, p, r() * 6.28, sc * (0.8 + 0.4 * r()), f.color);
+          for (const p of scatterIn(poly, fl.per, seed, SCATTER_GAP[fl.model])) one(fl.model, p, r() * 6.28, D * (0.8 + 0.4 * r()), fl.color);
         }
       };
-      // Field edges (hedgerows, walls, fences) in the gaps between fields, once each.
-      const edge = fieldEdge(imp, g.biome[t]!), edgeAt: Pt2[] = [];
-      const edgeRand = mulberry32(mix(t, 0xed));
-      d.areas.forEach((poly, i) => {
+      // Field edges (hedgerows, walls, fences) round each field.
+      const edge = fieldEdge(imp, g.biome[t]!), edgeRand = mulberry32(mix(t, 0xed));
+      farm.fields.forEach((poly, i) => {
         const look = areaLook(imp, g.biome[t]!, g.feature[t] ?? null, g.map.temperature[t]!, i, t);
         if (edge) {
-          const c = poly.reduce((a, p) => ({ x: a.x + p.x / poly.length, y: a.y + p.y / poly.length }), { x: 0, y: 0 });
           poly.forEach((p, k) => {
             const q = poly[(k + 1) % poly.length]!, l = len2(sub2(q, p)), n = Math.max(1, Math.round(l / edge.step));
             for (let m = 0; m < n; m++) {
-              const u = (m + 0.5) / n, e = { x: p.x + (q.x - p.x) * u, y: p.y + (q.y - p.y) * u };
-              // (Out into the gap, away from the field's middle.)
-              const out = sub2(e, c), ol = len2(out) || 1, at = { x: e.x + (out.x / ol) * 0.004, y: e.y + (out.y / ol) * 0.004 };
-              if (edgeAt.some((o) => len2(sub2(o, at)) < edge.step * 0.7)) continue;
-              edgeAt.push(at);
+              const e = { x: p.x + ((q.x - p.x) * (m + 0.5)) / n, y: p.y + ((q.y - p.y) * (m + 0.5)) / n };
               const yaw = edge.model === 'bush' ? edgeRand() * 6.28 : yawOf(p, q) - Math.PI / 2;
-              one(edge.model, at, yaw, sc * (edge.model === 'bush' ? 0.8 + 0.45 * edgeRand() : 1), edge.color, 1, 1, 1);
+              one(edge.model, e, yaw, D * (edge.model === 'bush' ? 0.8 + 0.45 * edgeRand() : 1), edge.color);
             }
           });
         }
-        const points = poly.map(toT);
-        if (wet(this.sampleDir(points.reduce((a, p) => a.add(p), new THREE.Vector3()).normalize()))) return;
-        pavings.push({ points, paved: false, rgb: look.ground });
+        pavings.push({ points: poly.map(toT), paved: false, rgb: look.ground });
         fillWith(look.fill, poly, mix(t, i));
         if (look.extra) fillWith(look.extra, poly, mix(t, i + 99));
-        // A mine's adit at the heap nearest the homestead, facing it.
-        // A camp's drying racks by each clearing, on the homestead's side.
-        if (imp === 'camp') {
-          const near = poly.reduce((a, p) => (len2(sub2(p, d.spot)) < len2(sub2(a, d.spot)) ? p : a));
-          one('rack', near, yawOf(near, d.spot), sc, 0xffffff);
-        }
+        // A mine's adit at the field's corner nearest the homestead, facing it;
+        // a camp's drying rack by each clearing.
+        const near = poly.reduce((a, p) => (len2(sub2(p, farm.home)) < len2(sub2(a, farm.home)) ? p : a));
+        if (imp === 'camp') one('rack', near, yawOf(near, farm.home), D, 0xffffff);
         if (imp === 'mine') {
-          const near = poly.reduce((a, p) => (len2(sub2(p, d.spot)) < len2(sub2(a, d.spot)) ? p : a));
-          const da = toT(near), smp = this.sampleDir(da);
-          if (!wet(smp)) put(t, ...settle((k) => this.standLot(ruralModelKind('adit'), da, facing(da, toT(d.spot)) + Math.PI / 2, 0.004, 0.002, D * k, rand, city.owner), false));
+          const da = toT(near);
+          if (!wet(this.sampleDir(da))) put(t, ...settle((k) => this.standLot(ruralModelKind('adit'), da, facing(da, toT(farm.home)) + Math.PI / 2, 0.004, 0.002, D * k, mulberry32(mix(t, i)), city.owner), false));
         }
       });
-      // The homestead: houses in the civ's style, sheds.
-      const placeLot = (kind: Footprint, floors: Floors, p: Pt2, yaw: number, lr: Rng) => {
+      // The homestead: a house in the civ's style and its barn, facing along the grid.
+      const placeLot = (kind: Footprint, floors: Floors, p: Pt2, lr: Rng) => {
         const s0 = this.sampleDir(toT(p));
         if (wet(s0)) return;
-        const f = toT({ x: p.x + 0.01 * Math.cos(yaw), y: p.y + 0.01 * Math.sin(yaw) });
+        const f = toT({ x: p.x + 0.01 * farm.u.x, y: p.y + 0.01 * farm.u.y });
         const hk = houseKind(styleOf(g.players[city.owner]!.name, floors), kind, floors, Math.floor(lr() * HOUSE_VARIANTS));
         const [lw, ld] = LOT_SIZE[kind];
         put(t, ...settleHere((k) => this.standLot(hk, s0.dir, facing(s0.dir, f) + Math.PI / 2, lw, ld, D * local(s0.dir, f) * k, lr, city.owner)));
       };
-      for (const l of d.lots) {
-        const lr = mulberry32(mix(t, Math.round(l.x * 1e4) ^ Math.round(l.y * 1e4)));
-        if (isBuilding(l.kind)) { placeLot(l.kind, l.floors ?? 1, l, l.yaw, lr); continue; }
-        const s0 = this.sampleDir(toT(l));
-        if (wet(s0)) continue;
-        const kind = PROP_MODEL[l.kind], f = toT({ x: l.x + 0.01 * Math.cos(l.yaw), y: l.y + 0.01 * Math.sin(l.yaw) });
-        put(t, this.make(kind, s0.dir, s0.ground, facing(s0.dir, f) + Math.PI / 2, HOUSE_SCALE * local(s0.dir, f), buildingEntry(kind).leaf, lr));
-      }
-      // The building spot: a barn (the countryside's own buildings come later).
-      placeLot('b44', 1, d.spot, d.spot.yaw, mulberry32(mix(t, 0x5b)));
+      const v = { x: -farm.u.y, y: farm.u.x };
+      placeLot('b22', 1, { x: farm.home.x - 0.012 * v.x, y: farm.home.y - 0.012 * v.y }, mulberry32(mix(t, 0x5a)));
+      if (density !== 'low') placeLot('b32', 1, { x: farm.home.x + 0.02 * v.x, y: farm.home.y + 0.02 * v.y }, mulberry32(mix(t, 0x5b)));
     }
     return { sig, byTile, streets, pavings };
   }
@@ -907,37 +819,6 @@ export function standsAt(kind: BuildingKind, s: CitySpot): boolean {
   if (rule === 'float') return depth >= 0.0003;
   if (rule === 'shore') return depth >= 0.0003 || depth <= DRY;
   return depth <= DRY;
-}
-
-// A rural drawing kept clear of a circle (a wonder standing on its tile):
-// tracks bent round it, fields cut back along a line tangent to it, the
-// homestead moved out of it.
-function keepClear(d: RuralDrawing, k: { p: Pt2; r: number } | undefined): RuralDrawing {
-  if (!k) return d;
-  const away = (q: Pt2): Pt2 => { const o = sub2(q, k.p), l = len2(o) || 1e-9; return { x: k.p.x + (o.x / l) * k.r, y: k.p.y + (o.y / l) * k.r }; };
-  // (Densified first, so no stretch cuts back across the circle.)
-  const tracks = d.tracks.map((tr) => ({ ...tr, pts: densify2(tr.pts, 0.005).map((q) => (len2(sub2(q, k.p)) < k.r ? away(q) : q)) }));
-  const areas = d.areas.flatMap((poly) => {
-    const near = pointInPoly(k.p, poly) || poly.some((q, i) => distToSeg(k.p, q, poly[(i + 1) % poly.length]!) < k.r);
-    if (!near) return [poly];
-    const c = poly.reduce((a, q) => ({ x: a.x + q.x / poly.length, y: a.y + q.y / poly.length }), { x: 0, y: 0 });
-    const o = sub2(c, k.p), l = len2(o);
-    if (l < 1e-6) return [];
-    const n = { x: o.x / l, y: o.y / l }, side = (q: Pt2) => (q.x - k.p.x) * n.x + (q.y - k.p.y) * n.y - k.r;
-    const out: Pt2[] = [];
-    poly.forEach((a, i) => {
-      const b = poly[(i + 1) % poly.length]!, sa = side(a), sb = side(b);
-      if (sa >= 0) out.push(a);
-      if (sa * sb < 0) out.push({ x: a.x + ((b.x - a.x) * sa) / (sa - sb), y: a.y + ((b.y - a.y) * sa) / (sa - sb) });
-    });
-    const area = Math.abs(out.reduce((s, a, i) => { const b = out[(i + 1) % out.length]!; return s + a.x * b.y - b.x * a.y; }, 0)) / 2;
-    return out.length >= 3 && area > 0.002 ? [out] : [];
-  });
-  // (The homestead moves as one, its spot out of the circle with room for its houses.)
-  const o = sub2(d.spot, k.p), l = len2(o) || 1e-9, push = Math.max(0, k.r + 0.06 - l);
-  const shift = { x: (o.x / l) * push, y: (o.y / l) * push };
-  const lots = d.lots.map((lt) => ({ ...lt, x: lt.x + shift.x, y: lt.y + shift.y }));
-  return { ...d, tracks, areas, lots, spot: { ...d.spot, x: d.spot.x + shift.x, y: d.spot.y + shift.y } };
 }
 
 // Yaw (around the local up, matching setFromUnitVectors(UP, dir)) that turns

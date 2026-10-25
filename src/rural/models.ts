@@ -10,7 +10,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { cone, cyl, part, tf, type Tf } from '../propCatalog.ts';
 
-export const RURAL_MODELS = ['ridge', 'bush', 'wallStone', 'fence', 'olive', 'orchard', 'palm', 'vine', 'sheep', 'cow', 'heap', 'block', 'logs', 'stump', 'haystack', 'adit', 'rack'] as const;
+export const RURAL_MODELS = ['crop', 'ridge', 'bush', 'wallStone', 'fence', 'olive', 'orchard', 'palm', 'vine', 'sheep', 'cow', 'heap', 'block', 'logs', 'stump', 'haystack', 'adit', 'rack'] as const;
 export type RuralModel = (typeof RURAL_MODELS)[number];
 export type RuralModelKind = `rural|${RuralModel}`;
 export const ruralModelKind = (m: RuralModel): RuralModelKind => `rural|${m}`;
@@ -23,6 +23,9 @@ const P = (g: THREE.BufferGeometry, c: number, o: Tf = {}) => part(g, c, tf(o));
 const box = (w: number, h: number, d: number, c: number, o: Tf = {}) => P(new THREE.BoxGeometry(w, h, d).translate(0, h / 2, 0), c, o);
 
 const MODELS: Record<RuralModel, () => THREE.BufferGeometry[]> = {
+  // A field's crop: a unit block (stretched per instance to the field and
+  // the crop's height), its top and sides only.
+  crop: () => [P(new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0).deleteAttribute('uv').toNonIndexed(), LEAF)],
   // A crop row: a unit ridge along x with a rounded top (stretched per
   // instance: length, height, width), its ends closed.
   ridge: () => {

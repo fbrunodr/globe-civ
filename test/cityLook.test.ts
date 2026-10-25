@@ -171,7 +171,7 @@ describe('L7: no land building touches water: its footprint and a margin round i
       // (Walls may follow a bank and garden trees grow on it; roofs, doors and foundations sit with their walls.)
       // (Town lots: the house and its yard.)
       // (The town's trees are its tile's flora, which may grow on a bank.)
-      if (waterRule(b.kind) !== undefined || isFloraModel(b.kind) || ['wallSegment', 'wallTower', 'gardenTree', 'bush', 'hedge', 'foundation'].includes(b.kind)) continue;
+      if (waterRule(b.kind) !== undefined || isFloraModel(b.kind) || ['wallSegment', 'wallTower', 'foundation'].includes(b.kind)) continue;
       if (isHouseKind(b.kind)) homes++;
       const c = new THREE.Vector3().setFromMatrixPosition(b.matrix).normalize();
       for (const p of cp.footprint(b)) {
@@ -205,7 +205,7 @@ describe('L6: no building stands on a street or a road', () => {
     if (!b) { const geo = modelGeometry(kind); geo.computeBoundingBox(); b = geo.boundingBox!; box.set(kind, b); }
     return b;
   };
-  const FURNITURE = new Set<string>(['gardenTree', 'well', 'fountain', 'stall', 'shed', 'foundation']);
+  const FURNITURE = new Set<string>(['foundation']);
   for (let t = 0; t < g.N; t++) cp.place(t);
   const streets = [
     ...cp.streets().map((s) => ({ pts: s.points, hw: s.halfWidth })),

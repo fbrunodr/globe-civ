@@ -1,10 +1,10 @@
 // What a rural tile's worked areas look like: decided by the tile (its
-// improvement, biome, feature, climate), never by the drawing, so one
-// drawing is a wheat farm in France, an olive grove in Tuscany and a rice
+// improvement, biome, feature, climate), never by the farm's layout, so one
+// layout is a wheat farm in France, an olive grove in Tuscany and a rice
 // estate in Bengal. Each area gets a ground colour and what fills it: crop
 // rows, trees in rows, animals at pasture, spoil heaps, stone blocks, cut
 // logs. Areas of one tile vary among the crops its climate grows.
-// Pure 2D (drawing coordinates, tile steps): the game and the rural editor
+// Pure 2D (the tile's canonical hex, tile steps): the game and the farm painter
 // place the same things.
 
 import type { BiomeKey, FeatureKey } from '../terrain.ts';
