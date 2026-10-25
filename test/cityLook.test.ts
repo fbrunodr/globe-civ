@@ -135,7 +135,10 @@ describe('L4: City Lab presets build as described', () => {
   });
 });
 
-describe('L5: on slopes, houses stand level at their street: a foundation below, a cut above', () => {
+// (Was: houses stand level at their street, the ground cut where higher.
+// A city is now a diorama with no streets, cityProps.ts: its houses stand
+// level with the highest ground under them, a foundation below.)
+describe('L5: on slopes, city houses stand level: at the highest ground under them, a foundation below', () => {
   const g = grownGame();
   // A tilted world: the ground rises steadily along x (far steeper than any hill).
   const ground = (d: THREE.Vector3) => 0.01 + 0.08 * d.x;
@@ -146,34 +149,24 @@ describe('L5: on slopes, houses stand level at their street: a foundation below,
     return at(tl.center.clone().multiplyScalar(1 - wa - wb).addScaledVector(A, wa).addScaledVector(B, wb).normalize());
   };
   const cp = new CityProps(g, sampler, (d) => ({ ...at(d), t: locate(g.globe, d).t }), 1);
-  let homes = 0, levelled = 0;
-  const sunk: string[] = [], offStreet: string[] = [];
+  let homes = 0, founded = 0;
+  const sunk: string[] = [], cut: string[] = [];
   for (let t = 0; t < g.N; t++) {
-    if (g.use[t] !== USE.urban && g.use[t] !== USE.center) continue;
+    if (g.use[t] !== USE.center) continue;
     const items = cp.place(t);
     for (const [i, b] of items.entries()) {
-      if (b.kind === 'foundation') continue;
+      if (b.kind === 'foundation' || isFloraModel(b.kind)) continue;
       const p = new THREE.Vector3().setFromMatrixPosition(b.matrix), floor = p.length() - 1;
-      if (isLotModel(b.kind)) {
-        if (isHouseKind(b.kind)) homes++;
-        // Its floor at the ground of its door (the front of its lot, at the street).
-        const front = new THREE.Vector3(0, 0, 1).applyQuaternion(new THREE.Quaternion().setFromRotationMatrix(b.matrix)).normalize();
-        const s = new THREE.Vector3().setFromMatrixScale(b.matrix).x, ld = new THREE.Box3().setFromBufferAttribute(modelGeometry(b.kind).getAttribute('position') as THREE.BufferAttribute).max.z;
-        const door = ground(p.clone().normalize().addScaledVector(front, ld * s).normalize());
-        if (Math.abs(floor - door) > 0.0006) offStreet.push(`tile ${t}: ${b.kind} floor ${floor.toFixed(5)} door ${door.toFixed(5)}`);
-        // Lower ground under it: a foundation follows; higher: a cut (its pad, at its floor).
-        if (items[i + 1]?.kind === 'foundation' || b.pad) levelled++;
-        if (b.pad && Math.abs(b.pad.base - floor) > 1e-9) offStreet.push(`tile ${t}: pad off its floor`);
-        continue;
-      }
-      if (['gardenTree', 'well', 'fountain', 'stall'].includes(b.kind) || isFloraModel(b.kind)) continue;
-      if (floor < ground(p.clone().normalize()) - 0.0003) sunk.push(`tile ${t}: ${b.kind}`);
+      const top = Math.max(...cp.footprint(b).map((d) => ground(d)));
+      if (floor < top - 0.0003) sunk.push(`tile ${t}: ${b.kind} floor ${floor.toFixed(5)} ground ${top.toFixed(5)}`);
+      if (b.pad) cut.push(`tile ${t}: ${b.kind}`);
+      if (isHouseKind(b.kind)) { homes++; if (items[i + 1]?.kind === 'foundation') founded++; }
     }
   }
-  it('houses still stand on the slope', () => expect(homes).toBeGreaterThan(200));
-  it('each house\'s floor is at the street, at its door', () => expect(offStreet.slice(0, 5)).toEqual([]));
-  it('on the slope every house has a foundation, a cut, or both', () => expect(levelled).toBeGreaterThanOrEqual(homes));
-  it('no other building sinks below the ground under it (it stands at its highest corner)', () => expect(sunk.slice(0, 5)).toEqual([]));
+  it('houses still stand on the slope', () => expect(homes).toBeGreaterThan(50));
+  it('nothing sinks below the highest ground under it', () => expect(sunk.slice(0, 5)).toEqual([]));
+  it('no ground is cut for a city', () => expect(cut.slice(0, 5)).toEqual([]));
+  it('on the slope every house has a foundation', () => expect(founded).toBe(homes));
 });
 
 describe('L7: no land building touches water: its footprint and a margin round it stay dry', () => {
@@ -257,8 +250,8 @@ describe('L6: no building stands on a street or a road', () => {
       const fb = footprint(b.kind);
       const pts: THREE.Vector3[] = [];
       for (const [x, z] of [[fb.min.x, fb.min.z], [fb.max.x, fb.min.z], [fb.max.x, fb.max.z], [fb.min.x, fb.max.z], [(fb.min.x + fb.max.x) / 2, fb.min.z], [(fb.min.x + fb.max.x) / 2, fb.max.z], [fb.min.x, (fb.min.z + fb.max.z) / 2], [fb.max.x, (fb.min.z + fb.max.z) / 2]] as const) {
-        // (A town lot, its yard included, is in tile steps with its scale in its matrix.)
-        const k = isHouseKind(b.kind) ? 1 : PROP;
+        // (A lot model, its yard included, is in tile steps with its scale in its matrix.)
+        const k = isLotModel(b.kind) ? 1 : PROP;
         pts.push(new THREE.Vector3(x * k, 0, z * k).applyMatrix4(b.matrix).normalize());
       }
       const c = new THREE.Vector3().setFromMatrixPosition(b.matrix).normalize();

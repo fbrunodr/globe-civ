@@ -4,6 +4,7 @@ import type { PropKind } from './town/geometry.ts';
 import { houseGeometry, isHouseKind, type HouseKind } from './houses.ts';
 import { civicGeometry, isCivicKind, type CivicKind } from './civic.ts';
 import { isWonderModelKind, wonderGeometry, type WonderModelKind } from './wonderModels.ts';
+import { isRuralModelKind, ruralGeometry, type RuralModelKind } from './rural/models.ts';
 
 // City models: houses, rural structures, quarter buildings and wonders,
 // drawn as instanced props like the flora (render.ts) and shown in the prop
@@ -381,8 +382,8 @@ export const buildBuildingGeometry = (kind: BuildingKind, palette?: Partial<Pale
 // Any model a town places: a catalog building, or a lot model (a house,
 // houses.ts, a city hall, civic.ts, or what stands on a site, wonderModels.ts:
 // in tile steps, cached; the others at prop scale, built anew).
-export type LotModelKind = HouseKind | CivicKind | WonderModelKind;
-export const isLotModel = (k: string): k is LotModelKind => isHouseKind(k) || isCivicKind(k) || isWonderModelKind(k);
+export type LotModelKind = HouseKind | CivicKind | WonderModelKind | RuralModelKind;
+export const isLotModel = (k: string): k is LotModelKind => isHouseKind(k) || isCivicKind(k) || isWonderModelKind(k) || isRuralModelKind(k);
 export type ModelKind = BuildingKind | LotModelKind;
 // What a town places: a model, or a plant of the flora (its trees are its tile's own).
 export type PlacedKind = ModelKind | CatalogKind;
@@ -392,7 +393,7 @@ export const waterRule = (k: PlacedKind): BuildingEntry['water'] => (isFloraMode
 // Its geometry before scaling (the flora's and the catalog's at reference size; lot models in tile steps).
 export const placedGeometry = (k: PlacedKind): THREE.BufferGeometry => (isFloraModel(k) ? buildCatalogGeometry(k) : modelGeometry(k));
 export const modelGeometry = (kind: ModelKind, palette?: Partial<Palette>): THREE.BufferGeometry =>
-  isHouseKind(kind) ? houseGeometry(kind) : isCivicKind(kind) ? civicGeometry(kind) : isWonderModelKind(kind) ? wonderGeometry(kind) : buildBuildingGeometry(kind, palette);
+  isHouseKind(kind) ? houseGeometry(kind) : isCivicKind(kind) ? civicGeometry(kind) : isWonderModelKind(kind) ? wonderGeometry(kind) : isRuralModelKind(kind) ? ruralGeometry(kind) : buildBuildingGeometry(kind, palette);
 
 // Roof colors by roof kind: an instance picks one (muted, realistic).
 export const ROOFS = {

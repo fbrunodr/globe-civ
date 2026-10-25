@@ -18,10 +18,11 @@ import { makeSky, makeHalo, installHaze, HAZE, HAZE_DENSITY, AIR } from './sky.t
 import { makeWeather, type Weather } from './weather.ts';
 import { buildPropGeometry, catalogEntry, CATALOG, CATALOG_KINDS, type CatalogKind, type Layer } from './propCatalog.ts';
 import { BUILDING_KINDS, buildBuildingGeometry, type BuildingKind } from './buildingCatalog.ts';
-import { houseGeometry, type HouseKind } from './houses.ts';
+import { houseGeometry, isHouseKind, type HouseKind } from './houses.ts';
 import { civicGeometry, isCivicKind, type CivicKind } from './civic.ts';
 import { isWonderModelKind, wonderGeometry, type WonderModelKind } from './wonderModels.ts';
-import { CityProps, type CitySpot } from './cityProps.ts';
+import { isRuralModelKind, ruralGeometry, type RuralModelKind } from './rural/models.ts';
+import { CityProps, isFarmland, type CitySpot } from './cityProps.ts';
 import { roadLines, ROAD_HALF_WIDTH } from './roads.ts';
 import { Vegetation, type SpotEnv } from './vegetation.ts';
 import { mulberry32, makePerlin } from './rng.ts';
@@ -53,9 +54,13 @@ const PROP_CHUNKS = 8;
 
 // Flora and city buildings share the chunks; town lots (houses.ts) are
 // models of their own, made on first use.
-type PropKind = CatalogKind | BuildingKind | HouseKind | CivicKind | WonderModelKind;
+type PropKind = CatalogKind | BuildingKind | HouseKind | CivicKind | WonderModelKind | RuralModelKind;
 const PROP_KINDS: readonly PropKind[] = [...CATALOG_KINDS, ...BUILDING_KINDS];
 const isFloraKind = (k: PropKind): k is CatalogKind => k in CATALOG;
+// The triangle counter's category for a prop kind.
+const statOf = (k: PropKind): string =>
+  isFloraKind(k) ? `flora · ${CATALOG[k].layer.toLowerCase()}` : isRuralModelKind(k) ? 'rural' : isHouseKind(k) ? 'houses'
+    : isCivicKind(k) ? 'civic' : isWonderModelKind(k) ? 'wonders' : 'buildings';
 
 interface PropChunk {
   dir: THREE.Vector3;  // chunk center
@@ -248,6 +253,13 @@ export class GlobeRenderer {
   private fpsWork = 0;
   private fpsTris = 0;
   private fpsSince = performance.now();
+  // Triangles drawn per category this frame (main pass and shadow passes),
+  // tallied by hooks on every mesh (installed at each counter refresh).
+  // (The shadow map re-renders only when the view or the world changes, so
+  // the shadow column keeps the last pass that drew it.)
+  private readonly statTris = new Map<string, { main: number; shadow: number; lastShadow: number }>();
+  // Whether the counter shows the breakdown (clicking it toggles; remembered per viewer).
+  private statsOpen = ((): boolean => { try { return localStorage.getItem('trisBreakdown') === '1'; } catch { return false; } })();
 
   constructor(canvas: HTMLCanvasElement, game: Game) {
     this.game = game;
@@ -304,6 +316,7 @@ export class GlobeRenderer {
       else if (e.key === 'Escape' && this.walk.active) this.setWalking(false);
     }, { signal: this.abort.signal });
     this.stars = new THREE.PointsMaterial({ color: 0xaab4cc, size: 1.4, sizeAttenuation: false, fog: false, transparent: true });
+    this.sky.mesh.userData['stat'] = 'sky';
     this.scene.add(this.sky.mesh);
     installHaze();
     this.scene.fog = new THREE.FogExp2(HAZE.getHex(), HAZE_DENSITY);
@@ -407,6 +420,7 @@ export class GlobeRenderer {
     this.globeMesh = new THREE.Mesh(this.terrain.geometry, this.terrainMat.material);
     this.globeMesh.castShadow = true;
     this.globeMesh.receiveShadow = true;
+    this.globeMesh.userData['stat'] = 'terrain';
     this.scene.add(this.globeMesh);
     // The water surface, hidden under fog of war like the ground.
     const W = this.terrain.waterVerts.length;
@@ -416,8 +430,10 @@ export class GlobeRenderer {
     this.waterMesh = new THREE.Mesh(this.terrain.water, this.waterMat.material);
     this.waterMesh.receiveShadow = true;
     this.waterMesh.renderOrder = 1;
+    this.waterMesh.userData['stat'] = 'water';
     this.scene.add(this.waterMesh);
     this.weather = makeWeather(g.globe, g.map.rainfall, g.map.temperature, params.r0, g.seed);
+    this.weather.group.userData['stat'] = 'clouds & rain';
     this.scene.add(this.weather.group);
     this.prevExplored = new Uint8Array(N).fill(255);
     this.prevVisible = new Uint8Array(N).fill(255);
@@ -441,6 +457,7 @@ export class GlobeRenderer {
       this.tileChunk[tile.id] = c;
       c.radius = Math.max(c.radius, c.dir.angleTo(tile.center) + 2 * g.globe.avgEdgeAngle);
     }
+    this.craters.userData['stat'] = 'craters';
     this.scene.add(this.craters);
     for (const kind of BUILDING_KINDS) this.propGeo.set(kind, buildBuildingGeometry(kind).scale(s * 1.5 * PROP_SIZE, s * 1.5 * PROP_SIZE, s * 1.5 * PROP_SIZE));
     this.prevUse = new Uint8Array(N);
@@ -450,11 +467,18 @@ export class GlobeRenderer {
       hint = l.t;
       return { ...this.citySpot(l.t, l.i, l.wa, l.wb), t: l.t };
     }, s);
+    this.unitsGroup.userData['stat'] = 'units';
+    this.citiesGroup.userData['stat'] = 'city markers';
+    this.overlayGroup.userData['stat'] = 'overlays';
     this.scene.add(this.unitsGroup, this.citiesGroup, this.overlayGroup);
     this.smoke = makeSmoke(s);
     this.scene.add(this.smoke.points);
 
     this.bindInput(canvas);
+    this.fpsEl?.addEventListener('click', () => {
+      this.statsOpen = !this.statsOpen;
+      try { localStorage.setItem('trisBreakdown', this.statsOpen ? '1' : '0'); } catch { /* (not remembered) */ }
+    }, { signal: this.abort.signal });
     const resize = () => {
       this.renderer.setSize(innerWidth, innerHeight);
       this.camera.aspect = innerWidth / innerHeight;
@@ -637,6 +661,7 @@ export class GlobeRenderer {
     sg.setAttribute('position', new THREE.Float32BufferAttribute(stars, 3));
     this.scene.add(new THREE.Points(sg, this.stars));
 
+    this.halo.mesh.userData['stat'] = 'sky';
     this.scene.add(this.halo.mesh);
   }
 
@@ -794,7 +819,7 @@ export class GlobeRenderer {
             const inWater = env.water - env.ground > 0 && catalogEntry(prop.kind).water !== undefined;
             // On built ground the tile's own flora stays where it stands clear of
             // the buildings and streets (a town keeps its trees, never adds any).
-            if ((use === USE.urban || use === USE.center) && !inWater) {
+            if ((use === USE.urban || use === USE.center || isFarmland(g, u)) && !inWater) {
               if (!this.cityProps.floraClear(u, d)) continue;
             } else if (use !== USE.wild && !inWater) {
               const imp = use === USE.rural ? improvementFor(g.terrainAt(u)) : null;
@@ -839,7 +864,7 @@ export class GlobeRenderer {
   // carry the scale).
   private geometryOf(kind: PropKind): THREE.BufferGeometry {
     let g = this.propGeo.get(kind);
-    if (!g) { g = isCivicKind(kind) ? civicGeometry(kind) : isWonderModelKind(kind) ? wonderGeometry(kind) : houseGeometry(kind as HouseKind); this.propGeo.set(kind, g); }
+    if (!g) { g = isCivicKind(kind) ? civicGeometry(kind) : isWonderModelKind(kind) ? wonderGeometry(kind) : isRuralModelKind(kind) ? ruralGeometry(kind) : houseGeometry(kind as HouseKind); this.propGeo.set(kind, g); }
     return g;
   }
 
@@ -881,6 +906,7 @@ export class GlobeRenderer {
           // Ground cover is too small to cast a visible shadow (and skipping it saves draw calls).
           mesh.castShadow = !isFloraKind(kind) || CATALOG[kind].layer !== 'Ground';
           mesh.userData['hideAbove'] = isFloraKind(kind) ? HIDE_ABOVE[CATALOG[kind].layer] : Infinity;
+          mesh.userData['stat'] = statOf(kind);
           chunk.meshes.set(kind, mesh);
           this.scene.add(mesh);
         }
@@ -980,6 +1006,7 @@ export class GlobeRenderer {
       polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
     }));
     this.borders.renderOrder = 2;
+    this.borders.userData['stat'] = 'borders';
     this.scene.add(this.borders);
   }
 
@@ -1026,8 +1053,9 @@ export class GlobeRenderer {
   // coarse ground: a house gone, its cut goes with it.
   private updateTownGround(): void {
     const g = this.game;
+    // (Cities are dioramas standing level on the coarse ground, cityProps.ts:
+    // no tile is redrawn fine any more.)
     const built = new Set<number>();
-    for (let t = 0; t < g.N; t++) if (g.use[t] === USE.urban || g.use[t] === USE.center) built.add(t);
     const pads = this.cityProps.pads();
     const key = `${[...built].join(',')}#${pads.map((p) => `${p.at.x.toFixed(6)},${p.at.y.toFixed(6)},${p.base.toFixed(7)}`).join(';')}`;
     if (key === this.townKey) return;
@@ -1048,6 +1076,7 @@ export class GlobeRenderer {
       geo.setIndex(new THREE.BufferAttribute(Uint32Array.from(keep), 1));
       const mesh = new THREE.Mesh(ground.geometry, this.terrainMat.material);
       mesh.castShadow = true; mesh.receiveShadow = true;
+      mesh.userData['stat'] = 'terrain · town ground';
       this.scene.add(mesh);
       this.town = { ground, mesh };
     }
@@ -1088,7 +1117,8 @@ export class GlobeRenderer {
     for (let t = 0; t < g.N; t++) {
       const o = t * TILE_ROWS * 4 + 20;
       const u = g.use[t];
-      const imp = u === USE.rural ? improvementFor(g.terrainAt(t)) : null;
+      // (Farmland is drawn, cityProps.ts: only fishing grounds keep a painted pattern.)
+      const imp = u === USE.rural && !isFarmland(g, t) ? improvementFor(g.terrainAt(t)) : null;
       td[o] = u === USE.urban || u === USE.center ? 1 : 0;
       td[o + 2] = g.pillaged[t] ? BURNT_CODE : imp ? IMPROVEMENT_CODE[imp] : IMPROVEMENT_CODE.none;
       td[o + 3] = u === USE.center ? 1 : 0;
@@ -1160,7 +1190,7 @@ export class GlobeRenderer {
     }
     // Streets and squares inside towns (cityProps.ts lays them out).
     for (const st of this.cityProps.streets()) this.drape(st.points, st.halfWidth, st.paved ? PAVED_RGB : DIRT_RGB, batches, at, lift, bridges, st.paved);
-    for (const pv of this.cityProps.pavings()) this.pave(pv.points, pv.paved ? PAVED_RGB : DIRT_RGB, at, lift + ROAD_LAYER * this.scale, batches.top.pos, batches.top.col);
+    for (const pv of this.cityProps.pavings()) this.pave(pv.points, pv.rgb ?? (pv.paved ? PAVED_RGB : DIRT_RGB), at, lift + ROAD_LAYER * this.scale, batches.top.pos, batches.top.col);
     for (const m of this.roads) { this.scene.remove(m); m.geometry.dispose(); }
     this.roads = [batches.edge, batches.top].map((bt, i) => {
       const geo = new THREE.BufferGeometry();
@@ -1171,6 +1201,7 @@ export class GlobeRenderer {
       const mesh = new THREE.Mesh(geo, this.roadMats[i]!);
       mesh.receiveShadow = true;
       mesh.renderOrder = 1 + i;
+      mesh.userData['stat'] = 'roads & fields';
       this.scene.add(mesh);
       return mesh;
     });
@@ -1186,6 +1217,7 @@ export class GlobeRenderer {
     this.bridges = new THREE.Mesh(bgeo, this.bridgeMat);
     this.bridges.castShadow = true;
     this.bridges.receiveShadow = true;
+    this.bridges.userData['stat'] = 'roads & fields';
     this.scene.add(this.bridges);
   }
 
@@ -1661,8 +1693,10 @@ export class GlobeRenderer {
     const alt = this.viewAltitude();
     this.weather.update(now / 1000, this.sunDir, this.walk.active ? [0, 0] : [0.15, 0.6],
       this.walk.active ? 1 : smoothstep(0.2, 0.55, alt / AIR.height), { color: fog.color, density: fog.density });
+    for (const v of this.statTris.values()) { v.main = 0; v.shadow = 0; }
     const t0 = performance.now();
     this.renderer.render(this.scene, this.camera);
+    if ([...this.statTris.values()].some((v) => v.shadow > 0)) for (const v of this.statTris.values()) v.lastShadow = v.shadow;
     this.countFrame(performance.now() - t0, this.renderer.info.render.triangles);
   }
 
@@ -1676,9 +1710,40 @@ export class GlobeRenderer {
     const now = performance.now();
     if (now - this.fpsSince < 500) return;
     const fps = (this.fpsFrames * 1000) / (now - this.fpsSince);
-    const tri = this.fpsTris >= 1e6 ? `${(this.fpsTris / 1e6).toFixed(1)}M` : `${Math.round(this.fpsTris / 1e3)}k`;
-    this.fpsEl.textContent = `${fps.toFixed(0)} fps · ${(this.fpsWork / this.fpsFrames).toFixed(1)} ms · ${tri} tris`;
+    // The last frame's triangles by category (what no hook saw yet: other).
+    const head = `${this.statsOpen ? '▾' : '▸'} ${fps.toFixed(0)} fps · ${(this.fpsWork / this.fpsFrames).toFixed(1)} ms · ${fmtTris(this.fpsTris)} tris`;
+    if (!this.statsOpen) this.fpsEl.textContent = head;
+    else {
+      const rows = [...this.statTris].filter(([, v]) => v.main + v.lastShadow > 0).sort((a, b) => b[1].main + b[1].lastShadow - (a[1].main + a[1].lastShadow));
+      const other = this.fpsTris - rows.reduce((a, [, v]) => a + v.main + v.shadow, 0);
+      if (other > 0) rows.push(['other', { main: other, shadow: 0, lastShadow: 0 }]);
+      const cell = (n: number) => `<td>${n ? fmtTris(n) : '–'}</td>`;
+      this.fpsEl.innerHTML = `<div>${head}</div><table class="tris"><tr><th></th><th>main</th><th title="the last shadow-map pass (it re-renders only when the view or the world changes)">shadow</th></tr>`
+        + `${rows.map(([k, v]) => `<tr><th>${k}</th>${cell(v.main)}${cell(v.lastShadow)}</tr>`).join('')}</table>`;
+    }
     this.fpsFrames = 0; this.fpsWork = 0; this.fpsSince = now;
+    this.hookStats();
+  }
+
+  // Hooks every mesh not yet hooked to add the triangles it draws (the
+  // renderer's count before and after) to its category: its own, or its
+  // nearest tagged ancestor's.
+  private hookStats(): void {
+    const info = this.renderer.info.render;
+    this.scene.traverse((o) => {
+      if (o.userData['statHooked'] || !(o instanceof THREE.Mesh)) return;
+      o.userData['statHooked'] = true;
+      let a: THREE.Object3D | null = o, stat = 'other';
+      for (; a; a = a.parent) if (typeof a.userData['stat'] === 'string') { stat = a.userData['stat']; break; }
+      let row = this.statTris.get(stat);
+      if (!row) { row = { main: 0, shadow: 0, lastShadow: 0 }; this.statTris.set(stat, row); }
+      const r = row;
+      let before = 0;
+      o.onBeforeRender = () => { before = info.triangles; };
+      o.onAfterRender = () => { r.main += info.triangles - before; };
+      o.onBeforeShadow = () => { before = info.triangles; };
+      o.onAfterShadow = () => { r.shadow += info.triangles - before; };
+    });
   }
 }
 
@@ -1695,6 +1760,10 @@ function smoothstep(a: number, b: number, x: number): number {
 }
 
 function lerp(a: number, b: number, t: number): number { return a + (b - a) * t; }
+
+function fmtTris(n: number): string {
+  return n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : `${n}`;
+}
 
 
 function drawUnitIcon(ctx: CanvasRenderingContext2D, color: string, icon: string, stack: number, hp: number, selected: boolean, fortified: boolean): void {

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>City Samples</title>
+    <style>
+      #topbar label { display: flex; align-items: center; gap: 4px; }
+    </style>
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+    <div id="hud">
+      <div id="topbar">
+        <span id="civ">City samples</span>
+        <nav class="devnav"><a href="/">Game</a><a href="/gallery.html">Gallery</a><a href="/buildings.html">Buildings</a><a href="/city_lab.html">City lab</a><a class="active" href="/city_samples.html">City samples</a><a href="/world_view.html">World view</a><a href="/map_editor.html">Map editor</a></nav>
+        <button id="again">New samples</button>
+        <label>Civ <select id="fCiv"></select></label>
+        <label>Era <select id="fEra"></select></label>
+        <label>Ground <select id="fGround"></select></label>
+        <label>Wonders <select id="fWonders"></select></label>
+        <label>Walls <select id="fWalls"></select></label>
+        <span id="count"></span>
+        <span class="spacer"></span>
+        <span id="hint"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Q</kbd>/<kbd>E</kbd> rotate · <kbd>T</kbd>/<kbd>G</kbd> tilt · <kbd>Z</kbd>/<kbd>X</kbd> zoom · drag: move · right-drag: rotate and tilt</span>
+      </div>
+    </div>
+    <script type="module" src="/src/citySamples.ts"></script>
+  </body>
+</html>

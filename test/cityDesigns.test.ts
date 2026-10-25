@@ -43,7 +43,7 @@ describe('DS4: drawings meet on the globe', () => {
     for (let t = 0; t < g.N; t++) if (g.tiles[t]!.corners.length !== 6) expect(g.use[t] === USE.urban || g.use[t] === USE.center, `tile ${t}`).toBe(false);
   });
 
-  it('both tiles of an edge read the same value: 1 or 2 between built-up tiles, 1 where a road comes in from open land, else 0', () => {
+  it('both tiles of an edge read the same value: 1 or 2 between built-up tiles, 1 where a road or a farm track comes in from open land, else 0', () => {
     const entries = roadEntries(g);
     const bad: string[] = [];
     for (let t = 0; t < g.N; t++) {
@@ -51,13 +51,15 @@ describe('DS4: drawings meet on the globe', () => {
       for (const n of g.tiles[t]!.neighbors) {
         const v = cp.edgeValue(t, n);
         if (built(n)) { if (v === 0 || v !== cp.edgeValue(n, t)) bad.push(`${t}-${n}: ${v} / ${cp.edgeValue(n, t)}`); }
-        else if (v !== (entries.has(`${t}:${n}`) ? 1 : 0)) bad.push(`${t}-${n} (open land): ${v}`);
+        else if (v !== (entries.has(`${t}:${n}`) || cp.ruralLink(t, n) ? 1 : 0)) bad.push(`${t}-${n} (open land): ${v}`);
+        // (A farm track: the farm reads it too.)
+        else if (cp.ruralLink(t, n) && cp.edgeValue(n, t) !== 1) bad.push(`${t}-${n} (farm): ${v} / ${cp.edgeValue(n, t)}`);
       }
     }
     expect(bad.slice(0, 5)).toEqual([]);
   });
 
-  it("every street end on a tile's rim meets a street of the tile across it (or a road), at the same point", () => {
+  it("every street end on a tile's rim meets a street of the tile across it (or a road, or a farm's track), at the same point", () => {
     const bad: string[] = [];
     const key = (d: THREE.Vector3) => `${Math.round(d.x * 1e6)},${Math.round(d.y * 1e6)},${Math.round(d.z * 1e6)}`;
     const roadEnds = new Set(roadLines(g).flatMap((r) => [key(r.points[0]!), key(r.points[r.points.length - 1]!)]));
@@ -66,16 +68,18 @@ describe('DS4: drawings meet on the globe', () => {
       // (The tiles across: this city's and any other built-up neighbors.)
       const around = [...new Set(tiles.flatMap((t) => [t, ...g.tiles[t]!.neighbors.filter(built)]))];
       const st = stamp(cp.stampTiles(around, null));
-      const ends = new Map<string, number[]>();
+      const ends = new Map<string, number[]>(), farmEnds = new Set<string>();
       for (const s of st.streets) for (const p of [s.pts[0]!, s.pts[s.pts.length - 1]!]) {
         if (Math.abs(p.wa + p.wb - 1) > 1e-9) continue; // not on the rim
         const k = key(dirOf(g.globe, p)), l = ends.get(k);
         if (l) l.push(p.t); else ends.set(k, [p.t]);
+        // (Side i of a tile is its edge with neighbor i: a farm whose track meets the street there.)
+        if (cp.ruralLink(p.t, g.tiles[p.t]!.neighbors[p.i]!)) farmEnds.add(k);
       }
       for (const [k, ts] of ends) {
         if (!tiles.includes(ts[0]!) && !tiles.includes(ts[1] ?? -1)) continue;
         const across = new Set(ts).size >= 2;
-        if (!across && !roadEnds.has(k)) bad.push(`${c.name}: a street ends alone on the rim of tile ${ts[0]}`);
+        if (!across && !roadEnds.has(k) && !farmEnds.has(k)) bad.push(`${c.name}: a street ends alone on the rim of tile ${ts[0]}`);
       }
     }
     expect(bad.slice(0, 5)).toEqual([]);
@@ -125,15 +129,8 @@ describe('DS7: harbors (urban water tiles) take no streets; their buildings stan
     }
     expect(bad).toEqual([]);
   });
-  it('every building of a harbor is placed', () => {
-    const bad: string[] = [];
-    for (const t of harbors) {
-      const want = g.slotKeys(t).filter((k) => k !== null && k !== 'walls').length;
-      const got = cp.place(t).filter((b) => b.kind !== 'foundation').length;
-      if (got < want) bad.push(`tile ${t}: ${got}/${want}`);
-    }
-    expect(bad).toEqual([]);
-  });
+  // (Was: every building of a harbor is placed. Buildings are no longer
+  // drawn on the map: cities are dioramas, cityProps.ts.)
 });
 
 describe('DS5: densities', () => {

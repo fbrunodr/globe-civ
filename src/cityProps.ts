@@ -9,28 +9,33 @@
 // Nothing is built on water or right beside it: lots there are left out,
 // streets stop at the water (or bridge a narrow river).
 //
-// Rural tiles get one structure each (farmstead, mine head, quarry stones,
-// lodge, stilt hut, fishing boats). Everything is a pure function of the
-// city's state and the seed, so a reload looks identical.
+// Rural land tiles show a rural drawing (src/rural: tracks, worked areas,
+// the homestead, a building spot) chosen by the tracks that cross their
+// sides; what the areas hold is the tile's (rural/look.ts). A city's rural
+// tracks form a tree that joins its town at a few sides (ruralLinks).
+// Fishing boats stay on their water tiles. Everything is a pure function of
+// the city's state and the seed, so a reload looks identical.
 
 import * as THREE from 'three';
 import type { Game, City } from './game.ts';
-import { USE, SLOTS, improvementFor, type ImprovementKey, type BuildingKey, type WonderKey, type EraIndex } from './cities.ts';
+import { USE, SLOTS, improvementFor, type ImprovementKey, type WonderKey, type EraIndex } from './cities.ts';
 import { ROOFS, PROP_MODEL, buildingEntry, isFloraModel, isLotModel, placedGeometry, waterRule, type BuildingKind, type LotModelKind, type PlacedKind } from './buildingCatalog.ts';
-import { civicExtent, civicKind } from './civic.ts';
-import { SITE_HALF, wonderModelKind, type SiteModel } from './wonderModels.ts';
-import { CATALOG, catalogEntry, type CatalogKind } from './propCatalog.ts';
-import { biomeVariant, featureVariant } from './flora.ts';
-import { BANK_CLIMATE, RIVER_BANKS, type Entry } from './floraData.ts';
+import type { SiteModel } from './wonderModels.ts';
+import type { CatalogKind } from './propCatalog.ts';
 import { HOUSE_VARIANTS, houseKind } from './houses.ts';
 import { styleOf } from './architecture.ts';
 import { tileDensity, allowedDensity } from './density.ts';
-import { LOT_SIZE, PLANTS, SPINS, isBuilding, type Density, type StreetClass } from './town/geometry.ts';
+import { HALF_WIDTH, LOT_SIZE, isBuilding, type Density, type Floors, type Footprint, type StreetClass } from './town/geometry.ts';
 import { planRoads, roadLines, roadEntries, ROAD_HALF_WIDTH } from './roads.ts';
-import { key as colouringKey, type EdgeValue } from './town/edges.ts';
-import { edgeClass, type Role } from './town/skeleton.ts';
-import { stamp, STAMP_STEP, type FanPt, type Stamp, type StampTile, type StampedSpot } from './cityStamp.ts';
+import { classOf, key as colouringKey, sideUnder, type EdgeValue } from './town/edges.ts';
+import { edgeClass, EDGE_BLEND, type Role } from './town/skeleton.ts';
+import { stamp, toTile, STAMP_STEP, type FanPt, type Stamp, type StampTile } from './cityStamp.ts';
+import { pickRural, TRACK_HALF, WORK_OF, type RuralDensity, type Work } from './rural/index.ts';
+import { SCATTER_GAP, areaLook, fieldEdge, gridIn, rowsIn, scatterIn, type Fill, type RGB } from './rural/look.ts';
+import { ruralModelKind, type RuralModel } from './rural/models.ts';
+import { densify as densify2, len as len2, sub as sub2, type Pt as Pt2 } from './town/geometry.ts';
 import { mulberry32, type Rng } from './rng.ts';
+import { dressCity } from './cityDress.ts';
 
 // The ground at a spot of a tile (render.ts samples the terrain).
 export interface CitySpot {
@@ -50,8 +55,9 @@ export interface Street {
   halfWidth: number[];     // radians, per point (a street may widen where it crosses an edge)
   paved: boolean;
 }
-// A square, drawn by render.ts as paving on the ground.
-export interface Paving { points: THREE.Vector3[]; paved: boolean }
+// A square, drawn by render.ts as paving on the ground (or a worked rural
+// area, in its ground colour).
+export interface Paving { points: THREE.Vector3[]; paved: boolean; rgb?: RGB }
 
 interface CityLayout {
   sig: string;
@@ -84,8 +90,6 @@ const DRY = -0.00008;      // like the flora: the water this far under the groun
 // Models are enlarged a little over true scale so towns read from afar
 // (the drawings' lot sizes assume this scale).
 const HOUSE_SCALE = 1.5;
-// How much of its lot or spot a building may fill (room for its turn and its foundation).
-const FIT = 0.92;
 // Foundations: under a building whose footprint's corners differ by more
 // than this (× the world scale); the model is FOUNDATION_UNIT on a side.
 const FOUNDATION_MIN = 0.00005;
@@ -97,18 +101,7 @@ const FOUNDATION_STYLE = [0x8d877c, 0xb59a72, 0x9a6a55, 0x5f5a55, 0x7a5f45, 0xd2
 const PROP_SCALE = 1.5 * 0.276;
 // Dry ground a land building keeps round its footprint (tile steps).
 export const WATER_GAP = 0.012;
-// The longest bridge a street gets (tile steps): rivers, inlets, pools.
-const BRIDGE = 0.4;
 
-// The model of each building that sits in a slot (walls are drawn around
-// the center instead). A Record, so a building without a model does not compile.
-const MODEL: Record<Exclude<BuildingKey, 'walls'>, BuildingKind> = {
-  library: 'library', academy: 'academy', market: 'market', countingHouse: 'countingHouse',
-  workshop: 'workshop', smithy: 'smithy', lighthouse: 'lighthouse', shipyard: 'shipyard',
-  shrine: 'shrine', temple: 'temple', amphitheater: 'amphitheater', odeon: 'odeon',
-  barracks: 'barracks', stable: 'stable', granary: 'granary', monument: 'monument',
-  waterMill: 'waterMill', aqueduct: 'aqueduct',
-};
 const WONDER_MODEL: Record<WonderKey, BuildingKind> = {
   pyramids: 'pyramids', greatLighthouse: 'greatLighthouse', hangingGardens: 'hangingGardens', machuPicchu: 'machuPicchu',
   greatLibrary: 'greatLibrary', stonehenge: 'stonehenge', colosseum: 'colosseum',
@@ -141,6 +134,12 @@ function roofOf(temp: number, pop: number, era: EraIndex, rand: Rng): number {
 export { tileDensity, allowedDensity };
 
 const mix = (a: number, b: number) => { let h = Math.imul(a ^ 0x9e3779b9, 0x85ebca6b) ^ b; h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35); return (h ^ (h >>> 16)) >>> 0; };
+
+// A rural tile drawn with a rural drawing: land, a hex, its improvement a kind of work.
+export const isFarmland = (g: Game, t: number): boolean => g.use[t] === USE.rural && g.tiles[t].corners.length === 6 && !g.isWater(t)
+  && (() => { const k = improvementFor(g.terrainAt(t)); return k !== null && WORK_OF[k] !== null; })();
+// How far a city's countryside has filled up: by its civ's era (until the tech tree).
+const ruralDensity = (g: Game, city: City): RuralDensity => (['low', 'medium', 'high'] as const)[g.players[city.owner]!.era] ?? 'high';
 
 // Built-up tiles: the centers and urban tiles (never pentagons, which have no drawings).
 // Built-up: a center or urban land hex, stamped with a town drawing. An
@@ -178,12 +177,52 @@ export class CityProps {
   private built(city: City): number[] {
     return [city.tile, ...this.game.cityTiles(city, USE.urban)].filter((t) => isBuilt(this.game, t));
   }
+  // Its rural tiles with drawings.
+  private farmland(city: City): number[] {
+    return this.game.cityTiles(city, USE.rural).filter((t) => isFarmland(this.game, t));
+  }
+
+  // The tracks of a city's countryside: a tree over its rural tiles, joined
+  // to the town at as few sides as it can (one per piece of countryside
+  // that touches the town), each link the edge a track crosses. (`a:b`,
+  // both ways.)
+  private readonly linkCache = new Map<number, { key: string; links: Set<string> }>();
+  private ruralLinks(city: City): Set<string> {
+    const g = this.game, rural = this.farmland(city), built = new Set(this.built(city));
+    const key = `${[...built].join(',')}|${rural.join(',')}`;
+    const hit = this.linkCache.get(city.id);
+    if (hit && hit.key === key) return hit.links;
+    const links = new Set<string>(), R = new Set(rural), done = new Set<number>();
+    const link = (a: number, b: number) => { links.add(`${a}:${b}`); links.add(`${b}:${a}`); };
+    for (const start of [...rural].sort((a, b) => a - b)) {
+      if (done.has(start)) continue;
+      const into = g.tiles[start].neighbors.filter((n) => built.has(n)).sort((a, b) => a - b)[0];
+      if (into === undefined) continue;
+      link(start, into);
+      done.add(start);
+      const queue = [start];
+      while (queue.length) {
+        const u = queue.shift()!;
+        for (const n of g.tiles[u].neighbors) if (R.has(n) && !done.has(n)) { done.add(n); link(u, n); queue.push(n); }
+      }
+    }
+    this.linkCache.set(city.id, { key, links });
+    return links;
+  }
+  ruralLink(t: number, n: number): boolean { return this.linked(t, n); }
+  private linked(t: number, n: number): boolean {
+    const g = this.game, city = g.cityById.get(g.tileCity[t]!) ?? g.cityById.get(g.tileCity[n]!);
+    return !!city && this.ruralLinks(city).has(`${t}:${n}`);
+  }
 
   // Whether a street crosses the edge between built-up tile t and its
   // neighbor n: always to another built-up tile (of any city); to open land
   // where a road comes in. The same from either side.
+  // (On a rural tile: where its tracks cross: ruralLinks.)
   edgeValue(t: number, n: number): EdgeValue {
     const g = this.game;
+    if (this.linked(t, n)) return 1;
+    if (!isBuilt(g, t)) return 0;
     if (isBuilt(g, n)) return 1;
     this.roadLines();
     return this.entries.has(`${t}:${n}`) ? 1 : 0;
@@ -210,7 +249,8 @@ export class CityProps {
       const c = this.colouring(t);
       return `${t}:${this.densityOf(t)}:${g.slots.slice(t * SLOTS, t * SLOTS + SLOTS).join(',')}:${g.wonderAt[t]}:${colouringKey(c)}:${this.edgeClasses(t, c).join(',')}`;
     }).join(';');
-    const sig = `${city.id}|${city.pop}|${g.players[city.owner]!.era}|${city.buildings.has('walls') ? 'w' : ''}|${city.wonderTile ?? ''}|${this.densityVersion}|${tiles}`;
+    const farms = this.farmland(city).map((t) => `${t}:${improvementFor(g.terrainAt(t))}:${colouringKey(this.colouring(t))}`).join(';');
+    const sig = `${city.id}|${city.pop}|${g.players[city.owner]!.era}|${city.buildings.has('walls') ? 'w' : ''}|${city.wonderTile ?? ''}|${this.densityVersion}|${tiles}|${farms}`;
     memo?.set(city.id, sig);
     return sig;
   }
@@ -222,7 +262,7 @@ export class CityProps {
     if (u === USE.wild) return g.wonderAt[t] ? `w${g.wonderAt[t]}` : g.ruins[t] ? 'ruins' : '';
     const city = g.cityById.get(g.tileCity[t]);
     if (!city) return '';
-    if (u === USE.urban || u === USE.center) return `town|${this.citySig(city, memo)}`;
+    if (u === USE.urban || u === USE.center || isFarmland(g, t)) return `town|${this.citySig(city, memo)}`;
     const site = city.wonderTile === t ? 's' : '';
     return `${u}|${city.id}|${site}|${g.eraAt(t)}|${g.useVersion}`;
   }
@@ -271,7 +311,7 @@ export class CityProps {
     if (!city) return [];
     const u = g.use[t];
     const rand = mulberry32((t + 1) * 2654435761 ^ city.id * 40503);
-    if (u === USE.rural) {
+    if (u === USE.rural && !isFarmland(g, t)) {
       const k = improvementFor(g.terrainAt(t));
       const items = k ? this.rural(t, RURAL[k], rand) : [];
       if (city.wonderTile === t) items.push(...this.landmark(t, 'scaffold', rand));
@@ -307,9 +347,7 @@ export class CityProps {
     const byTile = new Map<number, PlacedBuilding[]>();
     const put = (t: number, ...bs: PlacedBuilding[]) => { const l = byTile.get(t); if (l) l.push(...bs); else byTile.set(t, bs); };
     const era = g.players[city.owner]!.era;
-    const tiles = this.built(city);
     const walled = city.buildings.has('walls');
-    const st = stamp(this.stampTiles(tiles, walled ? city.tile : null));
     const at = (p: FanPt) => this.sample(p.t, p.i, p.wa, p.wb);
     const dirAt = (p: FanPt) => {
       const tl = g.tiles[p.t], k = tl.corners.length;
@@ -321,13 +359,10 @@ export class CityProps {
     // How much a drawing is stretched or squeezed here (tiles vary in size).
     const local = (a: THREE.Vector3, b: THREE.Vector3) => Math.min(1.25, Math.max(0.7, a.angleTo(b) / (0.01 * D)));
 
-    // Streets: where they cross water with land on both sides (a river, an
-    // inlet, a pool) they go on as bridges (render.ts builds them); where
-    // they run into water they stop at the shore.
+    // No streets in the city (its diorama suggests them); farm tracks below.
     const streets: Street[] = [];
-    const paved = era > 0;
-    // Street widths follow the local tile size, like the lots beside them
-    // (tiles vary in size; a street drawn for an average tile would crowd a small one).
+    const pavings: Paving[] = [];
+    // Street widths follow the local tile size (tiles vary in size).
     const widths = (x: { pts: FanPt[]; hw: number[] }) => {
       const dirs = x.pts.map(dirAt);
       return { pts: dirs, hw: dirs.map((d, i) => {
@@ -335,27 +370,11 @@ export class CityProps {
         return x.hw[i]! * D * (o ? Math.min(1.25, Math.max(0.7, d.angleTo(o) / (STAMP_STEP * D))) : 1);
       }) };
     };
-    for (const s of joinStreets(st.streets.map(widths))) {
-      const dry = s.pts.map((d) => !wet(this.sampleDir(d)));
-      let run: number[] = [], gap: number[] = [];
-      const flush = () => { if (run.length > 1) streets.push({ points: run.map((i) => s.pts[i]!), halfWidth: run.map((i) => s.hw[i]!), paved }); run = []; };
-      for (let n = 0; n < s.pts.length; n++) {
-        if (dry[n]) {
-          if (gap.length) {
-            const span = s.pts[gap[0]!]!.angleTo(s.pts[gap[gap.length - 1]!]!) / D;
-            if (run.length && span <= BRIDGE) run.push(...gap); else flush();
-            gap = [];
-          }
-          run.push(n);
-        } else gap.push(n);
-      }
-      flush();
-    }
-    // Nothing may stand on them: every building's footprint is checked
-    // (shrunk a little if it touches one, left out if it still does).
-    // (The roads between cities too: they end at the town's edge, where they meet its streets.)
+    // Nothing may stand on the roads between cities: every building's
+    // footprint is checked (shrunk a little if it touches one, left out if
+    // it still does). Roads run up to the city's diorama.
     const roads = this.roadLines().map((pts) => ({ points: pts, halfWidth: pts.map(() => ROAD_HALF_WIDTH * D), paved: false }));
-    const clear = new StreetIndex([...streets, ...roads], D);
+    const clear = new StreetIndex(roads, D);
     // Nor at the water: a land building's footprint, and a margin round it,
     // stays dry (no house touching a river or the sea). Walls may follow a bank.
     const dryAround = (b: PlacedBuilding) => {
@@ -373,120 +392,32 @@ export class CityProps {
       return [];
     };
 
-    // Building spots: what stands there (or the houses, until something does).
-    const builtSpot = new Set<string>();
-    // A building fits its spot by its footprint's corners (the rectangle inside the circle).
-    // (A wonder's rectangle: its width across its front, its depth.)
-    const fitSpot = (kind: BuildingKind, sp: StampedSpot, sc: number, grow = 1) => {
-      const [hx, hz] = this.modelBox(kind);
-      const fit = sp.hw !== undefined && sp.hd !== undefined ? Math.min(sp.hw / hx, sp.hd / hz) : sp.r / Math.hypot(hx, hz);
-      return Math.min(HOUSE_SCALE * sc * grow, (FIT * fit * D * sc) / (PROP_SCALE * this.scale));
-    };
-    const placeAt = (sp: StampedSpot, kind: BuildingKind, roof: number, rand: Rng) => {
-      const s = at(sp.at), f = dirAt(sp.face);
-      const water = buildingEntry(kind).water;
-      let spot: CitySpot | null = s;
-      if (!standsAt(kind, s)) spot = this.findSpot(sp.tile, kind, rand, s.dir);
-      if (!spot) return;
-      const size = fitSpot(kind, sp, local(s.dir, f));
-      const yaw = facing(spot.dir, f) + Math.PI / 2;
-      if (water === 'float') { put(sp.tile, this.make(kind, spot.dir, spot.water, yaw, size, roof, rand)); return; }
-      const bs = settle((k) => this.stand(kind, spot!.dir, yaw, size * k, roof, rand, city.owner));
-      put(sp.tile, ...bs);
-    };
-    const archCiv = g.players[city.owner]!.name;
-    for (const sp of st.spots) {
-      const b = g.slotKeys(sp.tile)[sp.k];
-      if (!b || b === 'walls') continue;
-      builtSpot.add(`${sp.tile}:${sp.k}`);
-      const kind = MODEL[b];
-      placeAt(sp, kind, buildingEntry(kind).leaf, mulberry32(mix(sp.tile, sp.k + 11)));
-    }
-    // Sites: the hall on the center (its civ's, for its tile's density:
-    // civic.ts), a wonder where one stands or goes up; on other tiles the
-    // houses stay (below). The houses reaching onto an occupied site give way.
-    const siteHeld = new Set<number>();
-    for (const sp of st.sites) {
-      const s0 = at(sp.at), f = dirAt(sp.face);
-      const w = g.wonderOn(sp.tile), building = city.wonderTile === sp.tile;
-      const model: SiteModel | null = w && w !== 'machuPicchu' ? w : building ? 'scaffold' : null;
-      const hall = g.use[sp.tile] === USE.center;
-      if (!hall && !model) continue;
-      siteHeld.add(sp.tile);
-      // (On dry ground: where the site is wet, the nearest dry place on its tile.)
-      const s = standsAt('hall', s0) ? s0 : this.findSpot(sp.tile, 'hall', mulberry32(mix(sp.tile, 8)), s0.dir);
-      if (!s) continue;
-      const sc = local(s.dir, f), yaw = facing(s.dir, f) + Math.PI / 2, rand = mulberry32(mix(sp.tile, 7));
-      if (hall) {
-        const [hw, hd] = civicExtent(sp.density);
-        put(sp.tile, ...settle((k) => this.standLot(civicKind(archCiv, sp.density), s.dir, yaw, hw, hd, D * sc * k, rand, city.owner)));
-      } else {
-        put(sp.tile, ...settle((k) => this.standLot(wonderModelKind(model!), s.dir, yaw, SITE_HALF * 0.94, SITE_HALF * 0.94, D * sc * k, rand, city.owner)));
-      }
-    }
-    // Harbors: each building on the quay side of the fan toward a built-up
-    // neighbor (side by side), facing it; anywhere it can stand otherwise.
-    for (const t of g.cityTiles(city, USE.urban)) {
-      if (!isHarbor(g, t)) continue;
-      const nbs = g.tiles[t].neighbors;
-      const quays = nbs.flatMap((n, j) => (isBuilt(g, n) ? [j] : []));
-      g.slotKeys(t).forEach((b, k) => {
-        if (!b || b === 'walls') return;
-        const kind = MODEL[b], rand = mulberry32(mix(t, k + 11));
-        const j = quays.length ? quays[k % quays.length]! : Math.floor(rand() * nbs.length);
-        const s0 = this.sample(t, j, k ? 0.22 : 0.45, k ? 0.45 : 0.22);
-        const s = standsAt(kind, s0) ? s0 : this.findSpot(t, kind, rand, s0.dir);
-        if (!s) return;
-        const yaw = facing(s.dir, g.tiles[nbs[j]!]!.center) + Math.PI / 2, roof = buildingEntry(kind).leaf;
-        if (buildingEntry(kind).water === 'float') put(t, this.make(kind, s.dir, s.water, yaw, HOUSE_SCALE, roof, rand));
-        else put(t, ...this.stand(kind, s.dir, yaw, HOUSE_SCALE, roof, rand, city.owner));
-      });
-    }
+    // The city: painted on its center tile (cityPainter.ts), dressed in
+    // its civ's style for its size and era (cityDress.ts).
+    const toC = (p: Pt2) => toTile(city.tile, { rot: 0, flip: false }, p);
+    // Every wonder the city has (Machu Picchu stands on its summit, a wild
+    // tile) and the one going up, as scaffolding.
+    const wonderTiles = [...g.cityTiles(city, USE.urban), ...g.cityTiles(city, USE.rural)].filter((t) => { const w = g.wonderOn(t); return w !== null && w !== 'machuPicchu'; });
+    const wonders: SiteModel[] = [...wonderTiles.map((t) => g.wonderOn(t)! as SiteModel), ...(city.wonderTile !== null ? ['scaffold' as const] : [])];
+    const dressed = dressCity({
+      civ: g.players[city.owner]!.name, era, pop: city.pop, wonders, walled, seed: mix(city.id, 0xc17),
+      free: (p) => !wet(this.sampleDir(dirAt(toC(p)))),
+    });
+    dressed.buildings.forEach((b, n) => {
+      const s = at(toC(b.at)), rand = mulberry32(mix(city.id, n + 1));
+      if (wet(s)) return;
+      const f = dirAt(toC({ x: b.at.x + 0.01 * Math.cos(b.yaw), y: b.at.y + 0.01 * Math.sin(b.yaw) }));
+      put(city.tile, ...settle((k) => this.standLot(b.model, s.dir, facing(s.dir, f) + Math.PI / 2, b.hw, b.hd, D * local(s.dir, f) * b.scale * k, rand, city.owner, 'top')));
+    });
+    for (const r of dressed.painting.roads) pavings.push({ points: r.map((p) => dirAt(toC(p))), paved: era > 0, rgb: dressed.roadRgb });
 
-    // Lots: homes and street furniture, never on water.
-    for (const l of st.lots) {
-      if (l.spot !== undefined && builtSpot.has(`${l.tile}:${l.spot}`)) continue;
-      if (l.onSite && siteHeld.has(l.tile)) continue;
-      const s = at(l.at);
-      if (wet(s)) continue;
-      const f = dirAt(l.face);
-      // The ground behind and beside it must be dry too (no houses at the water's edge).
-      const back = s.dir.clone().multiplyScalar(2).sub(f).normalize();
-      if (wet(this.sampleDir(back)) || wet(this.sampleDir(f))) continue;
-      const rand = mulberry32(l.seed);
-      const sc = local(s.dir, f);
-      const yaw = facing(s.dir, f) + Math.PI / 2;
-      if (!isBuilding(l.kind)) {
-        // A tree is one of those that grow on the tile (the town kept them), as large as in the wild.
-        const wild = l.kind === 'tree' ? this.treeOf(l.tile, rand) : null;
-        const kind = wild?.kind ?? PROP_MODEL[l.kind];
-        const b = wild
-          ? this.make(wild.kind, s.dir, s.ground, yaw + rand() * 6.28, wild.size * (0.85 + 0.3 * rand()), wild.leaf, rand)
-          : this.make(kind as BuildingKind, s.dir, s.ground, yaw + (SPINS.has(l.kind) ? rand() * 6.28 : 0), HOUSE_SCALE * sc * (l.kind === 'tree' ? 0.8 + 0.4 * rand() : 1), buildingEntry(kind as BuildingKind).leaf, rand);
-        // (Plants may grow on the bank.)
-        if (PLANTS.has(l.kind) || dryAround(b)) put(l.tile, b);
-        continue;
-      }
-      if (!isBuilding(l.kind)) continue;
-      // The lot's model in the town's style (its civ and era), as high as
-      // drawn or the tallest the era can build.
-      const [lw, ld] = LOT_SIZE[l.kind];
-      const floors = l.floors ?? 1;
-      const kind = houseKind(styleOf(archCiv, floors), l.kind, floors, Math.floor(rand() * HOUSE_VARIANTS));
-      const bs = settle((k) => this.standLot(kind, s.dir, yaw, lw, ld, D * sc * k, rand, city.owner));
-      if (bs.length) put(l.tile, ...bs);
-    }
-
-    // Walls: a segment between each pair of points of a run, a tower at
-    // its ends (the gates' sides) and its middle (the core's corner).
-    const rand = mulberry32(city.id * 7919 + 5);
-    for (const w of st.walls) {
-      const pts = w.pts.map(at);
+    // Walls: a segment between each pair of the ring's points, a tower at every other.
+    if (dressed.wall) {
+      const rand = mulberry32(city.id * 7919 + 5);
+      const pts = dressed.wall.map((p) => at(toC(p)));
       pts.forEach((s, n) => {
-        // (Towers at a gate's sides a little smaller than at the corners.)
-        const gateSide = n === 0 || n === pts.length - 1;
-        if (w.towers[n] && standsAt('wallTower', s)) {
-          put(w.tile, ...settle((k) => this.stand('wallTower', s.dir, 0, HOUSE_SCALE * (gateSide ? 0.85 : 1) * k, buildingEntry('wallTower').leaf, rand, city.owner), false));
+        if (n % 2 === 0 && n < pts.length - 1 && standsAt('wallTower', s)) {
+          put(city.tile, ...settle((k) => this.stand('wallTower', s.dir, 0, HOUSE_SCALE * k, buildingEntry('wallTower').leaf, rand, city.owner), false));
         }
         const nx = pts[n + 1];
         if (!nx) return;
@@ -494,13 +425,132 @@ export class CityProps {
         if (!standsAt('wallSegment', mid)) return;
         // Stretched to the gap between its ends (model length 0.01 at prop scale).
         const len = Math.max(0.3, Math.min(4, s.dir.angleTo(nx.dir) / (0.01 * HOUSE_SCALE * this.scale * PROP_SCALE)));
-        put(w.tile, ...settle((k) => this.stand('wallSegment', mid.dir, facing(mid.dir, nx.dir), HOUSE_SCALE * k, buildingEntry('wallSegment').leaf, rand, city.owner, len), false));
+        put(city.tile, ...settle((k) => this.stand('wallSegment', mid.dir, facing(mid.dir, nx.dir), HOUSE_SCALE * k, buildingEntry('wallSegment').leaf, rand, city.owner, len), false));
       });
     }
 
-    // Squares, but none on the water (a quay where the shore is further in).
-    const pavings: Paving[] = st.squares.filter((q) => q.paved).map((q) => ({ points: q.pts.map(dirAt), paved }))
-      .filter((q) => !wet(this.sampleDir(q.points.reduce((a, p) => a.add(p), new THREE.Vector3()).normalize())));
+    // The countryside: each rural tile's drawing (its tracks, worked areas,
+    // homestead and building spot), its areas filled as the tile grows them.
+    const density = ruralDensity(g, city);
+    for (const t of this.farmland(city)) {
+      const imp = improvementFor(g.terrainAt(t))!, work = WORK_OF[imp] as Work;
+      const colouring = this.colouring(t), { key, turn } = classOf(colouring);
+      const d = pickRural(key, work, density, mix(t, 0x51));
+      const toT = (p: Pt2) => dirAt(toTile(t, turn, p));
+      // Tracks: a lane's width, widening to the street they meet at a town's edge.
+      const tracks: Street[] = [];
+      for (const tr of d.tracks) {
+        const pts = densify2(tr.pts, STAMP_STEP);
+        const hw = pts.map((p) => {
+          let w = TRACK_HALF;
+          for (const e of tr.ends) {
+            if (e === null) continue;
+            const stub = d.stubs[e]!, n = g.tiles[t].neighbors[sideUnder(turn, stub.side)]!;
+            if (!isBuilt(g, n)) continue;
+            const cls = this.edgeClasses(n, this.colouring(n))[g.tiles[n].neighbors.indexOf(t)];
+            if (!cls) continue;
+            const f = Math.min(1, len2(sub2(p, stub.p)) / EDGE_BLEND);
+            w = HALF_WIDTH[cls] * (1 - f) + w * f;
+          }
+          return w;
+        });
+        // (Scaled with the tile, as town streets are.)
+        const wd = widths({ pts: pts.map((p) => toTile(t, turn, p)), hw });
+        tracks.push({ points: wd.pts, halfWidth: wd.hw, paved: false });
+      }
+      streets.push(...tracks);
+      // What the homestead keeps clear of: its tracks too.
+      const clearHere = new StreetIndex([...tracks, ...streets, ...roads], D);
+      const settleHere = (make: (shrink: number) => PlacedBuilding[]): PlacedBuilding[] => {
+        for (const shrink of [1, 0.85]) { const bs = make(shrink); if (clearHere.free(this.footprint(bs[0]!)) && dryAround(bs[0]!)) return bs; }
+        return [];
+      };
+      const rand = mulberry32(mix(t, 0x77));
+      const one = (m: RuralModel, p: Pt2, yaw: number, s: number, leaf: number, sx = 1, sy = 1, sz = 1) => {
+        const dir = toT(p), smp = this.sampleDir(dir);
+        if (wet(smp)) return;
+        const q = new THREE.Quaternion().setFromUnitVectors(UP, dir).multiply(new THREE.Quaternion().setFromAxisAngle(UP, yaw));
+        const pos = dir.clone().multiplyScalar(1 + smp.ground - 0.00005 * this.scale);
+        const b: PlacedBuilding = { kind: ruralModelKind(m), matrix: new THREE.Matrix4().compose(pos, q, new THREE.Vector3(s * sx, s * sy, s * sz)), color: new THREE.Color(1, 1, 1), leaf: new THREE.Color(leaf) };
+        // (Never on a track or a road crossing the farm.)
+        if (clearHere.free(this.footprint(b))) put(t, b);
+      };
+      // (A drawing's yaw turns with the tile: the angle of its x axis there.)
+      const yawOf = (a: Pt2, b: Pt2) => { const da = toT(a), db = toT(b); return facing(da, db) + Math.PI / 2; };
+      const sc = D;
+      const fillWith = (f: Fill, poly: readonly Pt2[], seed: number) => {
+        if (f.t === 'rows') {
+          // (Each row a shade of its own, so the field ripples.)
+          const r = mulberry32(seed + 2), base = new THREE.Color(f.color);
+          for (const [a, b] of rowsIn(poly, f.spacing, 0.002)) {
+            const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, k = 0.9 + 0.2 * r();
+            one('ridge', mid, yawOf(a, b) - Math.PI / 2, sc, base.clone().multiplyScalar(k).getHex(), len2(sub2(b, a)), f.height * (0.9 + 0.2 * r()), f.width);
+          }
+        } else if (f.t === 'trees') {
+          const r = mulberry32(seed);
+          for (const p of gridIn(poly, f.spacing)) one(f.model, p, r() * 6.28, sc * (0.85 + 0.3 * r()), f.color);
+        } else if (f.t === 'scatter') {
+          const r = mulberry32(seed + 1);
+          for (const p of scatterIn(poly, f.per, seed, SCATTER_GAP[f.model])) one(f.model, p, r() * 6.28, sc * (0.8 + 0.4 * r()), f.color);
+        }
+      };
+      // Field edges (hedgerows, walls, fences) in the gaps between fields, once each.
+      const edge = fieldEdge(imp, g.biome[t]!), edgeAt: Pt2[] = [];
+      const edgeRand = mulberry32(mix(t, 0xed));
+      d.areas.forEach((poly, i) => {
+        const look = areaLook(imp, g.biome[t]!, g.feature[t] ?? null, g.map.temperature[t]!, i, t);
+        if (edge) {
+          const c = poly.reduce((a, p) => ({ x: a.x + p.x / poly.length, y: a.y + p.y / poly.length }), { x: 0, y: 0 });
+          poly.forEach((p, k) => {
+            const q = poly[(k + 1) % poly.length]!, l = len2(sub2(q, p)), n = Math.max(1, Math.round(l / edge.step));
+            for (let m = 0; m < n; m++) {
+              const u = (m + 0.5) / n, e = { x: p.x + (q.x - p.x) * u, y: p.y + (q.y - p.y) * u };
+              // (Out into the gap, away from the field's middle.)
+              const out = sub2(e, c), ol = len2(out) || 1, at = { x: e.x + (out.x / ol) * 0.004, y: e.y + (out.y / ol) * 0.004 };
+              if (edgeAt.some((o) => len2(sub2(o, at)) < edge.step * 0.7)) continue;
+              edgeAt.push(at);
+              const yaw = edge.model === 'bush' ? edgeRand() * 6.28 : yawOf(p, q) - Math.PI / 2;
+              one(edge.model, at, yaw, sc * (edge.model === 'bush' ? 0.8 + 0.45 * edgeRand() : 1), edge.color, 1, 1, 1);
+            }
+          });
+        }
+        const points = poly.map(toT);
+        if (wet(this.sampleDir(points.reduce((a, p) => a.add(p), new THREE.Vector3()).normalize()))) return;
+        pavings.push({ points, paved: false, rgb: look.ground });
+        fillWith(look.fill, poly, mix(t, i));
+        if (look.extra) fillWith(look.extra, poly, mix(t, i + 99));
+        // A mine's adit at the heap nearest the homestead, facing it.
+        // A camp's drying racks by each clearing, on the homestead's side.
+        if (imp === 'camp') {
+          const near = poly.reduce((a, p) => (len2(sub2(p, d.spot)) < len2(sub2(a, d.spot)) ? p : a));
+          one('rack', near, yawOf(near, d.spot), sc, 0xffffff);
+        }
+        if (imp === 'mine') {
+          const near = poly.reduce((a, p) => (len2(sub2(p, d.spot)) < len2(sub2(a, d.spot)) ? p : a));
+          const da = toT(near), smp = this.sampleDir(da);
+          if (!wet(smp)) put(t, ...settle((k) => this.standLot(ruralModelKind('adit'), da, facing(da, toT(d.spot)) + Math.PI / 2, 0.004, 0.002, D * k, rand, city.owner, 'top'), false));
+        }
+      });
+      // The homestead: houses in the civ's style, sheds.
+      const placeLot = (kind: Footprint, floors: Floors, p: Pt2, yaw: number, lr: Rng) => {
+        const s0 = this.sampleDir(toT(p));
+        if (wet(s0)) return;
+        const f = toT({ x: p.x + 0.01 * Math.cos(yaw), y: p.y + 0.01 * Math.sin(yaw) });
+        const hk = houseKind(styleOf(g.players[city.owner]!.name, floors), kind, floors, Math.floor(lr() * HOUSE_VARIANTS));
+        const [lw, ld] = LOT_SIZE[kind];
+        put(t, ...settleHere((k) => this.standLot(hk, s0.dir, facing(s0.dir, f) + Math.PI / 2, lw, ld, D * local(s0.dir, f) * k, lr, city.owner, 'top')));
+      };
+      for (const l of d.lots) {
+        const lr = mulberry32(mix(t, Math.round(l.x * 1e4) ^ Math.round(l.y * 1e4)));
+        if (isBuilding(l.kind)) { placeLot(l.kind, l.floors ?? 1, l, l.yaw, lr); continue; }
+        const s0 = this.sampleDir(toT(l));
+        if (wet(s0)) continue;
+        const kind = PROP_MODEL[l.kind], f = toT({ x: l.x + 0.01 * Math.cos(l.yaw), y: l.y + 0.01 * Math.sin(l.yaw) });
+        put(t, this.make(kind, s0.dir, s0.ground, facing(s0.dir, f) + Math.PI / 2, HOUSE_SCALE * local(s0.dir, f), buildingEntry(kind).leaf, lr));
+      }
+      // The building spot: a barn (the countryside's own buildings come later).
+      placeLot('b44', 1, d.spot, d.spot.yaw, mulberry32(mix(t, 0x5b)));
+    }
     return { sig, byTile, streets, pavings };
   }
 
@@ -728,24 +778,6 @@ export class CityProps {
     return [b, f];
   }
 
-  // The trees that grow on a tile: the canopy of its forest, or of its
-  // biome, else what grows on its river banks (none: a garden tree).
-  private readonly trees = new Map<number, readonly Entry[]>();
-  private treeOf(t: number, rand: Rng): { kind: CatalogKind; leaf: number; size: number } | null {
-    let list = this.trees.get(t);
-    if (!list) {
-      const g = this.game, canopy = (es: readonly Entry[]) => es.filter((e) => CATALOG[e[0]].layer === 'Canopy' && catalogEntry(e[0]).water === undefined);
-      const fv = featureVariant(g.map, g.flora, t), bv = biomeVariant(g.map, g.flora, t);
-      list = [fv ? canopy(fv.mix) : [], canopy(bv.mix), canopy(RIVER_BANKS[BANK_CLIMATE[g.map.biome[t]]])].find((l) => l.length) ?? [];
-      this.trees.set(t, list);
-    }
-    if (!list.length) return null;
-    let r = rand() * list.reduce((a, e) => a + e[1], 0), e = list[0]!;
-    for (const x of list) { r -= x[1]; if (r <= 0) { e = x; break; } }
-    const tint = e[2], leaf = tint === undefined ? CATALOG[e[0]].leaf : typeof tint === 'number' ? tint : tint[Math.floor(rand() * tint.length)]!;
-    return { kind: e[0], leaf, size: e[3] ?? 1 };
-  }
-
   // A town lot (houses.ts: the building in its yard, in tile steps; or a
   // city hall, civic.ts) on the ground, scaled by s (radians per tile
   // step). Its floor is at the street: the ground at its door, where the
@@ -753,16 +785,19 @@ export class CityProps {
   // (in its civ's style) fills up to the floor; where it is higher, the
   // ground is dug down to the floor (its pad: render.ts cuts it, from the
   // ground as it was, so the cut goes when the building does).
-  private standLot(kind: LotModelKind, dir: THREE.Vector3, yaw: number, lw: number, ld: number, s: number, rand: Rng, owner: number): PlacedBuilding[] {
+  // ('top': in a city's diorama, with no street to stand at and no ground
+  // cut for it, its floor is level with the highest ground under it, the
+  // foundation filling the rest.)
+  private standLot(kind: LotModelKind, dir: THREE.Vector3, yaw: number, lw: number, ld: number, s: number, rand: Rng, owner: number, level: 'street' | 'top' = 'street'): PlacedBuilding[] {
     const q = new THREE.Quaternion().setFromUnitVectors(UP, dir).multiply(new THREE.Quaternion().setFromAxisAngle(UP, yaw));
     const X = new THREE.Vector3(1, 0, 0).applyQuaternion(q).multiplyScalar(lw * s);
     const Z = new THREE.Vector3(0, 0, 1).applyQuaternion(q).multiplyScalar(ld * s);
-    const base = this.sampleDir(dir.clone().addScaledVector(Z, 1.04).normalize()).ground;
     let low = this.sampleDir(dir).ground, high = low;
     for (const [a, b] of [[1, 1], [1, -1], [-1, -1], [-1, 1], [0, -1], [1, 0], [-1, 0]] as const) {
       const g = this.sampleDir(dir.clone().addScaledVector(X, a).addScaledVector(Z, b).normalize()).ground;
       low = Math.min(low, g); high = Math.max(high, g);
     }
+    const base = level === 'top' ? high : this.sampleDir(dir.clone().addScaledVector(Z, 1.04).normalize()).ground;
     const sink = 0.00012 * this.scale, shade = 0.92 + 0.12 * rand();
     const out: PlacedBuilding[] = [{
       kind,
@@ -842,47 +877,6 @@ class StreetIndex {
     }
     return true;
   }
-}
-
-// Streets joined end to end where exactly two meet (a middle's street and
-// the strip's that goes on from it, the two halves of a strip's street),
-// so a street is judged as a whole where it crosses water.
-function joinStreets(list: { pts: THREE.Vector3[]; hw: number[] }[]): { pts: THREE.Vector3[]; hw: number[] }[] {
-  const key = (d: THREE.Vector3) => `${Math.round(d.x * 1e6)},${Math.round(d.y * 1e6)},${Math.round(d.z * 1e6)}`;
-  const ends = new Map<string, number[]>();
-  list.forEach((s, i) => {
-    if (s.pts.length < 2) return;
-    for (const d of [s.pts[0]!, s.pts[s.pts.length - 1]!]) { const k = key(d); const l = ends.get(k); if (l) l.push(i); else ends.set(k, [i]); }
-  });
-  const used = new Uint8Array(list.length);
-  const out: { pts: THREE.Vector3[]; hw: number[] }[] = [];
-  // The other street at a joint where exactly two meet.
-  const next = (d: THREE.Vector3, from: number) => {
-    const l = ends.get(key(d));
-    if (!l || l.length !== 2) return -1;
-    const o = l[0] === from ? l[1]! : l[0]!;
-    return o === from || used[o] ? -1 : o;
-  };
-  list.forEach((s, i) => {
-    if (used[i] || s.pts.length < 2) return;
-    used[i] = 1;
-    let pts = [...s.pts], hw = [...s.hw];
-    for (const atEnd of [true, false]) {
-      for (;;) {
-        const tip = atEnd ? pts[pts.length - 1]! : pts[0]!;
-        const o = next(tip, i);
-        if (o < 0) break;
-        used[o] = 1;
-        let op = [...list[o]!.pts], ow = [...list[o]!.hw];
-        // Orient the other street to continue from the tip.
-        if (key(op[0]!) !== key(tip)) { op = op.reverse(); ow = ow.reverse(); }
-        if (atEnd) { pts = [...pts, ...op.slice(1)]; hw = [...hw, ...ow.slice(1)]; }
-        else { op.reverse(); ow.reverse(); pts = [...op.slice(0, -1), ...pts]; hw = [...ow.slice(0, -1), ...hw]; }
-      }
-    }
-    out.push({ pts, hw });
-  });
-  return out;
 }
 
 export function standsAt(kind: BuildingKind, s: CitySpot): boolean {
