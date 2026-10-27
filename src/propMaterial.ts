@@ -138,14 +138,11 @@ function leafTexture(): THREE.DataTexture {
 // `bounce`: light bounced off the ground onto walls (buildings, whose walls
 // would otherwise sit dark under a high sun). `saturation`: how much color
 // the lit result keeps. `sunDir` (on the globe, the sun's direction, kept up
-// to date by the caller): the planet's shadow, worked out (the shadow map
-// covers only what is in view): no direct sun where the sun is below a
-// prop's horizon.
+// to date by the caller): the planet's shadow, worked out: no direct sun
+// where the sun is below a prop's horizon.
 //
-// What flora does to its vertices, in the picture and in the sun's shadow
-// map alike (so a shadow sways with its tree): the leaves stir in the wind,
-// a farm's crops (cardUv z 2) shrink away with distance from the eye (the
-// camera, uEye: in the shadow pass cameraPosition is the sun's).
+// What flora does to its vertices: the leaves stir in the wind, a farm's
+// crops (cardUv z 2) shrink away with distance from the eye (the camera, uEye).
 export interface FloraUniforms {
   time: { value: number };
   cropFar?: { value: number };
@@ -169,14 +166,18 @@ const FLORA_VERTEX = `
       }
     }
   #endif`;
-const floraUniforms = (f: FloraUniforms): Record<string, THREE.IUniform> => ({
-  uTime: f.time, uCropFar: f.cropFar ?? { value: 1e9 }, uEye: f.eye ?? { value: new THREE.Vector3() },
+// The card textures (uLeaves, uBlades, uFronds, uNeedles), for CARD_TEXEL.
+export const cardTextures = (): Record<string, THREE.IUniform> => ({
   uLeaves: { value: leafTexture() }, uBlades: { value: bladeTexture() }, uFronds: { value: frondTexture() }, uNeedles: { value: needleTexture() },
+});
+const floraUniforms = (f: FloraUniforms): Record<string, THREE.IUniform> => ({
+  uTime: f.time, uCropFar: f.cropFar ?? { value: 1e9 }, uEye: f.eye ?? { value: new THREE.Vector3() }, ...cardTextures(),
 });
 // A card's texel: a conifer's needles (z 4), a palm's frond (z 3), a crop's
 // stalks (z 2, rural/models.ts) or a crown's leaves;
 // far off, its leaves are kept from fading away in the blurred mipmaps.
-const CARD_TEXEL = `
+export const CARD_TEXEL = `
+  uniform sampler2D uLeaves; uniform sampler2D uBlades; uniform sampler2D uFronds; uniform sampler2D uNeedles;
   vec4 cardTexel(vec3 card) {
     vec4 lt = card.z > 3.5 ? texture2D(uNeedles, card.xy) : card.z > 2.5 ? texture2D(uFronds, card.xy) : card.z > 1.5 ? texture2D(uBlades, card.xy) : texture2D(uLeaves, card.xy);
     vec2 dx = dFdx(card.xy) * ${LEAF_TEX}.0, dy = dFdy(card.xy) * ${LEAF_TEX}.0;
@@ -184,9 +185,9 @@ const CARD_TEXEL = `
     return lt;
   }`;
 
-// The depth flora is drawn into the sun's shadow map with: the same
-// vertices (wind, crops by distance), its cards cut out to their leaves and
-// stalks (a card would otherwise cast a square).
+// The depth flora is drawn into the sun's shadow map with ('real' shadows,
+// render.ts): the same vertices (wind, crops by distance), its cards cut
+// out to their leaves and stalks (a card would otherwise cast a square).
 export function makeFloraDepthMaterial(flora: FloraUniforms): THREE.MeshDepthMaterial {
   const mat = new THREE.MeshDepthMaterial();
   mat.onBeforeCompile = (shader) => {
@@ -201,7 +202,6 @@ export function makeFloraDepthMaterial(flora: FloraUniforms): THREE.MeshDepthMat
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
         varying vec3 vCard;
-        uniform sampler2D uLeaves; uniform sampler2D uBlades; uniform sampler2D uFronds; uniform sampler2D uNeedles;
         ${CARD_TEXEL}`)
       .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
         if (vCard.z > 0.5 && cardTexel(vCard).a < 0.5) discard;`);
@@ -247,7 +247,7 @@ export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Ve
       .replace('#include <common>', `#include <common>
         varying float vDay;
         varying vec3 vCard;
-        ${flora ? `uniform sampler2D uLeaves; uniform sampler2D uBlades; uniform sampler2D uFronds; uniform sampler2D uNeedles; ${CARD_TEXEL}` : ''}
+        ${flora ? CARD_TEXEL : ''}
         ${GRADE_GLSL}`)
       .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
         reflectedLight.directDiffuse *= vDay;

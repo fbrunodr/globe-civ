@@ -4,7 +4,7 @@
 
 import './style.css';
 import { Game } from './game.ts';
-import { GlobeRenderer, type DebugView } from './render.ts';
+import { GlobeRenderer, type DebugView, type ShadowMode } from './render.ts';
 import { MAP_SCRIPTS, MAP_SIZES, isMapScript, tileCount, type MapScriptKey, type MapSizeKey } from './rules.ts';
 import { terrainName } from './terrain.ts';
 import { floraLabel } from './flora.ts';
@@ -71,9 +71,10 @@ document.querySelectorAll<HTMLButtonElement>('#views [data-view]').forEach((b) =
 const cloudsBtn = $('clouds');
 const toggleClouds = () => { view.setClouds(!view.clouds); cloudsBtn.classList.toggle('active', view.clouds); cloudsBtn.blur(); };
 cloudsBtn.addEventListener('click', toggleClouds);
-// Shadows on or off (render.ts setShadows).
-const shadowsBtn = $('shadows');
-shadowsBtn.addEventListener('click', () => { view.setShadows(!view.shadows); shadowsBtn.classList.toggle('active', view.shadows); shadowsBtn.blur(); });
+// Shadows: none, baked or real (render.ts setShadows).
+const shadowsSel = $<HTMLSelectElement>('shadows');
+const isShadowMode = (s: string): s is ShadowMode => s === 'none' || s === 'baked' || s === 'real';
+shadowsSel.addEventListener('change', () => { if (isShadowMode(shadowsSel.value)) view.setShadows(shadowsSel.value); shadowsSel.blur(); });
 // Tone mapping on or off (render.ts setToneMapping).
 const toneBtn = $('tone');
 toneBtn.addEventListener('click', () => { view.setToneMapping(!view.toneMapped); toneBtn.classList.toggle('active', view.toneMapped); toneBtn.blur(); });

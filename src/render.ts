@@ -27,6 +27,7 @@ import { Vegetation, type SpotEnv } from './vegetation.ts';
 import { mulberry32, makePerlin } from './rng.ts';
 import { USE, WONDERS, improvementFor, type ImprovementKey } from './cities.ts';
 import { makeFloraDepthMaterial, makePropMaterial, instanceGeometry } from './propMaterial.ts';
+import { TreeShadows } from './treeShadows.ts';
 
 const FOG = new THREE.Color(0x0b0e15);
 
@@ -47,6 +48,11 @@ const HUE_JITTER = 0.12;
 // layer of props is too small to see and is not drawn.
 const HIDE_ABOVE = { Canopy: Infinity, Accent: Infinity, Understory: 1.6, Ground: 0.8 } as const;
 const PROP_CHUNKS = 8;
+// What lies on the ground is drawn before what stands on it (the opaque
+// pass, by renderOrder): after the sky (-10, sky.ts: drawn first, no depth
+// test), the ground, the roads over it, the trees' shadows over both
+// (treeShadows.ts), then everything else (0).
+const GROUND_ORDER = -8, ROAD_ORDER = -6, SHADOW_ORDER = -2;
 // A farm's crops stand within this many tiles of the camera (propMaterial.ts).
 const CROP_FAR = 16;
 
@@ -112,12 +118,14 @@ const SQUARE_GROW = 0.022; // squares reach this far (tile steps) under the stre
 const WALK_FOV = 55;
 // The look: a 35° lens from further back (flatter perspective, less of a
 // small planet); the City samples page's light (a maquette's): a strong
-// pale sky fill and a warm sun fairly high, casting shadows; no tone
+// pale sky fill and a warm sun fairly high, trees' shadows baked; no tone
 // mapping.
 const LENS = 35;
-// The sun's shadow map (texels a side), and its normal offset in texels.
-const SHADOW_MAP = 2048, SHADOW_NORMAL_TEXELS = 1.5;
 // sunSide: how far round to the left of behind the camera the sun stands (degrees).
+// The sun's shadow map ('real' shadows: texels a side) and its normal offset in texels.
+const SHADOW_MAP = 2048, SHADOW_NORMAL_TEXELS = 1.5;
+// How shadows are drawn (setShadows).
+export type ShadowMode = 'none' | 'baked' | 'real';
 const LIGHT = { sunColor: 0xfff4e0, sun: 2.1, sunHeight: 40, sunSide: 40, fill: 1.4, fillSky: 0xdfeeff, fillGround: 0x6a5a40 };
 // Bridges (heights × the world scale; spans in tile steps): the deck stands
 // at least BRIDGE_CLEAR over the water and arches up to BRIDGE_ARCH more on
@@ -200,6 +208,8 @@ export class GlobeRenderer {
   private readonly cropFar = { value: 1 };
   private readonly floraUniforms = { time: this.floraTime, cropFar: this.cropFar, eye: { value: new THREE.Vector3() } };
   private readonly propMat = makePropMaterial(0, 0.85, this.sunDir, this.floraUniforms);
+  private treeShadows!: TreeShadows;
+  private shadowMode: ShadowMode = 'baked';
   private readonly floraDepth = makeFloraDepthMaterial(this.floraUniforms);
   private shadowsDirty = true;
   private readonly buildingMat = makePropMaterial(0.32, 0.6, this.sunDir);
@@ -272,14 +282,15 @@ export class GlobeRenderer {
     this.camera.position.set(0, 0, 3.4);
     this.scene.add(this.camera);
     // The sun keeps a fixed angle to the camera (behind it, a little to the
-    // left) so the visible side is always lit (updateSun), its shadow map
-    // fitted to what is on screen. Shadows re-render only when the view or
-    // the world changes (laptops).
+    // left) so the visible side is always lit (updateSun). Its shadows
+    // (setShadows): none, baked (trees only, treeShadows.ts), or real (a
+    // shadow map fitted to what is on screen, re-rendered only when the view
+    // or the world changes).
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.shadowMap.autoUpdate = false;
     this.sun = new THREE.DirectionalLight(LIGHT.sunColor, LIGHT.sun);
-    this.sun.castShadow = true;
+    this.sun.castShadow = false;
     this.sun.shadow.mapSize.set(SHADOW_MAP, SHADOW_MAP);
     this.sun.shadow.bias = -0.0004;
     this.sun.shadow.radius = 3;
@@ -402,7 +413,8 @@ export class GlobeRenderer {
     });
     this.globeMesh = new THREE.Mesh(this.terrain.geometry, this.terrainMat.material);
     this.globeMesh.userData['stat'] = 'terrain';
-    this.globeMesh.castShadow = true;
+    this.globeMesh.renderOrder = GROUND_ORDER;
+    // ('Real' shadows: only trees cast them; everything receives them.)
     this.globeMesh.receiveShadow = true;
     this.scene.add(this.globeMesh);
     // The water surface, hidden under fog of war like the ground.
@@ -428,6 +440,9 @@ export class GlobeRenderer {
     // Props are drawn per chunk of the globe, one instanced mesh per kind, so
     // chunks behind the horizon or off screen cost nothing.
     for (const kind of CATALOG_KINDS) this.propGeo.set(kind, buildPropGeometry(kind, s * 1.5 * PROP_SIZE));
+    // Trees and shrubs cast shadows, baked once (treeShadows.ts).
+    const casters = new Map(CATALOG_KINDS.filter((k) => CATALOG[k].layer === 'Canopy' || CATALOG[k].layer === 'Understory').map((k) => [k, this.propGeo.get(k)!] as const));
+    this.treeShadows = new TreeShadows(this.renderer, casters, this.sunDir, LIGHT.sunHeight);
     const golden = Math.PI * (3 - Math.sqrt(5));
     for (let k = 0; k < PROP_CHUNKS; k++) {
       const y = 1 - (2 * (k + 0.5)) / PROP_CHUNKS, rr = Math.sqrt(1 - y * y);
@@ -524,7 +539,7 @@ export class GlobeRenderer {
     // (The flora on a town's tiles stays clear of what the town builds.)
     for (const t of townChanged) for (const x of [t, ...g.tiles[t].neighbors]) { this.propCache.delete(x); dirty.add(this.tileChunk[x]!); }
     if (changed.length) this.updateProps(); else if (dirty.size) this.updateProps(dirty);
-    // (What casts shadows changed: they re-render.)
+    // (What casts real shadows changed: they re-render.)
     if (changed.length || dirty.size || useChanged || townChanged.length) this.shadowsDirty = true;
     this.updateRoads(changed.length > 0 || townChanged.length > 0);
     this.updateSmoke();
@@ -578,10 +593,17 @@ export class GlobeRenderer {
 
   // Clouds and rain on or off (the debug views always hide them).
   clouds = true;
-  // The sun's shadows on or off (on by default; three recompiles the
-  // materials itself).
-  get shadows(): boolean { return this.sun.castShadow; }
-  setShadows(on: boolean): void { this.sun.castShadow = on; this.shadowsDirty = true; }
+  // Shadows: none, baked (trees cast them onto the ground, two triangles
+  // each: the default) or real (the sun's shadow map: trees cast them onto
+  // everything, each other too; a second pass whenever the view moves).
+  // Only trees and shrubs cast shadows.
+  get shadows(): ShadowMode { return this.shadowMode; }
+  setShadows(mode: ShadowMode): void {
+    this.shadowMode = mode;
+    this.sun.castShadow = mode === 'real';
+    this.shadowsDirty = true;
+    this.lastView.pos.set(0, 0, 0); // (fit the shadow map now)
+  }
 
   // Neutral tone mapping on or off (off by default, as on the City samples
   // page; three recompiles the materials itself).
@@ -920,7 +942,11 @@ export class GlobeRenderer {
         const items = lists.get(kind) ?? [];
         let mesh = chunk.meshes.get(kind);
         if (!mesh || mesh.instanceMatrix.count < items.length) {
-          if (mesh) { this.scene.remove(mesh); mesh.dispose(); mesh.geometry.getAttribute('leafTint')?.array && mesh.geometry.deleteAttribute('leafTint'); }
+          if (mesh) {
+            this.scene.remove(mesh); mesh.dispose(); mesh.geometry.getAttribute('leafTint')?.array && mesh.geometry.deleteAttribute('leafTint');
+            const old = mesh.userData['shadow'] as THREE.InstancedMesh | undefined;
+            if (old) { this.scene.remove(old); old.dispose(); }
+          }
           if (items.length === 0) { chunk.meshes.delete(kind); continue; }
           const cap = Math.ceil(items.length * 1.3) + 8;
           // (A farm's crops are drawn with the flora, and hide from high up as its understory does.)
@@ -929,13 +955,25 @@ export class GlobeRenderer {
           mesh.userData['hideAbove'] = isFloraKind(kind) ? HIDE_ABOVE[CATALOG[kind].layer] : Infinity;
           // (Crops hide once the camera is higher than they reach, cullProps.)
           if (crop) mesh.userData['crop'] = true;
-          // Everything casts a shadow but ground cover (too small to show
-          // one; skipping it saves draw calls), and everything receives one
-          // (trees shade each other, crowns their insides). Flora's shadows
-          // are cut to its leaves and sway with them (makeFloraDepthMaterial).
-          mesh.castShadow = !(isFloraKind(kind) && CATALOG[kind].layer === 'Ground');
+          // 'Real' shadows: only trees and shrubs cast them (cut to their
+          // leaves and swaying with them, makeFloraDepthMaterial);
+          // everything receives them (trees shade each other, and what
+          // stands near them).
+          const tree = isFloraKind(kind) && (CATALOG[kind].layer === 'Canopy' || CATALOG[kind].layer === 'Understory');
+          mesh.castShadow = tree;
           mesh.receiveShadow = true;
-          if (isFloraKind(kind) || crop) mesh.customDepthMaterial = this.floraDepth;
+          if (tree) mesh.customDepthMaterial = this.floraDepth;
+          // 'Baked': a tree's shadow, a quad on the ground under each
+          // (treeShadows.ts), on the tree's own instances.
+          const quad = this.treeShadows.quad(kind);
+          if (quad) {
+            const shade = new THREE.InstancedMesh(quad, this.treeShadows.material, cap);
+            shade.instanceMatrix = mesh.instanceMatrix;
+            shade.renderOrder = SHADOW_ORDER;
+            shade.userData['stat'] = 'tree shadows';
+            mesh.userData['shadow'] = shade;
+            this.scene.add(shade);
+          }
           mesh.userData['stat'] = statOf(kind);
           chunk.meshes.set(kind, mesh);
           this.scene.add(mesh);
@@ -953,6 +991,8 @@ export class GlobeRenderer {
         leaf.needsUpdate = true;
         if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
         mesh.computeBoundingSphere();
+        const shade = mesh.userData['shadow'] as THREE.InstancedMesh | undefined;
+        if (shade) { shade.count = mesh.count; shade.computeBoundingSphere(); }
       }
     }
     this.updateCraters();
@@ -971,6 +1011,8 @@ export class GlobeRenderer {
       for (const mesh of chunk.meshes.values()) {
         mesh.visible = this.view === 'normal' && seen && altitude < (mesh.userData['hideAbove'] as number)
           && (mesh.userData['crop'] !== true || dist - 1 < this.cropFar.value);
+        const shade = mesh.userData['shadow'] as THREE.InstancedMesh | undefined;
+        if (shade) shade.visible = mesh.visible && this.shadowMode === 'baked';
       }
     }
   }
@@ -1183,7 +1225,7 @@ export class GlobeRenderer {
       windOutward(geo);
       geo.computeVertexNormals();
       const mesh = new THREE.Mesh(geo, this.roadMats[i]!);
-      mesh.renderOrder = 1 + i;
+      mesh.renderOrder = ROAD_ORDER + i;
       mesh.userData['stat'] = 'roads & fields';
       mesh.receiveShadow = true;
       this.scene.add(mesh);
@@ -1200,7 +1242,6 @@ export class GlobeRenderer {
     bgeo.computeVertexNormals();
     this.bridges = new THREE.Mesh(bgeo, this.bridgeMat);
     this.bridges.userData['stat'] = 'roads & fields';
-    this.bridges.castShadow = true;
     this.bridges.receiveShadow = true;
     this.scene.add(this.bridges);
   }
@@ -1558,7 +1599,7 @@ export class GlobeRenderer {
     const cam = this.camera;
     const moved = cam.position.distanceToSquared(this.lastView.pos) > 1e-10 || cam.quaternion.angleTo(this.lastView.quat) > 1e-5;
     this.floraUniforms.eye.value.copy(cam.position);
-    if (this.shadowsDirty) { this.renderer.shadowMap.needsUpdate = true; this.shadowsDirty = false; }
+    if (this.shadowsDirty && this.sun.castShadow) { this.renderer.shadowMap.needsUpdate = true; this.shadowsDirty = false; }
     if (!moved && !this.walk.active) return;
     this.lastView.pos.copy(cam.position);
     this.lastView.quat.copy(cam.quaternion);
@@ -1580,6 +1621,7 @@ export class GlobeRenderer {
     this.sun.position.copy(focus).addScaledVector(dir, 3);
     this.sun.target.position.copy(focus);
     this.sun.target.updateMatrixWorld();
+    if (!this.sun.castShadow) return;
     // Fit the shadow map to the ground in view (more of it when tilted):
     // tight when zoomed in (crisp shadows), the whole hemisphere from afar.
     const span = this.cam.distance * Math.tan(THREE.MathUtils.degToRad(cam.fov / 2)) * Math.max(1, cam.aspect) * 1.3;
@@ -1838,7 +1880,7 @@ function slopeAndShore(terrain: TerrainMesh, coast: Float32Array): [Float32Array
 
 // Triangles of a ground overlay (roads, bridges) wound to face away from
 // the globe's center (they are built either way round): then their
-// normals point up, for the light and for the shadow lookups alike.
+// normals point up, for the light.
 // Walls (no clear outside) are left as they are.
 function windOutward(geo: THREE.BufferGeometry): void {
   const p = geo.getAttribute('position') as THREE.BufferAttribute;
