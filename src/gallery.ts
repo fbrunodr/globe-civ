@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { WorldLabel, clickableLabels, disposeLabels, type LabelLine } from './worldLabel.ts';
+import { makePropMaterial } from './propMaterial.ts';
 import { CATALOG, CATALOG_KINDS, buildCatalogGeometry, triangles, type CatalogKind } from './propCatalog.ts';
 import { BUILDINGS_CATALOG, BUILDING_KINDS, buildBuildingGeometry } from './buildingCatalog.ts';
 import { BIOME_FLORA, FEATURE_FLORA, realmsLabel, type Tint, type Variant } from './floraData.ts';
@@ -51,7 +52,8 @@ sun.shadow.bias = -0.0008;
 sun.shadow.normalBias = 0.06;
 scene.add(sun, sun.target);
 
-const propMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, flatShading: true, side: THREE.DoubleSide });
+// The game's flora material (clump normals, leaf cards), at full saturation.
+const propMat = makePropMaterial(0, 1, undefined, { time: { value: 0 } });
 const world = new THREE.Group();
 scene.add(world);
 

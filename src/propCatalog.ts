@@ -63,8 +63,12 @@ export const cyl = (r0: number, r1: number, h: number, n: number, color: number,
   part(new THREE.CylinderGeometry(r1, r0, h, n, 1, true).translate(0, h / 2, 0), color, tf(o));
 export const cone = (r: number, h: number, n: number, color: number, o: Tf = {}) =>
   part(new THREE.ConeGeometry(r, h, n, 1, true).translate(0, h / 2, 0), color, tf(o));
-const ico = (r: number, color: number, o: Tf = {}) => part(new THREE.IcosahedronGeometry(r, 0), color, tf(o));
-const oct = (r: number, color: number, o: Tf = {}) => part(new THREE.OctahedronGeometry(r, 0), color, tf(o));
+// (Blobs: a crown's leaf clumps become leaf cards, see clumpCards.)
+// CARD_DENSITY: cards per triangle of the blob each replaces, halved (1: as many triangles as the blob).
+const CARD_DENSITY = 3;
+const blob = (g: THREE.BufferGeometry, cards: number) => { g.userData['cards'] = cards * CARD_DENSITY; return g; };
+const ico = (r: number, color: number, o: Tf = {}) => blob(part(new THREE.IcosahedronGeometry(r, 0), color, tf(o)), 10);
+const oct = (r: number, color: number, o: Tf = {}) => blob(part(new THREE.OctahedronGeometry(r, 0), color, tf(o)), 4);
 const tet = (r: number, color: number, o: Tf = {}) => part(new THREE.TetrahedronGeometry(r, 0), color, tf(o));
 const disc = (r: number, n: number, color: number, o: Tf = {}) => part(new THREE.CircleGeometry(r, n), color, tf(o));
 
@@ -76,6 +80,10 @@ export function seg(a: THREE.Vector3, b: THREE.Vector3, r0: number, r1: number, 
   return part(g, color, new THREE.Matrix4().compose(a, new THREE.Quaternion().setFromUnitVectors(UP, d.normalize()), V(1, 1, 1)));
 }
 
+// Flat leaves (fronds, blades, fans): lit as a lawn is, from above (their
+// normals up), never as a clump.
+const flatLeaf = (g: THREE.BufferGeometry) => { g.userData['flat'] = true; return g; };
+
 // A flat leaf (a squashed 3-sided cone) from `at`, pointing out at angle
 // `ang` around the vertical; tilt > 0 droops it below horizontal, < 0 raises it.
 function frond(at: THREE.Vector3, ang: number, len: number, w: number, tilt: number, color: number) {
@@ -83,7 +91,7 @@ function frond(at: THREE.Vector3, ang: number, len: number, w: number, tilt: num
   const m = new THREE.Matrix4().makeTranslation(at.x, at.y, at.z)
     .multiply(new THREE.Matrix4().makeRotationY(ang))
     .multiply(new THREE.Matrix4().makeRotationZ(-Math.PI / 2 - tilt));
-  return part(leaf, color, m);
+  return flatLeaf(part(leaf, color, m));
 }
 
 // A flat rectangle leaf rising from `at`, tilted out by `tilt` from vertical.
@@ -92,14 +100,14 @@ function blade4(at: THREE.Vector3, ang: number, len: number, w: number, tilt: nu
   const m = new THREE.Matrix4().makeTranslation(at.x, at.y, at.z)
     .multiply(new THREE.Matrix4().makeRotationY(ang))
     .multiply(new THREE.Matrix4().makeRotationX(tilt));
-  return part(g, color, m);
+  return flatLeaf(part(g, color, m));
 }
 
 // One triangle of grass: base width w, height h, tip leaning by `lean`.
 function blade(x: number, z: number, ang: number, w: number, h: number, lean: number, color: number) {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute([-w / 2, 0, 0, w / 2, 0, 0, 0, h, lean], 3));
-  return part(g, color, tf({ x, z, ry: ang }));
+  return flatLeaf(part(g, color, tf({ x, z, ry: ang })));
 }
 
 // Deterministic lumpy jitter of a blob's vertices (shared corners move together).
@@ -246,8 +254,8 @@ export const CATALOG = {
   } },
   fanPalm: { name: 'Fan palm (buriti)', layer: 'Canopy', leaf: 0x6d9c48, water: wade(0.00025), build: (p) => [
     cyl(0.0006, 0.0005, 0.0105, 3, 0x7a6a55),
-    part(new THREE.CircleGeometry(0.0034, 6, 0, Math.PI), p.leaf, tf({ y: 0.0102 })),
-    part(new THREE.CircleGeometry(0.0034, 6, 0, Math.PI), p.leaf, tf({ y: 0.0102, ry: Math.PI / 2, rx: -0.3 })),
+    flatLeaf(part(new THREE.CircleGeometry(0.0034, 6, 0, Math.PI), p.leaf, tf({ y: 0.0102 }))),
+    flatLeaf(part(new THREE.CircleGeometry(0.0034, 6, 0, Math.PI), p.leaf, tf({ y: 0.0102, ry: Math.PI / 2, rx: -0.3 }))),
   ] },
   banana: { name: 'Banana', layer: 'Understory', leaf: 0x7cc04a, build: (p) => [
     cyl(0.0006, 0.0005, 0.0025, 3, 0x8a9a50),
@@ -460,9 +468,96 @@ export function buildCatalogGeometry(kind: CatalogKind, palette?: Partial<Palett
   return buildModel(CATALOG[kind], kind, palette);
 }
 
-// Builds a model whose leaf parts are marked (leafMask) for per-instance tints.
-export function buildModel(e: Pick<CatalogEntry, 'leaf' | 'accent' | 'build'>, name: string, palette?: Partial<Palette>): THREE.BufferGeometry {
-  const merged = mergeGeometries(e.build({ leaf: LEAF_PROBE.getHex(), accent: palette?.accent ?? e.accent ?? e.leaf }));
+// Fluffy foliage (as model-railway trees, and games' hand-painted ones):
+// a leaf part is lit as one soft clump, its normals pointing out from its
+// middle (an ellipsoid's, leaning up a little so tops catch the sun), not
+// by its facets; ground cover's point straight up, as a lawn's. A crown is
+// darker toward its underside (leafShade: how much, baked per vertex).
+const CLUMP_UP = 0.8;
+const UNDERSIDE_SHADE = 0.18;
+const isLeafPart = (g: THREE.BufferGeometry) => {
+  const col = g.getAttribute('color');
+  return Math.abs(col.getX(0) - LEAF_PROBE.r) + Math.abs(col.getY(0) - LEAF_PROBE.g) + Math.abs(col.getZ(0) - LEAF_PROBE.b) <= 1e-4;
+};
+// A crown's leaf clump (a blob) as crossed leaf cards, as many triangles
+// as the blob had: quads at random turns through the clump's middle,
+// filling its box (so a flattened clump stays flat). cardUv: the card's
+// texture coordinates, and 1 (the material cuts the leaves out of it).
+const CARD_SPREAD = 0.45, CARD_HALF = 0.62;
+function clumpCards(g: THREE.BufferGeometry, n: number, seed: number): THREE.BufferGeometry {
+  g.computeBoundingBox();
+  const box = g.boundingBox!, c = box.getCenter(new THREE.Vector3()), half = box.getSize(new THREE.Vector3()).multiplyScalar(0.5);
+  let h = seed >>> 0;
+  const rand = () => { h = (Math.imul(h ^ (h >>> 15), 0x2c1b3c6d) + 0x6d2b79f5) >>> 0; return (h >>> 8) / 16777216; };
+  const pos: number[] = [], uv: number[] = [];
+  const q = new THREE.Quaternion(), a = new THREE.Vector3(), b = new THREE.Vector3(), m = new THREE.Vector3();
+  for (let i = 0; i < n; i++) {
+    q.setFromEuler(new THREE.Euler(rand() * Math.PI, rand() * Math.PI, rand() * Math.PI));
+    a.set(CARD_HALF, 0, 0).applyQuaternion(q);
+    b.set(0, CARD_HALF, 0).applyQuaternion(q);
+    m.set(rand() - 0.5, rand() - 0.5, rand() - 0.5).multiplyScalar(2 * CARD_SPREAD);
+    const corner = (sa: number, sb: number) => { pos.push(...[0, 1, 2].map((k) => c.getComponent(k) + half.getComponent(k) * (m.getComponent(k) + sa * a.getComponent(k) + sb * b.getComponent(k)))); uv.push((sa + 1) / 2, (sb + 1) / 2, 1); };
+    for (const [sa, sb] of [[-1, -1], [1, -1], [1, 1], [-1, -1], [1, 1], [-1, 1]] as const) corner(sa, sb);
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.Float32BufferAttribute(new Float32Array(pos.length), 3));
+  out.setAttribute('cardUv', new THREE.Float32BufferAttribute(uv, 3));
+  const col = g.getAttribute('color'), cc = new Float32Array(pos.length);
+  for (let i = 0; i < cc.length; i += 3) { cc[i] = col.getX(0); cc[i + 1] = col.getY(0); cc[i + 2] = col.getZ(0); }
+  out.setAttribute('color', new THREE.BufferAttribute(cc, 3));
+  return out;
+}
+
+// A flat leaf keeps its own facets' light (so fronds differ by their tilt),
+// each facet's normal turned to its upper side and leaned up a little: both
+// sides share it (the material), so no leaf goes dark underneath.
+const FLAT_UP = 0.5;
+function fluff(g: THREE.BufferGeometry, layer: Layer): void {
+  const pos = g.getAttribute('position'), nor = g.getAttribute('normal');
+  if (layer === 'Ground' || layer === 'Accent' || g.userData['flat'] === true) {
+    const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), n = new THREE.Vector3();
+    for (let i = 0; i + 2 < pos.count; i += 3) {
+      a.fromBufferAttribute(pos, i); b.fromBufferAttribute(pos, i + 1); c.fromBufferAttribute(pos, i + 2);
+      n.subVectors(c, b).cross(a.sub(b));
+      if (n.lengthSq() < 1e-24) n.set(0, 1, 0);
+      n.normalize();
+      if (n.y < 0) n.negate();
+      n.addScaledVector(UP, FLAT_UP).normalize();
+      for (let k = 0; k < 3; k++) nor.setXYZ(i + k, n.x, n.y, n.z);
+    }
+    return;
+  }
+  g.computeBoundingBox();
+  const box = g.boundingBox!, c = box.getCenter(new THREE.Vector3()), half = box.getSize(new THREE.Vector3()).multiplyScalar(0.5).max(V(1e-6, 1e-6, 1e-6));
+  const n = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    n.set((pos.getX(i) - c.x) / half.x, (pos.getY(i) - c.y) / half.y, (pos.getZ(i) - c.z) / half.z);
+    if (n.lengthSq() < 1e-9) n.set(0, 1, 0);
+    n.normalize().addScaledVector(UP, CLUMP_UP).normalize();
+    nor.setXYZ(i, n.x, n.y, n.z);
+  }
+}
+
+// Builds a model whose leaf parts are marked (leafMask) for per-instance tints;
+// a flora model's (one with a layer) are made fluffy.
+export function buildModel(e: Pick<CatalogEntry, 'leaf' | 'accent' | 'build'> & { layer?: Layer }, name: string, palette?: Partial<Palette>): THREE.BufferGeometry {
+  const leafy = e.layer === 'Canopy' || e.layer === 'Understory';
+  let seed = [...name].reduce((h, ch) => Math.imul(h ^ ch.charCodeAt(0), 0x01000193), 0x811c9dc5);
+  const parts = e.build({ leaf: LEAF_PROBE.getHex(), accent: palette?.accent ?? e.accent ?? e.leaf })
+    .map((g) => (leafy && isLeafPart(g) && typeof g.userData['cards'] === 'number' ? clumpCards(g, g.userData['cards'] as number, seed++) : g));
+  if (e.layer) for (const g of parts) if (isLeafPart(g)) fluff(g, e.layer);
+  // (Which vertices are a crown's, in shade underneath: leaf clumps, not flat leaves.)
+  const crown = parts.flatMap((g) => Array<boolean>(g.getAttribute('position').count).fill(isLeafPart(g) && g.userData['flat'] !== true));
+  // (Every part has card coordinates, so they merge: 0 off the cards, and
+  // a flat leaf's -1, for its normal up on both sides.)
+  for (const g of parts) {
+    if (g.getAttribute('cardUv')) continue;
+    const n = g.getAttribute('position').count, uv = new Float32Array(n * 3);
+    if (e.layer && isLeafPart(g) && (g.userData['flat'] === true || e.layer === 'Ground' || e.layer === 'Accent')) for (let i = 0; i < n; i++) uv[i * 3 + 2] = -1;
+    g.setAttribute('cardUv', new THREE.BufferAttribute(uv, 3));
+  }
+  const merged = mergeGeometries(parts);
   if (!merged) throw new Error(`Could not build prop ${name}`);
   const leaf = new THREE.Color(palette?.leaf ?? e.leaf);
   const col = merged.getAttribute('color');
@@ -473,6 +568,15 @@ export function buildModel(e: Pick<CatalogEntry, 'leaf' | 'accent' | 'build'>, n
     col.setXYZ(i, leaf.r, leaf.g, leaf.b);
   }
   merged.setAttribute('leafMask', new THREE.BufferAttribute(mask, 1));
+  // The crown's underside in shade (canopy and understory).
+  const shade = new Float32Array(col.count);
+  if (e.layer === 'Canopy' || e.layer === 'Understory') {
+    const pos = merged.getAttribute('position');
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < pos.count; i++) if (crown[i]) { lo = Math.min(lo, pos.getY(i)); hi = Math.max(hi, pos.getY(i)); }
+    for (let i = 0; i < pos.count; i++) if (crown[i] && hi > lo) shade[i] = UNDERSIDE_SHADE * (1 - (pos.getY(i) - lo) / (hi - lo)) ** 1.5;
+  }
+  merged.setAttribute('leafShade', new THREE.BufferAttribute(shade, 1));
   return merged;
 }
 
