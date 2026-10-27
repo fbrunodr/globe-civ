@@ -135,8 +135,9 @@ function leafTexture(): THREE.DataTexture {
 
 // Prop material: per-vertex colors, with the leaf parts (leafMask) taking
 // each instance's leaf color (leafTint), times the instance's color.
-// `bounce`: light bounced off the ground onto walls (buildings, whose walls
-// would otherwise sit dark under a high sun). `saturation`: how much color
+// `bounce`: light bounced off the sunlit ground onto walls (buildings, whose
+// walls would otherwise sit dark under a high sun), on the sunny side only:
+// a wall turned from the sun keeps its shade. `saturation`: how much color
 // the lit result keeps. `sunDir` (on the globe, the sun's direction, kept up
 // to date by the caller): the planet's shadow, worked out: no direct sun
 // where the sun is below a prop's horizon.
@@ -252,7 +253,12 @@ export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Ve
       .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
         reflectedLight.directDiffuse *= vDay;
         reflectedLight.directSpecular *= vDay;`)
-      .replace('#include <opaque_fragment>', `outgoingLight += diffuseColor.rgb * ${bounce.toFixed(3)} * vDay;
+      .replace('#include <opaque_fragment>', `
+        #if NUM_DIR_LIGHTS > 0
+          outgoingLight += diffuseColor.rgb * ${bounce.toFixed(3)} * vDay * smoothstep(-0.1, 0.4, dot(normal, directionalLights[0].direction));
+        #else
+          outgoingLight += diffuseColor.rgb * ${bounce.toFixed(3)} * vDay;
+        #endif
         outgoingLight = grade(outgoingLight, ${saturation.toFixed(3)}) * 0.9;
         #include <opaque_fragment>`);
     // (A card's two sides share its outward normal, so light never falls

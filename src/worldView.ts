@@ -4,7 +4,8 @@
 
 import './style.css';
 import { Game } from './game.ts';
-import { GlobeRenderer, type DebugView, type ShadowMode } from './render.ts';
+import { GlobeRenderer, type DebugView } from './render.ts';
+import { mountSettings } from './settingsMenu.ts';
 import { MAP_SCRIPTS, MAP_SIZES, isMapScript, tileCount, type MapScriptKey, type MapSizeKey } from './rules.ts';
 import { terrainName } from './terrain.ts';
 import { floraLabel } from './flora.ts';
@@ -71,13 +72,8 @@ document.querySelectorAll<HTMLButtonElement>('#views [data-view]').forEach((b) =
 const cloudsBtn = $('clouds');
 const toggleClouds = () => { view.setClouds(!view.clouds); cloudsBtn.classList.toggle('active', view.clouds); cloudsBtn.blur(); };
 cloudsBtn.addEventListener('click', toggleClouds);
-// Shadows: none, baked or real (render.ts setShadows).
-const shadowsSel = $<HTMLSelectElement>('shadows');
-const isShadowMode = (s: string): s is ShadowMode => s === 'none' || s === 'baked' || s === 'real';
-shadowsSel.addEventListener('change', () => { if (isShadowMode(shadowsSel.value)) view.setShadows(shadowsSel.value); shadowsSel.blur(); });
-// Tone mapping on or off (render.ts setToneMapping).
-const toneBtn = $('tone');
-toneBtn.addEventListener('click', () => { view.setToneMapping(!view.toneMapped); toneBtn.classList.toggle('active', view.toneMapped); toneBtn.blur(); });
+// The settings menu (shadows, tone mapping).
+mountSettings(view);
 // In sight (as if every tile were seen by a unit) or explored only (how the
 // map looks out of sight).
 const sightBtn = $('sight');

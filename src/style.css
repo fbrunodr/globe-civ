@@ -42,7 +42,7 @@ small { color: var(--muted); font-weight: normal; }
 .turns { color: var(--muted); font-size: 12px; }
 .y { margin-right: 10px; white-space: nowrap; }
 .y.food { color: #8ce99a; } .y.prod { color: #ffc078; } .y.gold { color: #ffe066; }
-#tileinfo { right: 14px; bottom: 14px; min-width: 240px; }
+#tileinfo { right: 14px; bottom: 60px; min-width: 240px; } /* (above the dock) */
 #tileinfo div + div { margin-top: 3px; color: var(--muted); }
 .warn { color: #ffa94d; } .bad { color: #ff6b6b; }
 #log { position: fixed; left: 14px; top: 56px; width: 380px; font-size: 13px; color: var(--muted);
@@ -53,7 +53,6 @@ small { color: var(--muted); font-weight: normal; }
 #fps { font: 12px ui-monospace, monospace; color: var(--muted); padding: 4px 10px; cursor: pointer; user-select: none; }
 #views { font-size: 12px; color: var(--muted); padding: 4px 10px; display: flex; align-items: center; gap: 4px; }
 #views button { padding: 2px 7px; font-size: 12px; }
-#views select { padding: 2px 4px; font-size: 12px; }
 #help { font-size: 13px; color: var(--muted); }
 #help summary { cursor: pointer; color: var(--text); }
 
@@ -125,3 +124,13 @@ small { color: var(--muted); font-weight: normal; }
 #fps table.tris th { text-align: left; font-weight: normal; padding-right: 10px; }
 #fps table.tris td { text-align: right; padding-left: 8px; color: var(--text, #ddd); }
 #fps table.tris tr:first-child th { color: var(--muted); text-align: right; }
+
+/* The dock (settingsMenu.ts): bottom right, the View bar and the settings gear side by side; the menu opens upward. */
+#dock { position: fixed; right: 14px; bottom: 14px; display: flex; align-items: center; gap: 8px; z-index: 20; }
+#dock .panel { position: static; }
+#settings { position: relative; }
+#settingsBtn { font-size: 15px; line-height: 1; padding: 5px 9px; cursor: pointer; }
+#dock #settingsMenu { position: absolute; right: 0; bottom: calc(100% + 6px); min-width: 170px; padding: 8px 12px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+#dock #settingsMenu.hidden { display: none; }
+#settingsMenu h4 { margin: 0 0 2px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+#settingsMenu label { display: flex; align-items: center; gap: 8px; cursor: pointer; }

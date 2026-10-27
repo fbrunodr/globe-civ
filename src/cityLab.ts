@@ -6,7 +6,8 @@
 
 import './style.css';
 import { Game, type City } from './game.ts';
-import { GlobeRenderer, type DebugView, type ShadowMode, type TileMark } from './render.ts';
+import { GlobeRenderer, type DebugView, type TileMark } from './render.ts';
+import { mountSettings } from './settingsMenu.ts';
 import { MAP_SCRIPTS, MAP_SIZES, isMapScript, tileCount, type MapScriptKey, type MapSizeKey } from './rules.ts';
 import { terrainName } from './terrain.ts';
 import {
@@ -304,13 +305,8 @@ const setView = (m: DebugView) => {
 document.querySelectorAll<HTMLButtonElement>('#views [data-view]').forEach((b) => b.addEventListener('click', () => { setView(b.dataset['view'] as DebugView); b.blur(); }));
 const toggleClouds = () => { view.setClouds(!view.clouds); $('clouds').classList.toggle('active', view.clouds); };
 $('clouds').addEventListener('click', (e) => { toggleClouds(); (e.currentTarget as HTMLElement).blur(); });
-// Shadows: none, baked or real (render.ts setShadows).
-const shadowsSel = $<HTMLSelectElement>('shadows');
-const isShadowMode = (s: string): s is ShadowMode => s === 'none' || s === 'baked' || s === 'real';
-shadowsSel.addEventListener('change', () => { if (isShadowMode(shadowsSel.value)) view.setShadows(shadowsSel.value); shadowsSel.blur(); });
-// Tone mapping on or off (render.ts setToneMapping).
-const toneBtn = $('tone');
-toneBtn.addEventListener('click', () => { view.setToneMapping(!view.toneMapped); toneBtn.classList.toggle('active', view.toneMapped); toneBtn.blur(); });
+// The settings menu (shadows, tone mapping).
+mountSettings(view);
 addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
   if (e.key === 'j' || e.key === 'J') setView(VIEWS[(VIEWS.indexOf(view.view) + 1) % VIEWS.length]!);

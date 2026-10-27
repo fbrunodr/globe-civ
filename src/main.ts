@@ -1,5 +1,6 @@
 import './style.css';
 import { Game, HUMAN, type City, type Unit } from './game.ts';
+import { mountSettings } from './settingsMenu.ts';
 import { GlobeRenderer, type DebugView, type Selection, type TileMark } from './render.ts';
 import { UI, assertNever, wonderPicked, type Action, type Placing } from './ui.ts';
 import { MAP_SCRIPTS, MAP_SIZES, isMapScript, tileCount, unitDef, isWonder, type MapScriptKey, type MapSizeKey } from './rules.ts';
@@ -55,6 +56,8 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
   const ui = new UI(game, act);
   view.onTileHover = onHover;
   view.onTileClick = onClick;
+  // The settings menu (shadows, tone mapping).
+  mountSettings(view);
   // Dev-only handle for profiling from the browser console or test scripts.
   if (import.meta.env.DEV) Object.assign(window, { __globe: { game, view } });
 
