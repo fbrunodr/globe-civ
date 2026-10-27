@@ -71,6 +71,9 @@ document.querySelectorAll<HTMLButtonElement>('#views [data-view]').forEach((b) =
 const cloudsBtn = $('clouds');
 const toggleClouds = () => { view.setClouds(!view.clouds); cloudsBtn.classList.toggle('active', view.clouds); cloudsBtn.blur(); };
 cloudsBtn.addEventListener('click', toggleClouds);
+// Tone mapping on or off (render.ts setToneMapping).
+const toneBtn = $('tone');
+toneBtn.addEventListener('click', () => { view.setToneMapping(!view.toneMapped); toneBtn.classList.toggle('active', view.toneMapped); toneBtn.blur(); });
 // In sight (as if every tile were seen by a unit) or explored only (how the
 // map looks out of sight).
 const sightBtn = $('sight');

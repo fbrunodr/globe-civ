@@ -79,10 +79,77 @@ function leafTexture(): THREE.DataTexture {
 // `bounce`: light bounced off the ground onto walls (buildings, whose walls
 // would otherwise sit dark under a high sun). `saturation`: how much color
 // the lit result keeps. `sunDir` (on the globe, the sun's direction, kept up
-// to date by the caller): the planet's shadow, worked out instead of looked
-// up in the shadow map (props receive no shadow-map shadows, for speed): no
-// direct sun where the sun is below a prop's horizon.
+// to date by the caller): the planet's shadow, worked out (the shadow map
+// covers only what is in view): no direct sun where the sun is below a
+// prop's horizon.
 //
+// What flora does to its vertices, in the picture and in the sun's shadow
+// map alike (so a shadow sways with its tree): the leaves stir in the wind,
+// a farm's crops (cardUv z 2) shrink away with distance from the eye (the
+// camera, uEye: in the shadow pass cameraPosition is the sun's).
+export interface FloraUniforms {
+  time: { value: number };
+  cropFar?: { value: number };
+  eye?: { value: THREE.Vector3 };
+}
+const FLORA_VERTEX_DECL = `
+  attribute float leafMask;
+  attribute vec3 cardUv;
+  uniform float uTime; uniform float uCropFar; uniform vec3 uEye;`;
+const FLORA_VERTEX = `
+  #ifdef USE_INSTANCING
+    // Wind: leaves sway with their height in the model, each prop in its own phase.
+    {
+      vec3 o = instanceMatrix[3].xyz;
+      float ph = dot(o, vec3(4100.0, 3700.0, 2900.0));
+      float gust = sin(uTime * 1.7 + ph) + 0.5 * sin(uTime * 2.9 + ph * 1.3);
+      transformed.xz += leafMask * transformed.y * ${WIND.toFixed(3)} * gust * vec2(1.0, 0.6);
+      if (cardUv.z > 1.5) {
+        float far = distance((modelMatrix * vec4(o, 1.0)).xyz, uEye) / uCropFar;
+        transformed *= 1.0 - smoothstep(0.6, 1.0, far);
+      }
+    }
+  #endif`;
+const floraUniforms = (f: FloraUniforms): Record<string, THREE.IUniform> => ({
+  uTime: f.time, uCropFar: f.cropFar ?? { value: 1e9 }, uEye: f.eye ?? { value: new THREE.Vector3() },
+  uLeaves: { value: leafTexture() }, uBlades: { value: bladeTexture() },
+});
+// A card's texel: a crop's stalks (z 2, rural/models.ts) or a crown's leaves;
+// far off, its leaves are kept from fading away in the blurred mipmaps.
+const CARD_TEXEL = `
+  vec4 cardTexel(vec3 card) {
+    vec4 lt = card.z > 1.5 ? texture2D(uBlades, card.xy) : texture2D(uLeaves, card.xy);
+    vec2 dx = dFdx(card.xy) * ${LEAF_TEX}.0, dy = dFdy(card.xy) * ${LEAF_TEX}.0;
+    lt.a *= 1.0 + 0.3 * max(0.5 * log2(max(dot(dx, dx), dot(dy, dy))), 0.0);
+    return lt;
+  }`;
+
+// The depth flora is drawn into the sun's shadow map with: the same
+// vertices (wind, crops by distance), its cards cut out to their leaves and
+// stalks (a card would otherwise cast a square).
+export function makeFloraDepthMaterial(flora: FloraUniforms): THREE.MeshDepthMaterial {
+  const mat = new THREE.MeshDepthMaterial();
+  mat.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, floraUniforms(flora));
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>
+        ${FLORA_VERTEX_DECL}
+        varying vec3 vCard;`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        vCard = cardUv;
+        ${FLORA_VERTEX}`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+        varying vec3 vCard;
+        uniform sampler2D uLeaves; uniform sampler2D uBlades;
+        ${CARD_TEXEL}`)
+      .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+        if (vCard.z > 0.5 && cardTexel(vCard).a < 0.5) discard;`);
+  };
+  mat.customProgramCacheKey = () => 'flora-depth';
+  return mat;
+}
+
 // `flora` (trees, shrubs, ground cover): smooth shading over the models'
 // clump normals (propCatalog.ts: fluffy foliage), crowns darker underneath
 // (leafShade), and the leaves stirring in the wind (`time`, seconds, kept
@@ -90,37 +157,23 @@ function leafTexture(): THREE.DataTexture {
 // `flora.cropFar` (world units): a farm's crops (cardUv z 2) shrink into
 // the ground as they near this distance from the camera, and are gone past
 // it (the painted plots go on alone, at no cost).
-export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Vector3, flora?: { time: { value: number }; cropFar?: { value: number } }): THREE.MeshStandardMaterial {
+export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Vector3, flora?: FloraUniforms): THREE.MeshStandardMaterial {
   const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, flatShading: !flora, side: THREE.DoubleSide });
   const day = sunDir !== undefined;
   mat.onBeforeCompile = (shader) => {
     if (day) shader.uniforms['uSunDir'] = { value: sunDir };
-    if (flora) { shader.uniforms['uCropFar'] = flora.cropFar ?? { value: 1e9 }; shader.uniforms['uTime'] = flora.time; shader.uniforms['uLeaves'] = { value: leafTexture() }; shader.uniforms['uBlades'] = { value: bladeTexture() }; }
+    if (flora) Object.assign(shader.uniforms, floraUniforms(flora));
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
-        attribute float leafMask;
+        ${flora ? FLORA_VERTEX_DECL : 'attribute float leafMask; attribute vec3 cardUv;'}
         attribute float leafShade;
         attribute vec3 leafTint;
-        attribute vec3 cardUv;
         varying vec3 vCard;
         varying float vDay;
-        ${day ? 'uniform vec3 uSunDir;' : ''}
-        ${flora ? 'uniform float uTime; uniform float uCropFar;' : ''}`)
+        ${day ? 'uniform vec3 uSunDir;' : ''}`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
         vCard = cardUv;
-        ${flora ? `#ifdef USE_INSTANCING
-          // Wind: leaves sway with their height in the model, each prop in its own phase.
-          {
-            vec3 o = instanceMatrix[3].xyz;
-            float ph = dot(o, vec3(4100.0, 3700.0, 2900.0));
-            float gust = sin(uTime * 1.7 + ph) + 0.5 * sin(uTime * 2.9 + ph * 1.3);
-            transformed.xz += leafMask * transformed.y * ${WIND.toFixed(3)} * gust * vec2(1.0, 0.6);
-            if (cardUv.z > 1.5) {
-              float far = distance((modelMatrix * vec4(o, 1.0)).xyz, cameraPosition) / uCropFar;
-              transformed *= 1.0 - smoothstep(0.6, 1.0, far);
-            }
-          }
-        #endif` : ''}`)
+        ${flora ? FLORA_VERTEX : ''}`)
       .replace('#include <color_vertex>', `#include <color_vertex>
         #ifdef USE_INSTANCING_COLOR
           vColor.xyz = mix(color.xyz, leafTint, leafMask) * instanceColor.xyz * (1.0 - leafShade);
@@ -134,7 +187,7 @@ export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Ve
       .replace('#include <common>', `#include <common>
         varying float vDay;
         varying vec3 vCard;
-        ${flora ? 'uniform sampler2D uLeaves; uniform sampler2D uBlades;' : ''}
+        ${flora ? `uniform sampler2D uLeaves; uniform sampler2D uBlades; ${CARD_TEXEL}` : ''}
         ${GRADE_GLSL}`)
       .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
         reflectedLight.directDiffuse *= vDay;
@@ -148,14 +201,9 @@ export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Ve
         if (abs(vCard.z) > 0.5) normal *= faceDirection;`);
     if (flora) frag = frag.replace('#include <color_fragment>', `#include <color_fragment>
         // A leaf card: its leaves cut out of it; seen edge-on it thins out
-        // and goes (no hard edges); far off, its leaves are kept from
-        // fading away in the blurred mipmaps.
+        // and goes (no hard edges).
         if (vCard.z > 0.5) {
-          // (z 2: a crop's stalks, rural/models.ts; else a crown's leaves.)
-          vec4 lt = vCard.z > 1.5 ? texture2D(uBlades, vCard.xy) : texture2D(uLeaves, vCard.xy);
-          vec2 dx = dFdx(vCard.xy) * ${LEAF_TEX}.0, dy = dFdy(vCard.xy) * ${LEAF_TEX}.0;
-          float lod = 0.5 * log2(max(dot(dx, dx), dot(dy, dy)));
-          lt.a *= 1.0 + 0.3 * max(lod, 0.0);
+          vec4 lt = cardTexel(vCard);
           vec3 fn = normalize(cross(dFdx(vViewPosition), dFdy(vViewPosition)));
           float facing = abs(dot(fn, normalize(vViewPosition)));
           if (lt.a < mix(0.97, 0.5, smoothstep(0.12, 0.4, facing))) discard;

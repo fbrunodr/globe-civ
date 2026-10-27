@@ -304,6 +304,9 @@ const setView = (m: DebugView) => {
 document.querySelectorAll<HTMLButtonElement>('#views [data-view]').forEach((b) => b.addEventListener('click', () => { setView(b.dataset['view'] as DebugView); b.blur(); }));
 const toggleClouds = () => { view.setClouds(!view.clouds); $('clouds').classList.toggle('active', view.clouds); };
 $('clouds').addEventListener('click', (e) => { toggleClouds(); (e.currentTarget as HTMLElement).blur(); });
+// Tone mapping on or off (render.ts setToneMapping).
+const toneBtn = $('tone');
+toneBtn.addEventListener('click', () => { view.setToneMapping(!view.toneMapped); toneBtn.classList.toggle('active', view.toneMapped); toneBtn.blur(); });
 addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
   if (e.key === 'j' || e.key === 'J') setView(VIEWS[(VIEWS.indexOf(view.view) + 1) % VIEWS.length]!);
