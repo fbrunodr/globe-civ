@@ -1,22 +1,22 @@
 // What a rural tile's worked areas look like: decided by the tile (its
 // improvement, biome, feature, climate), never by the farm's layout, so one
 // layout is a wheat farm in France, an olive grove in Tuscany and a rice
-// estate in Bengal. Each area gets a ground colour and what fills it: crop
-// rows, trees in rows, animals at pasture, spoil heaps, stone blocks, cut
-// logs. Areas of one tile vary among the crops its climate grows.
+// estate in Bengal. Each area gets a ground colour and what fills it: the
+// harvest (crop rows), animals at pasture, spoil heaps, stone blocks, cut
+// logs; tree crops leave theirs empty (the ground is painted, the terrain
+// shader). Areas of one tile vary among the crops its climate grows.
 // Pure 2D (the tile's canonical hex, tile steps): the game and the farm painter
 // place the same things.
 
 import type { BiomeKey, FeatureKey } from '../terrain.ts';
 import type { ImprovementKey } from '../cities.ts';
-import { add, len, lerp, mul, pointInPoly, sub, type Pt } from '../town/geometry.ts';
+import { len, pointInPoly, sub, type Pt } from '../town/geometry.ts';
 import { mulberry32 } from '../rng.ts';
 import type { RuralModel } from './models.ts';
 
 export type RGB = readonly [number, number, number];
 export type Fill =
   | { readonly t: 'rows'; readonly color: number; readonly spacing: number; readonly height: number; readonly width: number }
-  | { readonly t: 'trees'; readonly model: Extract<RuralModel, 'olive' | 'orchard' | 'palm' | 'vine'>; readonly color: number; readonly spacing: number }
   | { readonly t: 'scatter'; readonly model: Extract<RuralModel, 'sheep' | 'cow' | 'heap' | 'block' | 'stump' | 'logs' | 'haystack'>; readonly color: number; readonly per: number }
   | { readonly t: 'none' };
 export interface AreaLook { readonly name: string; readonly ground: RGB; readonly fill: Fill; readonly extra?: Fill }
@@ -35,15 +35,15 @@ const POTATO: AreaLook = { name: 'potatoes', ground: rgb(0x4a3624), fill: rows(0
 const MAIZE: AreaLook = { name: 'maize', ground: rgb(0x4e4a26), fill: rows(0x6f8f32, 0.009, 0.011, 0.006) };
 const MEADOW: AreaLook = { name: 'pasture', ground: rgb(0x4f7a2e), fill: { t: 'scatter', model: 'cow', color: 0x7a4a30, per: 1.2 }, extra: { t: 'scatter', model: 'haystack', color: 0xc9a85a, per: 0.6 } };
 const SHEEP: AreaLook = { name: 'sheep pasture', ground: rgb(0x7a8a46), fill: { t: 'scatter', model: 'sheep', color: 0xece6d8, per: 3 } };
-const OLIVE: AreaLook = { name: 'olive grove', ground: rgb(0x8a7a52), fill: { t: 'trees', model: 'olive', color: 0x7f9466, spacing: 0.017 } };
-const VINES: AreaLook = { name: 'vineyard', ground: rgb(0x7a5e3a), fill: rows(0x3f6a26, 0.011, 0.0085, 0.0045) };
-const ORCHARD: AreaLook = { name: 'orchard', ground: rgb(0x557a32), fill: { t: 'trees', model: 'orchard', color: 0x3f6e2a, spacing: 0.016 } };
+const OLIVE: AreaLook = { name: 'olive grove', ground: rgb(0x8a7a52), fill: { t: 'none' } };
+const VINES: AreaLook = { name: 'vineyard', ground: rgb(0x7a5e3a), fill: { t: 'none' } };
+const ORCHARD: AreaLook = { name: 'orchard', ground: rgb(0x557a32), fill: { t: 'none' } };
 const MILLET: AreaLook = { name: 'millet', ground: rgb(0x7a5a30), fill: rows(0xc29a52, 0.0085, 0.0075) };
 const SORGHUM: AreaLook = { name: 'sorghum', ground: rgb(0x6a3e26), fill: rows(0xa0482c, 0.009, 0.009, 0.0068) };
 const CATTLE: AreaLook = { name: 'cattle', ground: rgb(0x8a8a4a), fill: { t: 'scatter', model: 'cow', color: 0xb08a5a, per: 1.2 } };
 const RICE: AreaLook = { name: 'rice paddy', ground: rgb(0x3f6a6a), fill: rows(0x86c24a, 0.0075, 0.0038, 0.0048) };
 const CANE: AreaLook = { name: 'sugar cane', ground: rgb(0x4a5226), fill: rows(0x6fa23a, 0.0095, 0.013, 0.0065) };
-const DATES: AreaLook = { name: 'date palms', ground: rgb(0x8a7448), fill: { t: 'trees', model: 'palm', color: 0x5f8a3a, spacing: 0.02 }, extra: { t: 'scatter', model: 'haystack', color: 0x9aae5a, per: 0 } };
+const DATES: AreaLook = { name: 'date palms', ground: rgb(0x8a7448), fill: { t: 'none' } };
 const IRRIGATED: AreaLook = { name: 'irrigated fields', ground: rgb(0x46622c), fill: rows(0x7fae44) };
 const PEAT: AreaLook = { name: 'peat cutting', ground: rgb(0x3e3328), fill: { t: 'scatter', model: 'block', color: 0x4a3a2c, per: 3 } };
 
@@ -62,6 +62,21 @@ const CROPS: Partial<Record<BiomeKey, readonly AreaLook[]>> = {
   tundra: [SHEEP, RYE],
 };
 
+// Which palette a farm's plots are painted in (terrainMaterial.ts, CROP_CODE).
+export type CropRegion = 'temperate' | 'steppe' | 'mediterranean' | 'savanna' | 'tropical' | 'oasis' | 'cold';
+export function cropRegion(biome: BiomeKey, feature: FeatureKey | null): CropRegion {
+  if (feature === 'oasis' || feature === 'floodplain') return 'oasis';
+  switch (biome) {
+    case 'steppe': return 'steppe';
+    case 'mediterranean': return 'mediterranean';
+    case 'savanna': return 'savanna';
+    case 'monsoonForest': case 'jungle': return 'tropical';
+    case 'hotDesert': case 'coldDesert': return 'oasis';
+    case 'taiga': case 'tundra': return 'cold';
+    default: return 'temperate';
+  }
+}
+
 // The look of area `i` of a tile.
 export function areaLook(imp: ImprovementKey, biome: BiomeKey, feature: FeatureKey | null, temp: number, i: number, seed: number): AreaLook {
   switch (imp) {
@@ -78,60 +93,7 @@ export function areaLook(imp: ImprovementKey, biome: BiomeKey, feature: FeatureK
   }
 }
 
-// What runs along a farm's field edges, by climate: hedgerows (bocage),
-// dry-stone walls, fences, or nothing (open steppe and paddies).
-export type Edge = { readonly model: Extract<RuralModel, 'bush' | 'wallStone' | 'fence'>; readonly color: number; readonly step: number } | null;
-export function fieldEdge(imp: ImprovementKey, biome: BiomeKey): Edge {
-  if (imp !== 'farm') return null;
-  switch (biome) {
-    case 'prairie': case 'temperateForest': case 'temperateRainforest': return { model: 'bush', color: 0x3e5e2a, step: 0.0068 };
-    case 'mediterranean': case 'coldDesert': case 'tundra': return { model: 'wallStone', color: 0xa49c8a, step: 0.0098 };
-    case 'savanna': case 'hotDesert': return { model: 'fence', color: 0x7a6a4a, step: 0.0098 };
-    case 'taiga': return { model: 'fence', color: 0x6a5038, step: 0.0098 };
-    default: return null;
-  }
-}
-
 // ---------- placing a fill in an area ----------
-
-// The area's long axis (its longest edge).
-export function axisOf(poly: readonly Pt[]): Pt {
-  let best = { x: 1, y: 0 }, bl = -1;
-  poly.forEach((p, i) => { const d = sub(poly[(i + 1) % poly.length]!, p), l = len(d); if (l > bl) { bl = l; best = mul(d, 1 / l); } });
-  return best;
-}
-
-// Rows along the area's long axis, `spacing` apart, clipped to it (each
-// stops a little short of its edge).
-export function rowsIn(poly: readonly Pt[], spacing: number, margin = 0.003): [Pt, Pt][] {
-  const ax = axisOf(poly), n = { x: -ax.y, y: ax.x };
-  const along = poly.map((p) => p.x * ax.x + p.y * ax.y), across = poly.map((p) => p.x * n.x + p.y * n.y);
-  const lo = Math.min(...across) + spacing / 2, hi = Math.max(...across);
-  const out: [Pt, Pt][] = [];
-  for (let c = lo; c < hi; c += spacing) {
-    // Where the line `across = c` meets the edges.
-    const ts: number[] = [];
-    poly.forEach((_, i) => {
-      const j = (i + 1) % poly.length, a = across[i]!, b = across[j]!;
-      if ((a - c) * (b - c) < 0) ts.push(along[i]! + ((c - a) / (b - a)) * (along[j]! - along[i]!));
-    });
-    ts.sort((x, y) => x - y);
-    for (let k = 0; k + 1 < ts.length; k += 2) {
-      const t0 = ts[k]! + margin, t1 = ts[k + 1]! - margin;
-      if (t1 - t0 < 0.004) continue;
-      out.push([add(mul(ax, t0), mul(n, c)), add(mul(ax, t1), mul(n, c))]);
-    }
-  }
-  return out;
-}
-
-// Points on a grid along the area's axis, `spacing` apart (trees in rows).
-export function gridIn(poly: readonly Pt[], spacing: number): Pt[] {
-  return rowsIn(poly, spacing, spacing * 0.4).flatMap(([a, b]) => {
-    const l = len(sub(b, a)), n = Math.max(1, Math.floor(l / spacing) + 1);
-    return Array.from({ length: n }, (_, k) => lerp(a, b, n === 1 ? 0.5 : k / (n - 1)));
-  });
-}
 
 // How far apart scattered things stand (tile steps).
 export const SCATTER_GAP: Record<Extract<Fill, { t: 'scatter' }>['model'], number> = { heap: 0.03, block: 0.016, stump: 0.008, logs: 0.024, cow: 0.012, sheep: 0.007, haystack: 0.012 };

@@ -4,7 +4,7 @@ import { GlobeCamera } from './camera.ts';
 import type { Game, Unit, City } from './game.ts';
 import { SNOW, tileLook, type TileLook } from './look.ts';
 import { buildTerrainMesh, locate, newSample, type TerrainMesh } from './terrainMesh.ts';
-import { makeTerrainMaterial, makeTable, FAN_ROWS, TILE_ROWS, IMPROVEMENT_CODE, BURNT_CODE, type TerrainMaterial } from './terrainMaterial.ts';
+import { makeTerrainMaterial, makeTable, FAN_ROWS, TILE_ROWS, IMPROVEMENT_CODE, BURNT_CODE, CROP_CODE, type TerrainMaterial } from './terrainMaterial.ts';
 import { makeSmoke, type Emitter, type Smoke } from './smoke.ts';
 import { buildPaintData, fanCoords, fanFrames, paintAt, softAt, warpAt, FAN_COORDS, FINE_MAX, FINE_WAVELENGTH, type PaintData, type FanFrame } from './paint.ts';
 import { buildRelief, CONE_RADIUS, CRATER, CRATER_DEPTH, type Relief } from './relief.ts';
@@ -19,7 +19,9 @@ import { BUILDING_KINDS, buildBuildingGeometry, type BuildingKind } from './buil
 import { houseGeometry, isHouseKind, type HouseKind } from './houses.ts';
 import { isWonderModelKind, wonderGeometry, type WonderModelKind } from './wonderModels.ts';
 import { isRuralModelKind, ruralGeometry, type RuralModelKind } from './rural/models.ts';
-import { CityProps, isFarmland, type CitySpot } from './cityProps.ts';
+import { CityProps, tileFrame, type CitySpot } from './cityProps.ts';
+import { farmAxis } from './farmPainter.ts';
+import { cropRegion } from './rural/look.ts';
 import { roadLines, ROAD_HALF_WIDTH } from './roads.ts';
 import { Vegetation, type SpotEnv } from './vegetation.ts';
 import { mulberry32, makePerlin } from './rng.ts';
@@ -339,6 +341,9 @@ export class GlobeRenderer {
       td[o + 3] = l.wet;
       td[o + 19] = l.beach;
       td[o + 21] = this.paint.group[t];
+      // The tile's own frame (cityProps.onTile), its crops and its farm's axis.
+      const f = tileFrame(g, t);
+      td.set([f.c.x, f.c.y, f.c.z, f.k, f.e1.x, f.e1.y, f.e1.z, CROP_CODE[cropRegion(g.biome[t]!, g.feature[t] ?? null)], f.e2.x, f.e2.y, f.e2.z, farmAxis(t)], o + 28);
     });
     const fanTex = makeTable(this.paint.fans.length * FAN_ROWS);
     const fd = fanTex.image.data as Float32Array;
@@ -773,12 +778,16 @@ export class GlobeRenderer {
             const inWater = env.water - env.ground > 0 && catalogEntry(prop.kind).water !== undefined;
             // On built ground the tile's own flora stays where it stands clear of
             // the buildings and streets (a town keeps its trees, never adds any).
+            // A rural tile keeps a share of it (fields keep hedgerow trees),
+            // and that clear of what stands on the farm too.
+            if (use === USE.rural && !inWater) {
+              const imp = improvementFor(g.terrainAt(u));
+              if (rand() >= FLORA_KEEP[imp ?? 'urban'][CATALOG[prop.kind].layer]) continue;
+            }
             if (this.cityProps.keepsFloraClear(u) && !inWater) {
               if (!this.cityProps.floraClear(u, d)) continue;
-            } else if (use !== USE.wild && !inWater) {
-              const imp = use === USE.rural ? improvementFor(g.terrainAt(u)) : null;
-              const keepShare = FLORA_KEEP[use === USE.rural ? imp ?? 'urban' : 'urban'][CATALOG[prop.kind].layer];
-              if (rand() >= keepShare) continue;
+            } else if (use !== USE.wild && use !== USE.rural && !inWater) {
+              if (rand() >= FLORA_KEEP.urban[CATALOG[prop.kind].layer]) continue;
             }
             if (prop.ancient) ancient = false;
             q.setFromUnitVectors(UP, d);
@@ -1031,8 +1040,7 @@ export class GlobeRenderer {
     for (let t = 0; t < g.N; t++) {
       const o = t * TILE_ROWS * 4 + 20;
       const u = g.use[t];
-      // (Farmland is drawn, cityProps.ts: only fishing grounds keep a painted pattern.)
-      const imp = u === USE.rural && !isFarmland(g, t) ? improvementFor(g.terrainAt(t)) : null;
+      const imp = u === USE.rural ? improvementFor(g.terrainAt(t)) : null;
       td[o] = u === USE.center ? 1 : 0;
       td[o + 2] = g.pillaged[t] ? BURNT_CODE : imp ? IMPROVEMENT_CODE[imp] : IMPROVEMENT_CODE.none;
       td[o + 3] = u === USE.center ? 1 : 0;

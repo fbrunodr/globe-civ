@@ -1,16 +1,16 @@
 // The small things the countryside is made of (rural/look.ts says which
-// stand where): crop rows, trees in groves, animals, spoil heaps, stone
+// stand where): animals, spoil heaps, stone
 // blocks, logs, haystacks, a mine's adit. Built in tile steps at true size,
-// like the town's lot models (houses.ts), cached; the leaf parts (the crop,
-// the crown, the heap) take each instance's own colour, so one model serves
-// every crop and every rock. Kept to a handful of triangles each: a farm
+// like the town's lot models (houses.ts), cached; the leaf parts (the
+// fleece, the heap) take each instance's own colour, so one model serves
+// every herd and every rock. Kept to a handful of triangles each: a farm
 // tile holds hundreds of them.
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { cone, cyl, part, tf, type Tf } from '../propCatalog.ts';
 
-export const RURAL_MODELS = ['crop', 'ridge', 'bush', 'wallStone', 'fence', 'olive', 'orchard', 'palm', 'vine', 'sheep', 'cow', 'heap', 'block', 'logs', 'stump', 'haystack', 'adit', 'rack'] as const;
+export const RURAL_MODELS = ['sheep', 'cow', 'heap', 'block', 'logs', 'stump', 'haystack', 'adit', 'rack'] as const;
 export type RuralModel = (typeof RURAL_MODELS)[number];
 export type RuralModelKind = `rural|${RuralModel}`;
 export const ruralModelKind = (m: RuralModel): RuralModelKind => `rural|${m}`;
@@ -23,35 +23,6 @@ const P = (g: THREE.BufferGeometry, c: number, o: Tf = {}) => part(g, c, tf(o));
 const box = (w: number, h: number, d: number, c: number, o: Tf = {}) => P(new THREE.BoxGeometry(w, h, d).translate(0, h / 2, 0), c, o);
 
 const MODELS: Record<RuralModel, () => THREE.BufferGeometry[]> = {
-  // A field's crop: a unit block (stretched per instance to the field and
-  // the crop's height), its top and sides only.
-  crop: () => [P(new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0).deleteAttribute('uv').toNonIndexed(), LEAF)],
-  // A crop row: a unit ridge along x with a rounded top (stretched per
-  // instance: length, height, width), its ends closed.
-  ridge: () => {
-    const prof: [number, number][] = [[0.5, 0], [0.42, 0.55], [0.22, 0.92], [0, 1], [-0.22, 0.92], [-0.42, 0.55], [-0.5, 0]];
-    const pos: number[] = [];
-    for (let i = 0; i + 1 < prof.length; i++) {
-      const [z0, y0] = prof[i]!, [z1, y1] = prof[i + 1]!;
-      pos.push(-0.5, y0, z0, 0.5, y0, z0, 0.5, y1, z1, -0.5, y0, z0, 0.5, y1, z1, -0.5, y1, z1);
-    }
-    for (const x of [-0.5, 0.5]) for (let i = 1; i + 1 < prof.length - 1; i++) {
-      const a = prof[0]!, b = prof[i]!, c = prof[i + 1]!;
-      if (x < 0) pos.push(x, a[1], a[0], x, c[1], c[0], x, b[1], b[0]); else pos.push(x, a[1], a[0], x, b[1], b[0], x, c[1], c[0]);
-    }
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    return [P(g, LEAF)];
-  },
-  // A hedgerow's bush, a stretch of dry-stone wall, a fence panel (along x).
-  bush: () => [P(new THREE.IcosahedronGeometry(0.0045, 0), LEAF, { y: 0.0034, sy: 0.85 })],
-  wallStone: () => [box(0.01, 0.0035, 0.0028, LEAF)],
-  fence: () => [box(0.0006, 0.0042, 0.0006, LEAF, { x: -0.0045 }), box(0.0006, 0.0042, 0.0006, LEAF, { x: 0.0045 }), box(0.01, 0.0005, 0.0004, LEAF, { y: 0.0034 }), box(0.01, 0.0005, 0.0004, LEAF, { y: 0.0018 })],
-  olive: () => [cyl(0.001, 0.0007, 0.006, 4, TRUNK), P(new THREE.IcosahedronGeometry(0.0068, 1), LEAF, { y: 0.0085, sy: 0.72 })],
-  orchard: () => [cyl(0.0009, 0.0007, 0.0065, 4, TRUNK), P(new THREE.IcosahedronGeometry(0.0062, 1), LEAF, { y: 0.01, sy: 0.95 })],
-  palm: () => [cyl(0.0009, 0.0006, 0.017, 4, TRUNK), ...[0, 1, 2, 3, 4, 5, 6].map((i) => P(new THREE.ConeGeometry(0.0016, 0.009, 3).rotateZ(Math.PI / 2).translate(0.0045, 0, 0).rotateZ(-0.35), LEAF, { y: 0.0165, ry: (i / 7) * Math.PI * 2 }))],
-  // A vine row's stock (rows of them along a field).
-  vine: () => [cyl(0.0003, 0.0003, 0.003, 3, TRUNK), P(new THREE.OctahedronGeometry(0.0022, 0), LEAF, { y: 0.0034, sx: 1.6, sy: 0.8 })],
   sheep: () => [box(0.0042, 0.0026, 0.0026, LEAF, { y: 0.0012 }), box(0.0014, 0.0014, 0.0014, DARK, { x: 0.0026, y: 0.0024 }), ...[[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([a, b]) => box(0.0005, 0.0012, 0.0005, DARK, { x: a! * 0.0014, z: b! * 0.0008 }))],
   cow: () => [box(0.0065, 0.0034, 0.0032, LEAF, { y: 0.0018 }), box(0.002, 0.0022, 0.0022, LEAF, { x: 0.0042, y: 0.0034 }), ...[[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([a, b]) => box(0.0007, 0.0018, 0.0007, DARK, { x: a! * 0.0024, z: b! * 0.0011 }))],
   heap: () => [cone(0.018, 0.015, 7, LEAF), cone(0.009, 0.008, 6, LEAF, { x: 0.012, z: 0.006 })],

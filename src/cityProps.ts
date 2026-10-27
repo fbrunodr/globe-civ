@@ -5,9 +5,9 @@
 //
 // Nothing is built on water or right beside it.
 //
-// Rural land tiles show a farm painted on them (farmPainter.ts: a
-// homestead, worked areas round it); what the areas hold is the tile's
-// (rural/look.ts). Fishing boats stay on their water tiles. Everything is a pure function of
+// Rural land tiles have their ground painted by the terrain shader (plots,
+// spoil, pits, clearings); on it a homestead and a few yards
+// (farmPainter.ts) holding what the tile grows or digs (rural/look.ts). Fishing boats stay on their water tiles. Everything is a pure function of
 // the city's state and the seed, so a reload looks identical.
 
 import * as THREE from 'three';
@@ -20,8 +20,8 @@ import { HOUSE_VARIANTS, houseKind } from './houses.ts';
 import { styleOf } from './architecture.ts';
 import { LOT_SIZE, rhoOf, type Floors, type Footprint } from './town/geometry.ts';
 import { planRoads, roadLines, ROAD_HALF_WIDTH } from './roads.ts';
-import { paintFarm, WORK_OF, type RuralDensity } from './farmPainter.ts';
-import { SCATTER_GAP, areaLook, fieldEdge, gridIn, scatterIn, type Fill, type RGB } from './rural/look.ts';
+import { farmAxis, paintFarm, WORK_OF, type RuralDensity } from './farmPainter.ts';
+import { SCATTER_GAP, areaLook, scatterIn, type Fill, type RGB } from './rural/look.ts';
 import { ruralModelKind, type RuralModel } from './rural/models.ts';
 import { len as len2, sub as sub2, type Pt as Pt2 } from './town/geometry.ts';
 import { mulberry32, type Rng } from './rng.ts';
@@ -78,8 +78,15 @@ const SEA_WONDER = 0.9, SEA_ISLET = 0.075;
 // its square (tile steps: twice the size it has in a city) and the ground
 // kept clear round it.
 const LAND_WONDER_HALF = 0.12, LAND_WONDER_GAP = 0.015;
-// The lowest a field's crop block stands (tile steps; a house's storey is 0.02).
-const CROP_LOW = 0.012;
+// A mine's adits: how many (by how far the countryside has filled up), how
+// far apart, how far from the homestead, and the spots tried (every
+// ADIT_STEP across the tile, tile steps).
+const ADITS: Record<RuralDensity, number> = { low: 1, medium: 2, high: 3 };
+// (Adits drawn twice true size, so they read beside their heaps.)
+const ADIT_SCALE = 2;
+const ADIT_GAP = 0.22, ADIT_HOME_GAP = 0.12, ADIT_REACH = 0.4, ADIT_STEP = 0.04;
+// What a crop's yard holds: haystacks.
+const HARVEST: Fill = { t: 'scatter', model: 'haystack', color: 0xc9a85a, per: 1.6 };
 // Models are enlarged a little over true scale so towns read from afar
 // (the drawings' lot sizes assume this scale).
 const HOUSE_SCALE = 1.5;
@@ -344,73 +351,50 @@ export class CityProps {
       keep.set(t, { p: best, r });
     }
 
-    // The countryside: each worked land tile's farm (farmPainter.ts: a
-    // homestead, worked areas round it), laid evenly on the tile; its areas
-    // filled as the tile grows them (rural/look.ts).
+    // The countryside: each worked land tile's ground is painted by the
+    // terrain shader (plots, spoil, pits, clearings); on it stand its
+    // farm's homestead and a few yards (farmPainter.ts), each filled with
+    // what the tile grows or digs (rural/look.ts): haystacks by the grain,
+    // a herd, a grove, heaps, stones, logs.
     const density = ruralDensity(g, city);
     for (const t of this.farmland(city)) {
       const imp = improvementFor(g.terrainAt(t))!, work = WORK_OF[imp]!;
       const { toDir: toT } = onTile(g, t);
       const ko = keep.get(t);
-      const farm = paintFarm({ work, density, seed: mix(t, 0x51), free: (p) => (!ko || len2(sub2(p, ko.p)) > ko.r) && !wet(this.sampleDir(toT(p))) && clear.free([toT(p)]) });
+      const farm = paintFarm({ work, axis: farmAxis(t), density, seed: mix(t, 0x51), free: (p) => (!ko || len2(sub2(p, ko.p)) > ko.r) && !wet(this.sampleDir(toT(p))) && clear.free([toT(p)]) });
       if (!farm) continue;
       const clearHere = new StreetIndex([...streets, ...roads], D);
       const settleHere = (make: (shrink: number) => PlacedBuilding[]): PlacedBuilding[] => {
         for (const shrink of [1, 0.85]) { const bs = make(shrink); if (clearHere.free(this.footprint(bs[0]!)) && dryAround(bs[0]!)) return bs; }
         return [];
       };
-      const one = (m: RuralModel, p: Pt2, yaw: number, s: number, leaf: number, sx = 1, sy = 1, sz = 1) => {
+      const one = (m: RuralModel, p: Pt2, yaw: number, s: number, leaf: number) => {
         const dir = toT(p), smp = this.sampleDir(dir);
         if (wet(smp)) return;
         const q = new THREE.Quaternion().setFromUnitVectors(UP, dir).multiply(new THREE.Quaternion().setFromAxisAngle(UP, yaw));
         const pos = dir.clone().multiplyScalar(1 + smp.ground - 0.00005 * this.scale);
-        const b: PlacedBuilding = { kind: ruralModelKind(m), matrix: new THREE.Matrix4().compose(pos, q, new THREE.Vector3(s * sx, s * sy, s * sz)), color: new THREE.Color(1, 1, 1), leaf: new THREE.Color(leaf) };
+        const b: PlacedBuilding = { kind: ruralModelKind(m), matrix: new THREE.Matrix4().compose(pos, q, new THREE.Vector3(s, s, s)), color: new THREE.Color(1, 1, 1), leaf: new THREE.Color(leaf) };
         // (Never on a road crossing the farm.)
         if (clearHere.free(this.footprint(b))) put(t, b);
       };
       // (Yaws on the tile: the angle of a direction drawn there.)
       const yawOf = (a: Pt2, b: Pt2) => { const da = toT(a), db = toT(b); return facing(da, db) + Math.PI / 2; };
-      const sc = onTile(g, t).k;
       const fillWith = (fl: Fill, poly: readonly Pt2[], seed: number) => {
-        if (fl.t === 'rows') {
-          // A crop: one low block over the field, about half a house's
-          // storey high (a shade of its own, so fields differ).
-          const r = mulberry32(seed + 2), c = poly.reduce((a, p) => ({ x: a.x + p.x / poly.length, y: a.y + p.y / poly.length }), { x: 0, y: 0 });
-          const long = len2(sub2(poly[1]!, poly[0]!)), wide = len2(sub2(poly[3]!, poly[0]!));
-          one('crop', c, yawOf(poly[0]!, poly[1]!) - Math.PI / 2, sc, new THREE.Color(fl.color).multiplyScalar(0.9 + 0.2 * r()).getHex(), long - 0.012, Math.max(CROP_LOW, fl.height * 2.5), wide - 0.012);
-        } else if (fl.t === 'trees') {
-          const r = mulberry32(seed);
-          for (const p of gridIn(poly, fl.spacing)) one(fl.model, p, r() * 6.28, D * (0.85 + 0.3 * r()), fl.color);
-        } else if (fl.t === 'scatter') {
+        if (fl.t === 'scatter') {
           const r = mulberry32(seed + 1);
           for (const p of scatterIn(poly, fl.per, seed, SCATTER_GAP[fl.model])) one(fl.model, p, r() * 6.28, D * (0.8 + 0.4 * r()), fl.color);
         }
       };
-      // Field edges (hedgerows, walls, fences) round each field.
-      const edge = fieldEdge(imp, g.biome[t]!), edgeRand = mulberry32(mix(t, 0xed));
-      farm.fields.forEach((poly, i) => {
+      if (imp === 'mine') this.adits(t, farm.home, ko, ADITS[density], (bs) => put(t, ...bs), settle, (poly, seed) => fillWith(areaLook(imp, g.biome[t]!, null, 0, 0, t).fill, poly, seed), city.owner);
+      // (A mine's yards are its adits' spoil.)
+      if (imp !== 'mine') farm.yards.forEach((poly, i) => {
         const look = areaLook(imp, g.biome[t]!, g.feature[t] ?? null, g.map.temperature[t]!, i, t);
-        if (edge) {
-          poly.forEach((p, k) => {
-            const q = poly[(k + 1) % poly.length]!, l = len2(sub2(q, p)), n = Math.max(1, Math.round(l / edge.step));
-            for (let m = 0; m < n; m++) {
-              const e = { x: p.x + ((q.x - p.x) * (m + 0.5)) / n, y: p.y + ((q.y - p.y) * (m + 0.5)) / n };
-              const yaw = edge.model === 'bush' ? edgeRand() * 6.28 : yawOf(p, q) - Math.PI / 2;
-              one(edge.model, e, yaw, D * (edge.model === 'bush' ? 0.8 + 0.45 * edgeRand() : 1), edge.color);
-            }
-          });
-        }
-        pavings.push({ points: poly.map(toT), paved: false, rgb: look.ground });
-        fillWith(look.fill, poly, mix(t, i));
+        // (The crop itself is painted: its yard holds the harvest.)
+        fillWith(look.fill.t === 'rows' ? HARVEST : look.fill, poly, mix(t, i));
         if (look.extra) fillWith(look.extra, poly, mix(t, i + 99));
-        // A mine's adit at the field's corner nearest the homestead, facing it;
-        // a camp's drying rack by each clearing.
+        // A camp's drying rack by each clearing.
         const near = poly.reduce((a, p) => (len2(sub2(p, farm.home)) < len2(sub2(a, farm.home)) ? p : a));
         if (imp === 'camp') one('rack', near, yawOf(near, farm.home), D, 0xffffff);
-        if (imp === 'mine') {
-          const da = toT(near);
-          if (!wet(this.sampleDir(da))) put(t, ...settle((k) => this.standLot(ruralModelKind('adit'), da, facing(da, toT(farm.home)) + Math.PI / 2, 0.004, 0.002, D * k, mulberry32(mix(t, i)), city.owner), false));
-        }
       });
       // The homestead: a house in the civ's style and its barn, facing along the grid.
       const placeLot = (kind: Footprint, floors: Floors, p: Pt2, lr: Rng) => {
@@ -653,6 +637,42 @@ export class CityProps {
     return false;
   }
 
+  // A mine's adits: where its tile is steepest, each cut into the slope
+  // (its back to the hill, facing down it), apart from each other and the
+  // homestead, its spoil heaps below it.
+  private adits(t: number, home: Pt2, keepOut: { p: Pt2; r: number } | undefined, want: number, put: (bs: PlacedBuilding[]) => void,
+    settle: (make: (shrink: number) => PlacedBuilding[], dry?: boolean) => PlacedBuilding[],
+    spoil: (poly: readonly Pt2[], seed: number) => void, owner: number): void {
+    const { toDir } = onTile(this.game, t);
+    const D = this.game.globe.avgEdgeAngle;
+    const h = (p: Pt2) => this.sampleDir(toDir(p)).ground;
+    const at = (p: Pt2, d: Pt2, s: number): Pt2 => ({ x: p.x + d.x * s, y: p.y + d.y * s });
+    const spots: { p: Pt2; down: Pt2; steep: number }[] = [];
+    for (let x = -ADIT_REACH; x <= ADIT_REACH; x += ADIT_STEP) for (let y = -ADIT_REACH; y <= ADIT_REACH; y += ADIT_STEP) {
+      const p = { x, y };
+      if (rhoOf(6, p) > 0.8 || len2(sub2(p, home)) < ADIT_HOME_GAP || (keepOut && len2(sub2(p, keepOut.p)) < keepOut.r + ADIT_HOME_GAP)) continue;
+      const gx = h({ x: x + 0.02, y }) - h({ x: x - 0.02, y }), gy = h({ x, y: y + 0.02 }) - h({ x, y: y - 0.02 });
+      const steep = Math.hypot(gx, gy);
+      if (steep > 1e-9) spots.push({ p, down: { x: -gx / steep, y: -gy / steep }, steep });
+    }
+    spots.sort((a, b) => b.steep - a.steep);
+    const placed: Pt2[] = [];
+    for (const { p, down } of spots) {
+      if (placed.length >= want) break;
+      if (placed.some((q) => len2(sub2(q, p)) < ADIT_GAP)) continue;
+      const da = toDir(p), s = this.sampleDir(da);
+      if (s.water - s.ground > DRY) continue;
+      const yaw = facing(da, toDir(at(p, down, 0.01))) + Math.PI / 2;
+      const bs = settle((k) => this.standLot(ruralModelKind('adit'), da, yaw, 0.004, 0.002, D * k * ADIT_SCALE, mulberry32(mix(t, placed.length)), owner), false);
+      if (bs.length === 0) continue;
+      put(bs);
+      // Its spoil: a yard down the slope in front of it.
+      const c = at(p, down, 0.07), side = { x: -down.y, y: down.x };
+      spoil([at(at(c, down, -0.035), side, -0.06), at(at(c, down, -0.035), side, 0.06), at(at(c, down, 0.035), side, 0.06), at(at(c, down, 0.035), side, -0.06)], mix(t, 0xad + placed.length));
+      placed.push(p);
+    }
+  }
+
   // One structure per rural tile (two boats on the water), off the roads.
   private rural(t: number, kind: BuildingKind, rand: Rng): PlacedBuilding[] {
     const out: PlacedBuilding[] = [];
@@ -805,13 +825,20 @@ class StreetIndex {
 // inner radius). Unlike the fans' mapping (cityStamp.ts toTile) it never
 // shears, so a painted city keeps its shapes on an uneven tile.
 export function onTile(g: Game, t: number): { toDir: (p: Pt2) => THREE.Vector3; k: number } {
+  const { c, e1, e2, k } = tileFrame(g, t);
+  return { toDir: (p) => c.clone().addScaledVector(e1, p.x * k).addScaledVector(e2, p.y * k).normalize(), k };
+}
+// The frame onTile lays things in (the terrain shader lays farms' plots in
+// it too): the tile's center, e1 toward its side 0, e2 toward side 1, and
+// k radians per tile step.
+export function tileFrame(g: Game, t: number): { c: THREE.Vector3; e1: THREE.Vector3; e2: THREE.Vector3; k: number } {
   const tl = g.tiles[t]!, c = tl.center, n = tl.corners.length;
   const mids = tl.corners.map((cn, j) => g.globe.triCenters[cn]!.clone().add(g.globe.triCenters[tl.corners[(j + 1) % n]!]!).normalize());
   const k = (2 * mids.reduce((a, m) => a + m.angleTo(c), 0)) / n;
   const e1 = mids[0]!.clone().addScaledVector(c, -mids[0]!.dot(c)).normalize();
   let e2 = c.clone().cross(e1);
   if (e2.dot(mids[1]!) < 0) e2 = e2.negate();
-  return { toDir: (p) => c.clone().addScaledVector(e1, p.x * k).addScaledVector(e2, p.y * k).normalize(), k };
+  return { c: c.clone(), e1, e2, k };
 }
 
 export function standsAt(kind: BuildingKind, s: CitySpot): boolean {

@@ -1,9 +1,10 @@
-// The farm painter: what a worked land tile shows, laid out on its own
-// (no drawings, no tracks between tiles). On a grid in the tile's
-// canonical hex (tile steps), turned by the seed, it places a homestead
-// near the middle and then its worked areas (fields, pits, clearings) as
-// rectangles: each on dry ground inside the tile, the nearest free spot to
-// the homestead, a gap of one square round each. Pure and deterministic.
+// The farm painter: where things stand on a worked land tile (its ground
+// is painted by the terrain shader: plots, spoil, pits, clearings). On a
+// grid in the tile's canonical hex (tile steps), along its plots (farmAxis), it
+// places a homestead near the middle and then a few yards round it
+// (haystacks, a herd, a grove, heaps, stones, logs) as rectangles: each on
+// dry ground inside the tile, near the homestead but scattered, a gap of
+// one square round each. Pure and deterministic.
 
 import { rhoOf, type Pt } from './town/geometry.ts';
 import type { ImprovementKey } from './cities.ts';
@@ -17,8 +18,13 @@ export const WORK_OF: Record<ImprovementKey, Work | null> = {
 // How far the countryside has filled up (by era, until the tech tree).
 export type RuralDensity = 'low' | 'medium' | 'high';
 
+// Which way a tile's farm runs: along one of its hex's sides (the terrain
+// shader lays its plots this way too). Radians, from the canonical x axis.
+export const farmAxis = (t: number): number => ((Math.imul(t + 1, 0x9e3779b1) >>> 16) % 3) * (Math.PI / 3);
+
 export interface FarmInput {
   readonly work: Work;
+  readonly axis: number;   // farmAxis
   readonly density: RuralDensity;
   readonly seed: number;
   readonly free: (p: Pt) => boolean; // open dry ground
@@ -26,22 +32,24 @@ export interface FarmInput {
 export interface Farm {
   readonly home: Pt;                  // the homestead's middle
   readonly u: Pt;                     // the grid's axis (the homestead faces it)
-  readonly fields: readonly (readonly Pt[])[]; // rectangles (4 corners)
+  readonly yards: readonly (readonly Pt[])[]; // rectangles (4 corners)
 }
 
 const UNIT = 0.02;            // a grid square (tile steps)
 const N = 25;                 // squares from the middle to the edge
 const REACH = 0.86;           // the hex radius the farm keeps inside
 const HOME = 3;               // the homestead's square (squares a side)
-const COUNT: Record<RuralDensity, number> = { low: 5, medium: 8, high: 11 };
-// Field sizes (squares: the long side, the short one) by work.
+const COUNT: Record<RuralDensity, number> = { low: 2, medium: 3, high: 4 };
+// Yard sizes (squares: the long side's range, the short side's) by work.
 const SIZE: Record<Work, readonly [number, number, number, number]> = {
-  cultivation: [5, 9, 3, 6], extraction: [3, 5, 3, 5], forest: [4, 6, 4, 6],
+  cultivation: [4, 6, 3, 5], extraction: [3, 5, 3, 5], forest: [4, 6, 4, 6],
 };
+// How freely the yards stray from the homestead (squares).
+const SPREAD = 12;
 
 export function paintFarm(inp: FarmInput): Farm | null {
   const rand = mulberry32(inp.seed);
-  const a = rand() * (Math.PI / 3), u = { x: Math.cos(a), y: Math.sin(a) }, v = { x: -u.y, y: u.x };
+  const a = inp.axis, u = { x: Math.cos(a), y: Math.sin(a) }, v = { x: -u.y, y: u.x };
   const at = (x: number, y: number): Pt => ({ x: (x * u.x + y * v.x) * UNIT, y: (x * u.y + y * v.y) * UNIT });
   const S = 2 * N, ok = new Uint8Array(S * S), taken = new Uint8Array(S * S);
   for (let j = 0; j < S; j++) for (let i = 0; i < S; i++) {
@@ -71,17 +79,17 @@ export function paintFarm(inp: FarmInput): Farm | null {
   if (!h0) return null;
   take(h0[0], h0[1], HOME, HOME);
   const hx = h0[0] + HOME / 2, hy = h0[1] + HOME / 2;
-  // The worked areas, round it.
+  // The yards, round it.
   const [l0, l1, s0, s1] = SIZE[inp.work];
-  const fields: Pt[][] = [];
+  const yards: Pt[][] = [];
   for (let n = 0; n < COUNT[inp.density]; n++) {
     const long = l0 + Math.floor(rand() * (l1 - l0 + 1)), short = s0 + Math.floor(rand() * (s1 - s0 + 1));
     const [w, h] = rand() < 0.5 ? [long, short] : [short, long];
-    const spot = nearest(w, h, hx, hy, 4);
+    const spot = nearest(w, h, hx, hy, SPREAD);
     if (!spot) continue;
     take(spot[0], spot[1], w, h);
     const [x0, y0] = [spot[0] - N, spot[1] - N];
-    fields.push([at(x0, y0), at(x0 + w, y0), at(x0 + w, y0 + h), at(x0, y0 + h)]);
+    yards.push([at(x0, y0), at(x0 + w, y0), at(x0 + w, y0 + h), at(x0, y0 + h)]);
   }
-  return { home: at(hx - N, hy - N), u, fields };
+  return { home: at(hx - N, hy - N), u, yards };
 }
