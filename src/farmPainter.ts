@@ -6,7 +6,7 @@
 // dry ground inside the tile, near the homestead but scattered, a gap of
 // one square round each. Pure and deterministic.
 
-import { rhoOf, type Pt } from './town/geometry.ts';
+import { SAFE_RHO, rhoOf, type Pt } from './town/geometry.ts';
 import type { ImprovementKey } from './cities.ts';
 import { mulberry32 } from './rng.ts';
 
@@ -37,7 +37,7 @@ export interface Farm {
 
 const UNIT = 0.02;            // a grid square (tile steps)
 const N = 25;                 // squares from the middle to the edge
-const REACH = 0.86;           // the hex radius the farm keeps inside
+const REACH = SAFE_RHO - 0.04; // the hex radius the farm keeps inside (its safe zone, rural/plots.ts)
 const HOME = 3;               // the homestead's square (squares a side)
 const COUNT: Record<RuralDensity, number> = { low: 2, medium: 3, high: 4 };
 // Yard sizes (squares: the long side's range, the short side's) by work.

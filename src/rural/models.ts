@@ -10,7 +10,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { cone, cyl, part, tf, type Tf } from '../propCatalog.ts';
 
-export const RURAL_MODELS = ['sheep', 'cow', 'heap', 'block', 'logs', 'stump', 'haystack', 'adit', 'rack'] as const;
+export const RURAL_MODELS = ['crop', 'sheep', 'cow', 'heap', 'block', 'logs', 'stump', 'haystack', 'adit', 'rack'] as const;
 export type RuralModel = (typeof RURAL_MODELS)[number];
 export type RuralModelKind = `rural|${RuralModel}`;
 export const ruralModelKind = (m: RuralModel): RuralModelKind => `rural|${m}`;
@@ -22,7 +22,7 @@ const TRUNK = 0x6a5038, TIMBER = 0x7a5f45, DARK = 0x2a2622, WHITE = 0xe8e2d6;
 const P = (g: THREE.BufferGeometry, c: number, o: Tf = {}) => part(g, c, tf(o));
 const box = (w: number, h: number, d: number, c: number, o: Tf = {}) => P(new THREE.BoxGeometry(w, h, d).translate(0, h / 2, 0), c, o);
 
-const MODELS: Record<RuralModel, () => THREE.BufferGeometry[]> = {
+const MODELS: Record<Exclude<RuralModel, 'crop'>, () => THREE.BufferGeometry[]> = {
   sheep: () => [box(0.0042, 0.0026, 0.0026, LEAF, { y: 0.0012 }), box(0.0014, 0.0014, 0.0014, DARK, { x: 0.0026, y: 0.0024 }), ...[[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([a, b]) => box(0.0005, 0.0012, 0.0005, DARK, { x: a! * 0.0014, z: b! * 0.0008 }))],
   cow: () => [box(0.0065, 0.0034, 0.0032, LEAF, { y: 0.0018 }), box(0.002, 0.0022, 0.0022, LEAF, { x: 0.0042, y: 0.0034 }), ...[[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([a, b]) => box(0.0007, 0.0018, 0.0007, DARK, { x: a! * 0.0024, z: b! * 0.0011 }))],
   heap: () => [cone(0.018, 0.015, 7, LEAF), cone(0.009, 0.008, 6, LEAF, { x: 0.012, z: 0.006 })],
@@ -34,11 +34,35 @@ const MODELS: Record<RuralModel, () => THREE.BufferGeometry[]> = {
   rack: () => [box(0.001, 0.009, 0.001, TIMBER, { x: -0.006 }), box(0.001, 0.009, 0.001, TIMBER, { x: 0.006 }), box(0.0135, 0.0008, 0.0008, TIMBER, { y: 0.0085 }), box(0.011, 0.005, 0.0004, WHITE, { y: 0.003 })],
 };
 
+// A tuft of a crop: three crossed cards (a unit tall and across, stretched
+// per instance) showing slim stalks (propMaterial.ts: cardUv z 2, the blade
+// texture), lit from above on both sides as a lawn is, all leaf (the
+// instance's colour), swaying in the wind. Drawn with the flora.
+const TUFT_LEAN = 0.35; // (a share of its height)
+function cropTuft(): THREE.BufferGeometry {
+  const pos: number[] = [], uv: number[] = [];
+  for (let k = 0; k < 3; k++) {
+    // (Each card leans out a little, alternately, as a tuft splays: seen
+    // from above it still covers its ground.)
+    const a = (k * Math.PI) / 3, cx = Math.cos(a) / 2, cz = Math.sin(a) / 2, lean = (k % 2 ? 1 : -1) * TUFT_LEAN;
+    for (const [s, t] of [[-1, 0], [1, 0], [1, 1], [-1, 0], [1, 1], [-1, 1]] as const) { pos.push(s * cx - t * lean * Math.sin(a), t, s * cz + t * lean * Math.cos(a)); uv.push((s + 1) / 2, t, 2); }
+  }
+  const n = pos.length / 3, g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(Array.from({ length: n }, () => [0, 1, 0]).flat(), 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(new Array<number>(n * 3).fill(1), 3));
+  g.setAttribute('leafMask', new THREE.Float32BufferAttribute(new Array<number>(n).fill(1), 1));
+  g.setAttribute('cardUv', new THREE.Float32BufferAttribute(uv, 3));
+  return g;
+}
+export const isFloraRural = (k: RuralModelKind): boolean => k === 'rural|crop';
+
 const cache = new Map<RuralModelKind, THREE.BufferGeometry>();
 export function ruralGeometry(kind: RuralModelKind): THREE.BufferGeometry {
   let g = cache.get(kind);
+  if (!g && kind === 'rural|crop') { g = cropTuft(); cache.set(kind, g); }
   if (!g) {
-    const parts = MODELS[kind.slice('rural|'.length) as RuralModel]().map((p) => (p.index ? p.toNonIndexed() : p));
+    const parts = MODELS[kind.slice('rural|'.length) as Exclude<RuralModel, 'crop'>]().map((p) => (p.index ? p.toNonIndexed() : p));
     g = mergeGeometries(parts)!;
     if (!g) throw new Error(`rural model ${kind}`);
     for (const p of parts) p.dispose();

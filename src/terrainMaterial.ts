@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { mulberry32 } from './rng.ts';
 import type { ImprovementKey } from './cities.ts';
 import type { CropRegion } from './rural/look.ts';
+import { CROP_INDEX_GLSL, CROP_PALETTE, CROP_SATURATION, PLOTS_GLSL } from './rural/plots.ts';
+import { SAFE_RHO } from './town/geometry.ts';
 
 // The terrain material: three's MeshStandardMaterial with extra shader code.
 // The look comes from the basics (the painting, the relief, the props); the
@@ -166,52 +168,18 @@ export const BURNT_CODE = 7;
 export const IMPROVEMENT_CODE = { none: 0, farm: 1, mine: 2, camp: 3, quarry: 4, wetland: 5, boats: 6 } as const satisfies Record<ImprovementKey | 'none', number>;
 // A farm's crops by climate (the plots' palette, CROP_GLSL).
 export const CROP_CODE = { temperate: 0, steppe: 1, mediterranean: 2, savanna: 3, tropical: 4, oasis: 5, cold: 6 } as const satisfies Record<CropRegion, number>;
-// How much of their saturation the crops keep (fields read as fields, not a quilt).
-const CROP_SATURATION = 0.5;
-// Five plot colours per region: grain, a second crop, pasture, ploughed
-// earth, a fourth crop (picked per plot, the first two most often).
-const CROP_PALETTE: Record<CropRegion, readonly [number, number, number, number, number]> = {
-  temperate:     [0xc9a443, 0x8fa045, 0x5f8a36, 0x6e5233, 0xa9a65a],
-  steppe:        [0xd0ad52, 0xbfa35e, 0x8f9a52, 0x7a6040, 0xc7b470],
-  mediterranean: [0x8a8f5c, 0x6f7a3a, 0xc4a660, 0x9a6a44, 0x7f8a52],
-  savanna:       [0xc2964e, 0xa0522f, 0x9a9a4e, 0x8a5a36, 0xb08446],
-  tropical:      [0x86b84a, 0x6fa23a, 0x5f9a5a, 0x5a4a2e, 0x9cc457],
-  oasis:         [0x6fa043, 0x8ab04f, 0xd2b066, 0x9a7a4a, 0x5f8f3a],
-  cold:          [0xa8954e, 0x4f7034, 0x8a9a6a, 0x5a4632, 0x9aa070],
-};
 // (In the shader's linear space, as THREE.Color holds them.)
 const hexVec = (h: number) => {
   const c = new THREE.Color(h), l = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b;
   const f = (x: number) => (l + (x - l) * CROP_SATURATION).toFixed(3);
   return `vec3(${f(c.r)}, ${f(c.g)}, ${f(c.b)})`;
 };
+// The plots (rural/plots.ts) and their colours.
 const CROP_GLSL = /* glsl */ `
 const vec3 CROPS[${Object.keys(CROP_CODE).length * 5}] = vec3[](${(Object.keys(CROP_CODE) as CropRegion[]).sort((a, b) => CROP_CODE[a] - CROP_CODE[b]).flatMap((k) => CROP_PALETTE[k].map(hexVec)).join(', ')});
-// A farm's plots, in its tile's frame (tile steps, turned to its axis):
-// strips in columns, staggered, some split across. f: the position in the
-// plot (0..1); edge: the distance to its border (tile steps).
-float tPlots(vec2 uv, float salt, out vec2 f, out float edge) {
-  vec2 size = vec2(0.11, 0.24);
-  vec2 c = uv / size;
-  c.y += cHash(vec2(floor(c.x), salt + 3.0)) * 3.0;
-  vec2 id = floor(c);
-  f = c - id;
-  vec2 sz = size;
-  float h0 = cHash(id + salt);
-  if (h0 > 0.6) {
-    float k = h0 > 0.85 ? 3.0 : 2.0;
-    id = id * 4.0 + vec2(0.0, floor(f.y * k));
-    f.y = fract(f.y * k);
-    sz.y /= k;
-  }
-  vec2 e = min(f, 1.0 - f) * sz;
-  edge = min(e.x, e.y);
-  return cHash(id + salt + 0.5);
-}
-vec3 cropColor(float region, float h) {
-  int k = h < 0.3 ? 0 : h < 0.55 ? 1 : h < 0.72 ? 2 : h < 0.86 ? 3 : 4;
-  return CROPS[int(region + 0.5) * 5 + k];
-}
+${PLOTS_GLSL}
+${CROP_INDEX_GLSL}
+vec3 cropColor(float region, float h) { return CROPS[int(region + 0.5) * 5 + cropIndex(h)]; }
 `;
 
 export interface TerrainMaterial {
@@ -451,26 +419,27 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
             }
             float fieldMask = 1.0 - urban;
             // Farms follow the grid, not the painting: each fills its own
-            // hex, its plots laid along the hex's sides, a verge at its edge.
+            // hex's safe zone (rural/plots.ts), its plots laid along the
+            // hex's sides, a hedge round it.
             int me = int(ids.x);
             if (int(tileRow(me, 5).z + 0.5) == 1) {
               vec4 fr0 = tileRow(me, 7), fr1 = tileRow(me, 8), fr2 = tileRow(me, 9);
-              vec3 d = normalize(P) - fr0.xyz;
-              vec2 lp = vec2(dot(d, fr1.xyz), dot(d, fr2.xyz)) / fr0.w;
+              // (The inverse of onTile's projection, exactly.)
+              vec3 d = normalize(P);
+              vec2 lp = vec2(dot(d, fr1.xyz), dot(d, fr2.xyz)) / (dot(d, fr0.xyz) * fr0.w);
               float ca = cos(fr2.w), sa = sin(fr2.w);
               vec2 uv = vec2(ca * lp.x + sa * lp.y, -sa * lp.x + ca * lp.y);
               float ringW = fwidth(vRing);
-              // (The whole hex, even where a city's ground spills over from next door.)
-              float farm = (1.0 - smoothstep(0.955, 0.955 + ringW, vRing)) * keep;
+              float farm = (1.0 - smoothstep(${SAFE_RHO.toFixed(3)}, ${SAFE_RHO.toFixed(3)} + ringW, vRing)) * keep;
               vec2 f; float edge;
-              float h = tPlots(uv, float(me), f, edge);
+              float h = plotAt(uv, me, f, edge);
               vec3 crop = cropColor(fr1.w, h);
               crop *= 0.94 + 0.12 * fract(h * 7.3);
               // Furrows along each plot, and hedges between plots and round the farm.
               float tile = fr0.w; // world units per tile step
               crop *= 1.0 + 0.05 * sin(f.y * 40.0) * tFade(40.0 / (0.24 * tile));
               float hedge = (1.0 - smoothstep(0.004, 0.004 + 1.5 * fwidth(edge), edge)) * tFade(1.0 / (0.02 * tile));
-              hedge = max(hedge, smoothstep(0.93, 0.93 + ringW, vRing));
+              hedge = max(hedge, smoothstep(${(SAFE_RHO - 0.025).toFixed(3)}, ${(SAFE_RHO - 0.025).toFixed(3)} + ringW, vRing));
               crop = mix(crop, vec3(0.2, 0.25, 0.15), hedge * 0.7);
               diffuseColor.rgb = mix(diffuseColor.rgb, crop * vShade, farm * 0.9);
             }

@@ -7,6 +7,38 @@ import { GRADE_GLSL } from './terrainMaterial.ts';
 // How far leaves sway in the wind (a share of their height in the model).
 const WIND = 0.04;
 
+// The stalks on a crop's card (rural/models.ts, cropTuft): slim tapering
+// blades of varied height, darker at the foot (in the crop's shade) and
+// lighter at the tip, transparent between them. Made once, in code.
+const BLADE_W = 64, BLADE_H = 128, BLADES = 22;
+let bladeTex: THREE.DataTexture | null = null;
+function bladeTexture(): THREE.DataTexture {
+  if (bladeTex) return bladeTex;
+  const W = BLADE_W, H = BLADE_H, data = new Uint8Array(W * H * 4).fill(232);
+  for (let o = 3; o < data.length; o += 4) data[o] = 0;
+  let h = 0xb1ade;
+  const rand = () => { h = (Math.imul(h ^ (h >>> 15), 0x2c1b3c6d) + 0x6d2b79f5) >>> 0; return (h >>> 8) / 16777216; };
+  for (let n = 0; n < BLADES; n++) {
+    const x0 = 3 + rand() * (W - 6), top = H * (0.55 + 0.45 * rand()), lean = (rand() - 0.5) * 10, w0 = 1.6 + 1.2 * rand();
+    for (let y = 0; y < top; y++) {
+      const t = y / top, cx = x0 + lean * t * t, half = w0 * (1 - 0.85 * t);
+      const shade = Math.round(255 * (0.6 + 0.4 * Math.min(1, t * 1.4)));
+      for (let x = Math.floor(cx - half); x <= cx + half; x++) {
+        if (x < 0 || x >= W) continue;
+        const o = (y * W + x) * 4; // (row 0 is v 0, the foot)
+        data[o] = data[o + 1] = data[o + 2] = shade;
+        data[o + 3] = 255;
+      }
+    }
+  }
+  bladeTex = new THREE.DataTexture(data, W, H, THREE.RGBAFormat);
+  bladeTex.generateMipmaps = true;
+  bladeTex.minFilter = THREE.LinearMipmapLinearFilter;
+  bladeTex.magFilter = THREE.LinearFilter;
+  bladeTex.needsUpdate = true;
+  return bladeTex;
+}
+
 // The leaves on a leaf card (propCatalog.ts, clumpCards): a cloud of small
 // leaves, denser toward the middle, in shades of white (the instance's leaf
 // color shows through), transparent between them. Made once, in code.
@@ -55,12 +87,15 @@ function leafTexture(): THREE.DataTexture {
 // clump normals (propCatalog.ts: fluffy foliage), crowns darker underneath
 // (leafShade), and the leaves stirring in the wind (`time`, seconds, kept
 // up to date by the caller). Buildings stay flat-shaded.
-export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Vector3, flora?: { time: { value: number } }): THREE.MeshStandardMaterial {
+// `flora.cropFar` (world units): a farm's crops (cardUv z 2) shrink into
+// the ground as they near this distance from the camera, and are gone past
+// it (the painted plots go on alone, at no cost).
+export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Vector3, flora?: { time: { value: number }; cropFar?: { value: number } }): THREE.MeshStandardMaterial {
   const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, flatShading: !flora, side: THREE.DoubleSide });
   const day = sunDir !== undefined;
   mat.onBeforeCompile = (shader) => {
     if (day) shader.uniforms['uSunDir'] = { value: sunDir };
-    if (flora) { shader.uniforms['uTime'] = flora.time; shader.uniforms['uLeaves'] = { value: leafTexture() }; }
+    if (flora) { shader.uniforms['uCropFar'] = flora.cropFar ?? { value: 1e9 }; shader.uniforms['uTime'] = flora.time; shader.uniforms['uLeaves'] = { value: leafTexture() }; shader.uniforms['uBlades'] = { value: bladeTexture() }; }
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
         attribute float leafMask;
@@ -70,7 +105,7 @@ export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Ve
         varying vec3 vCard;
         varying float vDay;
         ${day ? 'uniform vec3 uSunDir;' : ''}
-        ${flora ? 'uniform float uTime;' : ''}`)
+        ${flora ? 'uniform float uTime; uniform float uCropFar;' : ''}`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
         vCard = cardUv;
         ${flora ? `#ifdef USE_INSTANCING
@@ -80,6 +115,10 @@ export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Ve
             float ph = dot(o, vec3(4100.0, 3700.0, 2900.0));
             float gust = sin(uTime * 1.7 + ph) + 0.5 * sin(uTime * 2.9 + ph * 1.3);
             transformed.xz += leafMask * transformed.y * ${WIND.toFixed(3)} * gust * vec2(1.0, 0.6);
+            if (cardUv.z > 1.5) {
+              float far = distance((modelMatrix * vec4(o, 1.0)).xyz, cameraPosition) / uCropFar;
+              transformed *= 1.0 - smoothstep(0.6, 1.0, far);
+            }
           }
         #endif` : ''}`)
       .replace('#include <color_vertex>', `#include <color_vertex>
@@ -95,7 +134,7 @@ export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Ve
       .replace('#include <common>', `#include <common>
         varying float vDay;
         varying vec3 vCard;
-        ${flora ? 'uniform sampler2D uLeaves;' : ''}
+        ${flora ? 'uniform sampler2D uLeaves; uniform sampler2D uBlades;' : ''}
         ${GRADE_GLSL}`)
       .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
         reflectedLight.directDiffuse *= vDay;
@@ -112,7 +151,8 @@ export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Ve
         // and goes (no hard edges); far off, its leaves are kept from
         // fading away in the blurred mipmaps.
         if (vCard.z > 0.5) {
-          vec4 lt = texture2D(uLeaves, vCard.xy);
+          // (z 2: a crop's stalks, rural/models.ts; else a crown's leaves.)
+          vec4 lt = vCard.z > 1.5 ? texture2D(uBlades, vCard.xy) : texture2D(uLeaves, vCard.xy);
           vec2 dx = dFdx(vCard.xy) * ${LEAF_TEX}.0, dy = dFdy(vCard.xy) * ${LEAF_TEX}.0;
           float lod = 0.5 * log2(max(dot(dx, dx), dot(dy, dy)));
           lt.a *= 1.0 + 0.3 * max(lod, 0.0);

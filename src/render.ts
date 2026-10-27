@@ -18,7 +18,7 @@ import { buildPropGeometry, catalogEntry, CATALOG, CATALOG_KINDS, type CatalogKi
 import { BUILDING_KINDS, buildBuildingGeometry, type BuildingKind } from './buildingCatalog.ts';
 import { houseGeometry, isHouseKind, type HouseKind } from './houses.ts';
 import { isWonderModelKind, wonderGeometry, type WonderModelKind } from './wonderModels.ts';
-import { isRuralModelKind, ruralGeometry, type RuralModelKind } from './rural/models.ts';
+import { isFloraRural, isRuralModelKind, ruralGeometry, type RuralModelKind } from './rural/models.ts';
 import { CityProps, tileFrame, type CitySpot } from './cityProps.ts';
 import { farmAxis } from './farmPainter.ts';
 import { cropRegion } from './rural/look.ts';
@@ -47,6 +47,8 @@ const HUE_JITTER = 0.12;
 // layer of props is too small to see and is not drawn.
 const HIDE_ABOVE = { Canopy: Infinity, Accent: Infinity, Understory: 1.6, Ground: 0.8 } as const;
 const PROP_CHUNKS = 8;
+// A farm's crops stand within this many tiles of the camera (propMaterial.ts).
+const CROP_FAR = 5;
 
 // Flora and city buildings share the chunks; town lots (houses.ts) are
 // models of their own, made on first use.
@@ -55,7 +57,7 @@ const PROP_KINDS: readonly PropKind[] = [...CATALOG_KINDS, ...BUILDING_KINDS];
 const isFloraKind = (k: PropKind): k is CatalogKind => k in CATALOG;
 // The triangle counter's category for a prop kind.
 const statOf = (k: PropKind): string =>
-  isFloraKind(k) ? `flora · ${CATALOG[k].layer.toLowerCase()}` : isRuralModelKind(k) ? 'rural' : isHouseKind(k) ? 'houses'
+  isFloraKind(k) ? `flora · ${CATALOG[k].layer.toLowerCase()}` : isRuralModelKind(k) ? (isFloraRural(k) ? 'crops' : 'rural') : isHouseKind(k) ? 'houses'
     : isWonderModelKind(k) ? 'wonders' : 'buildings';
 
 interface PropChunk {
@@ -191,7 +193,8 @@ export class GlobeRenderer {
   private prevOwner: Int32Array;
 
   private readonly floraTime = { value: 0 };
-  private readonly propMat = makePropMaterial(0, 0.85, this.sunDir, { time: this.floraTime });
+  private readonly cropFar = { value: 1 };
+  private readonly propMat = makePropMaterial(0, 0.85, this.sunDir, { time: this.floraTime, cropFar: this.cropFar });
   private readonly buildingMat = makePropMaterial(0.32, 0.6, this.sunDir);
   private readonly propGeo = new Map<PropKind, THREE.BufferGeometry>();
   private readonly vegetation: Vegetation;
@@ -250,6 +253,7 @@ export class GlobeRenderer {
   constructor(canvas: HTMLCanvasElement, game: Game) {
     this.game = game;
     this.scale = game.globe.avgEdgeAngle / REF_EDGE;
+    this.cropFar.value = CROP_FAR * game.globe.avgEdgeAngle;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     // Full Retina sharpness (up to 2 pixels per CSS pixel).
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -866,8 +870,10 @@ export class GlobeRenderer {
           if (mesh) { this.scene.remove(mesh); mesh.dispose(); mesh.geometry.getAttribute('leafTint')?.array && mesh.geometry.deleteAttribute('leafTint'); }
           if (items.length === 0) { chunk.meshes.delete(kind); continue; }
           const cap = Math.ceil(items.length * 1.3) + 8;
-          mesh = new THREE.InstancedMesh(instanceGeometry(this.geometryOf(kind), cap), isFloraKind(kind) ? this.propMat : this.buildingMat, cap);
-          mesh.userData['hideAbove'] = isFloraKind(kind) ? HIDE_ABOVE[CATALOG[kind].layer] : Infinity;
+          // (A farm's crops are drawn with the flora, and hide from high up as its understory does.)
+          const crop = isRuralModelKind(kind) && isFloraRural(kind);
+          mesh = new THREE.InstancedMesh(instanceGeometry(this.geometryOf(kind), cap), isFloraKind(kind) || crop ? this.propMat : this.buildingMat, cap);
+          mesh.userData['hideAbove'] = isFloraKind(kind) ? HIDE_ABOVE[CATALOG[kind].layer] : crop ? HIDE_ABOVE.Understory : Infinity;
           mesh.userData['stat'] = statOf(kind);
           chunk.meshes.set(kind, mesh);
           this.scene.add(mesh);
