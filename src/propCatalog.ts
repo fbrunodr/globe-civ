@@ -67,6 +67,8 @@ export const cone = (r: number, h: number, n: number, color: number, o: Tf = {})
 // CARD_DENSITY: cards per triangle of the blob each replaces, halved (1: as many triangles as the blob).
 const CARD_DENSITY = 3;
 const blob = (g: THREE.BufferGeometry, cards: number) => { g.userData['cards'] = cards * CARD_DENSITY; return g; };
+// (Ground cover's blobs stay solid, unless made of cards outright: heather.)
+const groundCards = (g: THREE.BufferGeometry) => { g.userData['groundCards'] = true; return g; };
 const ico = (r: number, color: number, o: Tf = {}) => blob(part(new THREE.IcosahedronGeometry(r, 0), color, tf(o)), 10);
 const oct = (r: number, color: number, o: Tf = {}) => blob(part(new THREE.OctahedronGeometry(r, 0), color, tf(o)), 4);
 const tet = (r: number, color: number, o: Tf = {}) => part(new THREE.TetrahedronGeometry(r, 0), color, tf(o));
@@ -88,7 +90,9 @@ const flatLeaf = (g: THREE.BufferGeometry) => { g.userData['flat'] = true; retur
 // a card (its leaflets cut out of a frond texture, propMaterial.ts) arching
 // up a little and then drooping (tilt > 0 droops it further, < 0 raises it).
 const FROND_SPAN = 0.42; // the leaflets' span across, a share of its length
-function frond(at: THREE.Vector3, ang: number, len: number, _w: number, tilt: number, color: number) {
+// (`tex`: the card texture, propMaterial.ts: 3 a frond's leaflets, 2 slim
+// blades for sword-like leaves.)
+function frond(at: THREE.Vector3, ang: number, len: number, _w: number, tilt: number, color: number, tex = 3) {
   const out = V(Math.cos(ang), 0, -Math.sin(ang)), side = V(Math.sin(ang), 0, Math.cos(ang)).multiplyScalar((FROND_SPAN * len) / 2);
   const along = (t: number, up: number) => at.clone().addScaledVector(out, len * t * Math.cos(up)).add(V(0, len * t * Math.sin(up), 0));
   const mid = along(0.5, 0.3 - tilt), tip = mid.clone().add(along(0.5, -0.5 - tilt).sub(at));
@@ -96,8 +100,30 @@ function frond(at: THREE.Vector3, ang: number, len: number, _w: number, tilt: nu
   const pos: number[] = [], uv: number[] = [];
   for (let i = 0; i + 1 < rows.length; i++) {
     const [a, va] = rows[i]!, [b, vb] = rows[i + 1]!;
-    const q = (p: THREE.Vector3, s: number, v: number) => { pos.push(p.x + side.x * s, p.y, p.z + side.z * s); uv.push((s + 1) / 2, v, 3); };
+    const q = (p: THREE.Vector3, s: number, v: number) => { pos.push(p.x + side.x * s, p.y, p.z + side.z * s); uv.push((s + 1) / 2, v, tex); };
     q(a, -1, va); q(a, 1, va); q(b, 1, vb); q(a, -1, va); q(b, 1, vb); q(b, -1, vb);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('cardUv', new THREE.Float32BufferAttribute(uv, 3));
+  return flatLeaf(part(g, color));
+}
+
+// A rosette of stiff leaves at `at` (Joshua and dragon trees): `n` short
+// sword-like leaves (blade cards) splaying up and out.
+const rosette = (at: THREE.Vector3, n: number, len: number, color: number, turn = 0) =>
+  Array.from({ length: n }, (_, i) => frond(at, turn + (2 * Math.PI * i) / n, len, 0, -0.9 + 0.35 * (i % 2), color, 2));
+
+// A tangle of dry twigs (a dry bush): `n` crossed cards of twigs (the
+// needle texture, its needles read as twigs) splaying out from the ground.
+function twigs(n: number, w: number, h: number, color: number): THREE.BufferGeometry {
+  const pos: number[] = [], uv: number[] = [];
+  for (let k = 0; k < n; k++) {
+    const a = (k * Math.PI) / n, c = Math.cos(a) * w / 2, z = Math.sin(a) * w / 2, lean = (k % 2 ? 0.35 : -0.35) * h;
+    for (const [sd, t] of [[-1, 0], [1, 0], [1, 1], [-1, 0], [1, 1], [-1, 1]] as const) {
+      pos.push(sd * c - t * lean * Math.sin(a), t * h, sd * z + t * lean * Math.cos(a));
+      uv.push((sd + 1) / 2, t, 4);
+    }
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -298,12 +324,15 @@ export const CATALOG = {
     cyl(0.0006, 0.0005, 0.0025, 3, 0x8a9a50),
     ...Array.from({ length: 5 }, (_, i) => blade4(V(0, 0.0022, 0), ring(5, i), 0.0055, 0.0016, 0.9, p.leaf)),
   ] },
-  bamboo: { name: 'Bamboo clump', layer: 'Understory', leaf: 0x9bb34a, build: (p) => [
-    ...[[0, 0, 0.016], [0.0012, 0.0006, 0.013], [-0.001, 0.001, 0.014], [0.0004, -0.0013, 0.012], [-0.0012, -0.0006, 0.0125]]
-      .map(([x, z, h]) => cone(0.00028, h, 3, 0x9a9a50, { x, z, rz: x * 30, rx: -z * 30 })),
-    tet(0.0022, p.leaf, { y: 0.0125, x: 0.0018, sy: 0.6 }),
-    tet(0.002, p.leaf, { y: 0.011, x: -0.0018, z: 0.0008, sy: 0.6 }),
-  ] },
+  // Culms leaning out, sprays of leaves drooping from their upper joints.
+  bamboo: { name: 'Bamboo clump', layer: 'Understory', leaf: 0x9bb34a, build: (p) => {
+    const culms = [[0, 0, 0.016], [0.0012, 0.0006, 0.013], [-0.001, 0.001, 0.014], [0.0004, -0.0013, 0.012], [-0.0012, -0.0006, 0.0125]] as const;
+    const along = (x: number, z: number, h: number) => V(0, h, 0).applyEuler(new THREE.Euler(-z * 30, 0, x * 30)).add(V(x, 0, z));
+    return [
+      ...culms.map(([x, z, h]) => cone(0.00028, h, 3, 0x9a9a50, { x, z, rz: x * 30, rx: -z * 30 })),
+      ...culms.flatMap(([x, z, h], i) => [0.62, 0.78, 0.92].map((k, j) => frond(along(x, z, h * k), i * 1.3 + j * 2.1, 0.0046, 0, 0.55, p.leaf))),
+    ];
+  } },
   treeFern: { name: 'Tree fern', layer: 'Understory', leaf: 0x4f8f3c, build: (p) => [
     cyl(0.0005, 0.0003, 0.0058, 3, 0x5a4632),
     ...Array.from({ length: 6 }, (_, i) => frond(V(0, 0.0058, 0), ring(6, i), 0.0048, 0.0013, -0.15, p.leaf)),
@@ -336,20 +365,20 @@ export const CATALOG = {
     seg(V(-0.0019, 0.006, 0.0004), V(-0.0019, 0.0088, 0.0004), 0.0005, 0.00045, 3, p.leaf),
   ] },
   joshuaTree: { name: 'Joshua tree', layer: 'Canopy', leaf: 0x5d7a3e, build: (p) => {
+    // A shaggy trunk forking into crooked arms, each tipped with a rosette of daggers.
     const fork = V(0, 0.0042, 0);
-    const tips = [V(0.0026, 0.0072, 0.0004), V(-0.0022, 0.0078, 0.0008), V(0.0004, 0.0082, -0.0024)];
+    const tips = [V(0.0026, 0.0072, 0.0004), V(-0.0022, 0.0078, 0.0008), V(0.0004, 0.0082, -0.0024), V(0.0016, 0.0064, 0.0022), V(-0.0026, 0.0062, -0.0014)];
     return [
       seg(V(0, 0, 0), fork, 0.0007, 0.0006, 3, 0x6e5f4c),
       ...tips.map((t) => seg(fork, t, 0.0005, 0.0004, 3, 0x6e5f4c)),
-      ...tips.map((t) => tet(0.0014, p.leaf, { x: t.x, y: t.y + 0.0005, z: t.z, sy: 1.3 })),
+      ...tips.flatMap((t, i) => rosette(t, 5, 0.0022, p.leaf, i)),
     ];
   } },
   dragonTree: { name: 'Dragon tree', layer: 'Canopy', leaf: 0x4d6e3c, build: (p) => [
+    // A stout trunk, arms spreading into an umbrella, a rosette of swords on each.
     cyl(0.0008, 0.0006, 0.0045, 3, 0x9a8a78),
-    seg(V(0, 0.0042, 0), V(0.0016, 0.0062, 0), 0.0004, 0.0003, 3, 0x9a8a78),
-    seg(V(0, 0.0042, 0), V(-0.0014, 0.0062, 0.0006), 0.0004, 0.0003, 3, 0x9a8a78),
-    cone(0.0052, 0.0028, 6, p.leaf, { y: 0.0088, rx: Math.PI }),
-    disc(0.0052, 6, p.leaf, { y: 0.0088, rx: -Math.PI / 2 }),
+    ...[0, 1, 2, 3, 4].map((i) => seg(V(0, 0.0042, 0), V(Math.cos(ring(5, i)) * 0.0034, 0.0074, Math.sin(ring(5, i)) * 0.0034), 0.0004, 0.0003, 3, 0x9a8a78)),
+    ...[0, 1, 2, 3, 4].flatMap((i) => rosette(V(Math.cos(ring(5, i)) * 0.0034, 0.0076, Math.sin(ring(5, i)) * 0.0034), 6, 0.0028, p.leaf, i)),
   ] },
   euphorbia: { name: 'Euphorbia candelabra', layer: 'Understory', leaf: 0x6c8f4a, build: (p) => [
     cyl(0.0007, 0.0006, 0.0025, 3, 0x7a7050),
@@ -377,9 +406,7 @@ export const CATALOG = {
     oct(0.0022, p.leaf, { y: 0.001, sy: 0.55 }),
     oct(0.0017, p.leaf, { x: 0.0018, y: 0.0008, z: -0.0008, sy: 0.55, ry: 0.5 }),
   ] },
-  dryBush: { name: 'Dry bush', layer: 'Ground', leaf: 0x9a8a6a, build: (p) => [
-    oct(0.0018, p.leaf, { y: 0.0009, sy: 0.6, ry: 0.3 }),
-  ] },
+  dryBush: { name: 'Dry bush', layer: 'Ground', leaf: 0x9a8a6a, build: (p) => [twigs(4, 0.0042, 0.0026, p.leaf)] },
   berryBush: { name: 'Berry bush', layer: 'Understory', leaf: 0x5c7d3d, accent: 0xc0303a, build: (p) => [
     oct(0.0021, p.leaf, { y: 0.0013, sy: 0.75 }),
     tet(0.00045, p.accent, { x: 0.0015, y: 0.0016, z: 0.0006 }),
@@ -399,8 +426,9 @@ export const CATALOG = {
   } },
   fernClump: { name: 'Fern clump', layer: 'Ground', leaf: 0x4f8a3a, build: (p) =>
     Array.from({ length: 5 }, (_, i) => frond(V(0, 0.0003, 0), ring(5, i, 0.3), 0.0032, 0.0009, -0.55, p.leaf)) },
+  // A low cushion of tiny leaves (cards, its flowers' purple the tint).
   heather: { name: 'Heather', layer: 'Ground', leaf: 0x8a5a8a, build: (p) => [
-    oct(0.0026, p.leaf, { y: 0.0005, sy: 0.32, ry: 0.3 }),
+    groundCards(oct(0.0026, p.leaf, { y: 0.0006, sy: 0.38, ry: 0.3 })),
   ] },
   moss: { name: 'Moss / lichen mound', layer: 'Ground', leaf: 0x6f8f4a, build: (p) => [
     oct(0.002, p.leaf, { y: 0.0002, sy: 0.32, ry: 0.7 }),
@@ -582,7 +610,7 @@ export function buildModel(e: Pick<CatalogEntry, 'leaf' | 'accent' | 'build'> & 
   const leafy = e.layer === 'Canopy' || e.layer === 'Understory';
   let seed = [...name].reduce((h, ch) => Math.imul(h ^ ch.charCodeAt(0), 0x01000193), 0x811c9dc5);
   const parts = e.build({ leaf: LEAF_PROBE.getHex(), accent: palette?.accent ?? e.accent ?? e.leaf })
-    .map((g) => (leafy && isLeafPart(g) && typeof g.userData['cards'] === 'number' ? clumpCards(g, g.userData['cards'] as number, seed++) : g));
+    .map((g) => ((leafy || g.userData['groundCards'] === true) && isLeafPart(g) && typeof g.userData['cards'] === 'number' ? clumpCards(g, g.userData['cards'] as number, seed++) : g));
   if (e.layer) for (const g of parts) if (isLeafPart(g)) fluff(g, e.layer);
   // (Which vertices are a crown's, in shade underneath: leaf clumps, not flat leaves.)
   const crown = parts.flatMap((g) => Array<boolean>(g.getAttribute('position').count).fill(isLeafPart(g) && g.userData['flat'] !== true));

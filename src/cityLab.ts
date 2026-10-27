@@ -304,6 +304,9 @@ const setView = (m: DebugView) => {
 document.querySelectorAll<HTMLButtonElement>('#views [data-view]').forEach((b) => b.addEventListener('click', () => { setView(b.dataset['view'] as DebugView); b.blur(); }));
 const toggleClouds = () => { view.setClouds(!view.clouds); $('clouds').classList.toggle('active', view.clouds); };
 $('clouds').addEventListener('click', (e) => { toggleClouds(); (e.currentTarget as HTMLElement).blur(); });
+// Shadows on or off (render.ts setShadows).
+const shadowsBtn = $('shadows');
+shadowsBtn.addEventListener('click', () => { view.setShadows(!view.shadows); shadowsBtn.classList.toggle('active', view.shadows); shadowsBtn.blur(); });
 // Tone mapping on or off (render.ts setToneMapping).
 const toneBtn = $('tone');
 toneBtn.addEventListener('click', () => { view.setToneMapping(!view.toneMapped); toneBtn.classList.toggle('active', view.toneMapped); toneBtn.blur(); });

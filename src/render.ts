@@ -578,6 +578,11 @@ export class GlobeRenderer {
 
   // Clouds and rain on or off (the debug views always hide them).
   clouds = true;
+  // The sun's shadows on or off (on by default; three recompiles the
+  // materials itself).
+  get shadows(): boolean { return this.sun.castShadow; }
+  setShadows(on: boolean): void { this.sun.castShadow = on; this.shadowsDirty = true; }
+
   // Neutral tone mapping on or off (off by default, as on the City samples
   // page; three recompiles the materials itself).
   get toneMapped(): boolean { return this.renderer.toneMapping !== THREE.NoToneMapping; }

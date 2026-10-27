@@ -71,6 +71,9 @@ document.querySelectorAll<HTMLButtonElement>('#views [data-view]').forEach((b) =
 const cloudsBtn = $('clouds');
 const toggleClouds = () => { view.setClouds(!view.clouds); cloudsBtn.classList.toggle('active', view.clouds); cloudsBtn.blur(); };
 cloudsBtn.addEventListener('click', toggleClouds);
+// Shadows on or off (render.ts setShadows).
+const shadowsBtn = $('shadows');
+shadowsBtn.addEventListener('click', () => { view.setShadows(!view.shadows); shadowsBtn.classList.toggle('active', view.shadows); shadowsBtn.blur(); });
 // Tone mapping on or off (render.ts setToneMapping).
 const toneBtn = $('tone');
 toneBtn.addEventListener('click', () => { view.setToneMapping(!view.toneMapped); toneBtn.classList.toggle('active', view.toneMapped); toneBtn.blur(); });
