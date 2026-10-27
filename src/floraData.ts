@@ -147,9 +147,13 @@ export const FEATURE_FLORA: Record<FeatureKey, FloraSet> = {
     v('Cypress swamp', 'any', 120, [['baldCypress', 40], ['reeds', 15], ['lilyPads', 15], ['fernClump', 10], ['stump', 10], ['snag', 5], ['fallenLog', 5]]),
   ] },
   mangrove: { variants: [v('Mangrove', 'any', 120, [['mangrove', 75], ['reeds', 10], ['coconutPalm', 8], ['stump', 7]])] },
+  // (A bog shows the land it lies in, as it would be once drained, cities.ts:
+  // wooded in the taiga and the forests, open on the prairie. The maps put
+  // bogs on these three only.)
   bog: { variants: [
-    v('Palsa bog', 'any', 60, [['moss', 40], ['cottonGrass', 30], ['spruce', 10, undefined, STUNTED], ['snag', 10], ['boulder', 10]], { biomes: ['tundra', 'taiga'] }),
-    v('Raised bog', 'any', 85, [['moss', 30], ['heather', 25], ['cottonGrass', 20], ['pine', 12, undefined, STUNTED], ['snag', 8], ['stump', 5]]),
+    v('Spruce bog', 'any', 95, [['spruce', 28, undefined, STUNTED], ['pine', 10, undefined, STUNTED], ['birch', 8], ['moss', 25], ['cottonGrass', 17], ['snag', 7], ['fallenLog', 5]], { biomes: ['taiga'] }),
+    v('Wooded fen', 'any', 100, [['willow', 22], ['birch', 16], ['beechMaple', 6], ['moss', 18], ['reeds', 14], ['cottonGrass', 12], ['heather', 7], ['snag', 5]], { biomes: ['temperateForest'] }),
+    v('Fen meadow', 'any', 90, [['cottonGrass', 25], ['grassTuft', 25], ['reeds', 20], ['flowers', 15], ['willow', 8], ['moss', 7]]),
   ] },
   floodplain: { variants: [
     v('Gallery floodplain', 'any', 70, [['tallGrass', 35, GOLDEN], ['reeds', 25], ['palm', 20], ['shrub', 15], ['poplar', 5]],

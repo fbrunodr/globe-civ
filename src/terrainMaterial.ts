@@ -167,7 +167,7 @@ float cPlots(vec3 P, vec2 size, float salt, out vec2 f, out float edge) {
 export const BURNT_CODE = 7;
 export const IMPROVEMENT_CODE = { none: 0, farm: 1, mine: 2, camp: 3, quarry: 4, wetland: 5, boats: 6 } as const satisfies Record<ImprovementKey | 'none', number>;
 // A farm's crops by climate (the plots' palette, CROP_GLSL).
-export const CROP_CODE = { temperate: 0, steppe: 1, mediterranean: 2, savanna: 3, tropical: 4, oasis: 5, cold: 6 } as const satisfies Record<CropRegion, number>;
+export const CROP_CODE = { temperate: 0, steppe: 1, mediterranean: 2, savanna: 3, tropical: 4, oasis: 5, cold: 6, paddy: 7, peat: 8 } as const satisfies Record<CropRegion, number>;
 // (In the shader's linear space, as THREE.Color holds them.)
 const hexVec = (h: number) => {
   const c = new THREE.Color(h), l = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b;
@@ -394,7 +394,7 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
           // City ground (CITY_GLSL): urban ground and rural patterns.
           float urban = 0.0;
           {
-            float uS = 0.0, cS = 0.0, mineS = 0.0, campS = 0.0, quarryS = 0.0, wetS = 0.0, burntS = 0.0;
+            float uS = 0.0, cS = 0.0, mineS = 0.0, campS = 0.0, quarryS = 0.0, burntS = 0.0;
             for (int k = 0; k < 4; k++) {
               if (soft[k] > 0.001) {
                 vec4 r5 = tileRow(int(ids[k]), 5);
@@ -403,7 +403,6 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
                 if (code == 2) mineS += soft[k];
                 else if (code == 3) campS += soft[k];
                 else if (code == 4) quarryS += soft[k];
-                else if (code == 5) wetS += soft[k];
                 else if (code == ${BURNT_CODE}) burntS += soft[k];
               }
             }
@@ -418,11 +417,11 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               diffuseColor.rgb = mix(diffuseColor.rgb, trodden, 0.35 * urban);
             }
             float fieldMask = 1.0 - urban;
-            // Farms follow the grid, not the painting: each fills its own
-            // hex's safe zone (rural/plots.ts), its plots laid along the
-            // hex's sides, a hedge round it.
-            int me = int(ids.x);
-            if (int(tileRow(me, 5).z + 0.5) == 1) {
+            // Farms and wetlands (paddies, peat) follow the grid, not the
+            // painting: each fills its own hex's safe zone (rural/plots.ts),
+            // its plots laid along the hex's sides, a hedge round it.
+            int me = int(ids.x), meCode = int(tileRow(me, 5).z + 0.5);
+            if (meCode == 1 || meCode == 5) {
               vec4 fr0 = tileRow(me, 7), fr1 = tileRow(me, 8), fr2 = tileRow(me, 9);
               // (The inverse of onTile's projection, exactly.)
               vec3 d = normalize(P);
@@ -430,7 +429,8 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               float ca = cos(fr2.w), sa = sin(fr2.w);
               vec2 uv = vec2(ca * lp.x + sa * lp.y, -sa * lp.x + ca * lp.y);
               float ringW = fwidth(vRing);
-              float farm = (1.0 - smoothstep(${SAFE_RHO.toFixed(3)}, ${SAFE_RHO.toFixed(3)} + ringW, vRing)) * keep;
+              // (A paddy's plots go on under its water.)
+              float farm = (1.0 - smoothstep(${SAFE_RHO.toFixed(3)}, ${SAFE_RHO.toFixed(3)} + ringW, vRing)) * (meCode == 5 ? 1.0 - snowCover : keep);
               vec2 f; float edge;
               float h = plotAt(uv, me, f, edge);
               vec3 crop = cropColor(fr1.w, h);
@@ -442,15 +442,6 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               hedge = max(hedge, smoothstep(${(SAFE_RHO - 0.025).toFixed(3)}, ${(SAFE_RHO - 0.025).toFixed(3)} + ringW, vRing));
               crop = mix(crop, vec3(0.2, 0.25, 0.15), hedge * 0.7);
               diffuseColor.rgb = mix(diffuseColor.rgb, crop * vShade, farm * 0.9);
-            }
-            if (wetS > 0.02) {
-              float wet = smoothstep(0.38, 0.52, wetS + 0.35 * edgeN) * keep * fieldMask;
-              vec2 f; float edge;
-              float h = cPlots(P, vec2(0.12, 0.09), 5.0, f, edge);
-              vec3 paddy = mix(vec3(0.33, 0.45, 0.28), vec3(0.42, 0.52, 0.32), h);
-              float bund = (1.0 - smoothstep(0.004, 0.004 + 1.5 * fwidth(edge), edge)) * tFade(1.0 / (0.04 * uR0));
-              paddy = mix(paddy, vec3(0.52, 0.5, 0.4), bund * 0.7);
-              diffuseColor.rgb = mix(diffuseColor.rgb, paddy * vShade, wet * 0.75);
             }
             if (mineS > 0.02) {
               float mine = smoothstep(0.4, 0.55, mineS + 0.35 * edgeN) * keep * fieldMask;

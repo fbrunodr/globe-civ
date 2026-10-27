@@ -90,7 +90,7 @@ const FLORA_KEEP: Record<'urban' | ImprovementKey, Record<Layer, number>> = {
   mine:    { Canopy: 0.35, Understory: 0.35, Ground: 0.35, Accent: 0.6 },
   quarry:  { Canopy: 0.35, Understory: 0.35, Ground: 0.35, Accent: 0.6 },
   camp:    { Canopy: 0.85, Understory: 0.7, Ground: 0.8, Accent: 1 },
-  wetland: { Canopy: 0.6, Understory: 0.6, Ground: 0.5, Accent: 1 },
+  wetland: { Canopy: 0.2, Understory: 0.12, Ground: 0.08, Accent: 0.3 }, // (paddies and peat beds: cleared as fields are)
   boats:   { Canopy: 1, Understory: 1, Ground: 1, Accent: 1 },
 };
 
@@ -185,6 +185,7 @@ export class GlobeRenderer {
   private readonly looks: TileLook[];
   private readonly globeMesh: THREE.Mesh;
   private readonly baseColors: THREE.Color[];
+  private readonly prevDrained: Uint8Array;
   private readonly playerColors: THREE.Color[];
   private readonly paint: PaintData;
   private readonly frames: FanFrame[];
@@ -350,19 +351,7 @@ export class GlobeRenderer {
 
     // Tile table: static rows now, display rows (color, snow) in updateColors.
     this.tileTex = makeTable(N * TILE_ROWS);
-    const td = this.tileTex.image.data as Float32Array;
-    L.forEach((l, t) => {
-      const o = t * TILE_ROWS * 4;
-      td.set([l.detail.grain, l.detail.patch, l.detail.strata, l.detail.dunes], o + 4);
-      td.set([l.patchColor.r, l.patchColor.g, l.patchColor.b, l.detail.bump], o + 8);
-      td.set([l.rockColor.r, l.rockColor.g, l.rockColor.b, l.rock], o + 12);
-      td[o + 3] = l.wet;
-      td[o + 19] = l.beach;
-      td[o + 21] = this.paint.group[t];
-      // The tile's own frame (cityProps.onTile), its crops and its farm's axis.
-      const f = tileFrame(g, t);
-      td.set([f.c.x, f.c.y, f.c.z, f.k, f.e1.x, f.e1.y, f.e1.z, CROP_CODE[cropRegion(g.biome[t]!, g.feature[t] ?? null)], f.e2.x, f.e2.y, f.e2.z, farmAxis(t)], o + 28);
-    });
+    for (let t = 0; t < N; t++) this.writeTileLook(t);
     const fanTex = makeTable(this.paint.fans.length * FAN_ROWS);
     const fd = fanTex.image.data as Float32Array;
     this.paint.fans.forEach((f, i) => {
@@ -430,6 +419,7 @@ export class GlobeRenderer {
     this.weather.group.userData['stat'] = 'clouds & rain';
     this.scene.add(this.weather.group);
     this.prevExplored = new Uint8Array(N).fill(255);
+    this.prevDrained = new Uint8Array(N);
     this.prevVisible = new Uint8Array(N).fill(255);
     this.prevOwner = new Int32Array(N).fill(-2);
     this.buildBackdrop();
@@ -506,7 +496,7 @@ export class GlobeRenderer {
 
   // Redraw everything that depends on game state.
   syncWorld(sel: Selection): void {
-    const changed = this.changedTiles();
+    const changed = [...new Set([...this.changedTiles(), ...this.drainedTiles()])];
     if (changed.length) {
       this.updateColors(changed);
       this.updateBorders();
@@ -654,6 +644,39 @@ export class GlobeRenderer {
   }
 
   // Tiles whose fog or ownership changed since the last sync.
+  // A tile's static rows of the tile table (terrainMaterial.ts) from its
+  // look: its painting's detail, patches, rock, wetness, beach; its frame,
+  // its crops and its farm's axis.
+  private writeTileLook(t: number): void {
+    const g = this.game, l = this.looks[t]!;
+    const td = this.tileTex.image.data as Float32Array, o = t * TILE_ROWS * 4;
+    td.set([l.detail.grain, l.detail.patch, l.detail.strata, l.detail.dunes], o + 4);
+    td.set([l.patchColor.r, l.patchColor.g, l.patchColor.b, l.detail.bump], o + 8);
+    td.set([l.rockColor.r, l.rockColor.g, l.rockColor.b, l.rock], o + 12);
+    td[o + 3] = l.wet;
+    td[o + 19] = l.beach;
+    td[o + 21] = this.paint.group[t];
+    // The tile's own frame (cityProps.onTile), its crops and its farm's axis.
+    const f = tileFrame(g, t);
+    td.set([f.c.x, f.c.y, f.c.z, f.k, f.e1.x, f.e1.y, f.e1.z, CROP_CODE[cropRegion(improvementFor(g.terrainAt(t)), g.biome[t]!, g.feature[t] ?? null, g.map.temperature[t]!)], f.e2.x, f.e2.y, f.e2.z, farmAxis(t)], o + 28);
+    this.tileTex.needsUpdate = true;
+  }
+
+  // Bogs drained since last looked at (game.ts): their look is their land's
+  // now (their ground dries out in terraform).
+  private drainedTiles(): number[] {
+    const g = this.game, out: number[] = [];
+    for (let t = 0; t < g.N; t++) {
+      if (g.drained[t] === this.prevDrained[t]) continue;
+      this.prevDrained[t] = g.drained[t];
+      this.looks[t] = tileLook(g.map, t);
+      this.baseColors[t] = this.looks[t]!.color;
+      this.writeTileLook(t);
+      out.push(t);
+    }
+    return out;
+  }
+
   private changedTiles(): number[] {
     const g = this.game;
     const out: number[] = [];
@@ -803,7 +826,9 @@ export class GlobeRenderer {
             // Flora yields to cities.
             const use = g.use[u];
             // (What grows in the water, mangroves and reeds, stays: no house stands there.)
-            const inWater = env.water - env.ground > 0 && catalogEntry(prop.kind).water !== undefined;
+            // (Not in a worked wetland: its paddies and peat beds are cleared.)
+            const inWater = env.water - env.ground > 0 && catalogEntry(prop.kind).water !== undefined
+              && !(use === USE.rural && improvementFor(g.terrainAt(u)) === 'wetland');
             // On built ground the tile's own flora stays where it stands clear of
             // the buildings and streets (a town keeps its trees, never adds any).
             // A rural tile keeps a share of it (fields keep hedgerow trees),
@@ -1017,7 +1042,7 @@ export class GlobeRenderer {
   // whole) when what is built up changed. Returns the tiles whose ground moved.
   private terraform(): number[] {
     const g = this.game;
-    const built = (t: number) => g.use[t] === USE.center || g.ruins[t] === 1;
+    const built = (t: number) => g.use[t] === USE.center || g.ruins[t] === 1 || g.drained[t] === 1;
     let key = '';
     for (let t = 0; t < g.N; t++) if (built(t)) key += `${t},`;
     if (key === this.groundKey) return [];

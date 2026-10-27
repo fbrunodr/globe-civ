@@ -63,8 +63,12 @@ const CROPS: Partial<Record<BiomeKey, readonly AreaLook[]>> = {
 };
 
 // Which palette a farm's plots are painted in (terrainMaterial.ts, CROP_CODE).
-export type CropRegion = 'temperate' | 'steppe' | 'mediterranean' | 'savanna' | 'tropical' | 'oasis' | 'cold';
-export function cropRegion(biome: BiomeKey, feature: FeatureKey | null): CropRegion {
+// (A wetland is worked as rice paddies where warm, cut for peat where
+// colder than PEAT_BELOW.)
+export type CropRegion = 'temperate' | 'steppe' | 'mediterranean' | 'savanna' | 'tropical' | 'oasis' | 'cold' | 'paddy' | 'peat';
+export const PEAT_BELOW = 9;
+export function cropRegion(imp: ImprovementKey | null, biome: BiomeKey, feature: FeatureKey | null, temp: number): CropRegion {
+  if (imp === 'wetland') return temp < PEAT_BELOW ? 'peat' : 'paddy';
   if (feature === 'oasis' || feature === 'floodplain') return 'oasis';
   switch (biome) {
     case 'steppe': return 'steppe';
@@ -83,7 +87,7 @@ export function areaLook(imp: ImprovementKey, biome: BiomeKey, feature: FeatureK
     case 'mine': return { name: 'spoil heaps', ground: rgb(0x3a332c), fill: { t: 'scatter', model: 'heap', color: 0x8a7e6c, per: 6 } };
     case 'quarry': return { name: 'quarry', ground: rgb(0xa8a08e), fill: { t: 'scatter', model: 'block', color: 0xe2dac8, per: 7 } };
     case 'camp': return { name: 'logging', ground: rgb(0x4a3a24), fill: { t: 'scatter', model: 'stump', color: 0x6a5038, per: 14 }, extra: { t: 'scatter', model: 'logs', color: 0x7a5f45, per: 3 } };
-    case 'wetland': return temp < 9 ? PEAT : RICE;
+    case 'wetland': return temp < PEAT_BELOW ? PEAT : RICE;
     case 'boats': return { name: 'water', ground: GRASS, fill: { t: 'none' } };
     case 'farm': {
       const list = feature === 'oasis' || feature === 'floodplain' ? [DATES, IRRIGATED, WHEAT] : CROPS[biome] ?? [WHEAT, BARLEY, MEADOW];

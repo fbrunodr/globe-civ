@@ -84,14 +84,51 @@ export function seg(a: THREE.Vector3, b: THREE.Vector3, r0: number, r1: number, 
 // normals up), never as a clump.
 const flatLeaf = (g: THREE.BufferGeometry) => { g.userData['flat'] = true; return g; };
 
-// A flat leaf (a squashed 3-sided cone) from `at`, pointing out at angle
-// `ang` around the vertical; tilt > 0 droops it below horizontal, < 0 raises it.
-function frond(at: THREE.Vector3, ang: number, len: number, w: number, tilt: number, color: number) {
-  const leaf = new THREE.ConeGeometry(w, len, 3, 1, true).scale(1, 1, 0.3).translate(0, len / 2, 0);
-  const m = new THREE.Matrix4().makeTranslation(at.x, at.y, at.z)
-    .multiply(new THREE.Matrix4().makeRotationY(ang))
-    .multiply(new THREE.Matrix4().makeRotationZ(-Math.PI / 2 - tilt));
-  return flatLeaf(part(leaf, color, m));
+// A palm frond from `at`, pointing out at angle `ang` around the vertical:
+// a card (its leaflets cut out of a frond texture, propMaterial.ts) arching
+// up a little and then drooping (tilt > 0 droops it further, < 0 raises it).
+const FROND_SPAN = 0.42; // the leaflets' span across, a share of its length
+function frond(at: THREE.Vector3, ang: number, len: number, _w: number, tilt: number, color: number) {
+  const out = V(Math.cos(ang), 0, -Math.sin(ang)), side = V(Math.sin(ang), 0, Math.cos(ang)).multiplyScalar((FROND_SPAN * len) / 2);
+  const along = (t: number, up: number) => at.clone().addScaledVector(out, len * t * Math.cos(up)).add(V(0, len * t * Math.sin(up), 0));
+  const mid = along(0.5, 0.3 - tilt), tip = mid.clone().add(along(0.5, -0.5 - tilt).sub(at));
+  const rows: [THREE.Vector3, number][] = [[at, 0], [mid, 0.5], [tip, 1]];
+  const pos: number[] = [], uv: number[] = [];
+  for (let i = 0; i + 1 < rows.length; i++) {
+    const [a, va] = rows[i]!, [b, vb] = rows[i + 1]!;
+    const q = (p: THREE.Vector3, s: number, v: number) => { pos.push(p.x + side.x * s, p.y, p.z + side.z * s); uv.push((s + 1) / 2, v, 3); };
+    q(a, -1, va); q(a, 1, va); q(b, 1, vb); q(a, -1, va); q(b, 1, vb); q(b, -1, vb);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('cardUv', new THREE.Float32BufferAttribute(uv, 3));
+  return flatLeaf(part(g, color));
+}
+
+// A conifer's tier of branches: a slim cone at its heart (radius r, height
+// h), and round it branch cards (needles cut out of a branch texture,
+// propMaterial.ts) sloping down from the trunk, a long ring from halfway
+// up to the rim and a short one from near the top, as a fir's branches
+// shorten up the tree. Seen from above, branches; from the side, a fir.
+const TIER_CORE = 0.55, TIER_LONG = 7, TIER_SHORT = 5;
+function tier(r: number, h: number, n: number, color: number, o: Tf = {}): THREE.BufferGeometry[] {
+  const y = o.y ?? 0, turn = o.ry ?? 0;
+  const pos: number[] = [], uv: number[] = [];
+  const ring = (k: number, y0: number, y1: number, r1: number, phase: number) => {
+    for (let i = 0; i < k; i++) {
+      const a = turn + phase + (2 * Math.PI * i) / k;
+      const out = V(Math.cos(a), 0, Math.sin(a)), side = V(-Math.sin(a), 0, Math.cos(a)).multiplyScalar((Math.PI * r1) / k * 1.15);
+      const s = V(0, y0, 0).addScaledVector(out, 0.08 * r), e = V(0, y1, 0).addScaledVector(out, r1);
+      const q = (p: THREE.Vector3, sd: number, v: number) => { pos.push(p.x + side.x * sd, p.y, p.z + side.z * sd); uv.push((sd + 1) / 2, v, 4); };
+      q(s, -1, 0); q(s, 1, 0); q(e, 1, 1); q(s, -1, 0); q(e, 1, 1); q(e, -1, 1);
+    }
+  };
+  ring(TIER_LONG, y + 0.55 * h, y, 1.1 * r, 0);
+  ring(TIER_SHORT, y + 0.95 * h, y + 0.45 * h, 0.65 * r, Math.PI / TIER_SHORT);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('cardUv', new THREE.Float32BufferAttribute(uv, 3));
+  return [cone(r * TIER_CORE, h, n, color, o), flatLeaf(part(g, color))];
 }
 
 // A flat rectangle leaf rising from `at`, tilted out by `tilt` from vertical.
@@ -133,14 +170,14 @@ export const CATALOG = {
   // ---------- conifers ----------
   fir: { name: 'Fir', layer: 'Canopy', leaf: 0x2f6a40, build: (p) => [
     cyl(0.001, 0.0007, 0.005, 4, TRUNK),
-    cone(0.0048, 0.013, 6, p.leaf, { y: 0.004 }),
-    cone(0.0035, 0.011, 6, p.leaf, { y: 0.011 }),
+    ...tier(0.0048, 0.013, 6, p.leaf, { y: 0.004 }),
+    ...tier(0.0035, 0.011, 6, p.leaf, { y: 0.011 }),
   ] },
   spruce: { name: 'Spruce', layer: 'Canopy', leaf: 0x2f5e3f, build: (p) => [
     cyl(0.0007, 0.0005, 0.003, 3, TRUNK),
-    cone(0.0036, 0.0065, 6, p.leaf, { y: 0.0022 }),
-    cone(0.0029, 0.006, 6, p.leaf, { y: 0.0055, ry: 0.5 }),
-    cone(0.002, 0.0055, 6, p.leaf, { y: 0.0088 }),
+    ...tier(0.0036, 0.0065, 6, p.leaf, { y: 0.0022 }),
+    ...tier(0.0029, 0.006, 6, p.leaf, { y: 0.0055, ry: 0.5 }),
+    ...tier(0.002, 0.0055, 6, p.leaf, { y: 0.0088 }),
   ] },
   pine: { name: 'Pine', layer: 'Canopy', leaf: 0x4c7a3e, build: (p) => [
     cyl(0.0006, 0.0004, 0.0095, 3, 0x8a5a3a),
@@ -153,14 +190,14 @@ export const CATALOG = {
   ] },
   larch: { name: 'Larch', layer: 'Canopy', leaf: 0x9ab352, build: (p) => [
     cyl(0.0006, 0.0004, 0.004, 3, TRUNK),
-    cone(0.0032, 0.011, 6, p.leaf, { y: 0.0025 }),
-    cone(0.0018, 0.005, 5, p.leaf, { y: 0.0105 }),
+    ...tier(0.0032, 0.011, 6, p.leaf, { y: 0.0025 }),
+    ...tier(0.0018, 0.005, 5, p.leaf, { y: 0.0105 }),
   ] },
   giantCedar: { name: 'Giant cedar / redwood', layer: 'Canopy', leaf: 0x2e5c38, build: (p) => [
     cyl(0.0014, 0.0008, 0.013, 4, 0x8b4a2b),
-    cone(0.0048, 0.008, 6, p.leaf, { y: 0.009 }),
-    cone(0.0038, 0.008, 6, p.leaf, { y: 0.0135, ry: 0.5 }),
-    cone(0.0024, 0.0065, 6, p.leaf, { y: 0.018 }),
+    ...tier(0.0048, 0.008, 6, p.leaf, { y: 0.009 }),
+    ...tier(0.0038, 0.008, 6, p.leaf, { y: 0.0135, ry: 0.5 }),
+    ...tier(0.0024, 0.0065, 6, p.leaf, { y: 0.018 }),
   ] },
   cypress: { name: 'Cypress', layer: 'Canopy', leaf: 0x2f5130, build: (p) => [
     cone(0.0017, 0.0028, 5, p.leaf, { y: 0.0031, rx: Math.PI }),
@@ -177,9 +214,9 @@ export const CATALOG = {
   ] },
   araucaria: { name: 'Araucaria', layer: 'Canopy', leaf: 0x2f5a35, build: (p) => [
     cyl(0.0006, 0.0004, 0.0115, 3, 0x6e5a48),
-    cone(0.0036, 0.0013, 5, p.leaf, { y: 0.0072 }),
-    cone(0.0029, 0.0013, 5, p.leaf, { y: 0.0091, ry: 0.6 }),
-    cone(0.002, 0.0015, 5, p.leaf, { y: 0.0108 }),
+    ...tier(0.0036, 0.0013, 5, p.leaf, { y: 0.0072 }),
+    ...tier(0.0029, 0.0013, 5, p.leaf, { y: 0.0091, ry: 0.6 }),
+    ...tier(0.002, 0.0015, 5, p.leaf, { y: 0.0108 }),
   ] },
   kauri: { name: 'Kauri / podocarp', layer: 'Canopy', leaf: 0x4a7039, build: (p) => [
     cyl(0.0012, 0.0009, 0.0095, 4, 0xb8a58a),
@@ -242,20 +279,20 @@ export const CATALOG = {
   ] },
   palm: { name: 'Palm', layer: 'Canopy', leaf: 0x5ea63c, build: (p) => [
     cyl(0.0007, 0.00045, 0.011, 4, 0x7a6040),
-    ...Array.from({ length: 6 }, (_, i) => frond(V(0, 0.011, 0), ring(6, i), 0.0075, 0.0016, 0.2, p.leaf)),
+    ...Array.from({ length: 9 }, (_, i) => frond(V(0, 0.011, 0), ring(9, i), 0.0075, 0.0016, 0.15 + 0.15 * (i % 2), p.leaf)),
   ] },
   coconutPalm: { name: 'Coconut palm', layer: 'Canopy', leaf: 0x6cb445, build: (p) => {
     const mid = V(0.0012, 0.006, 0), top = V(0.0042, 0.0115, 0);
     return [
       seg(V(0, 0, 0), mid, 0.0007, 0.0005, 3, 0x8a7050),
       seg(mid, top, 0.0005, 0.0004, 3, 0x8a7050),
-      ...Array.from({ length: 5 }, (_, i) => frond(top, ring(5, i, 0.3), 0.0068, 0.0015, 0.3, p.leaf)),
+      ...Array.from({ length: 8 }, (_, i) => frond(top, ring(8, i, 0.3), 0.0068, 0.0015, 0.25 + 0.15 * (i % 2), p.leaf)),
     ];
   } },
   fanPalm: { name: 'Fan palm (buriti)', layer: 'Canopy', leaf: 0x6d9c48, water: wade(0.00025), build: (p) => [
     cyl(0.0006, 0.0005, 0.0105, 3, 0x7a6a55),
-    flatLeaf(part(new THREE.CircleGeometry(0.0034, 6, 0, Math.PI), p.leaf, tf({ y: 0.0102 }))),
-    flatLeaf(part(new THREE.CircleGeometry(0.0034, 6, 0, Math.PI), p.leaf, tf({ y: 0.0102, ry: Math.PI / 2, rx: -0.3 }))),
+    // (A buriti's crown: short stiff fronds splaying up and out.)
+    ...Array.from({ length: 10 }, (_, i) => frond(V(0, 0.0102, 0), ring(10, i, 0.2), 0.0042, 0.0012, -0.35 + 0.2 * (i % 2), p.leaf)),
   ] },
   banana: { name: 'Banana', layer: 'Understory', leaf: 0x7cc04a, build: (p) => [
     cyl(0.0006, 0.0005, 0.0025, 3, 0x8a9a50),

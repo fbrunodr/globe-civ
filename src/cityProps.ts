@@ -90,6 +90,8 @@ const ADIT_GAP = 0.22, ADIT_HOME_GAP = 0.12, ADIT_REACH = 0.4, ADIT_STEP = 0.04;
 // CROP_STEP along them, each CROP_WIDTH across (they overlap, so a plot
 // reads as one crop); none within CROP_EDGE of a plot's border (the
 // hedges), CROP_MARGIN of the safe zone's, CROP_HOME_GAP of the homestead.
+// Rice stands in its paddies' water up to this share of its height.
+export const PADDY_DEPTH = 0.45;
 const CROP_ROW = 0.014, CROP_STEP = 0.01, CROP_WIDTH = 0.013, CROP_EDGE = 0.007, CROP_MARGIN = 0.03, CROP_HOME_GAP = 0.06;
 // What a crop's yard holds: haystacks.
 const HARVEST: Fill = { t: 'scatter', model: 'haystack', color: 0xc9a85a, per: 1.6 };
@@ -402,7 +404,10 @@ export class CityProps {
         const near = poly.reduce((a, p) => (len2(sub2(p, farm.home)) < len2(sub2(a, farm.home)) ? p : a));
         if (imp === 'camp') one('rack', near, yawOf(near, farm.home), D, 0xffffff);
       });
-      if (imp === 'farm') this.crops(t, farm, ko, (b) => { if (clearHere.free(this.footprint(b))) put(t, b); });
+      // (Farms and rice paddies grow crops; peat is only cut.)
+      if (imp === 'farm' || (imp === 'wetland' && cropRegion(imp, g.biome[t]!, g.feature[t] ?? null, g.map.temperature[t]!) === 'paddy')) {
+        this.crops(t, farm, ko, (b) => { if (clearHere.free(this.footprint(b))) put(t, b); });
+      }
       // The homestead: a house in the civ's style and its barn, facing along the grid.
       const placeLot = (kind: Footprint, floors: Floors, p: Pt2, lr: Rng) => {
         const s0 = this.sampleDir(toT(p));
@@ -646,11 +651,12 @@ export class CityProps {
 
   // A farm's crops: tufts in rows along its plots (rural/plots.ts, the
   // layout the ground is painted with), inside its safe zone, off the
-  // hedges, the bare ploughed plots, the homestead and its yards, the water;
+  // hedges, the bare ploughed plots, the homestead and its yards, the water
+  // (rice stands in it, its foot under: up to PADDY_DEPTH of its height);
   // each the colour and height of its plot's crop.
   private crops(t: number, farm: Farm, keepOut: { p: Pt2; r: number } | undefined, put: (b: PlacedBuilding) => void): void {
     const g = this.game, D = g.globe.avgEdgeAngle, { toDir } = onTile(g, t);
-    const region = cropRegion(g.biome[t]!, g.feature[t] ?? null);
+    const region = cropRegion(improvementFor(g.terrainAt(t)), g.biome[t]!, g.feature[t] ?? null, g.map.temperature[t]!);
     const tint = CROP_PALETTE[region].map((h) => {
       const c = new THREE.Color(h), l = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b;
       return new THREE.Color(l + (c.r - l) * CROP_STAND_SATURATION, l + (c.g - l) * CROP_STAND_SATURATION, l + (c.b - l) * CROP_STAND_SATURATION);
@@ -664,11 +670,11 @@ export class CityProps {
       const plot = plotAt(pu, pv, t), k = cropIndex(plot.h), height = CROP_HEIGHT[k];
       if (height === 0 || plot.edge < CROP_EDGE) continue;
       if (len2(sub2(p, farm.home)) < CROP_HOME_GAP || farm.yards.some((poly) => pointInPoly(p, poly)) || (keepOut && len2(sub2(p, keepOut.p)) < keepOut.r)) continue;
-      const dir = toDir(p), smp = this.sampleDir(dir);
-      if (smp.water - smp.ground > DRY) continue;
+      const dir = toDir(p), smp = this.sampleDir(dir), tall = height * D * (0.9 + 0.2 * rand());
+      if (smp.water - smp.ground > (region === 'paddy' ? PADDY_DEPTH * tall : DRY)) continue;
       const q = new THREE.Quaternion().setFromUnitVectors(UP, dir).multiply(new THREE.Quaternion().setFromAxisAngle(UP, yaw));
       const pos = dir.clone().multiplyScalar(1 + smp.ground - 0.00005 * this.scale);
-      put({ kind: ruralModelKind('crop'), matrix: new THREE.Matrix4().compose(pos, q, new THREE.Vector3(CROP_WIDTH * D, height * D * (0.9 + 0.2 * rand()), CROP_WIDTH * D)),
+      put({ kind: ruralModelKind('crop'), matrix: new THREE.Matrix4().compose(pos, q, new THREE.Vector3(CROP_WIDTH * D, tall, CROP_WIDTH * D)),
         color: new THREE.Color(1, 1, 1), leaf: tint[k]!.clone().multiplyScalar(shade) });
     }
   }

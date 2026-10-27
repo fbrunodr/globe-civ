@@ -3,10 +3,10 @@ import * as THREE from 'three';
 import { isFloraModel, isLotModel, waterRule, BUILDING_KINDS, buildBuildingGeometry, modelGeometry, type ModelKind } from '../src/buildingCatalog.ts';
 import { isHouseKind } from '../src/houses.ts';
 import { triangles } from '../src/propCatalog.ts';
-import { CityProps, WATER_GAP, type CitySpot } from '../src/cityProps.ts';
+import { CityProps, PADDY_DEPTH, WATER_GAP, type CitySpot } from '../src/cityProps.ts';
 import { Game } from '../src/game.ts';
 import { aiTurn } from '../src/ai.ts';
-import { USE, WONDER_KEYS, isWonderKey } from '../src/cities.ts';
+import { USE, WONDER_KEYS, improvementFor, isWonderKey } from '../src/cities.ts';
 import { planRoads, roadLines, ROAD_HALF_WIDTH } from '../src/roads.ts';
 import { SITE_MODELS } from '../src/wonderModels.ts';
 import { locate } from '../src/terrainMesh.ts';
@@ -83,7 +83,10 @@ describe('L3: city buildings stand on dry ground (boats on water)', () => {
       if (!s) continue;
       const rule = waterRule(b.kind);
       const wet = s.water - s.ground >= 0.0003, dry = s.water <= s.ground;
-      if (rule === 'float' ? !wet : rule === 'shore' ? !wet && !dry : !dry) bad.push(`tile ${t}: ${b.kind}`);
+      // (Rice stands in its paddy's water, up to PADDY_DEPTH of its height.)
+      const paddy = b.kind === 'rural|crop' && improvementFor(g.terrainAt(t)) === 'wetland'
+        && s.water - s.ground <= PADDY_DEPTH * new THREE.Vector3().setFromMatrixColumn(b.matrix, 1).length() + 1e-12;
+      if (!paddy && (rule === 'float' ? !wet : rule === 'shore' ? !wet && !dry : !dry)) bad.push(`tile ${t}: ${b.kind}`);
     }
   }
   it('places buildings', () => expect(count).toBeGreaterThan(200));

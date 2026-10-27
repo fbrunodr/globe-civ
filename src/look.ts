@@ -78,7 +78,7 @@ export const FEATURE_LOOK: Record<FeatureKey, FeatureLook> = {
   marsh:      { color: 0x71895a, rock: null, colorMix: 0.55, patch: 0.5,  patchColor: 0x6d8d45, heightDelta: -0.0005, plateau: null, strata: 0, wet: 0.25 },
   swamp:      { color: 0x526b48, rock: null, colorMix: 0.5,  patch: 0.5,  patchColor: 0x4d5f3a, heightDelta: -0.0005, plateau: null, strata: 0, wet: 0.2 },
   mangrove:   { color: 0x48694f, rock: null, colorMix: 0.4,  patch: 0.5,  patchColor: 0x6b6247, heightDelta: -0.001, plateau: null, strata: 0, wet: 0.25 },
-  bog:        { color: 0x7d7552, rock: null, colorMix: 0.55, patch: 0.55, patchColor: 0x6e6038, heightDelta: -0.0005, plateau: null, strata: 0, wet: 0.15 },
+  bog:        { color: 0x7d7552, rock: null, colorMix: 0.4, patch: 0.55, patchColor: 0x6e6038, heightDelta: -0.0005, plateau: null, strata: 0, wet: 0.15 },
   floodplain: { color: 0x7d9750, rock: null, colorMix: 0.55, patch: 0.25, patchColor: 0x5d8a3a, heightDelta: -0.002, plateau: 0.7, strata: 0, wet: 0 },
   oasis:      { color: 0x71874a, rock: null, colorMix: 0.45, patch: 0.3,  patchColor: 0x6f8f3e, heightDelta: 0,      plateau: null, strata: 0, wet: 0 },
   volcano:    { color: 0x4a423c, rock: 0x3d3632, colorMix: 0.7,  patch: 0,    patchColor: 0x000000, heightDelta: 0.008,  plateau: null, strata: 0.3, wet: 0 },

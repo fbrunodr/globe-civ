@@ -92,6 +92,9 @@ export const CROP_PALETTE: Record<CropRegion, readonly [number, number, number, 
   tropical:      [0x86b84a, 0x6fa23a, 0x5f9a5a, 0x5a4a2e, 0x9cc457],
   oasis:         [0x6fa043, 0x8ab04f, 0xd2b066, 0x9a7a4a, 0x5f8f3a],
   cold:          [0xa8954e, 0x4f7034, 0x8a9a6a, 0x5a4632, 0x9aa070],
+  // Rice standing in its flooded paddies; peat cut in dark beds.
+  paddy:         [0x7fb43f, 0x9cc85a, 0x6aa24a, 0x4f7a6e, 0x8ebe4c],
+  peat:          [0x4a3a2c, 0x5a4632, 0x3e3328, 0x2e261e, 0x6a5a3a],
 };
 
 // The crops standing on the plots keep more of theirs (the stalks' shading

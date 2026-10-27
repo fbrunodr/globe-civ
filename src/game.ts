@@ -142,6 +142,7 @@ export class Game {
   readonly use: Uint8Array;         // TileUse of each tile (cities.ts); wild unless a city developed it
   readonly pillaged: Uint8Array;    // turns of repair left on a pillaged rural tile (0 = fine)
   readonly ruins: Uint8Array;       // 1 where a razed city stood
+  readonly drained: Uint8Array;     // 1 where a peat bog was drained to be worked (its feature is gone; its ground stays dry)
   readonly wondersBuilt = new Map<WonderKey, number>(); // wonder -> its tile (its city's center, or a mountain top; FALLEN)
   useVersion = 0;                   // bumped whenever a tile's use changes (for the renderer)
   readonly explored: Uint8Array;
@@ -166,6 +167,7 @@ export class Game {
     this.use = new Uint8Array(this.N);
     this.pillaged = new Uint8Array(this.N);
     this.ruins = new Uint8Array(this.N);
+    this.drained = new Uint8Array(this.N);
     this.explored = new Uint8Array(this.N);
     this.visible = new Uint8Array(this.N);
 
@@ -836,6 +838,13 @@ export class Game {
   }
 
   private setUse(t: number, u: TileUse): void {
+    // A bog worked is drained, for good: it is its land from now on (cities.ts drained).
+    if (u === USE.rural && this.feature[t] === 'bog') {
+      this.feature[t] = null;
+      this.drained[t] = 1;
+      const city = this.cityById.get(this.tileCity[t]);
+      if (city) this.log(`${city.name} drained a peat bog.`);
+    }
     this.use[t] = u;
     this.useVersion++;
   }

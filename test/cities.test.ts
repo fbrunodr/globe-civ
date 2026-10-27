@@ -83,11 +83,14 @@ function checkCities(g: Game): string[] {
   const centers = new Map<number, number>();
   for (let t = 0; t < g.N; t++) {
     const u = g.use[t];
+    if (g.drained[t] && g.feature[t] === 'bog') out.push(`C3 tile ${t}: drained but still a bog`);
     if (u === USE.wild) continue;
     const city = g.cityById.get(g.tileCity[t]);
     if (!city) { out.push(`C3 tile ${t}: developed but owned by no city`); continue; }
     if (u === USE.center) { centers.set(city.id, (centers.get(city.id) ?? 0) + 1); if (city.tile !== t) out.push(`C3 tile ${t}: a center that is not ${city.name}'s`); }
     if (u === USE.rural && !improvementFor(g.terrainAt(t))) out.push(`C3 tile ${t}: rural on wild-only terrain`);
+    // (A bog is drained when worked: no worked tile is still a bog, and every drained one was worked.)
+    if (u === USE.rural && g.feature[t] === 'bog') out.push(`C3 tile ${t}: a worked bog not drained`);
   }
   // Wonders: once in the world, in its city (on the center, meeting its
   // need), or beside it: Machu Picchu on a wild mountain, the Great
@@ -145,7 +148,8 @@ describe('cities in simulated games', () => {
     const sizes = sims.flatMap((s) => s.game.cities.map((c) => c.pop)).sort((a, b) => a - b);
     const uses = sims.flatMap((s) => [...s.game.use]).reduce((m, u) => { m[u] = (m[u] ?? 0) + 1; return m; }, {} as Record<number, number>);
     const spec = sims.reduce((n, s) => n + s.game.cities.reduce((a, c) => a + s.game.specialistCount(c), 0), 0);
-    console.log(`sizes at turn ${TURNS}: ${sizes.join(' ')} | rural ${uses[USE.rural]} specialists ${spec}`);
+    const drained = sims.reduce((n, s) => n + s.game.drained.reduce((a, d) => a + d, 0), 0);
+    console.log(`sizes at turn ${TURNS}: ${sizes.join(' ')} | rural ${uses[USE.rural]} specialists ${spec} | bogs drained ${drained}`);
     expect(median).toBeGreaterThanOrEqual(5);
     expect(median).toBeLessThanOrEqual(12);
   });

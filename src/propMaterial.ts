@@ -10,6 +10,65 @@ const WIND = 0.04;
 // The stalks on a crop's card (rural/models.ts, cropTuft): slim tapering
 // blades of varied height, darker at the foot (in the crop's shade) and
 // lighter at the tip, transparent between them. Made once, in code.
+// A card texture drawn in code: W × H texels, transparent but white
+// between the strokes (the blurred mipmaps seen from afar stay light), each
+// stroke (draw(rand, stroke)) a line of texels from (x0, y0) to (x1, y1),
+// `w` texels across, in a shade of white. Row 0 is v 0.
+type Stroke = (x0: number, y0: number, x1: number, y1: number, w: number, shade: number) => void;
+function drawnTexture(W: number, H: number, salt: number, draw: (rand: () => number, stroke: Stroke) => void): THREE.DataTexture {
+  const data = new Uint8Array(W * H * 4).fill(232);
+  for (let o = 3; o < data.length; o += 4) data[o] = 0;
+  let h = salt;
+  const rand = () => { h = (Math.imul(h ^ (h >>> 15), 0x2c1b3c6d) + 0x6d2b79f5) >>> 0; return (h >>> 8) / 16777216; };
+  draw(rand, (x0, y0, x1, y1, w, shade) => {
+    const n = Math.ceil(Math.hypot(x1 - x0, y1 - y0) * 2) + 1, v = Math.round(255 * shade);
+    for (let i = 0; i <= n; i++) {
+      const cx = x0 + ((x1 - x0) * i) / n, cy = y0 + ((y1 - y0) * i) / n;
+      for (let y = Math.floor(cy - w / 2); y <= cy + w / 2; y++) for (let x = Math.floor(cx - w / 2); x <= cx + w / 2; x++) {
+        if (x < 0 || y < 0 || x >= W || y >= H || Math.hypot(x - cx, y - cy) > w / 2 + 0.3) continue;
+        const o = (y * W + x) * 4;
+        data[o] = data[o + 1] = data[o + 2] = v;
+        data[o + 3] = 255;
+      }
+    }
+  });
+  const tex = new THREE.DataTexture(data, W, H, THREE.RGBAFormat);
+  tex.generateMipmaps = true;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+// A palm frond (propCatalog.ts, frond): a rib up the middle (v along it),
+// leaflets either side slanting toward the tip, longest a third of the way
+// along, none at the very tip.
+let frondTex: THREE.DataTexture | null = null;
+const frondTexture = (): THREE.DataTexture => (frondTex ??= drawnTexture(64, 128, 0xf20d, (rand, stroke) => {
+  stroke(32, 0, 32, 124, 2.2, 0.7);
+  for (let y = 8; y < 120; y += 4.6) {
+    const t = y / 128, reach = 29 * Math.sin(Math.PI * Math.min(1, t * 1.2)) * (0.8 + 0.2 * rand());
+    // (Leaflets droop from the rib, thin, light between them.)
+    for (const side of [-1, 1]) stroke(32, y, 32 + side * reach, y + reach * 0.9 + 3 * rand(), 1.5, 0.78 + 0.22 * rand());
+  }
+}));
+
+// A conifer's branch (propCatalog.ts, tier): a twig up the middle (v from
+// the trunk out), sprigs of needles along it, shorter toward the tip.
+let needleTex: THREE.DataTexture | null = null;
+const needleTexture = (): THREE.DataTexture => (needleTex ??= drawnTexture(64, 128, 0x9ee1, (rand, stroke) => {
+  stroke(32, 0, 32, 126, 2, 0.55);
+  for (let y = 2; y < 124; y += 3.2) {
+    const t = y / 128, reach = 30 * (1 - 0.75 * t) * (0.75 + 0.25 * rand());
+    for (const side of [-1, 1]) {
+      const x1 = 32 + side * reach, y1 = y + reach * 0.45;
+      stroke(32, y, x1, y1, 1.8, 0.75 + 0.25 * rand());
+      // (needles off each sprig)
+      for (let k = 0.3; k < 1; k += 0.22) stroke(32 + side * reach * k, y + reach * 0.45 * k, 32 + side * reach * (k + 0.12), y + reach * 0.45 * k + 4, 1.1, 0.7 + 0.3 * rand());
+    }
+  }
+}));
+
 const BLADE_W = 64, BLADE_H = 128, BLADES = 22;
 let bladeTex: THREE.DataTexture | null = null;
 function bladeTexture(): THREE.DataTexture {
@@ -112,13 +171,14 @@ const FLORA_VERTEX = `
   #endif`;
 const floraUniforms = (f: FloraUniforms): Record<string, THREE.IUniform> => ({
   uTime: f.time, uCropFar: f.cropFar ?? { value: 1e9 }, uEye: f.eye ?? { value: new THREE.Vector3() },
-  uLeaves: { value: leafTexture() }, uBlades: { value: bladeTexture() },
+  uLeaves: { value: leafTexture() }, uBlades: { value: bladeTexture() }, uFronds: { value: frondTexture() }, uNeedles: { value: needleTexture() },
 });
-// A card's texel: a crop's stalks (z 2, rural/models.ts) or a crown's leaves;
+// A card's texel: a conifer's needles (z 4), a palm's frond (z 3), a crop's
+// stalks (z 2, rural/models.ts) or a crown's leaves;
 // far off, its leaves are kept from fading away in the blurred mipmaps.
 const CARD_TEXEL = `
   vec4 cardTexel(vec3 card) {
-    vec4 lt = card.z > 1.5 ? texture2D(uBlades, card.xy) : texture2D(uLeaves, card.xy);
+    vec4 lt = card.z > 3.5 ? texture2D(uNeedles, card.xy) : card.z > 2.5 ? texture2D(uFronds, card.xy) : card.z > 1.5 ? texture2D(uBlades, card.xy) : texture2D(uLeaves, card.xy);
     vec2 dx = dFdx(card.xy) * ${LEAF_TEX}.0, dy = dFdy(card.xy) * ${LEAF_TEX}.0;
     lt.a *= 1.0 + 0.3 * max(0.5 * log2(max(dot(dx, dx), dot(dy, dy))), 0.0);
     return lt;
@@ -141,7 +201,7 @@ export function makeFloraDepthMaterial(flora: FloraUniforms): THREE.MeshDepthMat
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
         varying vec3 vCard;
-        uniform sampler2D uLeaves; uniform sampler2D uBlades;
+        uniform sampler2D uLeaves; uniform sampler2D uBlades; uniform sampler2D uFronds; uniform sampler2D uNeedles;
         ${CARD_TEXEL}`)
       .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
         if (vCard.z > 0.5 && cardTexel(vCard).a < 0.5) discard;`);
@@ -187,7 +247,7 @@ export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Ve
       .replace('#include <common>', `#include <common>
         varying float vDay;
         varying vec3 vCard;
-        ${flora ? `uniform sampler2D uLeaves; uniform sampler2D uBlades; ${CARD_TEXEL}` : ''}
+        ${flora ? `uniform sampler2D uLeaves; uniform sampler2D uBlades; uniform sampler2D uFronds; uniform sampler2D uNeedles; ${CARD_TEXEL}` : ''}
         ${GRADE_GLSL}`)
       .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
         reflectedLight.directDiffuse *= vDay;

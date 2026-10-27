@@ -62,10 +62,16 @@ export const IMPROVEMENTS = {
 } satisfies Record<string, ImprovementDef>;
 export type ImprovementKey = keyof typeof IMPROVEMENTS;
 
+// A peat bog is not farmed as it is: worked, it is drained (game.ts), and
+// is then its land (tundra, taiga, forest, prairie) with that land's
+// improvement and yields. A worked bog is planned for as drained.
+export const drained = (t: TileTerrain): TileTerrain => (t.feature === 'bog' ? { ...t, feature: null } : t);
+
 // The improvement a tile gets when it is developed, or null where the tile
 // stays wild (mountains, ice, deep ocean). A total function of the terrain:
 // the player picks the tile, never the improvement.
 export function improvementFor(t: TileTerrain): ImprovementKey | null {
+  if (t.feature === 'bog') return improvementFor(drained(t));
   if (BIOMES[t.biome].water) {
     if (t.biome === 'shallowSea' || t.biome === 'lake') return 'boats';
     return null; // deep ocean, sea ice
@@ -78,7 +84,7 @@ export function improvementFor(t: TileTerrain): ImprovementKey | null {
 
 // Features decide first (they replace the land's yields too).
 const FEATURE_IMPROVEMENT: Record<keyof typeof FEATURES, ImprovementKey | null> = {
-  marsh: 'wetland', swamp: 'wetland', mangrove: 'wetland', bog: 'wetland',
+  marsh: 'wetland', swamp: 'wetland', mangrove: 'wetland', bog: null, // (bogs: drained first, improvementFor)
   floodplain: 'farm', oasis: 'farm',
   volcano: null, glacier: null,
   reef: 'boats', kelp: 'boats',
@@ -112,8 +118,8 @@ export function centerYield(t: TileTerrain, river: boolean): Output {
   return withRiver({ ...b, food: Math.max(CENTER_MIN.food, b.food), prod: Math.max(CENTER_MIN.prod, b.prod), gold: Math.max(CENTER_MIN.gold, b.gold) }, river);
 }
 
-export function ruralYield(t: TileTerrain, river: boolean, era: EraIndex = 0): Output {
-  const k = improvementFor(t);
+export function ruralYield(t0: TileTerrain, river: boolean, era: EraIndex = 0): Output {
+  const t = drained(t0), k = improvementFor(t);
   const base = fromYields(terrainYield(t));
   return withRiver(k ? addOut(addOut(base, IMPROVEMENTS[k].bonus), eraBonus(k, era)) : base, river);
 }
