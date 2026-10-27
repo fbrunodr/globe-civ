@@ -157,15 +157,6 @@ function tier(r: number, h: number, n: number, color: number, o: Tf = {}): THREE
   return [cone(r * TIER_CORE, h, n, color, o), flatLeaf(part(g, color))];
 }
 
-// A flat rectangle leaf rising from `at`, tilted out by `tilt` from vertical.
-function blade4(at: THREE.Vector3, ang: number, len: number, w: number, tilt: number, color: number) {
-  const g = new THREE.PlaneGeometry(w, len).translate(0, len / 2, 0);
-  const m = new THREE.Matrix4().makeTranslation(at.x, at.y, at.z)
-    .multiply(new THREE.Matrix4().makeRotationY(ang))
-    .multiply(new THREE.Matrix4().makeRotationX(tilt));
-  return flatLeaf(part(g, color, m));
-}
-
 // One triangle of grass: base width w, height h, tip leaning by `lean`.
 function blade(x: number, z: number, ang: number, w: number, h: number, lean: number, color: number) {
   const g = new THREE.BufferGeometry();
@@ -225,9 +216,11 @@ export const CATALOG = {
     ...tier(0.0038, 0.008, 6, p.leaf, { y: 0.0135, ry: 0.5 }),
     ...tier(0.0024, 0.0065, 6, p.leaf, { y: 0.018 }),
   ] },
+  // A slim dark column of foliage (leaf cards), a short trunk under it.
   cypress: { name: 'Cypress', layer: 'Canopy', leaf: 0x2f5130, build: (p) => [
-    cone(0.0017, 0.0028, 5, p.leaf, { y: 0.0031, rx: Math.PI }),
-    cone(0.0017, 0.0105, 5, p.leaf, { y: 0.0031 }),
+    cyl(0.0005, 0.0004, 0.002, 3, TRUNK),
+    oct(0.0019, p.leaf, { y: 0.0052, sy: 2.1 }),
+    oct(0.0014, p.leaf, { y: 0.0098, sy: 2.0 }),
   ] },
   baldCypress: { name: 'Bald cypress', layer: 'Canopy', leaf: 0x6b7f45, water: wade(0.0004), build: (p) => [
     cone(0.0018, 0.0035, 5, 0x7a6a55),
@@ -266,10 +259,11 @@ export const CATALOG = {
     oct(0.0022, p.leaf, { y: 0.0078, sy: 1.35 }),
     oct(0.0016, p.leaf, { x: 0.0013, y: 0.0058, sy: 1.2 }),
   ] },
+  // A fluffy crown, its long strands hanging round it to the ground.
   willow: { name: 'Willow / alder', layer: 'Canopy', leaf: 0x8fae5a, water: wade(0.0002), build: (p) => [
-    cyl(0.0008, 0.0006, 0.0045, 3, 0x6a5a45),
-    ico(0.004, p.leaf, { y: 0.0068, sy: 0.7 }),
-    cone(0.0052, 0.0052, 6, p.leaf, { y: 0.0022 }),
+    cyl(0.0008, 0.0006, 0.0055, 3, 0x6a5a45),
+    ico(0.0042, p.leaf, { y: 0.0072, sy: 0.7 }),
+    ...Array.from({ length: 10 }, (_, i) => frond(V(Math.cos(ring(10, i)) * 0.0026, 0.0086, -Math.sin(ring(10, i)) * 0.0026), ring(10, i), 0.0068, 0, 1.25, p.leaf, 2)),
   ] },
   poplar: { name: 'Poplar', layer: 'Canopy', leaf: 0x6f9d3d, build: (p) => [
     cyl(0.0006, 0.0004, 0.003, 3, TRUNK),
@@ -320,9 +314,10 @@ export const CATALOG = {
     // (A buriti's crown: short stiff fronds splaying up and out.)
     ...Array.from({ length: 10 }, (_, i) => frond(V(0, 0.0102, 0), ring(10, i, 0.2), 0.0042, 0.0012, -0.35 + 0.2 * (i % 2), p.leaf)),
   ] },
+  // A soft stem, big leaves arching up and out from its top.
   banana: { name: 'Banana', layer: 'Understory', leaf: 0x7cc04a, build: (p) => [
-    cyl(0.0006, 0.0005, 0.0025, 3, 0x8a9a50),
-    ...Array.from({ length: 5 }, (_, i) => blade4(V(0, 0.0022, 0), ring(5, i), 0.0055, 0.0016, 0.9, p.leaf)),
+    cyl(0.0006, 0.0005, 0.0032, 3, 0x8a9a50),
+    ...Array.from({ length: 6 }, (_, i) => frond(V(0, 0.003, 0), ring(6, i, 0.4), 0.0058, 0, -0.25 + 0.25 * (i % 2), p.leaf)),
   ] },
   // Culms leaning out, sprays of leaves drooping from their upper joints.
   bamboo: { name: 'Bamboo clump', layer: 'Understory', leaf: 0x9bb34a, build: (p) => {
@@ -337,11 +332,14 @@ export const CATALOG = {
     cyl(0.0005, 0.0003, 0.0058, 3, 0x5a4632),
     ...Array.from({ length: 6 }, (_, i) => frond(V(0, 0.0058, 0), ring(6, i), 0.0048, 0.0013, -0.15, p.leaf)),
   ] },
+  // A crown on a short trunk raised on stilt roots, each running down from
+  // the trunk into the mud.
   mangrove: { name: 'Mangrove', layer: 'Canopy', leaf: 0x3f7d4f, water: wade(0.0006), build: (p) => [
-    ico(0.0045, p.leaf, { y: 0.0058, sy: 0.7 }),
-    ...Array.from({ length: 3 }, (_, i) => {
-      const a = ring(3, i);
-      return cone(0.0005, 0.0045, 4, 0x4a3a2a, { x: Math.cos(a) * 0.0022, z: Math.sin(a) * 0.0022, rx: Math.sin(a) * 0.45, rz: -Math.cos(a) * 0.45 });
+    cyl(0.0006, 0.0005, 0.0034, 3, 0x4a3a2a, { y: 0.0024 }),
+    ico(0.0045, p.leaf, { y: 0.0068, sy: 0.7 }),
+    ...Array.from({ length: 5 }, (_, i) => {
+      const a = ring(5, i, 0.3);
+      return seg(V(Math.cos(a) * 0.0003, 0.0028, Math.sin(a) * 0.0003), V(Math.cos(a) * 0.003, -0.0002, Math.sin(a) * 0.003), 0.00028, 0.0002, 3, 0x4a3a2a);
     }),
   ] },
 

@@ -18,6 +18,9 @@ export const SITE_HALF = (7 * CELL) / 2; // 0.07875
 // What stands on a site: a wonder, or the scaffolding of one being built.
 export type SiteModel = Exclude<WonderKey, 'machuPicchu'> | 'scaffold';
 export type WonderModelKind = `wonder|${SiteModel}`;
+// Wonders that stand on the bare ground, sunk into a slope rather than
+// raised on a foundation (cityProps.ts standLot).
+export const ON_BARE_GROUND: ReadonlySet<string> = new Set<SiteModel>(['stonehenge']);
 export const wonderModelKind = (m: SiteModel): WonderModelKind => `wonder|${m}`;
 export const isWonderModelKind = (k: string): k is WonderModelKind => k.startsWith('wonder|');
 
@@ -88,10 +91,10 @@ const MODELS: Record<SiteModel, () => G[]> = {
     return out;
   },
   // Salisbury Plain: a ring of sarsens with their lintels, a horseshoe of
-  // trilithons inside, the bank and ditch round them on the grass.
+  // trilithons inside, standing straight on the grass (no platform:
+  // ON_BARE_GROUND).
   stonehenge: () => {
-    const out: G[] = [P(new THREE.CircleGeometry(H, 24).rotateX(-Math.PI / 2), GRASS, { y: 0.0003 })];
-    out.push(cyl(H, H * 0.97, 0.004, 24, shade(GRASS, 0.85)));
+    const out: G[] = [];
     const n = 16, r = 0.05;
     for (let i = 0; i < n; i++) {
       const a = (i / n) * Math.PI * 2;

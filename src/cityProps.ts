@@ -14,7 +14,7 @@ import * as THREE from 'three';
 import type { Game, City } from './game.ts';
 import { USE, improvementFor, wonderBeside, isWonderKey, type ImprovementKey, type EraIndex } from './cities.ts';
 import { ROOFS, buildingEntry, isFloraModel, isLotModel, placedGeometry, waterRule, type BuildingKind, type LotModelKind, type PlacedKind } from './buildingCatalog.ts';
-import { wonderModelKind, type SiteModel } from './wonderModels.ts';
+import { ON_BARE_GROUND, isWonderModelKind, wonderModelKind, type SiteModel } from './wonderModels.ts';
 import type { CatalogKind } from './propCatalog.ts';
 import { HOUSE_VARIANTS, houseKind } from './houses.ts';
 import { styleOf } from './architecture.ts';
@@ -780,7 +780,10 @@ export class CityProps {
       const g = this.sampleDir(dir.clone().addScaledVector(X, a).addScaledVector(Z, b).normalize()).ground;
       low = Math.min(low, g); high = Math.max(high, g);
     }
-    const base = high;
+    // (A wonder on the bare ground stands at the lowest corner, sunk into
+    // the slope: no foundation.)
+    const bare = isWonderModelKind(kind) && ON_BARE_GROUND.has(kind.slice('wonder|'.length));
+    const base = bare ? low : high;
     const sink = 0.00012 * this.scale, shade = 0.92 + 0.12 * rand();
     const out: PlacedBuilding[] = [{
       kind,
