@@ -2,15 +2,16 @@ import * as THREE from 'three';
 import { mulberry32 } from './rng.ts';
 
 // Ground materials: small tileable close-up textures of what the ground is
-// made of (grass, dry grass, soil, sand, litter, moss, rock, snow), drawn in
-// code at load time like the leaf cards. The terrain shader (terrainMaterial.ts)
-// lays them over the painting, so up close the ground has the same fine
-// detail as the props on it, and catches the same sun.
+// made of (grass, dry grass, soil, sand, litter, moss, rock, snow). The
+// terrain shader (terrainMaterial.ts) lays them over the painting, so the
+// ground has the same fine detail as the props on it, and catches the same sun.
 //
-// One layer per material in a texture array; each texel holds
+// All but snow are scans (public/ground, CC0, see CREDITS.md), loaded after
+// start; snow is drawn here. One layer per material in a texture array; each
+// texel holds
 //   r  brightness / 2   (1 = the material's own color; mean 1 over the layer)
-//   g  height           (0..1: blends one material into the next, and the normal)
-//   b, a  normal x, y   (from the height, 0.5 = flat)
+//   g  height           (0..1: blends one material into the next)
+//   b, a  normal x, y   (0.5 = flat)
 // Brightness only: the colors come from the tile (look.ts GroundLook), so
 // the same grass is green on a prairie and khaki on a steppe.
 
@@ -21,8 +22,9 @@ export const GROUND_LAYER = Object.fromEntries(GROUND_LAYERS.map((k, i) => [k, i
 export const GROUND_TEX = 512;
 const N = GROUND_TEX;
 
-// A layer being drawn: brightness and height, both wrapping at the edges.
-interface Canvas { lum: Float32Array; hgt: Float32Array; rand: () => number }
+// The scanned layers (public/ground/<layer>.webp and <layer>_normal.webp).
+type ScannedLayer = Exclude<GroundLayer, 'snow'>;
+const SCANNED: readonly ScannedLayer[] = ['grass', 'dry', 'soil', 'sand', 'litter', 'moss', 'rock'];
 
 const wrap = (i: number) => ((i % N) + N) % N;
 
@@ -49,155 +51,80 @@ function fbmField(rand: () => number, cells: number, octaves: number): (x: numbe
     return s / total;
   };
 }
-function fill(c: Canvas, f: (x: number, y: number) => [number, number]): void {
+
+// A box blur R texels about, wrapping.
+function boxBlur(src: ArrayLike<number>, R: number): Float32Array {
+  const tmp = new Float32Array(N * N), out = new Float32Array(N * N);
+  for (let y = 0; y < N; y++) { let s = 0; for (let i = -R; i <= R; i++) s += src[y * N + wrap(i)]!; for (let x = 0; x < N; x++) { tmp[y * N + x] = s / (2 * R + 1); s += src[y * N + wrap(x + R + 1)]! - src[y * N + wrap(x - R)]!; } }
+  for (let x = 0; x < N; x++) { let s = 0; for (let i = -R; i <= R; i++) s += tmp[wrap(i) * N + x]!; for (let y = 0; y < N; y++) { out[y * N + x] = s / (2 * R + 1); s += tmp[wrap(y + R + 1) * N + x]! - tmp[wrap(y - R) * N + x]!; } }
+  return out;
+}
+// Even out a layer's brightness at large scale (keeping the detail): what
+// the eye picks out as a texture repeats from afar is its big light and
+// dark areas. (Two passes: near enough a gaussian.)
+function flatten(lum: Float32Array, R = 40): Float32Array {
+  const low = boxBlur(boxBlur(lum, R), R), out = new Float32Array(N * N);
+  let mean = 0;
+  for (let i = 0; i < N * N; i++) mean += lum[i]!;
+  mean /= N * N;
+  for (let i = 0; i < N * N; i++) out[i] = lum[i]! * mean / Math.max(1e-3, low[i]!);
+  return out;
+}
+
+// Snow: soft drifts, drawn (no scan needed).
+function drawSnow(data: Uint8Array, o0: number): void {
+  const f = fbmField(mulberry32(0x6e0d + 977 * GROUND_LAYER.snow), 6, 4);
   for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
-    const [l, h] = f(x, y);
-    c.lum[y * N + x] = l; c.hgt[y * N + x] = h;
-  }
-}
-// A stroke (a blade of grass, a twig): brightness and height ramp from the
-// foot to the tip; drawn only where it stands higher than what is there.
-function stroke(c: Canvas, x0: number, y0: number, x1: number, y1: number, w: number,
-  lum0: number, lum1: number, h0: number, h1: number): void {
-  const n = Math.ceil(Math.hypot(x1 - x0, y1 - y0) * 1.5) + 1;
-  for (let i = 0; i <= n; i++) {
-    const t = i / n, cx = x0 + (x1 - x0) * t, cy = y0 + (y1 - y0) * t, r = (w / 2) * (1 - 0.6 * t);
-    const l = lum0 + (lum1 - lum0) * t, h = h0 + (h1 - h0) * t;
-    for (let y = Math.floor(cy - r); y <= Math.ceil(cy + r); y++) for (let x = Math.floor(cx - r); x <= Math.ceil(cx + r); x++) {
-      const d = Math.hypot(x - cx, y - cy);
-      if (d > r + 0.5) continue;
-      const o = wrap(y) * N + wrap(x), hh = h * (1 - 0.3 * (d / (r + 0.5)) ** 2);
-      if (hh <= c.hgt[o]!) continue;
-      c.hgt[o] = hh; c.lum[o] = l;
-    }
-  }
-}
-// A blob (a pebble, a leaf, a cushion of moss): an ellipse with a domed top.
-function blob(c: Canvas, cx: number, cy: number, rx: number, ry: number, ang: number, lum: number, h: number, dome = 0.5): void {
-  const R = Math.max(rx, ry), ca = Math.cos(ang), sa = Math.sin(ang);
-  for (let y = Math.floor(cy - R); y <= Math.ceil(cy + R); y++) for (let x = Math.floor(cx - R); x <= Math.ceil(cx + R); x++) {
-    const dx = x - cx, dy = y - cy, u = (dx * ca + dy * sa) / rx, v = (-dx * sa + dy * ca) / ry, q = u * u + v * v;
-    if (q > 1) continue;
-    const o = wrap(y) * N + wrap(x), hh = h * (1 - dome + dome * Math.sqrt(1 - q));
-    if (hh <= c.hgt[o]!) continue;
-    c.hgt[o] = hh; c.lum[o] = lum * (1 - 0.15 * q);
+    const o = o0 + (y * N + x) * 4, v = f(x, y);
+    const dx = f(x + 1, y) - f(x - 1, y), dy = f(x, y + 1) - f(x, y - 1);
+    data[o] = Math.round(127.5 * (0.97 + 0.06 * v));
+    data[o + 1] = Math.round(255 * v);
+    data[o + 2] = Math.round(255 * Math.min(1, Math.max(0, 0.5 - 0.4 * dx)));
+    data[o + 3] = Math.round(255 * Math.min(1, Math.max(0, 0.5 - 0.4 * dy)));
   }
 }
 
-type Drawer = (c: Canvas) => void;
-
-// Tufts of short blades over dark ground between them.
-const grass: Drawer = (c) => {
-  const { rand } = c, f = fbmField(rand, 8, 3), dense = fbmField(rand, 4, 2);
-  fill(c, (x, y) => [0.55 + 0.2 * f(x, y), 0.15 * f(x, y)]);
-  for (let k = 0; k < 900; k++) {
-    const x = rand() * N, y = rand() * N;
-    if (dense(x, y) < 0.3 + 0.25 * rand()) continue;
-    const blades = 6 + Math.floor(rand() * 8), tone = 0.85 + 0.25 * rand();
-    for (let b = 0; b < blades; b++) {
-      const a = rand() * Math.PI * 2, len = 5 + 8 * rand(), sx = x + (rand() - 0.5) * 4, sy = y + (rand() - 0.5) * 4;
-      stroke(c, sx, sy, sx + Math.cos(a) * len, sy + Math.sin(a) * len, 2 + rand(), 0.7 * tone, 1.35 * tone, 0.35, 0.65 + 0.35 * rand());
-    }
+// A scan's pixels, RGBA at N x N.
+async function pixels(url: string): Promise<Uint8ClampedArray> {
+  const img = new Image();
+  img.src = url;
+  await img.decode();
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = N;
+  const ctx = cv.getContext('2d', { willReadFrequently: true })!;
+  ctx.drawImage(img, 0, 0, N, N);
+  return ctx.getImageData(0, 0, N, N).data;
+}
+// Fill a layer from its scan: brightness (evened out at large scale) and
+// height from the colour's luminance, the normal from the normal map (GL
+// convention; the image's rows run down, the layer's up the v axis).
+async function loadScan(data: Uint8Array, layer: ScannedLayer): Promise<void> {
+  const base = `${import.meta.env.BASE_URL}ground/${layer}`;
+  const [col, nor] = await Promise.all([pixels(`${base}.webp`), pixels(`${base}_normal.webp`)]);
+  const raw = new Float32Array(N * N);
+  for (let i = 0; i < N * N; i++) raw[i] = col[i * 4]! * 0.3 + col[i * 4 + 1]! * 0.55 + col[i * 4 + 2]! * 0.15;
+  const lum = flatten(raw);
+  let mean = 0;
+  for (let i = 0; i < N * N; i++) mean += lum[i]!;
+  mean /= N * N;
+  const o0 = GROUND_LAYER[layer] * N * N * 4;
+  for (let i = 0; i < N * N; i++) {
+    const o = o0 + i * 4;
+    data[o] = Math.min(255, Math.round(127.5 * lum[i]! / mean));
+    data[o + 1] = Math.min(255, Math.round(lum[i]!));
+    data[o + 2] = nor[i * 4]!;
+    data[o + 3] = 255 - nor[i * 4 + 1]!;
   }
-};
-// Sparse, long, pale straw lying in tussocks, soil showing between.
-const dry: Drawer = (c) => {
-  const { rand } = c, f = fbmField(rand, 8, 3);
-  fill(c, (x, y) => [0.75 + 0.2 * f(x, y), 0.1 * f(x, y)]);
-  for (let k = 0; k < 420; k++) {
-    const x = rand() * N, y = rand() * N, blades = 8 + Math.floor(rand() * 10), lean = rand() * Math.PI * 2;
-    for (let b = 0; b < blades; b++) {
-      const a = lean + (rand() - 0.5) * 2.2, len = 9 + 13 * rand();
-      stroke(c, x, y, x + Math.cos(a) * len, y + Math.sin(a) * len, 1.4 + 0.8 * rand(), 0.85, 1.1 + 0.1 * rand(), 0.4, 0.7 + 0.3 * rand());
-    }
-  }
-};
-// Earth: lumpy, with pebbles and fine cracks.
-const soil: Drawer = (c) => {
-  const { rand } = c, f = fbmField(rand, 16, 4), cr = fbmField(rand, 12, 3);
-  fill(c, (x, y) => {
-    const crack = Math.abs(cr(x, y) - 0.5) < 0.012 ? 0.6 : 1;
-    return [(0.8 + 0.35 * f(x, y)) * crack, 0.3 * f(x, y) * crack];
-  });
-  for (let k = 0; k < 700; k++) {
-    const r = 1.2 + 3 * rand() ** 2;
-    blob(c, rand() * N, rand() * N, r * (0.8 + 0.4 * rand()), r, rand() * 3, 0.95 + 0.5 * rand(), 0.4 + 0.5 * rand());
-  }
-};
-// Sand: fine grain and wind ripples.
-const sand: Drawer = (c) => {
-  const { rand } = c, f = fbmField(rand, 6, 2), g = noiseField(rand, 256);
-  fill(c, (x, y) => {
-    const w = Math.sin(((x + 40 * f(x, y) + y * 0.35) / N) * Math.PI * 2 * 22);
-    return [0.95 + 0.06 * w + 0.12 * (g(x, y) - 0.5), 0.5 + 0.35 * w + 0.1 * g(x, y)];
-  });
-};
-// Forest floor: fallen leaves of many tones, twigs, dark earth between.
-const litter: Drawer = (c) => {
-  const { rand } = c, f = fbmField(rand, 12, 3);
-  fill(c, (x, y) => [0.5 + 0.3 * f(x, y), 0.1 * f(x, y)]);
-  for (let k = 0; k < 2600; k++) {
-    const r = 2.5 + 3 * rand();
-    blob(c, rand() * N, rand() * N, r, r * (0.45 + 0.2 * rand()), rand() * Math.PI, 0.7 + 0.75 * rand(), 0.3 + 0.6 * rand(), 0.25);
-  }
-  for (let k = 0; k < 90; k++) {
-    const x = rand() * N, y = rand() * N, a = rand() * Math.PI, len = 12 + 25 * rand();
-    stroke(c, x, y, x + Math.cos(a) * len, y + Math.sin(a) * len, 1.6, 0.55, 0.65, 0.95, 0.9);
-  }
-};
-// Moss and mud: soft cushions, darker hollows.
-const moss: Drawer = (c) => {
-  const { rand } = c, f = fbmField(rand, 10, 4);
-  fill(c, (x, y) => [0.55 + 0.4 * f(x, y), 0.4 * f(x, y)]);
-  for (let k = 0; k < 900; k++) {
-    const r = 3 + 6 * rand();
-    blob(c, rand() * N, rand() * N, r, r * (0.7 + 0.3 * rand()), rand() * 3, 0.85 + 0.45 * rand(), 0.45 + 0.5 * rand(), 0.8);
-  }
-};
-// Rock: crags. Ridged noise (sharp crests where the noise folds) makes
-// ledges and gullies, a finer ridged layer breaks them up, grain on top;
-// hollows are darker.
-const rock: Drawer = (c) => {
-  const { rand } = c, big = fbmField(rand, 4, 4), mid = fbmField(rand, 12, 3), g = fbmField(rand, 64, 2);
-  const ridge = (v: number) => 1 - Math.abs(2 * v - 1);
-  fill(c, (x, y) => {
-    const r1 = ridge(big(x, y)) ** 2, r2 = ridge(mid(x, y)) ** 3, n = g(x, y);
-    const h = 0.6 * r1 + 0.3 * r2 + 0.1 * n;
-    return [(0.55 + 0.8 * h) * (0.9 + 0.2 * n), h];
-  });
-};
-// Snow: soft drifts.
-const snow: Drawer = (c) => {
-  const { rand } = c, f = fbmField(rand, 6, 4);
-  fill(c, (x, y) => [0.97 + 0.06 * f(x, y), f(x, y)]);
-};
-
-const DRAW: Record<GroundLayer, Drawer> = { grass, dry, soil, sand, litter, moss, rock, snow };
-// How bumpy each layer's normal is (height units per texel).
-const BUMP: Record<GroundLayer, number> = { grass: 2.2, dry: 2, soil: 2.5, sand: 1.2, litter: 2.5, moss: 2, rock: 6, snow: 0.8 };
+}
 
 let groundTex: THREE.DataArrayTexture | null = null;
+// The ground texture array. The scanned layers start flat (each material's
+// plain color) and fill in once their images have loaded (not at all where
+// there is no DOM to decode them: tests).
 export function groundTextures(): THREE.DataArrayTexture {
   if (groundTex) return groundTex;
-  const L = GROUND_LAYERS.length, data = new Uint8Array(N * N * 4 * L);
-  GROUND_LAYERS.forEach((k, layer) => {
-    const c: Canvas = { lum: new Float32Array(N * N), hgt: new Float32Array(N * N), rand: mulberry32(0x6e0d + 977 * layer) };
-    DRAW[k](c);
-    let mean = 0;
-    for (let i = 0; i < N * N; i++) mean += c.lum[i]!;
-    mean /= N * N;
-    const o0 = layer * N * N * 4, bump = BUMP[k];
-    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
-      const i = y * N + x, o = o0 + i * 4;
-      const dx = c.hgt[y * N + wrap(x + 1)]! - c.hgt[y * N + wrap(x - 1)]!;
-      const dy = c.hgt[wrap(y + 1) * N + x]! - c.hgt[wrap(y - 1) * N + x]!;
-      data[o] = Math.round(255 * Math.min(1, c.lum[i]! / mean / 2));
-      data[o + 1] = Math.round(255 * Math.min(1, Math.max(0, c.hgt[i]!)));
-      // (The slope's tangent part of the normal: -dh/dx, -dh/dy.)
-      data[o + 2] = Math.round(255 * Math.min(1, Math.max(0, 0.5 - 0.5 * bump * dx)));
-      data[o + 3] = Math.round(255 * Math.min(1, Math.max(0, 0.5 - 0.5 * bump * dy)));
-    }
-  });
+  const L = GROUND_LAYERS.length, data = new Uint8Array(N * N * 4 * L).fill(128);
+  drawSnow(data, GROUND_LAYER.snow * N * N * 4);
   const tex = new THREE.DataArrayTexture(data, N, N, L);
   tex.format = THREE.RGBAFormat;
   tex.type = THREE.UnsignedByteType;
@@ -207,5 +134,10 @@ export function groundTextures(): THREE.DataArrayTexture {
   tex.magFilter = THREE.LinearFilter;
   tex.needsUpdate = true;
   groundTex = tex;
+  if (typeof document !== 'undefined') {
+    void Promise.all(SCANNED.map((k) => loadScan(data, k)))
+      .then(() => { tex.needsUpdate = true; })
+      .catch((e: unknown) => console.error('ground textures failed to load', e));
+  }
   return tex;
 }

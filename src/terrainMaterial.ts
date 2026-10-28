@@ -4,7 +4,7 @@ import type { ImprovementKey } from './cities.ts';
 import type { CropRegion } from './rural/look.ts';
 import { CROP_INDEX_GLSL, CROP_PALETTE, CROP_SATURATION, PLOTS_GLSL } from './rural/plots.ts';
 import { SAFE_RHO } from './town/geometry.ts';
-import { GROUND_LAYER, groundTextures } from './groundTextures.ts';
+import { GROUND_LAYER, GROUND_TEX, groundTextures } from './groundTextures.ts';
 
 // The terrain material: three's MeshStandardMaterial with extra shader code.
 // The look comes from the basics (the painting, the relief, the props); the
@@ -141,69 +141,89 @@ vec4 paintWeights(int fan, vec3 P, vec4 ids, out vec3 sEdge, out vec4 soft) {
 const GROUND_GLSL = /* glsl */ `
 vec3 gN;
 vec3 gQ, gBw;
-void gSetup(vec3 P) {
+float gTpp; // ground texels per pixel at the usual scale
+// Projected along the surface's own normal (not straight down), so steep
+// faces aren't smeared.
+void gSetup(vec3 P, vec3 Nrm) {
   gQ = P * uGroundScale;
-  vec3 a = abs(normalize(P));
+  vec3 a = abs(normalize(Nrm));
   gBw = pow(a, vec3(10.0));
   gBw /= gBw.x + gBw.y + gBw.z;
+  gTpp = tLod * uGroundScale * ${GROUND_TEX}.0;
 }
-// (k: the texture's scale, 1 = the usual third of a tile.)
+// (k: the texture's scale, 1 = the usual third of a tile.) From afar, where
+// the mipmaps have blurred a texture to its average (some dozens of texels
+// to a pixel), it isn't read at all: the average is known (brightness 1,
+// flat).
 vec4 gSample(float layer, out vec3 n, float k) {
-  vec4 s = vec4(0.0); n = vec3(0.0);
+  n = vec3(0.0);
+  float coarse = smoothstep(12.0, 32.0, gTpp * k);
+  if (coarse > 0.999) return vec4(0.5);
+  vec4 s = vec4(0.0);
   float tw = 0.0;
   vec3 q = gQ * k;
   if (gBw.x > 0.02) { vec4 t = texture(uGround, vec3(q.yz, layer)); s += gBw.x * t; n += gBw.x * vec3(0.0, t.b - 0.5, t.a - 0.5); tw += gBw.x; }
   if (gBw.y > 0.02) { vec4 t = texture(uGround, vec3(q.zx, layer)); s += gBw.y * t; n += gBw.y * vec3(t.a - 0.5, 0.0, t.b - 0.5); tw += gBw.y; }
   if (gBw.z > 0.02) { vec4 t = texture(uGround, vec3(q.xy, layer)); s += gBw.z * t; n += gBw.z * vec3(t.b - 0.5, t.a - 0.5, 0.0); tw += gBw.z; }
-  n /= tw;
-  return s / tw;
+  n *= (1.0 - coarse) / tw;
+  return mix(s / tw, vec4(0.5), coarse);
 }
 // A material's color: its base times the texture's brightness, lighter bits
 // a little warmer.
 vec3 gTone(vec3 base, float lum) { float L = 2.0 * lum; return max(base * L + (L - 1.0) * vec3(0.035, 0.025, -0.03), 0.0); }
-// Lay one cover layer over what is there: cov of the remaining area, in
-// patches where the noise n is high.
-void gLay(inout vec3 col, inout float h, float layer, vec3 base, float cov, float n0, float near) {
-  if (cov < 0.004) return;
-  vec3 n;
-  vec4 t = gSample(layer, n, 1.0);
-  float patchN = clamp((n0 - 0.5) * 2.4 + 0.5, 0.0, 1.0);
-  float x = 0.7 * patchN + 0.3 * t.g;
-  float mask = smoothstep(1.0 - cov - 0.1, 1.0 - cov + 0.1, x + 0.15 * (cov - 0.5));
-  mask = cov > 0.996 ? 1.0 : mix(cov, mask, near);
-  col = mix(col, gTone(base, t.r), mask);
-  h = mix(h, t.g, mask);
-  gN = mix(gN, n, mask);
+// Graded as northern land is seen: muted, toward olive and ochre.
+vec3 gGrade(vec3 c) { float l = dot(c, vec3(0.3, 0.55, 0.15)); return mix(vec3(l), c, 0.62) * vec3(1.06, 1.0, 0.82); }
+// How crisp the edges between materials are: crisp up close, blended from
+// afar (where crisp edges would only shimmer).
+float gNear() { return 1.0 - smoothstep(0.035, 0.09, tLod / (0.16 * uR0)); }
+// How much of a layer shows: cov of what is under it, in patches where x
+// (its patch noise, raised by its texture's height) is high.
+float gMask(float cov, float x, float near) {
+  if (cov < 0.004) return 0.0;
+  if (cov > 0.996) return 1.0;
+  return mix(cov, smoothstep(1.0 - cov - 0.1, 1.0 - cov + 0.1, x + 0.15 * (cov - 0.5)), near);
 }
-// How much the materials show: all of it up close, none from afar (where
-// the painting alone reads cleaner, and costs less).
-float gShow() { return 1.0 - smoothstep(0.035, 0.09, tLod / (0.16 * uR0)); }
 vec3 groundColor(vec3 c, vec3 soilC, vec4 s0, vec4 s1, vec4 s2, vec3 P) {
   // s0 = (soil.rgb, grass), s1 = (dry, soil, sand, litter), s2 = (moss, snow, -, -)
   gN = vec3(0.0);
-  float show = gShow();
-  if (show < 0.001) return c;
-  float near = 1.0;
+  float near = gNear();
   // Four patch noises in two fetches (uNoise4: four independent channels);
   // layers that rarely meet share one, and some take its opposite (litter
   // where the grass thins out).
   vec3 pq = P / (0.16 * uR0);
   vec4 pn = 0.667 * texture(uNoise4, pq * ${(1 / NOISE_SIZE).toFixed(8)}) + 0.333 * texture(uNoise4, (pq * 2.03 + 1.7) * ${(1 / NOISE_SIZE).toFixed(8)});
-  float gSoil = s1.y, gSand = s1.z, gDry = s1.x, gGrass = s0.w, gMoss = s2.x, gLitter = s1.w, gSnow = s2.y;
-  vec3 n;
-  vec4 t = gSample(${GROUND_LAYER.soil}.0, n, 1.0);
-  vec3 col = gTone(soilC, t.r);
-  float h = t.g;
-  gN = n;
-  float acc = gSoil;
-  acc += gSand;   gLay(col, h, ${GROUND_LAYER.sand}.0, mix(c, vec3(0.84, 0.75, 0.56), 0.6), gSand / max(acc, 1e-4), pn.x, near);
-  acc += gDry;    gLay(col, h, ${GROUND_LAYER.dry}.0, mix(c, vec3(0.6, 0.55, 0.4), 0.25), gDry / max(acc, 1e-4), pn.y, near);
-  acc += gGrass;  gLay(col, h, ${GROUND_LAYER.grass}.0, c, gGrass / max(acc, 1e-4), pn.z, near);
-  acc += gMoss;   gLay(col, h, ${GROUND_LAYER.moss}.0, mix(c, vec3(0.33, 0.42, 0.2), 0.45) * 0.9, gMoss / max(acc, 1e-4), pn.w, near);
-  acc += gLitter; gLay(col, h, ${GROUND_LAYER.litter}.0, mix(mix(soilC * 0.8, vec3(0.36, 0.29, 0.18), 0.5), c, 0.15), gLitter / max(acc, 1e-4), 1.0 - pn.z, near);
-  acc += gSnow;   gLay(col, h, ${GROUND_LAYER.snow}.0, vec3(0.92, 0.94, 0.96), gSnow / max(acc, 1e-4), 1.0 - pn.x, near);
-  gN *= show;
-  return mix(c, col, show);
+  // The layers, bottom to top; each covers its share of the area (cov: of
+  // what is under it).
+  const int L = 7;
+  float share[L] = float[L](s1.y, s1.z, s1.x, s0.w, s2.x, s1.w, s2.y);
+  float noise[L] = float[L](0.5, pn.x, pn.y, pn.z, pn.w, 1.0 - pn.z, 1.0 - pn.x);
+  float layer[L] = float[L](${GROUND_LAYER.soil}.0, ${GROUND_LAYER.sand}.0, ${GROUND_LAYER.dry}.0, ${GROUND_LAYER.grass}.0, ${GROUND_LAYER.moss}.0, ${GROUND_LAYER.litter}.0, ${GROUND_LAYER.snow}.0);
+  vec3 base[L] = vec3[L](soilC, mix(c, vec3(0.84, 0.75, 0.56), 0.6), mix(c, vec3(0.6, 0.55, 0.4), 0.25), c,
+    mix(c, vec3(0.33, 0.42, 0.2), 0.45) * 0.9, mix(mix(soilC * 0.8, vec3(0.36, 0.29, 0.18), 0.5), c, 0.15), vec3(0.92, 0.94, 0.96));
+  float cov[L], x0[L];
+  float acc = 0.0;
+  // Only the layers that show are read: from the topmost one that surely
+  // covers the whole pixel (whatever its texture), up through those that
+  // may show over it. (Most pixels read one or two.)
+  int first = 0;
+  for (int i = 0; i < L; i++) {
+    acc += share[i];
+    cov[i] = i == 0 ? 1.0 : share[i] / max(acc, 1e-4);
+    x0[i] = 0.7 * clamp((noise[i] - 0.5) * 2.4 + 0.5, 0.0, 1.0);
+    if (gMask(cov[i], x0[i], near) > 0.999) first = i;
+  }
+  vec3 col = vec3(0.0);
+  for (int i = first; i < L; i++) {
+    if (i > first && gMask(cov[i], x0[i] + 0.3, near) < 0.001) continue;
+    vec3 n;
+    vec4 t = gSample(layer[i], n, 1.0);
+    float mask = i == first ? 1.0 : gMask(cov[i], x0[i] + 0.3 * t.g, near);
+    vec3 tone = gTone(base[i], t.r);
+    // (Snow stays white.)
+    col = mix(col, i == L - 1 ? tone : gGrade(tone), mask);
+    gN = mix(gN, n, mask);
+  }
+  return col;
 }
 `;
 
@@ -424,19 +444,18 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
           vec4 w = paintWeights(fan, P, ids, sEdge, soft);
           vec4 m0 = vec4(0.0), m1 = vec4(0.0), m2 = vec4(0.0), m3 = vec4(0.0), m4 = vec4(0.0);
           vec4 g0 = vec4(0.0), g1 = vec4(0.0), g2 = vec4(0.0);
-          bool showGround = gShow() > 0.001;
           for (int k = 0; k < 4; k++) {
             if (w[k] > 0.001) {
               int tt = int(ids[k]);
               m0 += w[k] * tileRow(tt, 0); m1 += w[k] * tileRow(tt, 1); m2 += w[k] * tileRow(tt, 2);
               m3 += w[k] * tileRow(tt, 3); m4 += w[k] * tileRow(tt, 4);
-              if (showGround) { g0 += w[k] * tileRow(tt, 10); g1 += w[k] * tileRow(tt, 11); g2 += w[k] * tileRow(tt, 12); }
+              g0 += w[k] * tileRow(tt, 10); g1 += w[k] * tileRow(tt, 11); g2 += w[k] * tileRow(tt, 12);
             }
           }
           float wsum = w.x * step(0.001, w.x) + w.y * step(0.001, w.y) + w.z * step(0.001, w.z) + w.w * step(0.001, w.w);
           m0 /= wsum; m1 /= wsum; m2 /= wsum; m3 /= wsum; m4 /= wsum;
           g0 /= wsum; g1 /= wsum; g2 /= wsum;
-          gSetup(P);
+          gSetup(P, vObjNormal);
           vDetail = m1; vBump = m2.a;
           vec4 vRock = m3;
           // Wetness and coast data come from the soft (unsharpened) weights, so
@@ -453,17 +472,18 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
           // Snow: a crisp, ragged edge where the interpolated cover crosses one
           // half; it slides off steep faces (bare rock shows there).
           float steepness = 1.0 - dot(normalize(vObjNormal), normalize(P));
-          float snowCover = 0.0;
+          float snowCover = 0.0, snowEdge = -1.0;
           if (vSnow < 0.5) {
             float edge = length(P) - 1.0 - vSnow + 0.0016 * (tFbm(P * 260.0 + 5.3, 3) - 0.5);
+            snowEdge = edge;
             snowCover = smoothstep(-0.00015, 0.00015, edge) * (1.0 - smoothstep(0.16, 0.3, steepness));
           }
           vec3 ground = groundColor(m0.rgb, g0.rgb, g0, g1, g2, P);
           vec3 snowN = vec3(0.0);
           vec4 snowT = vec4(0.5);
-          if (snowCover > 0.001 && gShow() > 0.001) snowT = gSample(${GROUND_LAYER.snow}.0, snowN, 0.5);
-          diffuseColor.rgb = mix(ground, mix(m4.rgb, gTone(m4.rgb, snowT.r), gShow()), snowCover) * vShade;
-          gN = mix(gN, snowN * gShow(), snowCover);
+          if (snowCover > 0.001) snowT = gSample(${GROUND_LAYER.snow}.0, snowN, 0.5);
+          diffuseColor.rgb = mix(ground, gTone(m4.rgb, snowT.r), snowCover) * vShade;
+          gN = mix(gN, snowN, snowCover);
           // The owner's color, faintly, and only from afar: territory reads
           // at strategic zoom, the land keeps its own colors up close.
           {
@@ -510,14 +530,14 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
           // City ground (CITY_GLSL): urban ground and rural patterns.
           float urban = 0.0;
           {
-            float uS = 0.0, cS = 0.0, mineS = 0.0, campS = 0.0, quarryS = 0.0, burntS = 0.0;
+            float uS = 0.0, cS = 0.0, campS = 0.0, quarryS = 0.0, burntS = 0.0;
             for (int k = 0; k < 4; k++) {
               if (soft[k] > 0.001) {
                 vec4 r5 = tileRow(int(ids[k]), 5);
                 uS += soft[k] * r5.x; cS += soft[k] * r5.w;
                 int code = int(r5.z + 0.5);
-                if (code == 2) mineS += soft[k];
-                else if (code == 3) campS += soft[k];
+                // (Mines keep the land's own ground: the models are enough.)
+                if (code == 3) campS += soft[k];
                 else if (code == 4) quarryS += soft[k];
                 else if (code == ${BURNT_CODE}) burntS += soft[k];
               }
@@ -558,12 +578,6 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               hedge = max(hedge, smoothstep(${(SAFE_RHO - 0.025).toFixed(3)}, ${(SAFE_RHO - 0.025).toFixed(3)} + ringW, vRing));
               crop = mix(crop, vec3(0.2, 0.25, 0.15), hedge * 0.7);
               diffuseColor.rgb = mix(diffuseColor.rgb, crop * vShade, farm * 0.9);
-            }
-            if (mineS > 0.02) {
-              float mine = smoothstep(0.4, 0.55, mineS + 0.35 * edgeN) * keep * fieldMask;
-              float spoil = smoothstep(0.45, 0.62, tFbm(P / (0.12 * uR0) + 1.3, 2));
-              vec3 c = mix(vec3(0.42, 0.38, 0.34), vec3(0.55, 0.45, 0.32), tNoise(P / (0.05 * uR0)));
-              diffuseColor.rgb = mix(diffuseColor.rgb, c * vShade, mine * spoil * 0.8);
             }
             if (quarryS > 0.02) {
               // Open pits: a couple of irregular hollows per tile, cut in
@@ -607,17 +621,31 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
             float alt = length(P) - 1.0;
             float allow = max(vRock.a, smoothstep(0.0104, 0.0169, alt));
             float alpine = smoothstep(0.0169, 0.0234, alt);
-            rock = max(smoothstep(0.04, 0.09, steep) * allow, alpine) * dry * (1.0 - snowCover) * (1.0 - vBank) * (1.0 - 0.8 * urban);
+            rock = max(smoothstep(0.09, 0.15, steep) * allow, alpine) * dry * (1.0 - snowCover) * (1.0 - vBank) * (1.0 - 0.8 * urban);
             // Rock tone varies: greyer bands and lighter speckle, so faces read as stone.
             vec3 rockN = vec3(0.0);
             vec4 rockT = vec4(0.5);
-            if (rock > 0.001 && gShow() > 0.001) rockT = gSample(${GROUND_LAYER.rock}.0, rockN, 0.45);
+            if (rock > 0.001) rockT = gSample(${GROUND_LAYER.rock}.0, rockN, 0.3);
             // Up close, rock breaks through the cover along its own crags
             // rather than fading in.
-            rock = mix(rock, smoothstep(0.3, 0.5, rock + 0.7 * (rockT.g - 0.45)), gShow() * step(0.001, rock));
+            float crag = rock + 0.45 * (rockT.g - 0.45);
+            rock = mix(rock, smoothstep(0.3, 0.5, crag), gNear() * step(0.001, rock));
+            // (Its rim darker: the rock stands out of the ground, shading its foot.)
+            float rim = mix(1.0, 0.6 + 0.4 * smoothstep(0.35, 0.75, crag), gNear());
             vec3 stone = mix(vRock.rgb, vec3(0.62, 0.6, 0.57), 0.45 * tNoise(P * 55.0 + 1.7)) * (0.9 + 0.3 * patchy);
-            diffuseColor.rgb = mix(diffuseColor.rgb, mix(stone, gTone(stone, rockT.r), gShow()) * vShade, rock * 0.95);
-            gN = mix(gN, rockN * gShow(), rock);
+            // Up close, a pale cool grey (weathered stone, as in northern crags),
+            // keeping a little of the tile's own tint.
+            vec3 nearStone = mix(vec3(0.26, 0.27, 0.28), vRock.rgb, 0.3) * rim;
+            diffuseColor.rgb = mix(diffuseColor.rgb, gTone(nearStone, rockT.r) * vShade, rock * 0.95);
+            gN = mix(gN, rockN, rock);
+            // Up close, snow dusts the rock from a little below the snow line
+            // up: it lies on the ledges and the faces turned up to the sky,
+            // the steep faces stay dark.
+            if (snowEdge > -0.005) {
+              float up = dot(normalize(vObjNormal + 2.5 * rockN), normalize(P));
+              float dust = smoothstep(-0.005, 0.0, snowEdge) * smoothstep(0.82, 0.93, up + 0.25 * (rockT.g - 0.5));
+              diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.85, 0.88, 0.92) * vShade, dust * rock);
+            }
           }
 
           // Shores, at the real waterline: sandy coasts get a beach that runs on
