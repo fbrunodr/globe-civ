@@ -23,6 +23,46 @@ export interface BiomeLook {
 
 const d = (grain: number, patch: number, strata: number, dunes: number, bump: number): Detail => ({ grain, patch, strata, dunes, bump });
 
+// What the ground is made of, up close (groundTextures.ts): the share of each
+// cover material, laid by the terrain shader in patches, and the color of the
+// bare soil. Shares need not sum to 1 (normalized by the shader's caller).
+export const GROUND_COVERS = ['grass', 'dry', 'soil', 'sand', 'litter', 'moss', 'snow'] as const;
+export type GroundCover = typeof GROUND_COVERS[number];
+export interface GroundLook { cover: Readonly<Partial<Record<GroundCover, number>>>; soil: number }
+
+export const BIOME_GROUND: Record<BiomeKey, GroundLook> = {
+  // Beds under the water: silt and sand.
+  ocean:               { cover: { soil: 0.5, sand: 0.5 }, soil: 0x56605a },
+  shallowSea:          { cover: { sand: 0.8, soil: 0.2 }, soil: 0x7d7660 },
+  lake:                { cover: { soil: 0.6, moss: 0.4 }, soil: 0x6a6650 },
+  seaIce:              { cover: { snow: 1 }, soil: 0x9fb0b8 },
+  iceSheet:            { cover: { snow: 1 }, soil: 0x9fb0b8 },
+  tundra:              { cover: { moss: 0.45, dry: 0.25, soil: 0.2, grass: 0.1 }, soil: 0x75705f },
+  taiga:               { cover: { moss: 0.4, litter: 0.35, grass: 0.25 }, soil: 0x544636 },
+  coldDesert:          { cover: { soil: 0.55, sand: 0.25, dry: 0.2 }, soil: 0xa39478 },
+  steppe:              { cover: { dry: 0.55, grass: 0.25, soil: 0.2 }, soil: 0x8a7756 },
+  prairie:             { cover: { grass: 0.7, dry: 0.15, soil: 0.15 }, soil: 0x6b573b },
+  temperateForest:     { cover: { grass: 0.65, litter: 0.2, soil: 0.15 }, soil: 0x5c4832 },
+  temperateRainforest: { cover: { moss: 0.45, grass: 0.3, litter: 0.25 }, soil: 0x4b3e2e },
+  mediterranean:       { cover: { dry: 0.45, soil: 0.35, grass: 0.2 }, soil: 0x977853 },
+  hotDesert:           { cover: { sand: 0.8, soil: 0.2 }, soil: 0xc09c70 },
+  savanna:             { cover: { dry: 0.65, soil: 0.25, grass: 0.1 }, soil: 0x8f7354 },
+  monsoonForest:       { cover: { grass: 0.55, litter: 0.25, soil: 0.2 }, soil: 0x845a39 },
+  jungle:              { cover: { grass: 0.45, litter: 0.35, moss: 0.2 }, soil: 0x6a472d },
+};
+// Features that change what the ground is made of.
+export const FEATURE_GROUND: Partial<Record<FeatureKey, GroundLook>> = {
+  marsh:      { cover: { grass: 0.5, moss: 0.4, soil: 0.1 }, soil: 0x4f4a36 },
+  swamp:      { cover: { moss: 0.6, litter: 0.25, soil: 0.15 }, soil: 0x3f3a2a },
+  mangrove:   { cover: { soil: 0.55, litter: 0.25, moss: 0.2 }, soil: 0x5a4f3a },
+  bog:        { cover: { moss: 0.7, dry: 0.2, soil: 0.1 }, soil: 0x4a3a26 },
+  floodplain: { cover: { grass: 0.75, soil: 0.25 }, soil: 0x5e4c34 },
+  oasis:      { cover: { grass: 0.5, sand: 0.3, soil: 0.2 }, soil: 0x9c7e56 },
+  volcano:    { cover: { soil: 0.8, sand: 0.2 }, soil: 0x3a3430 },
+};
+// Forests carpet their floor with fallen leaves or needles, whatever the biome.
+export const FOREST_LITTER = 0.45;
+
 export const BIOME_LOOK: Record<BiomeKey, BiomeLook> = {
   // Water tiles: the color is the bed's, seen through the water surface.
   ocean:               { color: 0x56605a, rock: 0x7d8a8c, detail: d(0.5, 0, 0, 0, 0.3), wet: 1 },
@@ -152,6 +192,7 @@ export interface TileLook {
   bed: number;       // bed level under water (land tiles: the shallow bed off their shore)
   tint: WaterTint | null; // open water's look
   pool: PoolLook | null;  // wetland pools / oasis pond
+  ground: GroundLook;
 }
 
 // Biomes whose coasts get sandy beaches; cold, forested-to-the-water and
@@ -214,5 +255,6 @@ export function tileLook(map: MapData, t: number): TileLook {
       : feature === 'reef' ? -0.0013 : feature === 'kelp' ? -0.0021 : BED[biome],
     tint: isOpenWater(biome) ? SEA_TINT[biome] : null,
     pool: feature ? POOL_LOOK[feature] ?? null : null,
+    ground: (feature ? FEATURE_GROUND[feature] : undefined) ?? BIOME_GROUND[biome],
   };
 }
