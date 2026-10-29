@@ -14,14 +14,16 @@ const allVariants: Variant[] = allSets.flatMap((s) => [...s.variants]);
 
 describe('prop catalog', () => {
   // (Leaf cards, the fluffy crowns' crossed quads, are counted apart: a
-  // crown's clumps may take up to three times their solid triangles.)
-  it('V4: every prop stays within 40 solid triangles, and 120 of leaf cards', () => {
+  // crown's clumps may take up to three times their solid triangles. The
+  // mangrove may take more: its arching stilt roots.)
+  const SOLID_EXCEPTIONS: Partial<Record<string, number>> = { mangrove: 80 };
+  it('V4: every prop stays within 40 solid triangles (but the exceptions), and 120 of leaf cards', () => {
     const over = CATALOG_KINDS.flatMap((k) => {
       const g = buildCatalogGeometry(k), card = g.getAttribute('cardUv');
       let cards = 0;
       for (let i = 0; i < card.count; i += 3) if (card.getZ(i) > 0.5) cards++;
       const solid = triangles(g) - cards;
-      return solid > 40 || cards > 120 ? [`${k}: ${solid} solid, ${cards} card triangles`] : [];
+      return solid > (SOLID_EXCEPTIONS[k] ?? 40) || cards > 120 ? [`${k}: ${solid} solid, ${cards} card triangles`] : [];
     });
     expect(over).toEqual([]);
   });

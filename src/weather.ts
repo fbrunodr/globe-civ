@@ -134,11 +134,11 @@ export function makeWeather(globe: Globe, rainfall: Float32Array, temperature: F
           if (cover < 0.004) discard;
           float dist = distance(vPos, cameraPosition);
           float fade = uFade.y > 0.0 ? smoothstep(uFade.x, uFade.y, dist) : 1.0;
-          // Lit from above, darker on the night side; gray underneath, darker
-          // where thick or raining (only seen from below).
+          // Lit from above, darker on the night side; seen from below, white
+          // (a touch greyer where thick) and a soft grey only where it rains.
           bool below = length(cameraPosition) < ${(1 + ALT).toFixed(3)};
           float light = 0.45 + 0.6 * smoothstep(-0.25, 0.6, dot(p, uSun));
-          vec3 col = below ? mix(vec3(0.93, 0.95, 0.98), vec3(0.5, 0.53, 0.58), max(cover * cover, rain))
+          vec3 col = below ? mix(mix(vec3(0.97, 0.98, 1.0), vec3(0.86, 0.88, 0.92), cover * cover), vec3(0.66, 0.69, 0.74), 0.75 * rain)
                            : vec3(1.0) * light; // cloud tops stay white, raining or not
           float hz = 1.0 - exp(-uHazeDensity * airDepth(cameraPosition, vPos));
           col = mix(col, uHaze, hz);

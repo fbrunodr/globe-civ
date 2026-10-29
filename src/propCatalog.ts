@@ -332,15 +332,16 @@ export const CATALOG = {
     cyl(0.0005, 0.0003, 0.0058, 3, 0x5a4632),
     ...Array.from({ length: 6 }, (_, i) => frond(V(0, 0.0058, 0), ring(6, i), 0.0048, 0.0013, -0.15, p.leaf)),
   ] },
-  // A crown on a short trunk raised on stilt roots, each running down from
-  // the trunk into the mud.
+  // A crown on a short trunk raised on arching stilt roots, each bending
+  // down from the trunk into the mud. (Over the solid triangle budget, and
+  // allowed to be: its roots are what make it a mangrove; test/flora.test.ts.)
   mangrove: { name: 'Mangrove', layer: 'Canopy', leaf: 0x3f7d4f, water: wade(0.0006), build: (p) => [
-    cyl(0.0006, 0.0005, 0.0034, 3, 0x4a3a2a, { y: 0.0024 }),
+    cyl(0.0006, 0.0005, 0.0034, 4, 0x4a3a2a, { y: 0.0024 }),
     ico(0.0045, p.leaf, { y: 0.0068, sy: 0.7 }),
     ...Array.from({ length: 5 }, (_, i) => {
-      const a = ring(5, i, 0.3);
-      return seg(V(Math.cos(a) * 0.0003, 0.0028, Math.sin(a) * 0.0003), V(Math.cos(a) * 0.003, -0.0002, Math.sin(a) * 0.003), 0.00028, 0.0002, 3, 0x4a3a2a);
-    }),
+      const a = ring(5, i, 0.3), out = (r: number, y: number) => V(Math.cos(a) * r, y, Math.sin(a) * r);
+      return [seg(out(0.0003, 0.0028), out(0.0018, 0.0022), 0.00028, 0.00024, 3, 0x4a3a2a), seg(out(0.0018, 0.0022), out(0.003, -0.0002), 0.00024, 0.0002, 3, 0x4a3a2a)];
+    }).flat(),
   ] },
 
   // ---------- arid ----------
