@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { unitDef } from './rules.ts';
 import { GlobeCamera } from './camera.ts';
 import type { Game, Unit, City } from './game.ts';
-import { FOREST_LITTER, GROUND_COVERS, SNOW, tileLook, type GroundCover, type TileLook } from './look.ts';
+import { GROUND_COVERS, SNOW, tileLook, type GroundCover, type TileLook } from './look.ts';
 import { buildTerrainMesh, locate, newSample, type TerrainMesh } from './terrainMesh.ts';
 import { makeTerrainMaterial, makeTable, FAN_ROWS, TILE_ROWS, IMPROVEMENT_CODE, BURNT_CODE, CROP_CODE, type TerrainMaterial } from './terrainMaterial.ts';
 import { makeSmoke, type Emitter, type Smoke } from './smoke.ts';
@@ -402,7 +402,6 @@ export class GlobeRenderer {
       for (const v of this.terrain.tileVerts[t]) snow[v] = Math.min(snow[v], line);
     }
     this.vegetation = new Vegetation(g.globe, g.map, g.flora, L, this.relief.base, this.relief.peak, params.r0, g.seed);
-    for (let t = 0; t < N; t++) this.writeTileLook(t); // (again: forest floors)
     ;[this.vertSlope, this.vertCoast, this.vertInland] = slopeAndShore(this.terrain, coast!);
     // Forest floors sit in the canopy's shade.
     for (let t = 0; t < N; t++) {
@@ -688,9 +687,8 @@ export class GlobeRenderer {
     // The tile's own frame (cityProps.onTile), its crops and its farm's axis.
     const f = tileFrame(g, t);
     td.set([f.c.x, f.c.y, f.c.z, f.k, f.e1.x, f.e1.y, f.e1.z, CROP_CODE[cropRegion(improvementFor(g.terrainAt(t)), g.biome[t]!, g.feature[t] ?? null, g.map.temperature[t]!)], f.e2.x, f.e2.y, f.e2.z, farmAxis(t)], o + 28);
-    // What the ground is made of up close: the soil's color and the cover shares.
-    const cover = { ...l.ground.cover };
-    if (this.vegetation?.isForest(t)) cover.litter = (cover.litter ?? 0) + FOREST_LITTER;
+    // What the ground is made of: the soil's color and the cover shares.
+    const cover = l.ground.cover;
     const total = GROUND_COVERS.reduce((s, k) => s + (cover[k] ?? 0), 0) || 1;
     const share = (k: GroundCover) => (cover[k] ?? 0) / total;
     const soil = new THREE.Color(l.ground.soil);

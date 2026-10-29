@@ -133,9 +133,8 @@ vec4 paintWeights(int fan, vec3 P, vec4 ids, out vec3 sEdge, out vec4 soft) {
 
 // Ground materials (groundTextures.ts): textures planar-projected along the
 // dominant axis of the ground's direction (blending across the cube's
-// seams), so they wrap the sphere at one scale everywhere. The cover is laid
-// in layers, soil at the bottom, each covering its share of what is left in
-// patches whose edges follow the texture's own relief (blades over earth).
+// seams), so they wrap the sphere at one scale everywhere. Each biome shows
+// its one main cover material; neighbouring biomes blend at their borders.
 // gN collects the materials' normals (object space, tangent part) for
 // normal_fragment_maps.
 const GROUND_GLSL = /* glsl */ `
@@ -176,52 +175,33 @@ vec3 gGrade(vec3 c) { float l = dot(c, vec3(0.3, 0.55, 0.15)); return mix(vec3(l
 // How crisp the edges between materials are: crisp up close, blended from
 // afar (where crisp edges would only shimmer).
 float gNear() { return 1.0 - smoothstep(0.035, 0.09, tLod / (0.16 * uR0)); }
-// How much of a layer shows: cov of what is under it, in patches where x
-// (its patch noise, raised by its texture's height) is high.
-float gMask(float cov, float x, float near) {
-  if (cov < 0.004) return 0.0;
-  if (cov > 0.996) return 1.0;
-  return mix(cov, smoothstep(1.0 - cov - 0.1, 1.0 - cov + 0.1, x + 0.15 * (cov - 0.5)), near);
-}
 vec3 groundColor(vec3 c, vec3 soilC, vec4 s0, vec4 s1, vec4 s2, vec3 P) {
   // s0 = (soil.rgb, grass), s1 = (dry, soil, sand, litter), s2 = (moss, snow, -, -)
   gN = vec3(0.0);
-  float near = gNear();
-  // Four patch noises in two fetches (uNoise4: four independent channels);
-  // layers that rarely meet share one, and some take its opposite (litter
-  // where the grass thins out).
-  vec3 pq = P / (0.16 * uR0);
-  vec4 pn = 0.667 * texture(uNoise4, pq * ${(1 / NOISE_SIZE).toFixed(8)}) + 0.333 * texture(uNoise4, (pq * 2.03 + 1.7) * ${(1 / NOISE_SIZE).toFixed(8)});
-  // The layers, bottom to top; each covers its share of the area (cov: of
-  // what is under it).
+  // One material per biome: each layer weighs its share, sharpened so the
+  // main one rules a tile alone; where tiles of different biomes meet,
+  // their main materials blend across the border. No patches.
   const int L = 7;
   float share[L] = float[L](s1.y, s1.z, s1.x, s0.w, s2.x, s1.w, s2.y);
-  float noise[L] = float[L](0.5, pn.x, pn.y, pn.z, pn.w, 1.0 - pn.z, 1.0 - pn.x);
   float layer[L] = float[L](${GROUND_LAYER.soil}.0, ${GROUND_LAYER.sand}.0, ${GROUND_LAYER.dry}.0, ${GROUND_LAYER.grass}.0, ${GROUND_LAYER.moss}.0, ${GROUND_LAYER.litter}.0, ${GROUND_LAYER.snow}.0);
   vec3 base[L] = vec3[L](soilC, mix(c, vec3(0.84, 0.75, 0.56), 0.6), mix(c, vec3(0.6, 0.55, 0.4), 0.25), c,
     mix(c, vec3(0.33, 0.42, 0.2), 0.45) * 0.9, mix(mix(soilC * 0.8, vec3(0.36, 0.29, 0.18), 0.5), c, 0.15), vec3(0.92, 0.94, 0.96));
-  float cov[L], x0[L];
-  float acc = 0.0;
-  // Only the layers that show are read: from the topmost one that surely
-  // covers the whole pixel (whatever its texture), up through those that
-  // may show over it. (Most pixels read one or two.)
-  int first = 0;
-  for (int i = 0; i < L; i++) {
-    acc += share[i];
-    cov[i] = i == 0 ? 1.0 : share[i] / max(acc, 1e-4);
-    x0[i] = 0.7 * clamp((noise[i] - 0.5) * 2.4 + 0.5, 0.0, 1.0);
-    if (gMask(cov[i], x0[i], near) > 0.999) first = i;
-  }
+  float wt[L];
+  float top = 1e-4;
+  for (int i = 0; i < L; i++) top = max(top, share[i]);
+  float total = 0.0;
+  for (int i = 0; i < L; i++) { float r = share[i] / top; wt[i] = r * r * r * r * r * r * r * r; total += wt[i]; }
   vec3 col = vec3(0.0);
-  for (int i = first; i < L; i++) {
-    if (i > first && gMask(cov[i], x0[i] + 0.3, near) < 0.001) continue;
+  // (Only the layers that weigh are read: one, away from borders.)
+  for (int i = 0; i < L; i++) {
+    float k = wt[i] / total;
+    if (k < 0.02) continue;
     vec3 n;
     vec4 t = gSample(layer[i], n, 1.0);
-    float mask = i == first ? 1.0 : gMask(cov[i], x0[i] + 0.3 * t.g, near);
     vec3 tone = gTone(base[i], t.r);
     // (Snow stays white.)
-    col = mix(col, i == L - 1 ? tone : gGrade(tone), mask);
-    gN = mix(gN, n, mask);
+    col += k * (i == L - 1 ? tone : gGrade(tone));
+    gN += k * n;
   }
   return col;
 }
@@ -314,23 +294,6 @@ export function noiseTexture(): THREE.Data3DTexture {
   noiseTex ??= makeNoiseTexture();
   return noiseTex;
 }
-// The same, four independent noises in the four channels.
-let noise4Tex: THREE.Data3DTexture | null = null;
-function noise4Texture(): THREE.Data3DTexture {
-  if (noise4Tex) return noise4Tex;
-  const rand = mulberry32(0x5eed4);
-  const data = new Uint8Array(NOISE_SIZE ** 3 * 4);
-  for (let i = 0; i < data.length; i++) data[i] = Math.floor(rand() * 256);
-  const tex = new THREE.Data3DTexture(data, NOISE_SIZE, NOISE_SIZE, NOISE_SIZE);
-  tex.format = THREE.RGBAFormat;
-  tex.type = THREE.UnsignedByteType;
-  tex.minFilter = THREE.LinearFilter;
-  tex.magFilter = THREE.LinearFilter;
-  tex.wrapS = tex.wrapT = tex.wrapR = THREE.RepeatWrapping;
-  tex.needsUpdate = true;
-  noise4Tex = tex;
-  return tex;
-}
 function makeNoiseTexture(): THREE.Data3DTexture {
   const rand = mulberry32(0x5eed);
   const data = new Uint8Array(NOISE_SIZE ** 3);
@@ -363,7 +326,6 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
     shader.uniforms['uGrid'] = uGrid;
     shader.uniforms['uView'] = uView;
     shader.uniforms['uGround'] = { value: groundTextures() };
-    shader.uniforms['uNoise4'] = { value: noise4Texture() };
     // (One repeat of a ground texture: a third of a tile across.)
     shader.uniforms['uGroundScale'] = { value: 1 / (0.3 * paint.r0) };
     shader.vertexShader = shader.vertexShader
@@ -405,7 +367,6 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
         uniform float uGrid;
         uniform float uView;
         uniform highp sampler2DArray uGround;
-        uniform highp sampler3D uNoise4;
         uniform float uGroundScale;
         varying vec4 vPc0;
         varying vec2 vPc1;
@@ -506,7 +467,6 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
           // (The fine grain is the ground materials' now.)
           float grain = (tFbm(P * 380.0, 2) - 0.5) * tFade(380.0);
           float patchy = tNoise(P * 70.0) - 0.5;
-          diffuseColor.rgb *= 1.0 + vDetail.x * 0.3 * patchy;
 
           // Dunes and sand ripples: warped ripples.
           duneWave = 0.0;
@@ -521,9 +481,9 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
             diffuseColor.rgb *= 1.0 + vDetail.z * 0.16 * strata;
           }
 
-          // Patches: coral, kelp, tussocks, moss.
+          // Patches on the sea floor: coral, kelp. (Land keeps one color.)
           if (vDetail.y > 0.01) {
-            float pm = smoothstep(0.5, 0.58, tFbm(P * 140.0 + 3.1, 2)) * clamp(vDetail.y * 1.4, 0.0, 1.0);
+            float pm = smoothstep(0.5, 0.58, tFbm(P * 140.0 + 3.1, 2)) * clamp(vDetail.y * 1.4, 0.0, 1.0) * under;
             diffuseColor.rgb = mix(diffuseColor.rgb, m2.rgb, pm);
           }
 

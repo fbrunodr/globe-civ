@@ -23,9 +23,10 @@ export interface BiomeLook {
 
 const d = (grain: number, patch: number, strata: number, dunes: number, bump: number): Detail => ({ grain, patch, strata, dunes, bump });
 
-// What the ground is made of, up close (groundTextures.ts): the share of each
-// cover material, laid by the terrain shader in patches, and the color of the
-// bare soil. Shares need not sum to 1 (normalized by the shader's caller).
+// What the ground is made of (groundTextures.ts): the share of each cover
+// material, and the color of the bare soil. The terrain shader shows the
+// main material (the largest share) alone; the shares decide which it is,
+// and how neighbouring biomes blend at their borders. Shares need not sum to 1 (normalized by the shader's caller).
 export const GROUND_COVERS = ['grass', 'dry', 'soil', 'sand', 'litter', 'moss', 'snow'] as const;
 export type GroundCover = typeof GROUND_COVERS[number];
 export interface GroundLook { cover: Readonly<Partial<Record<GroundCover, number>>>; soil: number }
@@ -60,8 +61,6 @@ export const FEATURE_GROUND: Partial<Record<FeatureKey, GroundLook>> = {
   oasis:      { cover: { grass: 0.5, sand: 0.3, soil: 0.2 }, soil: 0x9c7e56 },
   volcano:    { cover: { soil: 0.8, sand: 0.2 }, soil: 0x3a3430 },
 };
-// Forests carpet their floor with fallen leaves or needles, whatever the biome.
-export const FOREST_LITTER = 0.45;
 
 export const BIOME_LOOK: Record<BiomeKey, BiomeLook> = {
   // Water tiles: the color is the bed's, seen through the water surface.
