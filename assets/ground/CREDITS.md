@@ -1,8 +1,10 @@
 # Ground textures
 
 Scanned textures from [Poly Haven](https://polyhaven.com), released under
-CC0 (public domain). Resized to 512 px and converted to WebP. The terrain
-shader (`src/terrainMaterial.ts`) uses only their brightness and normals.
+CC0 (public domain). Resized to 512 px and converted to WebP here; `npm run
+textures` (`scripts/groundTextures.ts`) builds them into the compressed
+array the game loads, `public/ground/ground.ktx2`. The terrain shader
+(`src/terrainMaterial.ts`) uses only their brightness and normals.
 
 | File | Poly Haven asset |
 |---|---|

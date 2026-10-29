@@ -4,7 +4,7 @@ import type { ImprovementKey } from './cities.ts';
 import type { CropRegion } from './rural/look.ts';
 import { CROP_INDEX_GLSL, CROP_PALETTE, CROP_SATURATION, PLOTS_GLSL } from './rural/plots.ts';
 import { SAFE_RHO } from './town/geometry.ts';
-import { GROUND_LAYER, GROUND_TEX, groundTextures } from './groundTextures.ts';
+import { GROUND_LAYER, GROUND_TEX, groundUniform } from './groundTextures.ts';
 
 // The terrain material: three's MeshStandardMaterial with extra shader code.
 // The look comes from the basics (the painting, the relief, the props); the
@@ -325,7 +325,7 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
     shader.uniforms['uFineFreq'] = { value: paint.fineFreq };
     shader.uniforms['uGrid'] = uGrid;
     shader.uniforms['uView'] = uView;
-    shader.uniforms['uGround'] = { value: groundTextures() };
+    shader.uniforms['uGround'] = groundUniform();
     // (One repeat of a ground texture: a third of a tile across.)
     shader.uniforms['uGroundScale'] = { value: 1 / (0.3 * paint.r0) };
     shader.vertexShader = shader.vertexShader

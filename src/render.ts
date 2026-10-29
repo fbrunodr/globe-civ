@@ -28,6 +28,7 @@ import { mulberry32, makePerlin } from './rng.ts';
 import { USE, WONDERS, improvementFor, type ImprovementKey } from './cities.ts';
 import { farGeometry, makeFloraDepthMaterial, makePropMaterial, instanceGeometry } from './propMaterial.ts';
 import { GpuTimer } from './gpuTimer.ts';
+import { loadGroundTextures } from './groundTextures.ts';
 
 const FOG = new THREE.Color(0x0b0e15);
 
@@ -294,6 +295,8 @@ export class GlobeRenderer {
     this.cropFar.value = CROP_FAR * game.globe.avgEdgeAngle;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.gpuTimer = new GpuTimer(this.renderer.getContext() as WebGL2RenderingContext);
+    // The ground's material textures, compressed for this GPU (they fill in once loaded).
+    loadGroundTextures(this.renderer);
     // Full Retina sharpness (up to 2 pixels per CSS pixel; setResolution).
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, this.resolution));
     // No tone mapping: the colours as they are lit.
