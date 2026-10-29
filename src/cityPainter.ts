@@ -10,8 +10,9 @@
 //      as near the middle as it fits in the largest stretch of dry land
 //      (where water cuts the tile in pieces, the city keeps to one);
 //   4. every wonder the city has is placed (at most MAX_WONDERS), wholly
-//      inside the safe zone; they are placed first, then the skyscrapers
-//      as near the middle as they fit, then the other buildings;
+//      inside the safe zone. The order they go up is drawn, the wonders
+//      and skyscrapers favoured (WEIGHT), so they mostly stand near the
+//      middle, but not always, and houses mix in among them;
 //   5. the tallest stand nearest the middle (heights: cityDress.ts);
 //   6. roads fill the gap between each joined pair, from the end of one
 //      building to the end of the other, the corners where they meet, and
@@ -76,6 +77,11 @@ export interface PaintInput {
   readonly limit?: number;
 }
 
+// How strongly each kind is drawn to go up next (per one left of it), and
+// pulled toward the middle where it goes (paintCity).
+const KINDS = ['wonder', 'skyscraper', 'building'] as const;
+const WEIGHT: Record<Kind, number> = { wonder: 5, skyscraper: 2, building: 1 };
+const PULL: Record<Kind, number> = { wonder: 1, skyscraper: 3, building: 1 };
 // Gaps in a town this narrow or less (units, each side) are paved over.
 const CLOSE = 2;
 // Dry ground kept round every building (units).
@@ -123,8 +129,13 @@ export function paintCity(inp: PaintInput): Painting {
     return s[d * (N + 1) + c]! - s[b * (N + 1) + c]! - s[d * (N + 1) + a]! + s[b * (N + 1) + a]!;
   };
   const allowed = Object.fromEntries((['wonder', 'skyscraper', 'building'] as const).map((k) => [k, sums(ok[k])])) as Record<Kind, Int32Array>;
+  // (Wonders by their very corners too: the squares are tested at their
+  // middles, and a wonder must lie wholly inside the safe zone.)
+  const inside = (x0: number, y0: number, w: number, h: number) =>
+    [[x0, y0], [x0 + w, y0], [x0, y0 + h], [x0 + w, y0 + h]].every(([x, y]) => rhoOf(6, toTile(x!, y!)) <= Math.min(REACH.wonder, limit));
   const fits = (k: Kind, x0: number, y0: number, w: number, h: number) =>
-    x0 >= -H && y0 >= -H && x0 + w <= H && y0 + h <= H && area(allowed[k], x0, y0, x0 + w, y0 + h) === w * h;
+    x0 >= -H && y0 >= -H && x0 + w <= H && y0 + h <= H && area(allowed[k], x0, y0, x0 + w, y0 + h) === w * h
+    && (k !== 'wonder' || inside(x0, y0, w, h));
   // The stretches of dry land (4-connected squares where a building may
   // stand); the city keeps to the largest.
   const piece = new Int32Array(N * N).fill(-1);
@@ -150,9 +161,9 @@ export function paintCity(inp: PaintInput): Painting {
   const inLargest = (x0: number, y0: number) => piece[(y0 + H) * N + x0 + H] === largest;
 
   // Taken: every building's square grown by 1 (nothing may stand there: guarantee 1).
-  const taken = new Uint8Array(N * N);
+  let taken = new Uint8Array(N * N);
   let takenSums = sums(taken);
-  const placed: { kind: Kind; x0: number; y0: number; w: number; h: number }[] = [];
+  let placed: { kind: Kind; x0: number; y0: number; w: number; h: number }[] = [];
   const clear = (x0: number, y0: number, w: number, h: number) => area(takenSums, x0, y0, x0 + w, y0 + h) === 0;
   const take = (x0: number, y0: number, w: number, h: number) => {
     for (let j = y0 - 1; j < y0 + h + 1; j++) for (let i = x0 - 1; i < x0 + w + 1; i++) if (i >= -H && j >= -H && i < H && j < H) taken[(j + H) * N + i + H] = 1;
@@ -200,10 +211,30 @@ export function paintCity(inp: PaintInput): Painting {
     }
     return false;
   };
-  const wonders = Math.min(MAX_WONDERS, inp.wonders);
-  for (let i = 0; i < wonders; i++) place('wonder', 1, rand);
-  for (let i = 0; i < inp.skyscrapers; i++) if (!place('skyscraper', 3, rand)) break;
-  for (let i = 0; i < inp.buildings; i++) if (!place('building', 1, rand)) break;
+  // The order they go up: each next one drawn by how many of its kind are
+  // left times the kind's WEIGHT, so wonders and skyscrapers mostly come
+  // early (near the middle) but houses mix in among them. A kind that finds
+  // no more room stops there. A wonder must find room (guarantee 4): should
+  // one drawn late find none, the city is drawn again with its wonders
+  // first.
+  const build = (wondersFirst: boolean): boolean => {
+    const r = mulberry32(inp.seed ^ 0x9e3779b9);
+    placed = [];
+    taken = new Uint8Array(N * N);
+    takenSums = sums(taken);
+    const left: Record<Kind, number> = { wonder: Math.min(MAX_WONDERS, inp.wonders), skyscraper: inp.skyscrapers, building: inp.buildings };
+    if (wondersFirst) for (; left.wonder > 0; left.wonder--) if (!place('wonder', PULL.wonder, r)) return false;
+    for (;;) {
+      const total = KINDS.reduce((a, k) => a + left[k] * WEIGHT[k], 0);
+      if (total <= 0) return true;
+      let pick = r() * total, k: Kind = 'building';
+      for (const kk of KINDS) { pick -= left[kk] * WEIGHT[kk]; if (pick < 0) { k = kk; break; } }
+      if (place(k, PULL[k], r)) left[k]--;
+      else if (k === 'wonder') return false;
+      else left[k] = 0;
+    }
+  };
+  if (!build(false)) build(true);
 
   // Roads: the gap between each joined pair (guarantee 6), as grid squares.
   const road = new Uint8Array(N * N);

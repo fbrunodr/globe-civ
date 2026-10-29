@@ -62,12 +62,11 @@ describe('CP1: buildings', () => {
     }
     expect(bad).toEqual([]);
   });
-  it('every wonder is placed, first, wholly inside the safe zone', () => {
+  it('every wonder is placed, wholly inside the safe zone', () => {
     const bad: string[] = [];
     for (const { c, p } of paint) {
       const ws = p.buildings.filter((b) => b.kind === 'wonder');
       if (ws.length !== Math.min(MAX_WONDERS, c.wonders)) bad.push(`seed ${c.seed}: ${ws.length}/${c.wonders} wonders`);
-      if (p.buildings.slice(0, ws.length).some((b) => b.kind !== 'wonder')) bad.push(`seed ${c.seed}: a wonder after another building`);
       for (const w of ws) {
         const corners = [[w.x0, w.y0], [w.x1, w.y0], [w.x0, w.y1], [w.x1, w.y1]].map(([x, y]) => ({ x: p.origin.x + (x! * p.u.x + y! * p.v.x) * UNIT, y: p.origin.y + (x! * p.u.y + y! * p.v.y) * UNIT }));
         if (corners.some((q) => rhoOf(6, q) > SAFE_RHO + 1e-9)) bad.push(`seed ${c.seed}: a wonder past the safe zone`);
@@ -75,14 +74,14 @@ describe('CP1: buildings', () => {
     }
     expect(bad).toEqual([]);
   });
-  it('skyscrapers stand nearer the middle than the other buildings, on average', () => {
-    const bad: string[] = [];
-    for (const { c, p } of paint) {
-      const mean = (k: string) => { const xs = p.buildings.filter((b) => b.kind === k).map((b) => Math.hypot(b.at.x, b.at.y)); return xs.length ? xs.reduce((a, x) => a + x, 0) / xs.length : NaN; };
-      const l = mean('skyscraper'), b = mean('building');
-      if (l > b) bad.push(`seed ${c.seed}: skyscrapers ${l.toFixed(3)} vs ${b.toFixed(3)}`);
-    }
-    expect(bad).toEqual([]);
+  // (Not in every city: the order they go up is drawn, skyscrapers only
+  // favoured. Taken over all of them: how far out each stands, as a share
+  // of its city's reach.)
+  it('skyscrapers stand nearer the middle than the other buildings, over all cities', () => {
+    const share: Record<'skyscraper' | 'building', number[]> = { skyscraper: [], building: [] };
+    for (const { p } of paint) for (const b of p.buildings) if (b.kind !== 'wonder') share[b.kind].push(Math.hypot(b.at.x, b.at.y) / p.reach);
+    const mean = (xs: number[]) => xs.reduce((a, x) => a + x, 0) / xs.length;
+    expect(mean(share.skyscraper)).toBeLessThan(mean(share.building) - 0.05);
   });
   it('nothing stands on water; a city on open land gets every building asked for', () => {
     for (const { c, p } of paint) {

@@ -83,9 +83,12 @@ const halfExtents = (k: LotModelKind): readonly [number, number] => {
   return r;
 };
 
+// The most buildings and skyscrapers a city shows (its wonders besides).
+const MAX_BUILDINGS = 50;
+
 export function dressCity(c: CityLook): DressedCity {
   const wonders = c.wonders.slice(0, MAX_WONDERS);
-  const total = Math.round(4 + 3 * c.pop);
+  const total = Math.min(MAX_BUILDINGS, Math.round(4 + 3 * c.pop));
   const skyscrapers = c.era >= 3 && c.pop >= SKYSCRAPER_FROM ? Math.min(total, Math.floor(c.pop / SKYSCRAPER_PER)) : 0;
   const painting = paintCity({ wonders: wonders.length, skyscrapers, buildings: total - skyscrapers, seed: c.seed, free: c.free, ...(c.walled ? { limit: WALLED_LIMIT } : {}) });
   const tall = Math.min(0.8, Math.max(0.15, c.pop / 20));
