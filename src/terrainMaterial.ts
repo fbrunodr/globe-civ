@@ -486,11 +486,6 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
           // River banks: greener, damper ground beside the water.
           diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.05, 0.2, 0.035) * vShade, vBank * 0.55 * dry * (1.0 - snowCover));
 
-          // Grain: fine speckle plus medium-scale patchiness.
-          // (The fine grain is the ground materials' now.)
-          float grain = (tFbm(P * 380.0, 2) - 0.5) * tFade(380.0);
-          float patchy = tNoise(P * 70.0) - 0.5;
-
           // Dunes and sand ripples: warped ripples.
           duneWave = 0.0;
           if (vDetail.w > 0.01) {
@@ -526,7 +521,8 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               }
             }
             float keep = dry * (1.0 - snowCover);
-            float edgeN = tFbm(P / (0.45 * uR0) + 4.1, 2) - 0.5;
+            // (Their edges' noise, only where a town or a worked tile reaches.)
+            float edgeN = max(max(uS, campS), max(quarryS, burntS)) > 0.02 ? tFbm(P / (0.45 * uR0) + 4.1, 2) - 0.5 : 0.0;
             if (uS > 0.02) {
               urban = smoothstep(0.36, 0.5, uS + 0.5 * edgeN) * keep;
               // No paving: the town keeps its own ground (gardens and yards
@@ -605,7 +601,7 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
             float allow = max(vRock.a, smoothstep(0.0104, 0.0169, alt));
             float alpine = smoothstep(0.0169, 0.0234, alt);
             rock = max(smoothstep(0.09, 0.15, steep) * allow, alpine) * dry * (1.0 - snowCover) * (1.0 - vBank) * (1.0 - 0.8 * urban);
-            // Rock tone varies: greyer bands and lighter speckle, so faces read as stone.
+            // Its texture (the rock scan), at a larger scale than the ground cover.
             vec3 rockN = vec3(0.0);
             vec4 rockT = vec4(0.5);
             if (rock > 0.001) rockT = gSample(${GROUND_LAYER.rock}.0, rockN, 0.3);
@@ -615,7 +611,6 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
             rock = mix(rock, smoothstep(0.3, 0.5, crag), gNear() * step(0.001, rock));
             // (Its rim darker: the rock stands out of the ground, shading its foot.)
             float rim = mix(1.0, 0.6 + 0.4 * smoothstep(0.35, 0.75, crag), gNear());
-            vec3 stone = mix(vRock.rgb, vec3(0.62, 0.6, 0.57), 0.45 * tNoise(P * 55.0 + 1.7)) * (0.9 + 0.3 * patchy);
             // Up close, a pale cool grey (weathered stone, as in northern crags),
             // keeping a little of the tile's own tint.
             vec3 nearStone = mix(vec3(0.26, 0.27, 0.28), vRock.rgb, 0.3) * rim;
@@ -643,6 +638,8 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               float top = 0.0009 + 0.0005 * tNoise(P * 120.0 + 9.0);
               float noBank = mix(1.0 - smoothstep(0.02, 0.4, vBank), 1.0, under);
               float sand = (1.0 - smoothstep(top * 0.6, top, above)) * smoothstep(0.15, 0.45, vShore + 0.4 * (tFbm(P * 160.0 + 2.7, 2) - 0.5)) * noBank;
+              // (A fine grain on the sand, where it can show.)
+              float grain = sand > 0.001 && tLod * 380.0 < 0.9 ? (tFbm(P * 380.0, 2) - 0.5) * tFade(380.0) : 0.0;
               diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.86, 0.73, 0.45) * (0.95 + 0.1 * grain) * vShade, sand * (1.0 - rock));
             }
             float landBed = 1.0 - smoothstep(0.3, 0.8, vWet);

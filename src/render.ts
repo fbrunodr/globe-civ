@@ -31,6 +31,10 @@ import { GpuTimer } from './gpuTimer.ts';
 
 const FOG = new THREE.Color(0x0b0e15);
 
+// Pixels per CSS pixel the renderer may use (setResolution).
+export const RESOLUTIONS = [2, 1.5, 1] as const;
+export type Resolution = typeof RESOLUTIONS[number];
+
 const UP = new THREE.Vector3(0, 1, 0);
 // Subdivisions per tile fan; higher = smoother relief, more triangles. Tiles
 // near water and relief get 2× or 4× this (see the mesh levels below).
@@ -290,8 +294,8 @@ export class GlobeRenderer {
     this.cropFar.value = CROP_FAR * game.globe.avgEdgeAngle;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.gpuTimer = new GpuTimer(this.renderer.getContext() as WebGL2RenderingContext);
-    // Full Retina sharpness (up to 2 pixels per CSS pixel).
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    // Full Retina sharpness (up to 2 pixels per CSS pixel; setResolution).
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, this.resolution));
     // No tone mapping: the colours as they are lit.
     this.renderer.toneMapping = THREE.NoToneMapping;
     this.scene.background = new THREE.Color(0x04050a);
@@ -633,6 +637,16 @@ export class GlobeRenderer {
   // page; three recompiles the materials itself).
   get toneMapped(): boolean { return this.renderer.toneMapping !== THREE.NoToneMapping; }
   setToneMapping(on: boolean): void { this.renderer.toneMapping = on ? THREE.NeutralToneMapping : THREE.NoToneMapping; }
+
+  // Rendering resolution: at most this many pixels per CSS pixel (screens
+  // with fewer get theirs). Fewer pixels are the quickest relief for a weak
+  // GPU: most of its work is per pixel.
+  resolution: Resolution = 2;
+  setResolution(r: Resolution): void {
+    this.resolution = r;
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, r));
+    this.renderer.setSize(innerWidth, innerHeight);
+  }
 
   setClouds(on: boolean): void {
     this.clouds = on;
