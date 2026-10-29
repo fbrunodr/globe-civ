@@ -127,12 +127,17 @@ const ROAD_KERB = [0.62, 0.59, 0.54] as const;
 const SQUARE_GROW = 0.022; // squares reach this far (tile steps) under the streets round them
 const WALK_FOV = 55;
 // The look: a 35° lens from further back (flatter perspective, less of a
-// small planet); the City samples page's light (a maquette's): a strong
-// pale sky fill and a warm sun fairly high, casting shadows; no tone
-// mapping.
+// small planet); a maquette's light: a warm sun fairly high, casting
+// shadows that read clearly (the pale sky fill, at about half the sun,
+// keeps them from going black; chosen by eye); no tone mapping.
 const LENS = 35;
 // The sun's shadow map (texels a side) and its normal offset in texels.
-const SHADOW_MAP = 2048, SHADOW_NORMAL_TEXELS = 1.5;
+// (Its size by the resolution setting: the sharpest gets the finest shadows.)
+const SHADOW_MAP: Record<Resolution, number> = { 2: 4096, 1.5: 2048, 1: 2048 };
+const SHADOW_NORMAL_TEXELS = 1.5;
+// How far the shadows' edges are blurred, in world units (the same however
+// much ground the map covers), and the most and least that is in texels.
+const SHADOW_BLUR = 0.0004, SHADOW_BLUR_TEXELS = [1, 3] as const;
 // The depth the shadow camera covers round the view (world units: the
 // ground in view, curving away, and what stands on it).
 const SHADOW_DEPTH = 1;
@@ -142,7 +147,7 @@ const SHADOW_DEPTH = 1;
 const SHADOW_PAD = 1.6, SHADOW_SLACK = 0.3, SHADOW_TURN = 1.5;
 // The largest the shadow map's half width gets (world units: a hemisphere).
 const SHADOW_MAX_HALF = 1.15;
-const LIGHT = { sunColor: 0xfff4e0, sun: 2.1, sunHeight: 40, fill: 1.4, fillSky: 0xdfeeff, fillGround: 0x6a5a40 };
+const LIGHT = { sunColor: 0xfff4e0, sun: 1.75, sunHeight: 40, fill: 1, fillSky: 0xdfeeff, fillGround: 0x6a5a40 };
 // Bridges (heights × the world scale; spans in tile steps): the deck stands
 // at least BRIDGE_CLEAR over the water and arches up to BRIDGE_ARCH more on
 // a long span; parapets rise BRIDGE_PARAPET over the deck, the slab is
@@ -315,7 +320,7 @@ export class GlobeRenderer {
     this.renderer.shadowMap.autoUpdate = false;
     this.sun = new THREE.DirectionalLight(LIGHT.sunColor, LIGHT.sun);
     this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(SHADOW_MAP, SHADOW_MAP);
+    this.sun.shadow.mapSize.set(SHADOW_MAP[this.resolution], SHADOW_MAP[this.resolution]);
     // (The bias is in the shadow camera's depth, 0..1 over its near..far: a
     // tenth of a millimetre of world over SHADOW_DEPTH. Larger, short things,
     // houses, would cast nothing.)
@@ -649,7 +654,16 @@ export class GlobeRenderer {
     this.resolution = r;
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, r));
     this.renderer.setSize(innerWidth, innerHeight);
+    // (And the shadow map's size: made anew at the next redraw.)
+    const size = SHADOW_MAP[r];
+    if (this.sun.shadow.mapSize.x !== size) {
+      this.sun.shadow.map?.dispose();
+      this.sun.shadow.map = null;
+      this.sun.shadow.mapSize.set(size, size);
+      this.shadowsDirty = true;
+    }
   }
+
 
   setClouds(on: boolean): void {
     this.clouds = on;
@@ -1799,7 +1813,9 @@ export class GlobeRenderer {
     // The normal offset follows the shadow map's texel size: enough to keep
     // slopes free of acne, small enough up close for houses to shadow the
     // ground beside them.
-    this.sun.shadow.normalBias = SHADOW_NORMAL_TEXELS * (2 * half) / SHADOW_MAP;
+    const texel = (2 * half) / this.sun.shadow.mapSize.x;
+    this.sun.shadow.normalBias = SHADOW_NORMAL_TEXELS * texel;
+    this.sun.shadow.radius = Math.min(SHADOW_BLUR_TEXELS[1], Math.max(SHADOW_BLUR_TEXELS[0], SHADOW_BLUR / texel));
     this.renderer.shadowMap.needsUpdate = true;
   }
 

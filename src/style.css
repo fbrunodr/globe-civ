@@ -133,5 +133,5 @@ small { color: var(--muted); font-weight: normal; }
 #dock #settingsMenu { position: absolute; right: 0; bottom: calc(100% + 6px); min-width: 170px; padding: 8px 12px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 #dock #settingsMenu.hidden { display: none; }
 #settingsMenu h4 { margin: 0 0 2px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
-#settingsMenu label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+#settingsMenu label { display: flex; align-items: center; gap: 8px; cursor: pointer; white-space: nowrap; }
 #settingsMenu select { margin-left: auto; }
