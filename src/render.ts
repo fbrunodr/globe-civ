@@ -26,7 +26,7 @@ import { roadLines, ROAD_HALF_WIDTH } from './roads.ts';
 import { Vegetation, type SpotEnv } from './vegetation.ts';
 import { mulberry32, makePerlin } from './rng.ts';
 import { USE, WONDERS, improvementFor, type ImprovementKey } from './cities.ts';
-import { makeFloraDepthMaterial, makePropMaterial, instanceGeometry } from './propMaterial.ts';
+import { farGeometry, makeFloraDepthMaterial, makePropMaterial, instanceGeometry } from './propMaterial.ts';
 import { GpuTimer } from './gpuTimer.ts';
 
 const FOG = new THREE.Color(0x0b0e15);
@@ -47,7 +47,10 @@ const HUE_JITTER = 0.12;
 // Camera altitude (globe radii, at the reference tile size) above which each
 // layer of props is too small to see and is not drawn.
 const HIDE_ABOVE = { Canopy: Infinity, Accent: Infinity, Understory: 1.6, Ground: 0.8 } as const;
-const PROP_CHUNKS = 8;
+const PROP_CHUNKS = 48;
+// Trees are drawn with their far models (farGeometry) once under this many
+// (device) pixels tall.
+const FAR_PX = 16;
 // What lies on the ground is drawn before what stands on it (the opaque
 // pass, by renderOrder): after the sky (-10, sky.ts: drawn first, no depth
 // test), the ground and the roads over it, then everything else (0).
@@ -65,11 +68,14 @@ const statOf = (k: PropKind): string =>
   isFloraKind(k) ? `flora · ${CATALOG[k].layer.toLowerCase()}` : isRuralModelKind(k) ? (isFloraRural(k) ? 'crops' : 'rural') : isHouseKind(k) ? 'houses'
     : isWonderModelKind(k) ? 'wonders' : 'buildings';
 
+// A chunk of the globe: its props, and its share of the ground and water
+// (drawn per chunk too), all hidden when beyond the horizon or off screen.
 interface PropChunk {
   dir: THREE.Vector3;  // chunk center
   radius: number;      // angular radius, with a margin for prop size
   tiles: number[];
   meshes: Map<PropKind, THREE.InstancedMesh>;
+  surface: THREE.Mesh[]; // its ground and water
 }
 
 interface PlacedProp {
@@ -187,13 +193,19 @@ export class GlobeRenderer {
   private lastFrame = performance.now();
   private readonly raycaster = new THREE.Raycaster();
   private readonly scale: number; // world size of one tile relative to REF_EDGE
+  private readonly maxLift: number; // highest ground above radius 1
+  private readonly treeHeight: number; // a typical tree's height, world units
+  private readonly farGeo = new Map<CatalogKind, THREE.BufferGeometry>();
+  private readonly frustum = new THREE.Frustum();
+  private readonly projView = new THREE.Matrix4();
+  private readonly chunkSphere = new THREE.Sphere();
 
   private readonly terrain: TerrainMesh;
   private readonly terrainMat: TerrainMaterial;
   private readonly waterMat: WaterMaterial;
-  private readonly waterMesh: THREE.Mesh;
+  private readonly waterMesh: THREE.Group;
   private readonly looks: TileLook[];
-  private readonly globeMesh: THREE.Mesh;
+  private readonly globeMesh: THREE.Group;
   private readonly baseColors: THREE.Color[];
   private readonly prevDrained: Uint8Array;
   private readonly playerColors: THREE.Color[];
@@ -417,22 +429,42 @@ export class GlobeRenderer {
       tileTex: this.tileTex, fanTex,
       r0: params.r0, fine: FINE_MAX * params.r0, fineFreq: 1 / (FINE_WAVELENGTH * params.r0),
     });
-    this.globeMesh = new THREE.Mesh(this.terrain.geometry, this.terrainMat.material);
+    // The globe in chunks (props, ground and water alike), spread evenly
+    // over the sphere (a golden-angle spiral); each tile goes to the
+    // nearest chunk center.
+    const golden = Math.PI * (3 - Math.sqrt(5));
+    for (let k = 0; k < PROP_CHUNKS; k++) {
+      const y = 1 - (2 * (k + 0.5)) / PROP_CHUNKS, rr = Math.sqrt(1 - y * y);
+      this.chunks.push({ dir: new THREE.Vector3(Math.cos(golden * k) * rr, y, Math.sin(golden * k) * rr), radius: 0, tiles: [], meshes: new Map(), surface: [] });
+    }
+    for (const tile of g.tiles) {
+      let best = 0;
+      for (let k = 1; k < PROP_CHUNKS; k++) if (this.chunks[k].dir.dot(tile.center) > this.chunks[best].dir.dot(tile.center)) best = k;
+      const c = this.chunks[best];
+      c.tiles.push(tile.id);
+      this.tileChunk[tile.id] = c;
+      c.radius = Math.max(c.radius, c.dir.angleTo(tile.center) + 2 * g.globe.avgEdgeAngle);
+    }
+    // (The highest the ground reaches, for the horizon: peaks show past it.)
+    this.maxLift = this.terrain.vertRadius.reduce((m, r) => Math.max(m, r), 1) - 1;
+    this.globeMesh = this.chunkedSurface(this.terrain.geometry, this.terrain.triToTile, this.terrainMat.material, (m) => {
+      m.renderOrder = GROUND_ORDER;
+      // (Everything casts shadows but the farms' crops; everything receives them.)
+      m.castShadow = true;
+      m.receiveShadow = true;
+    });
     this.globeMesh.userData['stat'] = 'terrain';
-    this.globeMesh.renderOrder = GROUND_ORDER;
-    // (Everything casts shadows but the farms' crops; everything receives them.)
-    this.globeMesh.castShadow = true;
-    this.globeMesh.receiveShadow = true;
     this.scene.add(this.globeMesh);
     // The water surface, hidden under fog of war like the ground.
     const W = this.terrain.waterVerts.length;
     this.terrain.water.setAttribute('unexplored', new THREE.BufferAttribute(new Float32Array(W).fill(1), 1));
     this.terrain.water.setAttribute('dim', new THREE.BufferAttribute(new Float32Array(W), 1));
     this.waterMat = makeWaterMaterial();
-    this.waterMesh = new THREE.Mesh(this.terrain.water, this.waterMat.material);
-    this.waterMesh.renderOrder = 1;
+    this.waterMesh = this.chunkedSurface(this.terrain.water, this.terrain.waterTriToTile, this.waterMat.material, (m) => {
+      m.renderOrder = 1;
+      m.receiveShadow = true;
+    });
     this.waterMesh.userData['stat'] = 'water';
-    this.waterMesh.receiveShadow = true;
     this.scene.add(this.waterMesh);
     this.weather = makeWeather(g.globe, g.map.rainfall, g.map.temperature, params.r0, g.seed);
     this.weather.group.userData['stat'] = 'clouds & rain';
@@ -447,19 +479,8 @@ export class GlobeRenderer {
     // Props are drawn per chunk of the globe, one instanced mesh per kind, so
     // chunks behind the horizon or off screen cost nothing.
     for (const kind of CATALOG_KINDS) this.propGeo.set(kind, buildPropGeometry(kind, s * 1.5 * PROP_SIZE));
-    const golden = Math.PI * (3 - Math.sqrt(5));
-    for (let k = 0; k < PROP_CHUNKS; k++) {
-      const y = 1 - (2 * (k + 0.5)) / PROP_CHUNKS, rr = Math.sqrt(1 - y * y);
-      this.chunks.push({ dir: new THREE.Vector3(Math.cos(golden * k) * rr, y, Math.sin(golden * k) * rr), radius: 0, tiles: [], meshes: new Map() });
-    }
-    for (const tile of g.tiles) {
-      let best = 0;
-      for (let k = 1; k < PROP_CHUNKS; k++) if (this.chunks[k].dir.dot(tile.center) > this.chunks[best].dir.dot(tile.center)) best = k;
-      const c = this.chunks[best];
-      c.tiles.push(tile.id);
-      this.tileChunk[tile.id] = c;
-      c.radius = Math.max(c.radius, c.dir.angleTo(tile.center) + 2 * g.globe.avgEdgeAngle);
-    }
+    // (A broadleaf's height, for when trees turn to their far models.)
+    this.treeHeight = this.propHeight('beechMaple');
     this.craters.userData['stat'] = 'craters';
     this.scene.add(this.craters);
     for (const kind of BUILDING_KINDS) this.propGeo.set(kind, buildBuildingGeometry(kind).scale(s * 1.5 * PROP_SIZE, s * 1.5 * PROP_SIZE, s * 1.5 * PROP_SIZE));
@@ -920,6 +941,13 @@ export class GlobeRenderer {
     return g;
   }
 
+  // A tree's far model (farGeometry), made when first needed.
+  private farGeometryOf(kind: CatalogKind): THREE.BufferGeometry {
+    let g = this.farGeo.get(kind);
+    if (!g) { g = farGeometry(this.geometryOf(kind)); this.farGeo.set(kind, g); }
+    return g;
+  }
+
   // Height of a prop model as drawn (before per-instance scaling).
   private propHeight(kind: CatalogKind): number {
     const g = this.propGeo.get(kind)!;
@@ -953,6 +981,8 @@ export class GlobeRenderer {
         if (!mesh || mesh.instanceMatrix.count < items.length) {
           if (mesh) {
             this.scene.remove(mesh); mesh.dispose(); mesh.geometry.getAttribute('leafTint')?.array && mesh.geometry.deleteAttribute('leafTint');
+            const far = mesh.userData['far'] as THREE.InstancedMesh | undefined;
+            if (far) { this.scene.remove(far); far.dispose(); }
           }
           if (items.length === 0) { chunk.meshes.delete(kind); continue; }
           const cap = Math.ceil(items.length * 1.3) + 8;
@@ -986,24 +1016,96 @@ export class GlobeRenderer {
         leaf.needsUpdate = true;
         if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
         mesh.computeBoundingSphere();
+        // Trees also get a far twin (farGeometry: a few triangles), drawn
+        // instead when they are a few pixels tall (cullChunks); it shares
+        // their instances (matrices, colors, leaf colors).
+        if (isFloraKind(kind) && CATALOG[kind].layer === 'Canopy') {
+          let far = mesh.userData['far'] as THREE.InstancedMesh | undefined;
+          if (!far) {
+            const geo = new THREE.BufferGeometry();
+            for (const [name, attr] of Object.entries(this.farGeometryOf(kind).attributes)) geo.setAttribute(name, attr);
+            geo.setAttribute('leafTint', leaf);
+            far = new THREE.InstancedMesh(geo, this.propMat, mesh.instanceMatrix.count);
+            far.instanceMatrix = mesh.instanceMatrix;
+            far.userData['stat'] = `${statOf(kind)} (far)`;
+            far.receiveShadow = true;
+            far.visible = false;
+            mesh.userData['far'] = far;
+            this.scene.add(far);
+          }
+          far.instanceColor = mesh.instanceColor;
+          far.count = mesh.count;
+          far.boundingSphere = mesh.boundingSphere;
+        }
       }
     }
     this.updateCraters();
   }
 
-  // Per frame: hide prop chunks beyond the horizon (they could not be seen).
-  private cullProps(): void {
+  // A geometry drawn whole, split into one mesh per chunk: the meshes share
+  // its buffers (updates to them show in every chunk), its triangles
+  // regrouped by chunk so each draws its own range.
+  private chunkedSurface(geo: THREE.BufferGeometry, triTile: Int32Array, mat: THREE.Material, setup: (m: THREE.Mesh) => void): THREE.Group {
+    const src = geo.index!.array, n = triTile.length;
+    const chunkOf = new Map(this.chunks.map((c, k) => [c, k]));
+    const count = new Int32Array(this.chunks.length);
+    const triChunk = Int32Array.from(triTile, (t) => chunkOf.get(this.tileChunk[t]!)!);
+    for (let tr = 0; tr < n; tr++) count[triChunk[tr]!]++;
+    const start = new Int32Array(this.chunks.length);
+    for (let k = 1; k < start.length; k++) start[k] = start[k - 1]! + count[k - 1]!;
+    const fill = start.slice(), index = new Uint32Array(src.length);
+    for (let tr = 0; tr < n; tr++) {
+      const o = fill[triChunk[tr]!]++ * 3;
+      index[o] = src[tr * 3]!; index[o + 1] = src[tr * 3 + 1]!; index[o + 2] = src[tr * 3 + 2]!;
+    }
+    geo.setIndex(new THREE.BufferAttribute(index, 1));
+    const group = new THREE.Group();
+    this.chunks.forEach((chunk, k) => {
+      if (count[k] === 0) return;
+      const part = new THREE.BufferGeometry();
+      for (const [name, attr] of Object.entries(geo.attributes)) part.setAttribute(name, attr);
+      part.setIndex(geo.index);
+      part.setDrawRange(start[k]! * 3, count[k]! * 3);
+      const mesh = new THREE.Mesh(part, mat);
+      // (Culled per chunk by cullChunks: the geometry's own bounds are the globe's.)
+      mesh.frustumCulled = false;
+      setup(mesh);
+      chunk.surface.push(mesh);
+      group.add(mesh);
+    });
+    return group;
+  }
+
+  // Per frame: hide chunks (their props, ground and water) beyond the
+  // horizon or out of the camera's view; they could not be seen.
+  private cullChunks(): void {
     const cam = this.camera.position;
     const dist = cam.length();
     const camDir = cam.clone().divideScalar(dist);
-    const horizon = Math.acos(Math.min(1, 1 / dist));
+    // (Past the horizon of the sphere, as far as the highest ground could
+    // still rise into sight.)
+    const horizon = Math.acos(Math.min(1, 1 / dist)) + Math.acos(1 / (1 + this.maxLift + 0.01));
+    this.camera.updateMatrixWorld();
+    this.frustum.setFromProjectionMatrix(this.projView.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse));
     // Small props vanish when they would be under a pixel or so.
     const altitude = (dist - 1) / this.scale;
+    // Beyond farDist a tree is under FAR_PX tall on screen.
+    const pxPerUnit = this.renderer.domElement.height / (2 * Math.tan((this.camera.fov * Math.PI) / 360));
+    const farDist = (this.treeHeight * pxPerUnit) / FAR_PX;
     for (const chunk of this.chunks) {
-      const seen = camDir.angleTo(chunk.dir) < horizon + chunk.radius;
+      // (Its bounds: the cap of the sphere it covers, up to the highest ground.)
+      this.chunkSphere.center.copy(chunk.dir);
+      this.chunkSphere.radius = 2 * Math.sin(Math.min(chunk.radius, Math.PI / 2) / 2) + this.maxLift + 0.01;
+      const seen = camDir.angleTo(chunk.dir) < horizon + chunk.radius && this.frustum.intersectsSphere(this.chunkSphere);
+      for (const mesh of chunk.surface) mesh.visible = seen;
+      // (Its trees go far when even its nearest are under FAR_PX tall.)
+      const far = cam.distanceTo(this.chunkSphere.center) - this.chunkSphere.radius > farDist;
       for (const mesh of chunk.meshes.values()) {
-        mesh.visible = this.view === 'normal' && seen && altitude < (mesh.userData['hideAbove'] as number)
+        const show = this.view === 'normal' && seen && altitude < (mesh.userData['hideAbove'] as number)
           && (mesh.userData['crop'] !== true || dist - 1 < this.cropFar.value);
+        const twin = mesh.userData['far'] as THREE.InstancedMesh | undefined;
+        mesh.visible = show && !(twin && far);
+        if (twin) twin.visible = show && far;
       }
     }
   }
@@ -1705,7 +1807,7 @@ export class GlobeRenderer {
     const now = performance.now();
     this.updateSun();
     this.updateAir();
-    this.cullProps();
+    this.cullChunks();
     this.terrainMat.setTime(now / 1000);
     this.floraTime.value = now / 1000;
     this.smoke.update(now / 1000, this.renderer.domElement.height / (2 * Math.tan((this.camera.fov * Math.PI) / 360)));

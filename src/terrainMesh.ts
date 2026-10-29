@@ -64,6 +64,7 @@ export interface TerrainMesh {
   geometry: THREE.BufferGeometry;
   water: THREE.BufferGeometry; // the water surface: triangles where water stands above the ground
   waterVerts: Int32Array;      // shared vertex id of each water vertex
+  waterTriToTile: Int32Array;  // water triangle index -> tile id
   triToTile: Int32Array;       // triangle index -> tile id
   vertTiles: Int32Array;       // 3 tile ids per vertex (-1 padded); >1 on shared boundaries
   vertDir: Float32Array;       // unit direction per vertex (xyz)
@@ -306,9 +307,11 @@ export function buildTerrainMesh(globe: Globe, spec: TerrainSpec, coarse: number
   const waterOf = new Int32Array(Vs).fill(-1);
   const waterVerts: number[] = [];
   const waterIndex: number[] = [];
+  const waterTriToTile: number[] = [];
   for (let j = 0; j < sharedIndex.length; j += 3) {
     const a = sharedIndex[j], b = sharedIndex[j + 1], c = sharedIndex[j + 2];
     if (water[a] <= height[a] && water[b] <= height[b] && water[c] <= height[c]) continue;
+    waterTriToTile.push(triToTile[j / 3]!);
     for (const v of [a, b, c]) {
       if (waterOf[v] < 0) { waterOf[v] = waterVerts.length; waterVerts.push(v); }
       waterIndex.push(waterOf[v]);
@@ -443,6 +446,7 @@ export function buildTerrainMesh(globe: Globe, spec: TerrainSpec, coarse: number
     geometry,
     water: waterGeo,
     waterVerts: Int32Array.from(waterVerts),
+    waterTriToTile: Int32Array.from(waterTriToTile),
     triToTile: Int32Array.from(triToTile),
     vertTiles,
     vertDir,

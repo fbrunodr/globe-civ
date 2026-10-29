@@ -289,3 +289,46 @@ export function instanceGeometry(model: THREE.BufferGeometry, capacity: number):
   g.setAttribute('leafTint', new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3));
   return g;
 }
+
+// A tree's far model, for when it is a few pixels tall: its crown as one
+// solid octahedron (8 triangles) fitted to the leaves: as tall as they
+// reach, widest at the height where they spread widest (low for a conifer,
+// midway for a broadleaf), a little slimmer than their outline (cards let
+// light through), darker underneath like the crown. The trunk is left out.
+export function farGeometry(model: THREE.BufferGeometry): THREE.BufferGeometry {
+  const pos = model.getAttribute('position'), mask = model.getAttribute('leafMask');
+  let cx = 0, cz = 0, n = 0, y0 = Infinity, y1 = -Infinity;
+  for (let i = 0; i < pos.count; i++) {
+    if (mask.getX(i) < 0.5) continue;
+    cx += pos.getX(i); cz += pos.getZ(i); n++;
+    y0 = Math.min(y0, pos.getY(i)); y1 = Math.max(y1, pos.getY(i));
+  }
+  if (n === 0) { y0 = 0; y1 = 1; n = 1; }
+  cx /= n; cz /= n;
+  let rx = 0, rz = 0, spread = 0, ym = (y0 + y1) / 2;
+  for (let i = 0; i < pos.count; i++) {
+    if (mask.getX(i) < 0.5) continue;
+    const dx = pos.getX(i) - cx, dz = pos.getZ(i) - cz, r = Math.hypot(dx, dz);
+    rx = Math.max(rx, Math.abs(dx)); rz = Math.max(rz, Math.abs(dz));
+    if (r > spread) { spread = r; ym = pos.getY(i); }
+  }
+  ym = Math.min(Math.max(ym, y0 + 0.15 * (y1 - y0)), y0 + 0.75 * (y1 - y0));
+  const k = 0.85;
+  const top = [cx, y1, cz], bot = [cx, y0, cz];
+  const ring = [[cx + k * rx, ym, cz], [cx, ym, cz + k * rz], [cx - k * rx, ym, cz], [cx, ym, cz - k * rz]];
+  const p: number[] = [], shade: number[] = [];
+  for (let s = 0; s < 4; s++) {
+    const a = ring[s]!, b = ring[(s + 1) % 4]!;
+    p.push(...top, ...b, ...a); shade.push(0, 0, 0);
+    p.push(...bot, ...a, ...b); shade.push(0.35, 0.15, 0.15);
+  }
+  const g = new THREE.BufferGeometry();
+  const V = p.length / 3;
+  g.setAttribute('position', new THREE.Float32BufferAttribute(p, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(new Array(V * 3).fill(1), 3));
+  g.setAttribute('leafMask', new THREE.Float32BufferAttribute(new Array(V).fill(1), 1));
+  g.setAttribute('leafShade', new THREE.Float32BufferAttribute(shade, 1));
+  g.setAttribute('cardUv', new THREE.Float32BufferAttribute(new Array(V * 3).fill(0), 3));
+  g.computeVertexNormals();
+  return g;
+}
