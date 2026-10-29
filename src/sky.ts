@@ -48,7 +48,9 @@ export function makeSky(): { mesh: THREE.Mesh; update(camera: THREE.Camera, sunD
           vec3 d = normalize(vDir);
           // Elevation above the horizon (which dips as the camera rises).
           float e = max(dot(d, uUp) + uDip, 0.0);
-          vec3 horizon = vec3(0.74, 0.83, 0.93), zenith = vec3(0.28, 0.5, 0.86);
+          // (A pale horizon a touch greyer, toward the distance haze; a deep
+          // blue overhead.)
+          vec3 horizon = vec3(0.732, 0.818, 0.912), zenith = vec3(0.284, 0.492, 0.832);
           vec3 col = mix(horizon, zenith, smoothstep(0.0, 0.55, e / max(1.0, uThick * 0.1)));
           float s = max(dot(d, uSun), 0.0);
           col += vec3(1.0, 0.92, 0.75) * (pow(s, 600.0) * 2.0 + pow(s, 12.0) * 0.18);
@@ -102,6 +104,32 @@ float airDepth(vec3 a, vec3 b) {
 }`;
 }
 
+// The distance haze over the board and walking (the haze above is the
+// planet's atmosphere seen from high up, and fades out down here). It is
+// measured in camera heights, so it looks the same at every zoom: nothing
+// within about DISTANCE_HAZE.start heights is veiled (looking down, the
+// board keeps its colours), and further out the land pales and greys toward
+// DISTANCE_HAZE.color, up to DISTANCE_HAZE.most at the horizon of a tilted
+// view. It fades out as the camera rises past DISTANCE_HAZE.fade (camera
+// heights above sea level, world units), where the atmosphere takes over.
+const DISTANCE_HAZE = {
+  color: new THREE.Color(0.7, 0.77, 0.84),
+  start: 1.75, scale: 3, most: 0.15, grey: 0.5,
+  fade: [0.15, 0.4] as const, minHeight: 0.002,
+};
+function distanceHazeGLSL(): string {
+  const H = DISTANCE_HAZE, f = (x: number) => x.toFixed(4), c = H.color;
+  return /* glsl */ `{
+    float camH = max(length(cameraPosition) - 1.0, ${f(H.minHeight)});
+    float past = max(distance(cameraPosition, vFogWorld) - ${f(H.start)} * camH, 0.0);
+    float haze = (1.0 - exp(-past / (${f(H.scale)} * camH))) * ${f(H.most)} * (1.0 - smoothstep(${f(H.fade[0])}, ${f(H.fade[1])}, camH));
+    // (Greyer first, then paler: distant colours lose their saturation.)
+    float lum = dot(gl_FragColor.rgb, vec3(0.3, 0.59, 0.11));
+    gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(lum), haze * ${f(H.grey)});
+    gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(${f(c.r)}, ${f(c.g)}, ${f(c.b)}), haze);
+  }`;
+}
+
 // Replaces three's fog with the haze above, for every material that uses
 // fog (FogExp2: color = HAZE, density = HAZE_DENSITY). Call before building
 // materials.
@@ -130,6 +158,7 @@ export function installHaze(): void {
     float fogFactor = smoothstep(fogNear, fogFar, distance(cameraPosition, vFogWorld));
   #endif
   gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor, fogFactor);
+  ${distanceHazeGLSL()}
 #endif`;
 }
 

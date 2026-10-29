@@ -147,7 +147,10 @@ const SHADOW_DEPTH = 1;
 const SHADOW_PAD = 1.6, SHADOW_SLACK = 0.3, SHADOW_TURN = 1.5;
 // The largest the shadow map's half width gets (world units: a hemisphere).
 const SHADOW_MAX_HALF = 1.15;
-const LIGHT = { sunColor: 0xfff4e0, sun: 1.75, sunHeight: 40, fill: 1, fillSky: 0xdfeeff, fillGround: 0x6a5a40 };
+// Warm sun, cool shade: the sun a little golden and the sky fill a little
+// blue, so lit ground glows and shadows lean blue-grey (both chosen by eye:
+// the brightness as in the earlier neutral colours, sun 1.75 and fill 1).
+const LIGHT = { sunColor: 0xffedd3, sun: 1.85, sunHeight: 40, fill: 1.05, fillSky: 0xd9e9fc, fillGround: 0x6a5a40 };
 // Bridges (heights × the world scale; spans in tile steps): the deck stands
 // at least BRIDGE_CLEAR over the water and arches up to BRIDGE_ARCH more on
 // a long span; parapets rise BRIDGE_PARAPET over the deck, the slab is
@@ -663,7 +666,6 @@ export class GlobeRenderer {
       this.shadowsDirty = true;
     }
   }
-
 
   setClouds(on: boolean): void {
     this.clouds = on;
