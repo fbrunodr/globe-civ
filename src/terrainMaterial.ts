@@ -178,19 +178,19 @@ float gNear() { return 1.0 - smoothstep(0.035, 0.09, tLod / (0.16 * uR0)); }
 vec3 groundColor(vec3 c, vec3 soilC, vec4 s0, vec4 s1, vec4 s2, vec3 P) {
   // s0 = (soil.rgb, grass), s1 = (dry, soil, sand, litter), s2 = (moss, snow, -, -)
   gN = vec3(0.0);
-  // One material per biome: each layer weighs its share, sharpened so the
-  // main one rules a tile alone; where tiles of different biomes meet,
-  // their main materials blend across the border. No patches.
+  // One material per biome; where tiles of different biomes meet, their
+  // materials fade into each other. No patches.
   const int L = 7;
   float share[L] = float[L](s1.y, s1.z, s1.x, s0.w, s2.x, s1.w, s2.y);
   float layer[L] = float[L](${GROUND_LAYER.soil}.0, ${GROUND_LAYER.sand}.0, ${GROUND_LAYER.dry}.0, ${GROUND_LAYER.grass}.0, ${GROUND_LAYER.moss}.0, ${GROUND_LAYER.litter}.0, ${GROUND_LAYER.snow}.0);
   vec3 base[L] = vec3[L](soilC, mix(c, vec3(0.84, 0.75, 0.56), 0.6), mix(c, vec3(0.6, 0.55, 0.4), 0.25), c,
     mix(c, vec3(0.33, 0.42, 0.2), 0.45) * 0.9, mix(mix(soilC * 0.8, vec3(0.36, 0.29, 0.18), 0.5), c, 0.15), vec3(0.92, 0.94, 0.96));
+  // (Each tile sends only its main material, as a share of 1, so the
+  // shares here are the tiles' soft weights: a fade across borders.)
   float wt[L];
-  float top = 1e-4;
-  for (int i = 0; i < L; i++) top = max(top, share[i]);
   float total = 0.0;
-  for (int i = 0; i < L; i++) { float r = share[i] / top; wt[i] = r * r * r * r * r * r * r * r; total += wt[i]; }
+  for (int i = 0; i < L; i++) { wt[i] = share[i]; total += wt[i]; }
+  total = max(total, 1e-4);
   vec3 col = vec3(0.0);
   // (Only the layers that weigh are read: one, away from borders.)
   for (int i = 0; i < L; i++) {
@@ -416,6 +416,29 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
           float wsum = w.x * step(0.001, w.x) + w.y * step(0.001, w.y) + w.z * step(0.001, w.z) + w.w * step(0.001, w.w);
           m0 /= wsum; m1 /= wsum; m2 /= wsum; m3 /= wsum; m4 /= wsum;
           g0 /= wsum; g1 /= wsum; g2 /= wsum;
+          // Land blends softly into land: its color and ground material take
+          // the unsharpened weights, so biomes fade into each other over
+          // about a tile radius. (Water tiles are left out, so the seabed
+          // doesn't bleed ashore; the sharpened mix stays where water is.)
+          {
+            vec4 c0 = vec4(0.0), h0 = vec4(0.0), h1 = vec4(0.0), h2 = vec4(0.0);
+            float ls = 0.0, landShare = 0.0;
+            for (int k = 0; k < 4; k++) {
+              if (soft[k] > 0.001 || w[k] > 0.001) {
+                int tt = int(ids[k]);
+                vec4 r0 = tileRow(tt, 0);
+                float land = 1.0 - step(0.9, r0.a);
+                landShare += w[k] * land;
+                float wk = soft[k] * land;
+                if (wk > 0.001) { c0 += wk * r0; h0 += wk * tileRow(tt, 10); h1 += wk * tileRow(tt, 11); h2 += wk * tileRow(tt, 12); ls += wk; }
+              }
+            }
+            if (ls > 0.001) {
+              float k = landShare / wsum;
+              m0.rgb = mix(m0.rgb, c0.rgb / ls, k);
+              g0 = mix(g0, h0 / ls, k); g1 = mix(g1, h1 / ls, k); g2 = mix(g2, h2 / ls, k);
+            }
+          }
           gSetup(P, vObjNormal);
           vDetail = m1; vBump = m2.a;
           vec4 vRock = m3;

@@ -687,10 +687,12 @@ export class GlobeRenderer {
     // The tile's own frame (cityProps.onTile), its crops and its farm's axis.
     const f = tileFrame(g, t);
     td.set([f.c.x, f.c.y, f.c.z, f.k, f.e1.x, f.e1.y, f.e1.z, CROP_CODE[cropRegion(improvementFor(g.terrainAt(t)), g.biome[t]!, g.feature[t] ?? null, g.map.temperature[t]!)], f.e2.x, f.e2.y, f.e2.z, farmAxis(t)], o + 28);
-    // What the ground is made of: the soil's color and the cover shares.
+    // What the ground is made of: the soil's color and the main cover
+    // material (the largest share), alone: the shader shows one material
+    // per tile, fading into its neighbours' across borders.
     const cover = l.ground.cover;
-    const total = GROUND_COVERS.reduce((s, k) => s + (cover[k] ?? 0), 0) || 1;
-    const share = (k: GroundCover) => (cover[k] ?? 0) / total;
+    const main = GROUND_COVERS.reduce((a, k) => ((cover[k] ?? 0) > (cover[a] ?? 0) ? k : a));
+    const share = (k: GroundCover) => (k === main ? 1 : 0);
     const soil = new THREE.Color(l.ground.soil);
     td.set([soil.r, soil.g, soil.b, share('grass'), share('dry'), share('soil'), share('sand'), share('litter'), share('moss'), share('snow'), 0, 0], o + 40);
     this.tileTex.needsUpdate = true;
