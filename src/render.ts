@@ -135,6 +135,8 @@ const SHADOW_DEPTH = 1;
 // once the view has moved SHADOW_SLACK of its half width, or the sun turned
 // SHADOW_TURN degrees (updateSun).
 const SHADOW_PAD = 1.6, SHADOW_SLACK = 0.3, SHADOW_TURN = 1.5;
+// The largest the shadow map's half width gets (world units: a hemisphere).
+const SHADOW_MAX_HALF = 1.15;
 const LIGHT = { sunColor: 0xfff4e0, sun: 2.1, sunHeight: 40, fill: 1.4, fillSky: 0xdfeeff, fillGround: 0x6a5a40 };
 // Bridges (heights × the world scale; spans in tile steps): the deck stands
 // at least BRIDGE_CLEAR over the water and arches up to BRIDGE_ARCH more on
@@ -246,14 +248,14 @@ export class GlobeRenderer {
   private readonly smoke: Smoke;
   private groundVersion = -1;
   private readonly levelled = new Set<number>();
-  private roads: THREE.Mesh[] = [];
+  private roads: THREE.Group[] = [];
   // The road layers' materials: edges below, the surface above (see drape).
   // Edges (kerbs) and surfaces. Kerbs draw first and leave the depth alone,
   // so any surface covers any kerb where they overlap (a street running
   // into a square or another street): kerbs show only round the outside of
   // the joined network, never as lines across it.
   private readonly roadMats = [makeRoadMaterial(-2, false), makeRoadMaterial(-4, true)];
-  private bridges: THREE.Mesh | null = null;
+  private bridges: THREE.Group | null = null;
   private readonly bridgeMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
   private roadsKey = '';
   private readonly prevUse: Uint8Array;
@@ -1310,34 +1312,82 @@ export class GlobeRenderer {
     // Streets and squares inside towns (cityProps.ts lays them out).
     for (const st of this.cityProps.streets()) this.drape(st.points, st.halfWidth, st.paved ? PAVED_RGB : DIRT_RGB, batches, at, lift, bridges, st.paved);
     for (const pv of this.cityProps.pavings()) this.pave(pv.points, pv.rgb ?? (pv.paved ? PAVED_RGB : DIRT_RGB), at, lift + ROAD_LAYER * this.scale, batches.top.pos, batches.top.col, pv.exact);
-    for (const m of this.roads) { this.scene.remove(m); m.geometry.dispose(); }
+    for (const grp of [...this.roads, ...(this.bridges ? [this.bridges] : [])]) this.dropChunked(grp);
     this.roads = [batches.edge, batches.top].map((bt, i) => {
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.Float32BufferAttribute(bt.pos, 3));
       geo.setAttribute('color', new THREE.Float32BufferAttribute(bt.col, 3));
       windOutward(geo);
       geo.computeVertexNormals();
-      const mesh = new THREE.Mesh(geo, this.roadMats[i]!);
-      mesh.renderOrder = ROAD_ORDER + i;
-      mesh.userData['stat'] = 'roads & fields';
-      mesh.receiveShadow = true;
-      this.scene.add(mesh);
-      return mesh;
+      const grp = this.chunkedSoup(geo, this.roadMats[i]!, (m) => {
+        m.renderOrder = ROAD_ORDER + i;
+        m.receiveShadow = true;
+      });
+      grp.userData['stat'] = 'roads & fields';
+      this.scene.add(grp);
+      return grp;
     });
-    if (this.bridges) {
-      this.scene.remove(this.bridges);
-      this.bridges.geometry.dispose();
-    }
     const bgeo = new THREE.BufferGeometry();
     bgeo.setAttribute('position', new THREE.Float32BufferAttribute(bridges.pos, 3));
     bgeo.setAttribute('color', new THREE.Float32BufferAttribute(bridges.col, 3));
     windOutward(bgeo);
     bgeo.computeVertexNormals();
-    this.bridges = new THREE.Mesh(bgeo, this.bridgeMat);
+    this.bridges = this.chunkedSoup(bgeo, this.bridgeMat, (m) => {
+      m.castShadow = true;
+      m.receiveShadow = true;
+    });
     this.bridges.userData['stat'] = 'roads & fields';
-    this.bridges.castShadow = true;
-    this.bridges.receiveShadow = true;
     this.scene.add(this.bridges);
+  }
+
+  // A triangle soup (unindexed: roads, bridges), split into one mesh per
+  // chunk (each triangle to the chunk nearest its middle), culled with the
+  // chunk (cullChunks).
+  private chunkedSoup(geo: THREE.BufferGeometry, mat: THREE.Material, setup: (m: THREE.Mesh) => void): THREE.Group {
+    const pos = geo.getAttribute('position'), n = pos.count / 3;
+    const triChunk = new Int32Array(n), count = new Int32Array(this.chunks.length);
+    const mid = new THREE.Vector3();
+    for (let tr = 0; tr < n; tr++) {
+      mid.set(0, 0, 0);
+      for (let c = 0; c < 3; c++) mid.x += pos.getX(tr * 3 + c), mid.y += pos.getY(tr * 3 + c), mid.z += pos.getZ(tr * 3 + c);
+      let best = 0;
+      for (let k = 1; k < this.chunks.length; k++) if (this.chunks[k]!.dir.dot(mid) > this.chunks[best]!.dir.dot(mid)) best = k;
+      triChunk[tr] = best; count[best]++;
+    }
+    const group = new THREE.Group();
+    this.chunks.forEach((chunk, k) => {
+      if (count[k] === 0) return;
+      const part = new THREE.BufferGeometry();
+      for (const [name, attr] of Object.entries(geo.attributes)) {
+        const size = attr.itemSize, src = attr.array, out = new Float32Array(count[k]! * 3 * size);
+        let o = 0;
+        for (let tr = 0; tr < n; tr++) {
+          if (triChunk[tr] !== k) continue;
+          for (let j = 0; j < 3 * size; j++) out[o++] = src[tr * 3 * size + j]!;
+        }
+        part.setAttribute(name, new THREE.BufferAttribute(out, size));
+      }
+      const mesh = new THREE.Mesh(part, mat);
+      mesh.frustumCulled = false;
+      setup(mesh);
+      chunk.surface.push(mesh);
+      group.add(mesh);
+    });
+    geo.dispose();
+    return group;
+  }
+
+  // Removes a chunked group (chunkedSoup) from the scene and its chunks.
+  private dropChunked(group: THREE.Group): void {
+    this.scene.remove(group);
+    for (const m of group.children) {
+      if (!(m instanceof THREE.Mesh)) continue;
+      m.geometry.dispose();
+      for (const chunk of this.chunks) {
+        const i = chunk.surface.indexOf(m);
+        if (i >= 0) chunk.surface.splice(i, 1);
+      }
+    }
   }
 
   // A paved square: a fan from its middle, each point on the ground.
@@ -1712,14 +1762,16 @@ export class GlobeRenderer {
     // The ground in view (more of it when tilted): tight when zoomed in
     // (crisp shadows), the whole hemisphere from afar.
     const span = this.cam.distance * Math.tan(THREE.MathUtils.degToRad(cam.fov / 2)) * Math.max(1, cam.aspect) * 1.3;
-    const want = this.walk.active ? 0.05 : Math.min(1.15, Math.max(0.08, span * (1 + 1.5 * Math.sin(this.cam.tilt))));
+    const want = this.walk.active ? 0.05 : Math.min(SHADOW_MAX_HALF, Math.max(0.08, span * (1 + 1.5 * Math.sin(this.cam.tilt))));
     const last = this.shadowAt;
+    // (A map already at its largest can't outgrow the view: from afar it
+    // would otherwise be redrawn every frame.)
     const stale = this.shadowsDirty || !last
       || focus.angleTo(last.center) > SHADOW_SLACK * last.half
-      || want > last.half * 0.9 || want < (last.half / SHADOW_PAD) * 0.6
+      || (want > last.half * 0.9 && last.half < SHADOW_MAX_HALF) || want < (last.half / SHADOW_PAD) * 0.6
       || dir.angleTo(last.dir) > (SHADOW_TURN * Math.PI) / 180;
     if (!stale) return;
-    const half = Math.min(1.15, want * SHADOW_PAD);
+    const half = Math.min(SHADOW_MAX_HALF, want * SHADOW_PAD);
     this.shadowAt = { center: focus, dir, half };
     this.shadowsDirty = false;
     const sc = this.sun.shadow.camera;
