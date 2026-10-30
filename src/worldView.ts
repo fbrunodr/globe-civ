@@ -6,7 +6,7 @@ import './style.css';
 import { Game } from './game.ts';
 import { GlobeRenderer, type DebugView } from './render.ts';
 import { mountSettings } from './settingsMenu.ts';
-import { MAP_SCRIPTS, MAP_SIZES, isMapScript, tileCount, type MapScriptKey, type MapSizeKey } from './rules.ts';
+import { MAP_SCRIPTS, MAP_SIZES, isMapScript, tileCount, type MapScriptKey, type MapSizeKey, type UnitKey } from './rules.ts';
 import { terrainName } from './terrain.ts';
 import { floraLabel } from './flora.ts';
 
@@ -85,9 +85,46 @@ const toggleSight = () => {
   sightBtn.blur();
 };
 sightBtn.addEventListener('click', toggleSight);
+// Units to look at (dev): U drops one of each kind for a few civs round
+// where the camera looks, on dry land; M marches every unit a tile; B sets
+// them fighting their neighbours.
+const UNIT_SAMPLE: UnitKey[] = ['warrior', 'spearman', 'archer', 'horseman', 'scout', 'settler'];
+const dropUnits = () => {
+  const at = view.looking;
+  let start = 0;
+  game.tiles.forEach((t, i) => { if (t.center.dot(at) > game.tiles[start]!.center.dot(at)) start = i; });
+  const seen = new Set<number>(), queue = [start], land: number[] = [];
+  while (queue.length && land.length < 2 * UNIT_SAMPLE.length) {
+    const t = queue.shift()!;
+    if (seen.has(t)) continue;
+    seen.add(t);
+    if (!game.isWater(t) && !game.units.some((u) => u.tile === t)) land.push(t);
+    queue.push(...game.tiles[t]!.neighbors);
+  }
+  land.forEach((t, i) => game.createUnit(UNIT_SAMPLE[i % UNIT_SAMPLE.length]!, (i + Math.floor(i / UNIT_SAMPLE.length)) % game.players.length, t));
+  view.syncWorld(null);
+};
+const marchUnits = () => {
+  for (const u of game.units) {
+    const free = game.tiles[u.tile]!.neighbors.filter((n) => !game.isWater(n) && !game.units.some((v) => v.tile === n));
+    if (free.length) u.tile = free[Math.floor(Math.random() * free.length)]!;
+  }
+  view.syncWorld(null);
+};
+// B: every fighting unit fights a unit next to it (a show: nobody is hurt).
+const battle = () => {
+  for (const u of game.units) {
+    if (!['warrior', 'spearman', 'archer', 'horseman'].includes(u.type)) continue;
+    const foe = game.tiles[u.tile]!.neighbors.find((n) => game.units.some((v) => v.tile === n && v.owner !== u.owner));
+    if (foe !== undefined) view.showBattle(u.id, foe, u.type === 'archer');
+  }
+};
 addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
-  if (e.key === 'j' || e.key === 'J') setView(VIEWS[(VIEWS.indexOf(view.view) + 1) % VIEWS.length]!);
+  if (e.key === 'u' || e.key === 'U') dropUnits();
+  else if (e.key === 'b' || e.key === 'B') battle();
+  else if (e.key === 'm' || e.key === 'M') marchUnits();
+  else if (e.key === 'j' || e.key === 'J') setView(VIEWS[(VIEWS.indexOf(view.view) + 1) % VIEWS.length]!);
   else if (e.key === 'k' || e.key === 'K') toggleClouds();
   else if (e.key === 'f' || e.key === 'F') toggleSight();
   else if (e.key === 'Enter') generate(Number(seedEl.value) || 1);

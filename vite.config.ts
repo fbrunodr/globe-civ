@@ -55,6 +55,7 @@ export default defineConfig({
         citySamples: resolve(import.meta.dirname, 'city_samples.html'),
         mapEditor: resolve(import.meta.dirname, 'map_editor.html'),
         buildings: resolve(import.meta.dirname, 'buildings.html'),
+        units: resolve(import.meta.dirname, 'units.html'),
       },
     },
   },

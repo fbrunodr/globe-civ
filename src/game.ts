@@ -51,6 +51,27 @@ export interface Player {
   offensive: boolean; // AI only
 }
 
+// ---- combat (shared with the Units page's battle sandbox) ----
+// Fortified, a unit defends this much better.
+export const FORTIFY_BONUS = 0.5;
+// A unit's strength attacking, or defending with a bonus (a fraction:
+// ground, city, fortified), weakened as it is hurt (half at no HP).
+export function combatStrength(type: UnitKey, role: 'atk' | 'def', hp: number, bonus: number): number {
+  const T = unitDef(type);
+  return (role === 'atk' ? T.atk : T.def * (1 + bonus)) * (0.5 + 0.5 * hp / 100);
+}
+// A fight between strengths A and D: exchanges of 18-31 damage, each won by
+// the attacker with odds A / (A + D), until one side has no HP left. A
+// ranged attack is a volley: three exchanges at most, half the damage back.
+// The HP each side is left with (at or below 0: destroyed).
+export function fightRounds(hpA: number, hpD: number, A: number, D: number, ranged: boolean, rng: () => number): { attacker: number; defender: number } {
+  for (let round = 0; hpA > 0 && hpD > 0 && (!ranged || round < 3); round++) {
+    const dmg = 18 + Math.floor(rng() * 14);
+    if (rng() < A / (A + D)) hpD -= dmg; else hpA -= ranged ? Math.round(dmg / 2) : dmg;
+  }
+  return { attacker: hpA, defender: hpD };
+}
+
 export interface Unit {
   id: number;
   type: UnitKey;
@@ -135,6 +156,8 @@ export class Game {
   turn = 1;
   private nextId = 1;
   units: Unit[] = [];
+  // Told of every attack as it starts (the renderer shows the fight).
+  onBattle: ((u: Unit, tile: number, ranged: boolean) => void) | null = null;
   cities: City[] = [];
   readonly cityById = new Map<number, City>();
   readonly cityByTile = new Map<number, City>();
@@ -348,16 +371,12 @@ export class Game {
   }
 
   unitStrength(u: Unit, role: 'atk' | 'def', tile: number): number {
-    const T = unitDef(u.type);
-    let s = role === 'atk' ? T.atk : T.def;
-    if (role === 'def') {
-      let mult = 1 + this.defenseBonus(tile);
-      const city = this.cityByTile.get(tile);
-      if (city) mult += 0.5 + (city.buildings.has('walls') ? 1 : 0) + 0.25 * (Number(city.buildings.has('barracks')) + Number(city.buildings.has('stable')));
-      if (u.fortified) mult += 0.5;
-      s *= mult;
-    }
-    return s * (0.5 + 0.5 * u.hp / 100);
+    if (role === 'atk') return combatStrength(u.type, 'atk', u.hp, 0);
+    let bonus = this.defenseBonus(tile);
+    const city = this.cityByTile.get(tile);
+    if (city) bonus += 0.5 + (city.buildings.has('walls') ? 1 : 0) + 0.25 * (Number(city.buildings.has('barracks')) + Number(city.buildings.has('stable')));
+    if (u.fortified) bonus += FORTIFY_BONUS;
+    return combatStrength(u.type, 'def', u.hp, bonus);
   }
 
   bestDefender(tile: number, attackerOwner: number): Unit | null {
@@ -381,14 +400,12 @@ export class Game {
     u.moves = 0;
     u.fortified = false;
     const ranged = unitDef(u.type).ranged === true;
+    this.onBattle?.(u, tile, ranged);
     const d = this.bestDefender(tile, u.owner);
     if (d) {
-      const A = this.unitStrength(u, 'atk', tile), D = this.unitStrength(d, 'def', tile);
-      // A ranged attack is a volley: a few exchanges, half the damage back.
-      for (let round = 0; u.hp > 0 && d.hp > 0 && (!ranged || round < 3); round++) {
-        const dmg = 18 + Math.floor(this.rng() * 14);
-        if (this.rng() < A / (A + D)) d.hp -= dmg; else u.hp -= ranged ? Math.round(dmg / 2) : dmg;
-      }
+      const after = fightRounds(u.hp, d.hp, this.unitStrength(u, 'atk', tile), this.unitStrength(d, 'def', tile), ranged, this.rng);
+      u.hp = after.attacker;
+      d.hp = after.defender;
       const an = this.players[u.owner].name, dn = this.players[d.owner].name;
       const involved = u.owner === HUMAN || d.owner === HUMAN;
       if (u.hp <= 0) {

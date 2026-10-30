@@ -24,7 +24,7 @@ function showStartScreen(): void {
     <div class="scripts">Map ${scripts}</div>
     <label>Seed <input id="seed" value="${params.get('seed') ?? Math.floor(Math.random() * 1e6)}"></label>
     <button id="go" class="primary">Start game</button>
-    <p class="tools"><small>Tools: <a href="/gallery.html">Gallery</a> · <a href="/city_lab.html">City lab</a> · <a href="/city_samples.html">City samples</a> · <a href="/world_view.html">World view</a> · <a href="/map_editor.html">Map editor</a></small></p>
+    <p class="tools"><small>Tools: <a href="/gallery.html">Gallery</a> · <a href="/buildings.html">Buildings</a> · <a href="/units.html">Units</a> · <a href="/city_lab.html">City lab</a> · <a href="/city_samples.html">City samples</a> · <a href="/world_view.html">World view</a> · <a href="/map_editor.html">Map editor</a></small></p>
   </div>`;
   let size: MapSizeKey = 'small', script: MapScriptKey = 'continents';
   const pSize = params.get('size'), pMap = params.get('map');

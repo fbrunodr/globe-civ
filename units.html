@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Units</title>
+    <style>
+      #topbar label { display: flex; align-items: center; gap: 6px; }
+      #topbar input[type="range"] { width: 110px; }
+      body:not([data-mode="sheet"]) .sheet-only { display: none !important; }
+      body:not([data-mode="battle"]) .battle-only { display: none !important; }
+      #battle { position: fixed; left: 10px; bottom: 10px; width: 330px; background: rgba(18,22,32,0.92); color: #cfd6e2; border-radius: 10px; padding: 10px 12px; font: 13px system-ui, sans-serif; display: grid; gap: 7px; }
+      #battle h4 { margin: 0 0 2px; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: #8b96a8; }
+      #battle .row { display: flex; gap: 6px; align-items: center; }
+      #battle select { flex: 1; min-width: 0; }
+      #battle .hp { width: 64px; text-align: right; font-variant-numeric: tabular-nums; }
+      #battle button.primary { margin-top: 2px; }
+      #result { min-height: 3.6em; line-height: 1.4; color: #e6ebf2; }
+      #result b.win { color: #8ce99a; } #result b.loss { color: #ffa8a8; }
+    </style>
+  </head>
+  <body data-mode="sheet">
+    <canvas id="c"></canvas>
+    <div id="hud">
+      <div id="topbar">
+        <span id="civ">Units</span>
+        <nav class="devnav"><a href="/">Game</a><a href="/gallery.html">Gallery</a><a href="/buildings.html">Buildings</a><a class="active" href="/units.html">Units</a><a href="/city_lab.html">City lab</a><a href="/city_samples.html">City samples</a><a href="/world_view.html">World view</a><a href="/map_editor.html">Map editor</a></nav>
+        <button data-mode="sheet" class="active">All units</button>
+        <button data-mode="battle">Battle</button>
+        <label class="sheet-only">Civ <select id="civSel"></select></label>
+        <label class="sheet-only" title="Fighting units show one figure per 8 HP or part of it, at most 12">HP <input type="range" id="hp" min="1" max="100" value="100"> <span id="hpV">100</span></label>
+        <label title="A civic: half of every unit women (else about half the settlers and scouts, one soldier in ten)"><input type="checkbox" id="suffrage"> Women's suffrage</label>
+        <button id="march" class="sheet-only">March <kbd>M</kbd></button>
+        <button id="attack" class="sheet-only">Attack <kbd>B</kbd></button>
+        <span class="spacer"></span>
+        <span id="hint"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Q</kbd>/<kbd>E</kbd> rotate · <kbd>T</kbd>/<kbd>G</kbd> tilt · <kbd>Z</kbd>/<kbd>X</kbd> zoom · drag: move · right-drag: rotate and tilt</span>
+      </div>
+    </div>
+    <div id="battle" class="battle-only">
+      <h4>Attacker</h4>
+      <div class="row"><select id="aCiv"></select><select id="aType"></select><span class="hp" id="aHp"></span></div>
+      <h4>Defender</h4>
+      <div class="row"><select id="dCiv"></select><select id="dType"></select><span class="hp" id="dHp"></span></div>
+      <div class="row"><select id="ground"></select><label><input type="checkbox" id="fort"> Fortified</label></div>
+      <div id="odds"></div>
+      <div class="row"><button id="fight" class="primary">Fight <kbd>Space</kbd></button><button id="heal">Heal both</button></div>
+      <div id="result"></div>
+    </div>
+    <script type="module" src="/src/unitGallery.ts"></script>
+  </body>
+</html>

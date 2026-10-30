@@ -28,6 +28,7 @@ import { mulberry32, makePerlin } from './rng.ts';
 import { USE, WONDERS, improvementFor, type ImprovementKey } from './cities.ts';
 import { farGeometry, makeFloraDepthMaterial, makePropMaterial, instanceGeometry } from './propMaterial.ts';
 import { GpuTimer } from './gpuTimer.ts';
+import { UnitView, type ShownUnit } from './unitView.ts';
 import { loadGroundTextures } from './groundTextures.ts';
 
 const FOG = new THREE.Color(0x0b0e15);
@@ -254,6 +255,8 @@ export class GlobeRenderer {
   private readonly propCache = new Map<number, PlacedProp[]>();
   private readonly craters = new THREE.Group();
   private readonly unitsGroup = new THREE.Group();
+  private unitView!: UnitView;
+  private selUnit: Unit | null = null;
   private readonly citiesGroup = new THREE.Group();
   private readonly overlayGroup = new THREE.Group();
   private borders: THREE.Mesh | null = null;
@@ -509,6 +512,20 @@ export class GlobeRenderer {
       return { ...this.citySpot(l.t, l.i, l.wa, l.wb), t: l.t };
     }, s);
     this.unitsGroup.userData['stat'] = 'units';
+    // The units, as figurines on the ground (unitView.ts), each under its flag.
+    let unitHint = 0;
+    this.unitView = new UnitView({
+      center: (t) => g.tiles[t].center,
+      ground: (d) => {
+        const l = locate(g.globe, d, unitHint);
+        unitHint = l.t;
+        const lv = this.terrain.at(l.t, l.i, l.wa, l.wb);
+        return { ground: lv.ground - 1, water: lv.water - 1 };
+      },
+      step: g.globe.avgEdgeAngle,
+    }, (u) => this.unitFlag(u));
+    this.unitsGroup.add(this.unitView.group);
+    g.onBattle = (u, t, ranged) => this.unitView.fight(u.id, t, ranged, performance.now() / 1000);
     this.citiesGroup.userData['stat'] = 'city markers';
     this.overlayGroup.userData['stat'] = 'overlays';
     this.scene.add(this.unitsGroup, this.citiesGroup, this.overlayGroup);
@@ -1704,34 +1721,35 @@ export class GlobeRenderer {
     return tex;
   }
 
+  // A fight shown without the game's rules (dev views): a unit attacking a tile.
+  showBattle(unit: number, tile: number, ranged: boolean): void { this.unitView.fight(unit, tile, ranged, performance.now() / 1000); }
+
+  // Where the camera looks (a unit vector).
+  get looking(): THREE.Vector3 { return (this.walk.active ? this.walk.position : this.cam.target).clone().normalize(); }
+
+  // The units in sight, to the unit view (fighting units first on a shared
+  // tile: they stand in the middle).
   private updateUnits(sel: Selection): void {
     const g = this.game;
-    for (const o of this.unitsGroup.children) if (o instanceof THREE.Sprite) o.material.dispose();
-    this.unitsGroup.clear();
-    const byTile = new Map<number, Unit[]>();
-    for (const u of g.units) {
-      if (!g.visible[u.tile]) continue;
-      const list = byTile.get(u.tile);
-      if (list) list.push(u); else byTile.set(u.tile, [u]);
-    }
-    const selUnit = sel?.kind === 'unit' ? sel.unit : null;
-    for (const [t, list] of byTile) {
-      const top = list.find((u) => u === selUnit) ?? list.find((u) => !unitDef(u.type).civilian) ?? list[0];
-      const color = g.players[top.owner].color;
-      const icon = unitDef(top.type).icon;
-      const hp = Math.ceil(top.hp / 10);
-      const selected = top === selUnit;
-      const key = `u|${color}|${icon}|${list.length}|${hp}|${selected}|${top.fortified}`;
-      const tex = this.texture(key, 128, 128, (ctx) => drawUnitIcon(ctx, color, icon, list.length, top.hp, selected, top.fortified));
-      // A fixed size on screen (about 40 px tall), whatever the zoom.
-      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, sizeAttenuation: false }));
-      sprite.scale.setScalar(0.036);
-      const tile = g.tiles[t];
-      const dir = g.cityByTile.has(t) ? tile.center.clone().lerp(g.globe.triCenters[tile.corners[0]], 0.55).normalize() : tile.center;
-      sprite.position.copy(dir).multiplyScalar(this.terrain.centerRadius[t] + 0.03 * this.scale);
-      sprite.renderOrder = 5;
-      this.unitsGroup.add(sprite);
-    }
+    this.selUnit = sel?.kind === 'unit' ? sel.unit : null;
+    const shown: ShownUnit[] = g.units
+      .filter((u) => g.visible[u.tile])
+      .sort((a, b) => Number(unitDef(a.type).civilian ?? false) - Number(unitDef(b.type).civilian ?? false))
+      .map((u) => ({ id: u.id, type: u.type, civ: g.players[u.owner].name, color: g.players[u.owner].color, tile: u.tile, hp: u.hp, suffrage: false /* (no civics yet: the civic tree will set it) */ }));
+    this.unitView.sync(shown, performance.now() / 1000);
+  }
+
+  // A unit's flag: its icon and health in its owner's colour, a fixed size
+  // on screen.
+  private unitFlag(s: ShownUnit): THREE.Sprite {
+    const g = this.game, u = g.units.find((x) => x.id === s.id);
+    const icon = unitDef(s.type).icon, selected = u !== undefined && u === this.selUnit, fortified = u?.fortified ?? false;
+    const key = `u|${s.color}|${icon}|1|${Math.ceil(s.hp / 10)}|${selected}|${fortified}`;
+    const tex = this.texture(key, 128, 128, (ctx) => drawUnitIcon(ctx, s.color, icon, 1, s.hp, selected, fortified));
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, sizeAttenuation: false }));
+    sprite.scale.setScalar(0.026);
+    sprite.renderOrder = 5;
+    return sprite;
   }
 
   private updateCities(): void {
@@ -1895,6 +1913,7 @@ export class GlobeRenderer {
     this.updateSun();
     this.updateAir();
     this.cullChunks();
+    this.unitView.update(now / 1000, this.camera, this.renderer.domElement.height / (2 * Math.tan((this.camera.fov * Math.PI) / 360)));
     this.terrainMat.setTime(now / 1000);
     this.floraTime.value = now / 1000;
     this.smoke.update(now / 1000, this.renderer.domElement.height / (2 * Math.tan((this.camera.fov * Math.PI) / 360)));
