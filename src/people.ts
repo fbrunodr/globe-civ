@@ -173,10 +173,19 @@ export type HairStyleKey = typeof HAIR_STYLE_KEYS[number];
 // (Tipped back about the head: the hair's edge high on the brow, low on the nape.)
 const tipBack = (g: THREE.BufferGeometry, a = 0.35) =>
   g.applyMatrix4(new THREE.Matrix4().makeTranslation(0, HEAD_Y, 0).multiply(new THREE.Matrix4().makeRotationX(-a)).multiply(new THREE.Matrix4().makeTranslation(0, -HEAD_Y, 0)));
+// (A cap's lower edge sheared: high on the brow, low on the nape.)
+function hairline(g: THREE.BufferGeometry): THREE.BufferGeometry {
+  const pos = g.getAttribute('position');
+  for (let i = 0; i < pos.count; i++) if (pos.getY(i) < HEAD_Y + 0.01) pos.setY(i, pos.getY(i) + Math.max(-0.05, Math.min(0.035, pos.getZ(i) * 0.55)));
+  g.computeVertexNormals();
+  return g;
+}
 export function hairShapes(style: HairStyleKey): THREE.BufferGeometry[] {
   const W = 0xffffff;
-  // A cap over the crown, down to the brow in front and the nape behind.
-  const cap = () => tipBack(hull([R([0, HEAD_Y - 0.012, -0.002], 0.072, 0.078), R([0, HEAD_Y + 0.042, -0.004], 0.062, 0.068), R([0, HEAD_Y + 0.08, -0.006], 0, 0)], 5, W, { ...FIVE, caps: [false, false] }));
+  // A cap over the crown, down to the brow in front and the nape behind: a
+  // shell over the head's own rings (so the head never shows through it),
+  // its edge raised in front and lowered behind.
+  const cap = () => hairline(headShell([[0.0, 1.1], [0.066, 1.2], [0.088, 0]], W));
   const beard = () => hull([R([0, HEAD_Y - 0.03, 0.014], 0.056, 0.06), R([0, HEAD_Y - 0.092, 0.042], 0, 0)], 5, W, { ...FIVE, caps: [false, false] });
   const long = () => hull([R([0, HEAD_Y - 0.005, -0.045], 0.064, 0.03), R([0, HEAD_Y - 0.13, -0.062], 0.06, 0.018)], 4, W);
   switch (style) {
