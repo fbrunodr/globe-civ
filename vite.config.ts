@@ -1,6 +1,6 @@
 import { defineConfig, type Plugin } from 'vite';
 import { resolve } from 'node:path';
-import { writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 
 // The map editor (/map_editor.html) saves paintings to src/maps/<name>.json
 // (dev only). The files are not watched: saving must not reload the
@@ -37,8 +37,31 @@ function mapPaintings(): Plugin {
   };
 }
 
+// The game's record (gameLog.ts): each turn's events appended to
+// logs/<game>.jsonl (dev only; logs/ is not committed).
+const LOGS = resolve(import.meta.dirname, 'logs');
+function gameLogs(): Plugin {
+  return {
+    name: 'game-logs',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use('/__log', (req, res) => {
+        const game = new URL(req.url ?? '', 'http://x').searchParams.get('game') ?? '';
+        if (req.method !== 'POST' || !/^[\w.-]+$/.test(game)) { res.statusCode = 400; res.end('POST /__log?game=<id>'); return; }
+        let body = '';
+        req.on('data', (c: Buffer) => { body += c.toString('utf8'); });
+        req.on('end', () => {
+          mkdirSync(LOGS, { recursive: true });
+          appendFileSync(resolve(LOGS, `${game}.jsonl`), body);
+          res.end('ok');
+        });
+      });
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [mapPaintings()],
+  plugins: [mapPaintings(), gameLogs()],
   // Pre-bundle every dependency up front: modules only the dev pages import
   // (the gallery's OrbitControls, CSS2DRenderer) would otherwise be found
   // late, re-bundled, and served stale (a 504 and a blank page).
@@ -56,6 +79,7 @@ export default defineConfig({
         mapEditor: resolve(import.meta.dirname, 'map_editor.html'),
         buildings: resolve(import.meta.dirname, 'buildings.html'),
         units: resolve(import.meta.dirname, 'units.html'),
+        wonders: resolve(import.meta.dirname, 'wonders.html'),
       },
     },
   },

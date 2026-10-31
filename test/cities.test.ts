@@ -1,10 +1,11 @@
+import { TECH_KEYS, techDef } from '../src/techs.ts';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { Game, type City } from '../src/game.ts';
 import { aiTurn } from '../src/ai.ts';
 import { BIOMES, FEATURE_RULES, RELIEFS, featureAllowed, type BiomeKey, type FeatureKey, type ReliefKey, type TileTerrain } from '../src/terrain.ts';
 import {
-  USE, ERAS, IMPROVEMENTS, SPECIALIST_KINDS, BUILDINGS, improvementFor, buildingAllowed, specialistSlots, eraBonus,
-  WONDERS, wonderBeside, type BuildingKey, type ImprovementKey, type EraIndex,
+  USE, IMPROVEMENTS, SPECIALIST_KINDS, BUILDINGS, improvementFor, buildingAllowed, specialistSlots,
+  WONDERS, wonderBeside, type BuildingKey,
 } from '../src/cities.ts';
 import type { MapSizeKey } from '../src/rules.ts';
 
@@ -185,26 +186,24 @@ describe('cities in simulated games', () => {
   });
 
   // (Tall cities grow through specialists, design doc.)
-  // (As many as its buildings have room for, if fewer; one short is fine:
-  // a slot built since the city last grew.)
+  // (As many as its buildings have room for, if fewer; two short are fine:
+  // slots built since the city last grew, which with lean yields is a while.)
   it('C7: a big city (size 10+) has specialists: at least a quarter of its citizens', () => {
     const room = (c: City) => SPECIALIST_KINDS.reduce((n, k) => n + specialistSlots(c.buildings, k), 0);
     const thin = sims.flatMap((s) => s.game.cities
-      .filter((c) => c.pop >= 10 && s.game.specialistCount(c) < Math.min(room(c), Math.floor(c.pop / 4)) - 1)
+      .filter((c) => c.pop >= 10 && s.game.specialistCount(c) < Math.min(room(c), Math.floor(c.pop / 4)) - 2)
       .map((c) => `${c.name} size ${c.pop}: ${s.game.specialistCount(c)} specialists, ${room(c)} slots, surplus ${s.game.cityYields(c).surplus}`));
     expect(thin).toEqual([]);
   });
 });
 
-describe('ER1: eras only ever add to improvements', () => {
-  it('every improvement yields at least as much in a later era', () => {
+describe('ER1: techs only ever add to improvements', () => {
+  it('no tech takes from an improvement', () => {
     const bad: string[] = [];
-    for (const k of Object.keys(IMPROVEMENTS) as ImprovementKey[]) {
-      for (let e = 1; e < ERAS.length; e++) {
-        const a = eraBonus(k, (e - 1) as EraIndex), b = eraBonus(k, e as EraIndex);
-        if ((Object.keys(a) as (keyof typeof a)[]).some((y) => b[y] < a[y])) bad.push(`${k} era ${e}`);
-      }
+    for (const k of TECH_KEYS) for (const e of techDef(k).effects ?? []) {
+      if (e.k === 'improvement' && (Object.values(e.o) as number[]).some((v) => v < 0)) bad.push(`${k} ${e.imp}`);
     }
     expect(bad).toEqual([]);
+    expect(Object.keys(IMPROVEMENTS).length).toBeGreaterThan(0);
   });
 });

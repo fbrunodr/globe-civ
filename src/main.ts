@@ -3,6 +3,8 @@ import { Game, HUMAN, type City, type Unit } from './game.ts';
 import { mountSettings } from './settingsMenu.ts';
 import { GlobeRenderer, type DebugView, type Selection, type TileMark } from './render.ts';
 import { UI, assertNever, wonderPicked, type Action, type Placing } from './ui.ts';
+import { Sheets } from './sheets.ts';
+import { gameLogId } from './gameLog.ts';
 import { MAP_SCRIPTS, MAP_SIZES, isMapScript, tileCount, unitDef, isWonder, type MapScriptKey, type MapSizeKey } from './rules.ts';
 
 const isMapSize = (s: string): s is MapSizeKey => s in MAP_SIZES;
@@ -24,7 +26,7 @@ function showStartScreen(): void {
     <div class="scripts">Map ${scripts}</div>
     <label>Seed <input id="seed" value="${params.get('seed') ?? Math.floor(Math.random() * 1e6)}"></label>
     <button id="go" class="primary">Start game</button>
-    <p class="tools"><small>Tools: <a href="/gallery.html">Gallery</a> · <a href="/buildings.html">Buildings</a> · <a href="/units.html">Units</a> · <a href="/city_lab.html">City lab</a> · <a href="/city_samples.html">City samples</a> · <a href="/world_view.html">World view</a> · <a href="/map_editor.html">Map editor</a></small></p>
+    <p class="tools"><small>Tools: <a href="/gallery.html">Gallery</a> · <a href="/buildings.html">Buildings</a> · <a href="/units.html">Units</a> · <a href="/wonders.html">Wonders</a> · <a href="/city_lab.html">City lab</a> · <a href="/city_samples.html">City samples</a> · <a href="/world_view.html">World view</a> · <a href="/map_editor.html">Map editor</a></small></p>
   </div>`;
   let size: MapSizeKey = 'small', script: MapScriptKey = 'continents';
   const pSize = params.get('size'), pMap = params.get('map');
@@ -54,6 +56,25 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
   const game = new Game({ size: sizeKey, seed, script });
   const view = new GlobeRenderer(document.getElementById('c') as HTMLCanvasElement, game);
   const ui = new UI(game, act);
+  // The record of the game (gameLog.ts): sent to the dev server each turn
+  // (logs/<id>.jsonl), downloadable from the Log sheet.
+  const logId = gameLogId(sizeKey, seed);
+  let logged = 0;
+  const flushLog = () => {
+    if (!import.meta.env.DEV || logged >= game.events.length) return;
+    const lines = game.events.slice(logged).map((e) => JSON.stringify(e)).join('\n') + '\n';
+    logged = game.events.length;
+    void fetch(`/__log?game=${encodeURIComponent(logId)}`, { method: 'POST', body: lines }).catch(() => { /* (no dev server: kept in memory) */ });
+  };
+  const downloadLog = () => {
+    const blob = new Blob([game.events.map((e) => JSON.stringify(e)).join('\n') + '\n'], { type: 'application/x-ndjson' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${logId}.jsonl`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+  const sheets = new Sheets(game, () => refresh(), downloadLog);
   view.onTileHover = onHover;
   view.onTileClick = onClick;
   // The settings menu (shadows, tone mapping).
@@ -154,6 +175,7 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
     view.syncWorld(sel);
     view.syncOverlay(sel, hover, previewPath(), marks());
     ui.render(sel, hover, hint(), placing);
+    sheets.render();
   }
 
   function selectNextUnit(): void {
@@ -193,6 +215,9 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
         break;
       case 'raze':
         if (sel?.kind === 'city' && sel.city.owner === HUMAN) game.raze(sel.city);
+        break;
+      case 'upgrade':
+        if (unit && game.upgrade(unit)) afterUnitAction(unit);
         break;
       case 'rally':
         if (unit && game.rally(unit) > 0) game.updateVisibility();
@@ -239,8 +264,12 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
       case 'buyMode':
         if (sel?.kind === 'city' && sel.city.owner === HUMAN) placing = 'buy';
         break;
+      case 'buy':
+        if (sel?.kind === 'city' && sel.city.owner === HUMAN) game.buy(sel.city, a.currency);
+        break;
       case 'endTurn': {
         game.endTurn();
+        flushLog();
         sel = null;
         // A city that grew asks for its citizen first.
         const grown = game.cities.find((c) => c.owner === HUMAN && c.growth > 0);
@@ -308,8 +337,9 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
     if (a) { e.preventDefault(); act(a); return; }
     if (e.key === 'n' || e.key === 'Tab') { e.preventDefault(); selectNextUnit(); refresh(); }
     else if (e.key === 'Escape') {
-      // Cancel picking a wonder's tile (or buying tiles) first; otherwise deselect.
-      if ((wonderPicked(placing) || placing === 'buy') && sel?.kind === 'city') placing = defaultPlacing(sel.city);
+      // Close a sheet first; then cancel picking a wonder's tile (or buying tiles); otherwise deselect.
+      if (sheets.isOpen) sheets.close();
+      else if ((wonderPicked(placing) || placing === 'buy') && sel?.kind === 'city') placing = defaultPlacing(sel.city);
       else { sel = null; placing = null; }
       refresh();
     }
@@ -320,6 +350,10 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
   // first tile matching every key (biome, relief or feature), e.g. hotDesert+hills.
   const debug = new URLSearchParams(location.search);
   if (debug.has('reveal')) game.explored.fill(1);
+  // A game in progress is never left by accident: a two-finger swipe (the
+  // browser's back gesture) is stopped by the page's overscroll rule
+  // (style.css); leaving or reloading asks first (?noguard: not, for tests).
+  if (!debug.has('noguard')) addEventListener('beforeunload', (e) => { if (!game.over) e.preventDefault(); });
   const lookFor = debug.get('look');
 
   game.log(`Welcome! ${game.players.length - 1} rival civilizations share this world of ${game.N.toLocaleString()} tiles.`);

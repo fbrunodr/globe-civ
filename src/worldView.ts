@@ -6,7 +6,7 @@ import './style.css';
 import { Game } from './game.ts';
 import { GlobeRenderer, type DebugView } from './render.ts';
 import { mountSettings } from './settingsMenu.ts';
-import { MAP_SCRIPTS, MAP_SIZES, isMapScript, tileCount, type MapScriptKey, type MapSizeKey, type UnitKey } from './rules.ts';
+import { MAP_SCRIPTS, MAP_SIZES, isMapScript, tileCount, type MapScriptKey, type MapSizeKey, type UnitKey, unitDef } from './rules.ts';
 import { terrainName } from './terrain.ts';
 import { floraLabel } from './flora.ts';
 
@@ -88,7 +88,7 @@ sightBtn.addEventListener('click', toggleSight);
 // Units to look at (dev): U drops one of each kind for a few civs round
 // where the camera looks, on dry land; M marches every unit a tile; B sets
 // them fighting their neighbours.
-const UNIT_SAMPLE: UnitKey[] = ['warrior', 'spearman', 'archer', 'horseman', 'scout', 'settler', 'commander'];
+const UNIT_SAMPLE: UnitKey[] = ['warrior', 'spearman', 'archer', 'horseman', 'swordsman', 'pikeman', 'crossbowman', 'knight', 'scout', 'settler', 'commander'];
 const dropUnits = () => {
   const at = view.looking;
   let start = 0;
@@ -114,9 +114,9 @@ const marchUnits = () => {
 // B: every fighting unit fights a unit next to it (a show: nobody is hurt).
 const battle = () => {
   for (const u of game.units) {
-    if (!['warrior', 'spearman', 'archer', 'horseman'].includes(u.type)) continue;
+    if (unitDef(u.type).atk <= 0) continue;
     const foe = game.tiles[u.tile]!.neighbors.find((n) => game.units.some((v) => v.tile === n && v.owner !== u.owner));
-    if (foe !== undefined) view.showBattle(u.id, foe, u.type === 'archer');
+    if (foe !== undefined) view.showBattle(u.id, foe, unitDef(u.type).ranged === true);
   }
 };
 addEventListener('keydown', (e) => {

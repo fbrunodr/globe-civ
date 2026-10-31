@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { ArchCiv } from './architecture.ts';
-import type { UnitKey } from './rules.ts';
-import { UNIT_LOOK, figuresFor, formationSlots, unitModel, variantOf, rides, hairModel, wearsHelmet, womenShare, GEAR, FORMATION, HAIR_BY, HAIR_STYLES, RIDER_HEAD, STRIKE } from './unitModels.ts';
+import { unitDef, type UnitKey } from './rules.ts';
+import { UNIT_LOOK, figuresFor, formationSlots, unitModel, variantOf, rides, hairModel, wearsHelmet, womenShare, isMachine, colsOf, GEAR, HAIR_BY, HAIR_STYLES, RIDER_HEAD, STRIKE } from './unitModels.ts';
 import { mulberry32 } from './rng.ts';
 
 // The units on the globe, as figurines (unitModels.ts): a fighting unit is a
@@ -175,7 +175,7 @@ export class UnitView {
     const defenders = [...this.shown.values()].filter((s) => s.unit.tile === tile && s !== a);
     const at = defenders[0]?.dir.clone() ?? this.env.center(tile).clone();
     if (a) this.startFight(a, at, ranged ? 0 : CHARGE, ranged, now);
-    for (const d of defenders) this.startFight(d, a?.dir.clone() ?? at, 0, d.unit.type === 'archer', now);
+    for (const d of defenders) this.startFight(d, a?.dir.clone() ?? at, 0, unitDef(d.unit.type).ranged === true, now);
   }
 
   private startFight(s: Shown, at: THREE.Vector3, charge: number, ranged: boolean, now: number): void {
@@ -237,7 +237,7 @@ export class UnitView {
         put(this.key(s, f), f.pos, color, f, walk, strike);
         if (f.hair >= 0) put(`hair|${f.hair}`, head.copy(f.pos).addScaledVector(f.up, lift * this.size), f.hairColor, f, walk, 0);
         // Its shadow: a soft disc on the ground under it (longer under a horse).
-        m.compose(f.pos.clone().addScaledVector(f.up, 0.002 * this.size), q, scale.set(this.size * 0.42, 1, this.size * (rides(s.unit.type, f.variant) ? 0.95 : 0.42)));
+        m.compose(f.pos.clone().addScaledVector(f.up, 0.002 * this.size), q, scale.set(this.size * (isMachine(s.unit.type) ? 0.8 : 0.42), 1, this.size * (isMachine(s.unit.type) ? 1.4 : rides(s.unit.type, f.variant) ? 0.95 : 0.42)));
         this.shadows.setMatrixAt(shadowN++, m);
       }
     }
@@ -370,8 +370,8 @@ export class UnitView {
   // that, the spot with the most figures dry.
   private spot(u: ShownUnit, k: number, facing: THREE.Vector3): { dir: THREE.Vector3; forward: THREE.Vector3; spread: number } {
     const c = this.env.center(u.tile), look = UNIT_LOOK[u.type];
-    const n = look.party === 'formation' ? figuresFor(u.hp) : look.count;
-    const cols = look.party === 'formation' ? FORMATION.cols : Math.ceil(Math.sqrt(n)), rows = Math.ceil(n / cols);
+    const n = look.party === 'formation' ? figuresFor(u.hp, look.count) : look.count;
+    const cols = colsOf(u.type, look.count), rows = Math.ceil(n / cols);
     const east = new THREE.Vector3(0, 1, 0).cross(c);
     if (east.lengthSq() < 1e-8) east.set(1, 0, 0);
     east.normalize();
@@ -455,7 +455,9 @@ export function figureLooks(type: UnitKey, civ: ArchCiv, women: number, rand: ()
   const g = GEAR[civ], pick = <T>(xs: readonly T[]) => xs[Math.floor(rand() * xs.length)]!;
   const female = rand() < women, helmet = wearsHelmet(type, civ), styles = HAIR_BY[female ? 'woman' : 'man'];
   const style = pick(helmet ? styles.helmet : styles.bare);
-  return { female, skin: new THREE.Color(pick(g.skin)), hair: style === 'bald' && helmet ? -1 : HAIR_STYLES.indexOf(style), hairColor: new THREE.Color(pick(g.hair)) };
+  // (Machines: no one shows.)
+  const none = isMachine(type) || (style === 'bald' && helmet);
+  return { female: female && !isMachine(type), skin: new THREE.Color(pick(g.skin)), hair: none ? -1 : HAIR_STYLES.indexOf(style), hairColor: new THREE.Color(pick(g.hair)) };
 }
 
 // Arrows in flight: each volley a dozen, from the archers to around the

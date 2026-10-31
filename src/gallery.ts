@@ -1,7 +1,12 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { WorldLabel, clickableLabels, disposeLabels, type LabelLine } from './worldLabel.ts';
-import { makePropMaterial } from './propMaterial.ts';
+import { makePropMaterial, instanceGeometry } from './propMaterial.ts';
+import { ruralGeometry, ruralModelKind } from './rural/models.ts';
+import { resourceLayout, RESOURCE_LOOKS } from './rural/resourceModels.ts';
+import { RESOURCES, RESOURCE_KEYS, type ResourceKey } from './resources.ts';
+import { TECHS, TECH_KEYS } from './techs.ts';
 import { CATALOG, CATALOG_KINDS, buildCatalogGeometry, triangles, type CatalogKind } from './propCatalog.ts';
 import { BUILDINGS_CATALOG, BUILDING_KINDS, buildBuildingGeometry } from './buildingCatalog.ts';
 import { BIOME_FLORA, FEATURE_FLORA, realmsLabel, type Tint, type Variant } from './floraData.ts';
@@ -10,11 +15,15 @@ import type { BiomeKey, FeatureKey } from './terrain.ts';
 import { biomeDef, featureDef } from './terrain.ts';
 import { makePerlin, mulberry32, type Rng } from './rng.ts';
 
-// Prop gallery (dev tool, /gallery.html): every prop, and every variant of
-// each terrain (floraData.ts) as one tile-sized hex patch: the plain mix,
-// without the game's placement modifiers (hills, rivers, coasts...). Sizes
-// match the game: a tile edge of 0.07 at the reference scale, props at
-// render.ts's scale, the walk-mode eye height for the ground camera.
+// Prop gallery (dev tool, /gallery.html). Two views:
+//   terrains  one board of every terrain at once: a row per biome and
+//             feature (floraData.ts), each of its variants a tile-sized hex
+//             patch (the plain mix, without the game's placement modifiers:
+//             hills, rivers, coasts...); then every resource (resources.ts)
+//             on its own land, as the game shows it (rural/resourceModels.ts)
+//   catalog   every prop and building on its own, enlarged
+// Sizes match the game: a tile edge of 0.07 at the reference scale, props
+// at render.ts's scale, the walk-mode eye height for the ground camera.
 // Everything is ×100 here.
 
 const SC = 100;
@@ -32,8 +41,9 @@ renderer.shadowMap.type = THREE.PCFShadowMap;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x9fc3e6);
-scene.fog = new THREE.Fog(0x9fc3e6, 150, 420);
-const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 1000);
+scene.fog = new THREE.Fog(0x9fc3e6, 260, 900);
+// (Near plane no closer than the walk eye needs: depth precision for the far rows.)
+const camera = new THREE.PerspectiveCamera(45, 1, 0.05, 1000);
 const controls = new OrbitControls(camera, canvas);
 clickableLabels(canvas, camera, () => world);
 controls.enableDamping = true;
@@ -54,6 +64,10 @@ scene.add(sun, sun.target);
 
 // The game's flora material (clump normals, leaf cards), at full saturation.
 const propMat = makePropMaterial(0, 1, undefined, { time: { value: 0 } });
+// The game's material for the countryside's models (and the resources').
+const ruralMat = makePropMaterial(0.32, 0.8);
+// A tile step (center to center) in scene units: resource models are sized in them.
+const STEP = R * Math.sqrt(3);
 const world = new THREE.Group();
 scene.add(world);
 
@@ -99,7 +113,8 @@ function spots(n: number, rand: Rng, r: number): [number, number][] {
   return pts;
 }
 
-interface Placed { key: string; geo: THREE.BufferGeometry; m: THREE.Matrix4; c: THREE.Color }
+// (leaf: the instance's leaf colour, per instance as in the game: render.ts.)
+interface Placed { key: string; geo: THREE.BufferGeometry; m: THREE.Matrix4; c: THREE.Color; leaf: THREE.Color; mat?: THREE.Material }
 interface Options { jitter: boolean; groves: boolean; seed: number }
 
 const pickTint = (t: Tint | undefined, rand: Rng): number | undefined =>
@@ -132,7 +147,7 @@ function placeVariant(v: Variant, o: Options): Placed[] {
     const leaf = pickTint(tint, rand);
     const inst = instance(x, z, rand, o.jitter);
     inst.m.scale(new THREE.Vector3(size, size, size));
-    out.push({ key: `${kind}|${leaf ?? ''}`, geo: catalogGeo(kind, leaf), ...inst });
+    out.push({ key: kind, geo: catalogGeo(kind), leaf: new THREE.Color(leaf ?? CATALOG[kind].leaf), ...inst });
   }
   return out;
 }
@@ -143,8 +158,9 @@ function addInstances(items: Placed[], at: THREE.Vector3, parent: THREE.Object3D
   let tris = 0;
   const off = new THREE.Matrix4().makeTranslation(at.x, at.y, at.z);
   for (const list of groups.values()) {
-    const mesh = new THREE.InstancedMesh(list[0].geo, propMat, list.length);
-    list.forEach((p, i) => { mesh.setMatrixAt(i, off.clone().multiply(p.m)); mesh.setColorAt(i, p.c); });
+    const mesh = new THREE.InstancedMesh(instanceGeometry(list[0].geo, list.length), list[0].mat ?? propMat, list.length);
+    const leaf = mesh.geometry.getAttribute('leafTint') as THREE.InstancedBufferAttribute;
+    list.forEach((p, i) => { mesh.setMatrixAt(i, off.clone().multiply(p.m)); mesh.setColorAt(i, p.c); leaf.setXYZ(i, p.leaf.r, p.leaf.g, p.leaf.b); });
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     parent.add(mesh);
@@ -154,6 +170,18 @@ function addInstances(items: Placed[], at: THREE.Vector3, parent: THREE.Object3D
 }
 
 // ---------- scene pieces ----------
+// The rim of a patch: a band round its hex (no surface under the hex's own:
+// two faces a hair apart flicker from afar) and its sides down to RIM_DEPTH.
+const RIM_DEPTH = 0.5;
+function rim(at: THREE.Vector3, r = R): THREE.Mesh {
+  const mat = new THREE.MeshStandardMaterial({ color: 0x4a4436, roughness: 1 });
+  const band = new THREE.RingGeometry(r, r * 1.06, 6, 1).rotateX(-Math.PI / 2);
+  const sides = new THREE.CylinderGeometry(r * 1.06, r * 1.06, RIM_DEPTH, 6, 1, true).rotateY(Math.PI / 2).translate(0, -RIM_DEPTH / 2, 0);
+  const m = new THREE.Mesh(mergeGeometries([band.toNonIndexed(), sides.toNonIndexed()])!, mat);
+  m.position.copy(at);
+  m.receiveShadow = true;
+  return m;
+}
 function hex(color: number, at: THREE.Vector3, r = R): THREE.Mesh {
   const m = new THREE.Mesh(new THREE.CircleGeometry(r, 6).rotateX(-Math.PI / 2),
     new THREE.MeshStandardMaterial({ color, roughness: 1 }));
@@ -191,7 +219,7 @@ const terrainKeys = [...TERRAINS.keys()];
 const hashParts = location.hash.slice(1).split('/');
 const state = {
   view: (hashParts[0] === 'catalog' ? 'catalog' : 'terrains') as View,
-  terrain: (terrainKeys.includes(hashParts[1] as TerrainSetKey) ? hashParts[1] : 'temperateRainforest') as TerrainSetKey,
+  terrain: ([...terrainKeys, 'resources'].includes(hashParts[1] as TerrainSetKey) ? hashParts[1] : terrainKeys[0]) as TerrainSetKey,
   focus: 0,
   seed: 1,
 };
@@ -200,6 +228,7 @@ let patches: { center: THREE.Vector3; label: WorldLabel; mix: string }[] = [];
 const $ = <T extends HTMLElement>(s: string) => document.querySelector<T>(s)!;
 const select = $<HTMLSelectElement>('#terrain');
 for (const k of terrainKeys) select.add(new Option(TERRAINS.get(k)!.name, k));
+select.add(new Option('Resources', 'resources'));
 const jitterBox = $<HTMLInputElement>('#jitter'), grovesBox = $<HTMLInputElement>('#groves');
 const info = $<HTMLSpanElement>('#info'), mixPanel = $<HTMLDivElement>('#mix');
 
@@ -212,26 +241,78 @@ function mixHtml(name: string, v: Variant): string {
   return `<h4>${name}</h4><div class="row">${rows.join(' · ')}</div>`;
 }
 
-function buildTerrains(): void {
-  const set = TERRAINS.get(state.terrain)!;
-  const o: Options = { jitter: jitterBox.checked, groves: grovesBox.checked, seed: state.seed };
-  const entries: { title: string; sub: string; items: Placed[]; mix: string }[] = set.variants.filter((v) => v.mix.length > 0).map((v, i) => ({
-    title: v.name, sub: `${realmsLabel(v)}${v.hills ? ', on hills' : ''} · ${v.density} props`,
-    items: placeVariant(v, { ...o, seed: o.seed * 977 + i }), mix: mixHtml(v.name, v),
-  }));
-  state.focus = Math.min(state.focus, entries.length - 1);
-  patches = entries.map((e, i) => {
-    const center = new THREE.Vector3(i * SPACING, 0, 0);
-    world.add(hex(set.ground, center));
-    world.add(hex(0x4a4436, center.clone().setY(-0.06), R * 1.06));
-    if (set.water !== undefined) world.add(waterSheet(center, set.water));
-    const tris = addInstances(e.items, center, world);
-    const div = label(e.title, `${e.sub} · ${Math.round(tris).toLocaleString()} tris`,
-      center.clone().add(new THREE.Vector3(0, 0, R * 0.95)), () => { state.focus = i; refreshFocus(); setCam('close'); });
-    return { center, label: div, mix: e.mix };
+// What a resource's models add to a patch (as resourceLayout lays them in the game).
+function resourceItems(r: ResourceKey, seed: number): Placed[] {
+  const rand = mulberry32(seed);
+  return resourceLayout(r, rand).map((m) => {
+    const geo = cached(`r|${m.model}`, () => ruralGeometry(ruralModelKind(m.model)));
+    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), m.yaw);
+    const mm = new THREE.Matrix4().compose(new THREE.Vector3(m.x * STEP, 0, m.y * STEP), q, new THREE.Vector3().setScalar(m.s * STEP));
+    return { key: `r|${m.model}`, geo, m: mm, c: new THREE.Color(1, 1, 1), leaf: new THREE.Color(m.color ?? 0xffffff), mat: ruralMat };
   });
+}
+// The land a resource stands on in the gallery: its first terrain with flora.
+function landOf(r: ResourceKey): TerrainSetKey | null {
+  const d = RESOURCES[r] as { biomes: readonly string[]; features?: readonly string[] };
+  return [...(d.features ?? []), ...d.biomes].find((k) => TERRAINS.has(k)) ?? null;
+}
+const revealedBy = (r: ResourceKey): string => {
+  const t = (RESOURCES[r] as { reveal?: string }).reveal;
+  return t ? ` · revealed by ${TECHS[TECH_KEYS.find((k) => k === t)!].name}` : '';
+};
+const yieldText = (r: ResourceKey) => Object.entries(RESOURCES[r].yields).filter(([, v]) => v).map(([k, v]) => `+${v} ${k === 'prod' ? 'production' : k}`).join(', ');
+
+// The whole board: a row per terrain, then the resources, eight a row.
+const ROW = 2.5 * R, RES_COLS = 8;
+let rowStart = new Map<TerrainSetKey, number>();
+function buildTerrains(): void {
+  const o: Options = { jitter: jitterBox.checked, groves: grovesBox.checked, seed: state.seed };
+  patches = [];
+  rowStart = new Map();
+  const patch = (center: THREE.Vector3, ground: number, water: number | undefined, items: Placed[], title: string, sub: string, mix: string) => {
+    world.add(hex(ground, center));
+    world.add(rim(center));
+    if (water !== undefined) world.add(waterSheet(center, water));
+    const tris = addInstances(items, center, world);
+    const i = patches.length;
+    const div = label(title, `${sub} · ${Math.round(tris).toLocaleString()} tris`, center.clone().add(new THREE.Vector3(0, 0, R * 0.95)), () => { state.focus = i; refreshFocus(); setCam('close'); });
+    patches.push({ center, label: div, mix });
+  };
+  let row = 0;
+  for (const [key, set] of TERRAINS) {
+    rowStart.set(key, patches.length);
+    const z = row * ROW;
+    const title = new WorldLabel([{ text: set.name, bold: true }], LABEL * 1.6);
+    title.position.set(-SPACING * 0.9, title.scale.y / 2 + 0.1, z);
+    world.add(title);
+    set.variants.filter((v) => v.mix.length > 0).forEach((v, i) => {
+      patch(new THREE.Vector3(i * SPACING, 0, z), set.ground, set.water, placeVariant(v, { ...o, seed: o.seed * 977 + row * 31 + i }),
+        v.name, `${realmsLabel(v)}${v.hills ? ', on hills' : ''} · ${v.density} props`, mixHtml(`${set.name}: ${v.name}`, v));
+    });
+    row++;
+  }
+  // The resources, each on its land (that land's first variant, thinned).
+  row++;
+  const head = new WorldLabel([{ text: 'Resources', bold: true }], LABEL * 2);
+  head.position.set(-SPACING * 0.9, head.scale.y / 2 + 0.1, row * ROW);
+  world.add(head);
+  rowStart.set('resources', patches.length);
+  RESOURCE_KEYS.forEach((r, i) => {
+    const land = landOf(r), set = land ? TERRAINS.get(land)! : null;
+    const v = set?.variants.find((x) => x.mix.length > 0);
+    const center = new THREE.Vector3((i % RES_COLS) * SPACING, 0, (row + Math.floor(i / RES_COLS)) * ROW);
+    // (The flora kept clear of the resource's patch.)
+    const flora = v ? placeVariant({ ...v, density: Math.round(v.density * 0.5) }, { ...o, seed: o.seed * 131 + i }).filter((p) => {
+      const at = new THREE.Vector3().setFromMatrixPosition(p.m);
+      return Math.hypot(at.x, at.z) > 0.2 * STEP;
+    }) : [];
+    const d = RESOURCES[r];
+    patch(center, set?.ground ?? 0x8a8a70, RESOURCE_LOOKS[r].water ? (set?.water ?? 0.0012) : undefined, [...flora, ...resourceItems(r, o.seed * 7 + i)],
+      d.name, `${d.kind} · ${yieldText(r)}${revealedBy(r)}`, `<h4>${d.name}</h4><div class="row">${d.kind} resource on ${set?.name ?? 'its land'} · ${yieldText(r)}${revealedBy(r)}</div>`);
+  });
+  state.focus = Math.min(state.focus, patches.length - 1);
   refreshFocus();
-  info.textContent = `${set.name}: tile edge ${R / SC}, props at game scale. Click a label to focus · ← → terrain · drag move · right-drag or Shift+drag rotate & tilt · WASD move · Q/E rotate · T/G tilt · Z/X zoom`;
+  info.textContent = `Every terrain and its variants, then every resource on its land: tile edge ${R / SC}, props at game scale. Pick a terrain to fly to it · ← → previous / next row · click a label to focus · drag move · right-drag rotate & tilt · WASD · Q/E · T/G · Z/X`;
 }
 
 function buildCatalog(): void {
@@ -288,6 +369,7 @@ function rebuild(resetCam: boolean): void {
   for (const b of document.querySelectorAll<HTMLButtonElement>('[data-view]')) b.classList.toggle('active', b.dataset['view'] === state.view);
   select.value = state.terrain;
   select.disabled = state.view !== 'terrains';
+  if (resetCam && state.view === 'terrains') { state.focus = rowStart.get(state.terrain) ?? 0; refreshFocus(); }
   history.replaceState(null, '', `#${state.view}${state.view === 'terrains' ? '/' + state.terrain : ''}`);
   // Sun and shadows over everything shown.
   const box = new THREE.Box3();
@@ -305,7 +387,7 @@ const rowGapOf = () => 13;
 function setCam(c: Cam): void {
   const box = new THREE.Box3();
   for (const p of patches) box.expandByPoint(p.center);
-  const mid = box.getCenter(new THREE.Vector3()), size = box.getSize(new THREE.Vector3());
+  const mid = box.getCenter(new THREE.Vector3());
   const f = patches[state.focus]?.center ?? mid;
   if (c === 'map') {
     if (state.view === 'catalog') {
@@ -314,9 +396,12 @@ function setCam(c: Cam): void {
       camera.position.copy(top).add(new THREE.Vector3(0, 22, 42));
       controls.target.copy(top);
     } else {
-      const d = size.x * 0.8 + 16;
-      camera.position.copy(mid).add(new THREE.Vector3(0, d * 0.6, d * 0.75));
-      controls.target.copy(mid);
+      // The focused row, end to end.
+      const row = patches.filter((p) => Math.abs(p.center.z - f.z) < 1e-6);
+      const x0 = Math.min(...row.map((p) => p.center.x)), x1 = Math.max(...row.map((p) => p.center.x));
+      const at = new THREE.Vector3((x0 + x1) / 2, 0, f.z), d = (x1 - x0) * 0.7 + 22;
+      camera.position.copy(at).add(new THREE.Vector3(0, d * 0.6, d * 0.75));
+      controls.target.copy(at);
     }
   } else if (c === 'close') {
     const d = state.view === 'catalog' ? 7 : R * 1.6;
@@ -334,7 +419,16 @@ for (const b of document.querySelectorAll<HTMLButtonElement>('[data-view]'))
   b.addEventListener('click', () => { state.view = b.dataset['view'] as View; state.focus = 0; rebuild(true); });
 for (const b of document.querySelectorAll<HTMLButtonElement>('[data-cam]'))
   b.addEventListener('click', () => setCam(b.dataset['cam'] as Cam));
-select.addEventListener('change', () => { state.terrain = select.value as TerrainSetKey; rebuild(true); });
+select.addEventListener('change', () => { state.terrain = select.value as TerrainSetKey; goToRow(); });
+// Flies to the chosen row of the board (its first patch).
+function goToRow(): void {
+  if (state.view !== 'terrains') return;
+  state.focus = rowStart.get(state.terrain) ?? 0;
+  refreshFocus();
+  select.value = state.terrain;
+  history.replaceState(null, '', `#terrains/${state.terrain}`);
+  setCam('close');
+}
 jitterBox.addEventListener('change', () => rebuild(false));
 grovesBox.addEventListener('change', () => rebuild(false));
 $('#reroll').addEventListener('click', () => { state.seed++; rebuild(false); });
@@ -342,9 +436,10 @@ addEventListener('keydown', (e) => {
   if (state.view !== 'terrains' || e.target instanceof HTMLSelectElement) return;
   const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
   if (!step) return;
-  const i = (terrainKeys.indexOf(state.terrain) + step + terrainKeys.length) % terrainKeys.length;
-  state.terrain = terrainKeys[i];
-  rebuild(true);
+  const rows = [...terrainKeys, 'resources'];
+  const i = (rows.indexOf(state.terrain) + step + rows.length) % rows.length;
+  state.terrain = rows[i]!;
+  goToRow();
 });
 
 // Keyboard camera, as in the game: W A S D move over the ground (Shift =
@@ -398,7 +493,19 @@ rebuild(true);
 const timer = new THREE.Timer();
 renderer.setAnimationLoop((time) => {
   timer.update(time);
+  // (On the board, the sun's shadows follow the view: the board is too large for one shadow map.)
+  if (state.view === 'terrains') {
+    const ext = 70, mid = controls.target;
+    sun.position.copy(mid).add(new THREE.Vector3(ext * 0.6, ext * 1.4, ext * 0.9));
+    sun.target.position.copy(mid);
+    if (sun.shadow.camera.right !== ext * 1.3) {
+      Object.assign(sun.shadow.camera, { left: -ext * 1.3, right: ext * 1.3, top: ext * 1.3, bottom: -ext * 1.3, near: 1, far: ext * 5 });
+      sun.shadow.camera.updateProjectionMatrix();
+    }
+  }
   keyboardCamera(Math.min(0.1, timer.getDelta()));
   controls.update();
   renderer.render(scene, camera);
 });
+// Dev-only handle for test scripts: focus a patch and frame it.
+if (import.meta.env.DEV) Object.assign(window, { __gallery: { focus: (i: number) => { state.focus = i; refreshFocus(); setCam('close'); }, rows: () => Object.fromEntries(rowStart) } });

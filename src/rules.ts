@@ -3,6 +3,7 @@
 
 import { BUILDINGS, WONDERS, type BuildingDef, type BuildingKey, type WonderDef, type WonderKey } from './cities.ts';
 import type { ArchCiv } from './architecture.ts';
+import type { StrategicKey } from './resources.ts';
 export { BUILDINGS, WONDERS, type BuildingKey, type WonderKey };
 
 export interface UnitDef {
@@ -16,6 +17,9 @@ export interface UnitDef {
   ranged?: boolean; // attacks without moving in (and can never take a city)
   sight?: number;
   desc?: string;
+  needs?: StrategicKey; // a strategic resource the civ must own (resources.ts)
+  siege?: boolean;  // twice as strong against a city's walls
+  mounted?: boolean; // on horseback or wheels (pikemen hold them off; some bonuses are theirs)
 }
 
 export const UNITS = {
@@ -24,10 +28,26 @@ export const UNITS = {
   warrior:  { name: 'Warrior',  icon: 'W', atk: 1, def: 1, mv: 1, cost: 10 },
   spearman: { name: 'Spearman', icon: 'P', atk: 1, def: 2, mv: 1, cost: 20, desc: 'Good defender.' },
   archer:   { name: 'Archer',   icon: 'A', atk: 3, def: 2, mv: 1, cost: 25, ranged: true, desc: 'Ranged: attacks without moving in, taking half the damage back. Cannot take cities.' },
-  horseman: { name: 'Horseman', icon: 'H', atk: 2, def: 1, mv: 2, cost: 20 },
+  horseman: { name: 'Horseman', icon: 'H', atk: 2, def: 1, mv: 2, cost: 25, needs: 'horses', mounted: true, desc: 'Fast. Needs Horses.' },
+  swordsman: { name: 'Swordsman', icon: 'W', atk: 3, def: 2, mv: 1, cost: 35, needs: 'iron', desc: 'Strong infantry. Needs Iron.' },
+  pikeman: { name: 'Pikeman', icon: 'P', atk: 2, def: 4, mv: 1, cost: 45, desc: 'Holds the line; +100% against mounted units.' },
+  crossbowman: { name: 'Crossbowman', icon: 'A', atk: 5, def: 3, mv: 1, cost: 50, ranged: true, desc: 'Ranged: attacks without moving in, taking half the damage back. Cannot take cities.' },
+  knight: { name: 'Knight', icon: 'K', atk: 5, def: 3, mv: 2, cost: 60, needs: 'horses', mounted: true, desc: 'Heavy cavalry. Needs Horses.' },
+  musketman: { name: 'Musketman', icon: 'M', atk: 7, def: 7, mv: 1, cost: 80, desc: 'Gunpowder infantry.' },
+  cannon: { name: 'Cannon', icon: 'G', atk: 9, def: 3, mv: 1, cost: 90, ranged: true, siege: true, needs: 'niter', desc: 'Ranged siege: twice as strong against a city. Cannot take cities. Needs Niter.' },
+  rifleman: { name: 'Rifleman', icon: 'R', atk: 10, def: 11, mv: 1, cost: 120, desc: 'Line infantry.' },
+  cavalry: { name: 'Cavalry', icon: 'K', atk: 12, def: 7, mv: 3, cost: 130, needs: 'horses', mounted: true, desc: 'Fast. Needs Horses.' },
+  artillery: { name: 'Artillery', icon: 'G', atk: 15, def: 5, mv: 1, cost: 160, ranged: true, siege: true, needs: 'niter', desc: 'Ranged siege: twice as strong against a city. Cannot take cities. Needs Niter.' },
+  infantry: { name: 'Infantry', icon: 'I', atk: 15, def: 17, mv: 2, cost: 180, desc: 'Modern infantry.' },
+  tank: { name: 'Tank', icon: 'T', atk: 20, def: 14, mv: 3, cost: 220, needs: 'oil', mounted: true, desc: 'Armour. Needs Oil.' },
   commander: { name: 'Commander', icon: 'C', atk: 0, def: 2, mv: 2, cost: 40, desc: 'Leads an army: rallies up to 4 units from its tile and the tiles next to it, which then march with it as one; deploys them again there. A fighting unit may share its tile. Its army defends it; if it falls, its army is lost.' },
 } satisfies Record<string, UnitDef>;
 export type UnitKey = keyof typeof UNITS;
+// What each unit can be upgraded to (game.ts upgrade), once unlocked.
+export const UPGRADES: Partial<Record<UnitKey, UnitKey>> = {
+  warrior: 'swordsman', swordsman: 'musketman', spearman: 'pikeman', pikeman: 'musketman', musketman: 'rifleman', rifleman: 'infantry',
+  archer: 'crossbowman', crossbowman: 'musketman', horseman: 'knight', knight: 'cavalry', cavalry: 'tank', cannon: 'artillery',
+};
 export const unitDef = (k: UnitKey): UnitDef => UNITS[k];
 
 export type BuildKey = UnitKey | BuildingKey | WonderKey;
@@ -91,4 +111,5 @@ export const MAP_SCRIPTS = {
 export type MapScriptKey = keyof typeof MAP_SCRIPTS;
 export const isMapScript = (s: string): s is MapScriptKey => s in MAP_SCRIPTS;
 
-export const growthCost = (pop: number): number => Math.floor(15 + 8 * (pop - 1) + Math.pow(pop - 1, 1.5));
+// Food for the next citizen (lighter than Civ V's: tiles are lean, terrain.ts).
+export const growthCost = (pop: number): number => Math.floor(12 + 6 * (pop - 1) + Math.pow(pop - 1, 1.5));

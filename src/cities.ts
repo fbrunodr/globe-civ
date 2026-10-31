@@ -19,8 +19,12 @@
 // the player picks: Machu Picchu on a mountain, the Great Lighthouse on the
 // sea, the Pyramids and Stonehenge on flat land.
 //
-// A city starts with the tiles around its center and buys the ring beyond
-// with gold (game.ts buyTile); it never reaches farther.
+// A city starts with the tiles around its center; its borders then grow
+// ring by ring with the culture it makes (BORDER_AT), out to BORDER_MAX
+// tiles, claiming tiles no one owns yet. Its citizens only ever work the
+// tiles within CITY_REACH (Civ IV's "fat cross"): the land beyond is held
+// for its resources and so that no rival can settle there. Tiles within
+// reach may also be bought with gold (game.ts buyTile).
 //
 // Pure rules only: the state lives in Game, the look in render.ts.
 
@@ -28,16 +32,19 @@ import { BIOMES, FEATURES, RIVER_GOLD, terrainYield, type TileTerrain, type Yiel
 
 // ---------- city output: the terrain's yields plus science, culture, faith ----------
 
-export const OUTPUT_KEYS = ['food', 'prod', 'gold', 'science', 'culture', 'faith'] as const;
+// Cohesion: a society holding together (its institutions, its shared
+// life); it pays for politics (politics.ts), as science pays for techs and
+// culture for identity (identity.ts) and borders.
+export const OUTPUT_KEYS = ['food', 'prod', 'gold', 'science', 'culture', 'faith', 'cohesion'] as const;
 export type OutputKey = (typeof OUTPUT_KEYS)[number];
 export type Output = Readonly<Record<OutputKey, number>>;
 export const out = (o: Partial<Output> = {}): Output =>
-  ({ food: 0, prod: 0, gold: 0, science: 0, culture: 0, faith: 0, ...o });
+  ({ food: 0, prod: 0, gold: 0, science: 0, culture: 0, faith: 0, cohesion: 0, ...o });
 export const ZERO: Output = out();
 export const addOut = (a: Output, b: Output): Output =>
-  ({ food: a.food + b.food, prod: a.prod + b.prod, gold: a.gold + b.gold, science: a.science + b.science, culture: a.culture + b.culture, faith: a.faith + b.faith });
+  ({ food: a.food + b.food, prod: a.prod + b.prod, gold: a.gold + b.gold, science: a.science + b.science, culture: a.culture + b.culture, faith: a.faith + b.faith, cohesion: a.cohesion + b.cohesion });
 export const scaleOut = (a: Output, k: number): Output =>
-  ({ food: a.food * k, prod: a.prod * k, gold: a.gold * k, science: a.science * k, culture: a.culture * k, faith: a.faith * k });
+  ({ food: a.food * k, prod: a.prod * k, gold: a.gold * k, science: a.science * k, culture: a.culture * k, faith: a.faith * k, cohesion: a.cohesion * k });
 export const fromYields = (y: Yields): Output => out({ food: y.food, prod: y.prod, gold: y.gold });
 
 // ---------- tile uses ----------
@@ -53,8 +60,8 @@ export interface ImprovementDef {
 }
 
 export const IMPROVEMENTS = {
-  farm:    { name: 'Farm',            bonus: out({ food: 2 }) },
-  mine:    { name: 'Mine',            bonus: out({ prod: 1 }) },
+  farm:    { name: 'Farm',            bonus: out({ food: 1 }) },
+  mine:    { name: 'Mine',            bonus: out({ prod: 2 }) },
   camp:    { name: 'Camp',            bonus: out({ food: 1 }) },
   quarry:  { name: 'Quarry',          bonus: out({ prod: 1 }) },
   wetland: { name: 'Wetland harvest', bonus: out({ food: 1 }) },
@@ -101,14 +108,24 @@ const BIOME_IMPROVEMENT: Record<keyof typeof BIOMES, ImprovementKey | null> = {
 
 // ---------- territory ----------
 
-export const CITY_REACH = 2;      // the farthest a city's tiles are from its center
+export const CITY_REACH = 2;      // the farthest a city's worked tiles are from its center
 export const START_REACH = 1;     // what a new city owns
+// The city's culture so far (its own) that brings its borders out to each
+// ring (index: the ring), and the farthest they go.
+export const BORDER_AT = [0, 0, 12, 80, 500, 3000] as const;
+export const BORDER_MAX = 5;
+export function borderRing(culture: number): number {
+  let r = START_REACH;
+  while (r < BORDER_MAX && culture >= BORDER_AT[r + 1]!) r++;
+  return r;
+}
 // What buying a tile costs: more for each the city has bought already.
 export const tileCost = (bought: number): number => 25 + 15 * bought;
 
 // The center's yield.
-export const CENTER_BONUS = out({ food: 2, prod: 1, gold: 1, science: 1, culture: 1 });
-export const CENTER_MIN = out({ food: 3, prod: 2, gold: 1 });
+export const CENTER_BONUS = out({ food: 1, prod: 1, gold: 1, science: 1, culture: 1, cohesion: 1 });
+// (At least one food spare at size 1: every city can grow, however poor its land.)
+export const CENTER_MIN = out({ food: 3, prod: 1, gold: 1 });
 export const FOOD_PER_CITIZEN = 2;
 
 const withRiver = (base: Output, river: boolean): Output => (river ? addOut(base, out({ gold: RIVER_GOLD })) : base);
@@ -118,10 +135,12 @@ export function centerYield(t: TileTerrain, river: boolean): Output {
   return withRiver({ ...b, food: Math.max(CENTER_MIN.food, b.food), prod: Math.max(CENTER_MIN.prod, b.prod), gold: Math.max(CENTER_MIN.gold, b.gold) }, river);
 }
 
-export function ruralYield(t0: TileTerrain, river: boolean, era: EraIndex = 0): Output {
+// A worked tile's yield: its terrain, its improvement and what the owner's
+// techs and traits add to that improvement (`extra`, effects.ts tileBonus).
+export function ruralYield(t0: TileTerrain, river: boolean, extra: (k: ImprovementKey) => Output = () => ZERO): Output {
   const t = drained(t0), k = improvementFor(t);
   const base = fromYields(terrainYield(t));
-  return withRiver(k ? addOut(addOut(base, IMPROVEMENTS[k].bonus), eraBonus(k, era)) : base, river);
+  return withRiver(k ? addOut(addOut(base, IMPROVEMENTS[k].bonus), extra(k)) : base, river);
 }
 
 // ---------- specialists ----------
@@ -141,7 +160,9 @@ export const specialistYield = (k: SpecialistKind): Output => SPECIALISTS[k].yie
 
 export const BUILDING_KEYS = [
   'monument', 'granary', 'shrine', 'temple', 'library', 'academy', 'market', 'countingHouse', 'workshop', 'smithy',
-  'lighthouse', 'shipyard', 'amphitheater', 'odeon', 'waterMill', 'aqueduct', 'barracks', 'stable', 'walls',
+  'lighthouse', 'shipyard', 'amphitheater', 'odeon', 'waterMill', 'aqueduct', 'barracks', 'stable', 'walls', 'courthouse',
+  'university', 'bank', 'factory', 'hospital', 'stockExchange', 'researchLab', 'broadcastTower',
+  'forum', 'caravanserai', 'harbor', 'guildHall', 'observatory', 'chancery', 'railwayStation', 'museum', 'publicSchool', 'powerPlant', 'ministry',
 ] as const;
 export type BuildingKey = (typeof BUILDING_KEYS)[number];
 
@@ -155,31 +176,52 @@ export interface BuildingDef {
   readonly specialists?: { readonly kind: SpecialistKind; readonly slots: number };
   readonly requires?: BuildingKey;                                // in the city first
   readonly needs?: 'river' | 'coast';                             // where the city must be
+  readonly resource?: 'horses' | 'iron' | 'niter' | 'coal' | 'oil'; // a strategic resource its civ must own (resources.ts)
   readonly lostOnCapture?: true;
   readonly desc: string;
 }
 
-// (The numbers are placeholders, after Civ V's.)
+// (Lean numbers, after Civ IV's: flat yields small; what scales with the
+// city's size or adds a percentage is what grows a tall city.)
 export const BUILDINGS: Record<BuildingKey, BuildingDef> = {
-  monument:      { name: 'Monument',       cost: 30, yields: out({ culture: 2 }), desc: '+2 culture.' },
-  granary:       { name: 'Granary',        cost: 40, yields: out({ food: 2 }), desc: '+2 food.' },
+  monument:      { name: 'Monument',       cost: 30, yields: out({ culture: 1, cohesion: 1 }), desc: '+1 culture, +1 cohesion.' },
+  granary:       { name: 'Granary',        cost: 40, yields: out({ food: 1 }), desc: '+1 food.' },
   shrine:        { name: 'Shrine',         cost: 35, yields: out({ faith: 1 }), lostOnCapture: true, desc: '+1 faith.' },
   temple:        { name: 'Temple',         cost: 60, yields: out({ faith: 2 }), requires: 'shrine', lostOnCapture: true, desc: '+2 faith. Needs a Shrine.' },
   library:       { name: 'Library',        cost: 45, yields: ZERO, perCitizens: { per: 2, yields: out({ science: 1 }) }, specialists: { kind: 'scientist', slots: 1 }, desc: '+1 science per 2 citizens. 1 scientist slot.' },
-  academy:       { name: 'Academy',        cost: 80, yields: out({ science: 2 }), percent: { science: 33 }, specialists: { kind: 'scientist', slots: 2 }, requires: 'library', desc: '+2 science, +33% science. 2 scientist slots. Needs a Library.' },
-  market:        { name: 'Market',         cost: 45, yields: out({ gold: 2 }), percent: { gold: 25 }, specialists: { kind: 'merchant', slots: 1 }, desc: '+2 gold, +25% gold. 1 merchant slot.' },
-  countingHouse: { name: 'Counting house', cost: 80, yields: out({ gold: 2 }), percent: { gold: 25 }, specialists: { kind: 'merchant', slots: 1 }, requires: 'market', desc: '+2 gold, +25% gold. 1 merchant slot. Needs a Market.' },
-  workshop:      { name: 'Workshop',       cost: 50, yields: out({ prod: 2 }), percent: { prod: 10 }, specialists: { kind: 'engineer', slots: 1 }, desc: '+2 production, +10% production. 1 engineer slot.' },
-  smithy:        { name: 'Smithy',         cost: 80, yields: out({ prod: 2 }), percent: { prod: 15 }, specialists: { kind: 'engineer', slots: 1 }, requires: 'workshop', desc: '+2 production, +15% production. 1 engineer slot. Needs a Workshop.' },
+  academy:       { name: 'Academy',        cost: 80, yields: out({ science: 1 }), percent: { science: 25 }, specialists: { kind: 'scientist', slots: 2 }, requires: 'library', desc: '+1 science, +25% science. 2 scientist slots. Needs a Library.' },
+  market:        { name: 'Market',         cost: 45, yields: out({ gold: 1 }), percent: { gold: 20 }, specialists: { kind: 'merchant', slots: 1 }, desc: '+1 gold, +20% gold. 1 merchant slot.' },
+  countingHouse: { name: 'Counting house', cost: 80, yields: out({ gold: 1 }), percent: { gold: 15 }, specialists: { kind: 'merchant', slots: 1 }, requires: 'market', desc: '+1 gold, +15% gold. 1 merchant slot. Needs a Market.' },
+  workshop:      { name: 'Workshop',       cost: 50, yields: out({ prod: 1 }), percent: { prod: 10 }, specialists: { kind: 'engineer', slots: 1 }, desc: '+1 production, +10% production. 1 engineer slot.' },
+  smithy:        { name: 'Smithy',         cost: 80, yields: out({ prod: 1 }), percent: { prod: 15 }, specialists: { kind: 'engineer', slots: 1 }, requires: 'workshop', desc: '+1 production, +15% production. 1 engineer slot. Needs a Workshop.' },
   lighthouse:    { name: 'Lighthouse',     cost: 45, yields: ZERO, perImprovement: { improvement: 'boats', yields: out({ food: 1 }) }, needs: 'coast', desc: '+1 food on each fishing ground worked. A coastal city.' },
   shipyard:      { name: 'Shipyard',       cost: 70, yields: ZERO, perImprovement: { improvement: 'boats', yields: out({ prod: 1 }) }, needs: 'coast', requires: 'lighthouse', desc: '+1 production on each fishing ground worked. Needs a Lighthouse.' },
-  amphitheater:  { name: 'Amphitheater',   cost: 50, yields: out({ culture: 2 }), specialists: { kind: 'artist', slots: 1 }, desc: '+2 culture. 1 artist slot.' },
-  odeon:         { name: 'Odeon',          cost: 80, yields: out({ culture: 3 }), specialists: { kind: 'artist', slots: 1 }, requires: 'amphitheater', desc: '+3 culture. 1 artist slot. Needs an Amphitheater.' },
-  waterMill:     { name: 'Water mill',     cost: 50, yields: out({ food: 2, prod: 1 }), needs: 'river', desc: '+2 food, +1 production. A city by a river.' },
+  amphitheater:  { name: 'Amphitheater',   cost: 50, yields: out({ culture: 1 }), percent: { culture: 15 }, specialists: { kind: 'artist', slots: 1 }, desc: '+1 culture, +15% culture. 1 artist slot.' },
+  odeon:         { name: 'Odeon',          cost: 80, yields: out({ culture: 2 }), percent: { culture: 15 }, specialists: { kind: 'artist', slots: 1 }, requires: 'amphitheater', desc: '+2 culture, +15% culture. 1 artist slot. Needs an Amphitheater.' },
+  waterMill:     { name: 'Water mill',     cost: 50, yields: out({ food: 1, prod: 1 }), needs: 'river', desc: '+1 food, +1 production. A city by a river.' },
   aqueduct:      { name: 'Aqueduct',       cost: 70, yields: ZERO, desc: 'Keeps 40% of the food when the city grows.' },
   barracks:      { name: 'Barracks',       cost: 40, yields: ZERO, lostOnCapture: true, desc: '+25% defense for units in the city.' },
   stable:        { name: 'Stable',         cost: 55, yields: ZERO, requires: 'barracks', lostOnCapture: true, desc: '+25% defense for units in the city. Needs Barracks.' },
   walls:         { name: 'Walls',          cost: 30, yields: ZERO, desc: '+100% defense for units in the city.' },
+  courthouse:    { name: 'Courthouse',     cost: 60, yields: out({ cohesion: 1 }), desc: '+1 cohesion. Halves the city\'s upkeep.' },
+  university:    { name: 'University',     cost: 140, yields: out({ science: 2 }), percent: { science: 25 }, specialists: { kind: 'scientist', slots: 1 }, requires: 'academy', desc: '+2 science, +25% science. 1 scientist slot. Needs an Academy.' },
+  bank:          { name: 'Bank',           cost: 140, yields: out({ gold: 2 }), percent: { gold: 15 }, specialists: { kind: 'merchant', slots: 1 }, requires: 'countingHouse', desc: '+2 gold, +15% gold. 1 merchant slot. Needs a Counting house.' },
+  factory:       { name: 'Factory',        cost: 200, yields: out({ prod: 2 }), percent: { prod: 25 }, specialists: { kind: 'engineer', slots: 1 }, requires: 'smithy', resource: 'coal', desc: '+2 production, +25% production. 1 engineer slot. Needs a Smithy, and Coal.' },
+  hospital:      { name: 'Hospital',       cost: 180, yields: out({ food: 3 }), requires: 'aqueduct', desc: '+3 food. Needs an Aqueduct.' },
+  stockExchange: { name: 'Stock exchange', cost: 260, yields: out({ gold: 3 }), percent: { gold: 15 }, specialists: { kind: 'merchant', slots: 1 }, requires: 'bank', desc: '+3 gold, +15% gold. 1 merchant slot. Needs a Bank.' },
+  researchLab:   { name: 'Research lab',   cost: 280, yields: out({ science: 3 }), percent: { science: 30 }, specialists: { kind: 'scientist', slots: 1 }, requires: 'university', desc: '+3 science, +30% science. 1 scientist slot. Needs a University.' },
+  broadcastTower: { name: 'Broadcast tower', cost: 260, yields: out({ culture: 3, cohesion: 2 }), percent: { culture: 20 }, specialists: { kind: 'artist', slots: 1 }, requires: 'museum', desc: '+3 culture, +2 cohesion, +20% culture. 1 artist slot. Needs a Museum.' },
+  forum:         { name: 'Forum',          cost: 55, yields: out({ cohesion: 2 }), percent: { cohesion: 15 }, desc: '+2 cohesion, +15% cohesion.' },
+  caravanserai:  { name: 'Caravanserai',   cost: 55, yields: out({ gold: 2 }), desc: '+2 gold.' },
+  harbor:        { name: 'Harbor',         cost: 80, yields: ZERO, perImprovement: { improvement: 'boats', yields: out({ gold: 1 }) }, needs: 'coast', requires: 'lighthouse', desc: '+1 gold on each fishing ground worked. Needs a Lighthouse.' },
+  guildHall:     { name: 'Guild hall',     cost: 90, yields: out({ prod: 1, gold: 1 }), specialists: { kind: 'engineer', slots: 1 }, requires: 'workshop', desc: '+1 production, +1 gold. 1 engineer slot. Needs a Workshop.' },
+  observatory:   { name: 'Observatory',    cost: 110, yields: out({ science: 2 }), percent: { science: 10 }, desc: '+2 science, +10% science.' },
+  chancery:      { name: 'Chancery',       cost: 120, yields: out({ cohesion: 3 }), percent: { cohesion: 20 }, requires: 'forum', desc: '+3 cohesion, +20% cohesion. Needs a Forum.' },
+  railwayStation: { name: 'Railway station', cost: 180, yields: out({ prod: 2, gold: 2 }), resource: 'coal', desc: '+2 production, +2 gold. Needs Coal.' },
+  museum:        { name: 'Museum',         cost: 180, yields: out({ culture: 3 }), percent: { culture: 20 }, specialists: { kind: 'artist', slots: 1 }, requires: 'odeon', desc: '+3 culture, +20% culture. 1 artist slot. Needs an Odeon.' },
+  publicSchool:  { name: 'Public school',  cost: 170, yields: out({ cohesion: 1 }), perCitizens: { per: 3, yields: out({ science: 1 }) }, requires: 'library', desc: '+1 cohesion, +1 science per 3 citizens. Needs a Library.' },
+  powerPlant:    { name: 'Power plant',    cost: 260, yields: out({ prod: 3 }), percent: { prod: 20 }, requires: 'factory', resource: 'oil', desc: '+3 production, +20% production. Needs a Factory, and Oil.' },
+  ministry:      { name: 'Ministry',       cost: 240, yields: out({ cohesion: 4 }), percent: { cohesion: 25 }, requires: 'chancery', desc: '+4 cohesion, +25% cohesion. Needs a Chancery.' },
 };
 const def = (k: BuildingKey): BuildingDef => BUILDINGS[k];
 // The share of its food a city with an Aqueduct keeps when it grows.
@@ -209,7 +251,7 @@ export function buildingsYield(keys: Iterable<BuildingKey>, pop: number, worked:
 
 // The city's output with its buildings' percentages (food excepted), whole.
 export function withPercents(o: Output, keys: Iterable<BuildingKey>): Output {
-  const pct: Record<OutputKey, number> = { food: 0, prod: 0, gold: 0, science: 0, culture: 0, faith: 0 };
+  const pct: Record<OutputKey, number> = { food: 0, prod: 0, gold: 0, science: 0, culture: 0, faith: 0, cohesion: 0 };
   for (const k of keys) for (const [y, p] of Object.entries(def(k).percent ?? {}) as [OutputKey, number][]) pct[y] += p;
   return out({ food: o.food, ...Object.fromEntries((OUTPUT_KEYS.filter((y) => y !== 'food')).map((y) => [y, Math.floor((o[y] * (100 + pct[y])) / 100)])) });
 }
@@ -248,6 +290,16 @@ export const WONDERS = {
   greatLibrary:    { name: 'Great Library',    cost: 200, site: 'any', yields: out({ science: 5, culture: 2 }), desc: '+5 science, +2 culture.' },
   stonehenge:      { name: 'Stonehenge',       cost: 140, site: 'flat', beside: 'land', yields: out({ faith: 4, culture: 1 }), desc: 'On flat open land beside the city. +4 faith, +1 culture.' },
   colosseum:       { name: 'Colosseum',        cost: 180, site: 'any', yields: out({ culture: 5, gold: 1 }), desc: '+5 culture, +1 gold.' },
+  colossus:        { name: 'Colossus',         cost: 220, site: 'coast', yields: out({ gold: 4, culture: 1 }), desc: 'A coastal city. +4 gold, +1 culture.' },
+  angkorWat:       { name: 'Angkor Wat',       cost: 320, site: 'any', yields: out({ food: 3, faith: 3, culture: 2 }), desc: '+3 food, +3 faith, +2 culture.' },
+  hagiaSophia:     { name: 'Hagia Sophia',     cost: 320, site: 'any', yields: out({ faith: 5, culture: 3 }), desc: '+5 faith, +3 culture.' },
+  notreDame:       { name: 'Notre-Dame',       cost: 340, site: 'river', yields: out({ faith: 4, culture: 4 }), desc: 'A city by a river. +4 faith, +4 culture.' },
+  tajMahal:        { name: 'Taj Mahal',        cost: 460, site: 'river', yields: out({ culture: 6, gold: 3 }), desc: 'A city by a river. +6 culture, +3 gold.' },
+  bigBen:          { name: 'Big Ben',          cost: 620, site: 'any', yields: out({ gold: 8, culture: 2 }), desc: '+8 gold, +2 culture.' },
+  eiffelTower:     { name: 'Eiffel Tower',     cost: 660, site: 'any', yields: out({ culture: 8, gold: 2 }), desc: '+8 culture, +2 gold.' },
+  statueOfLiberty: { name: 'Statue of Liberty', cost: 640, site: 'coast', yields: out({ culture: 6, prod: 3 }), desc: 'A coastal city. +6 culture, +3 production.' },
+  cristoRedentor:  { name: 'Cristo Redentor',  cost: 860, site: 'hills', yields: out({ faith: 6, culture: 6 }), desc: 'A city on hills. +6 faith, +6 culture.' },
+  empireState:     { name: 'Empire State Building', cost: 900, site: 'any', yields: out({ prod: 6, gold: 6, science: 3 }), desc: '+6 production, +6 gold, +3 science.' },
 } satisfies Record<string, WonderDef>;
 export type WonderKey = keyof typeof WONDERS;
 export const WONDER_KEYS = Object.keys(WONDERS) as WonderKey[];
@@ -256,33 +308,18 @@ export const wonderBeside = (k: WonderKey): WonderDef['beside'] => (WONDERS[k] a
 
 // ---------- eras ----------
 
-// Eras advance with a civ's accumulated science (a stand-in until the
-// science system arrives). An era upgrades every improvement of a kind at
-// once and restyles the civ's towns; nothing is rebuilt.
+// A civ's era is that of the latest tech it knows (game.ts); it restyles
+// the civ's towns (cityProps.ts). What improvements yield more over time
+// comes from techs and traits now (effects.ts improvement).
 export interface EraDef {
   readonly name: string;
-  readonly science: number;            // science needed to enter it
-  readonly upgrades: Partial<Record<ImprovementKey, Output>>; // added to every improvement of the kind (cumulative)
 }
 
 export const ERAS = [
-  { name: 'Ancient',   science: 0,    upgrades: {} },
-  { name: 'Classical', science: 400,  upgrades: { farm: out({ food: 1 }), boats: out({ gold: 1 }) } },
-  { name: 'Medieval',  science: 1400, upgrades: { mine: out({ prod: 1 }), quarry: out({ prod: 1 }), camp: out({ gold: 1 }), wetland: out({ food: 1 }) } },
+  { name: 'Ancient' }, { name: 'Classical' }, { name: 'Medieval' }, { name: 'Renaissance' }, { name: 'Industrial' }, { name: 'Modern' },
 ] as const satisfies readonly EraDef[];
-export type EraIndex = 0 | 1 | 2;
-export const eraOf = (science: number): EraIndex => (science >= ERAS[2].science ? 2 : science >= ERAS[1].science ? 1 : 0);
-
-// What eras up to `era` add to an improvement.
-export function eraBonus(k: ImprovementKey, era: EraIndex): Output {
-  let sum = ZERO;
-  for (let e = 1; e <= era; e++) {
-    const u: Partial<Record<ImprovementKey, Output>> = ERAS[e]!.upgrades;
-    const b = u[k];
-    if (b) sum = addOut(sum, b);
-  }
-  return sum;
-}
+export type EraIndex = 0 | 1 | 2 | 3 | 4 | 5;
+export const ERA_COUNT = ERAS.length;
 
 // ---------- growth placements ----------
 
@@ -299,13 +336,13 @@ export interface FocusDef {
 }
 
 export const FOCUSES = {
-  balanced:   { name: 'Balanced',   weights: out({ food: 2.5, prod: 2, gold: 1, science: 1.5, culture: 1.2, faith: 1 }) },
-  food:       { name: 'Food',       weights: out({ food: 4, prod: 1.5, gold: 0.5, science: 0.8, culture: 0.6, faith: 0.5 }) },
-  production: { name: 'Production', weights: out({ food: 1.5, prod: 4, gold: 0.5, science: 0.8, culture: 0.6, faith: 0.5 }) },
-  gold:       { name: 'Gold',       weights: out({ food: 1.5, prod: 1.5, gold: 4, science: 0.8, culture: 0.6, faith: 0.5 }) },
-  science:    { name: 'Science',    weights: out({ food: 1.5, prod: 1.5, gold: 0.8, science: 4, culture: 0.6, faith: 0.5 }) },
-  culture:    { name: 'Culture',    weights: out({ food: 1.5, prod: 1.5, gold: 0.8, science: 0.8, culture: 4, faith: 0.8 }) },
-  faith:      { name: 'Faith',      weights: out({ food: 1.5, prod: 1.5, gold: 0.8, science: 0.6, culture: 0.8, faith: 4 }) },
+  balanced:   { name: 'Balanced',   weights: out({ food: 2.5, prod: 2, gold: 1, science: 1.5, culture: 1.2, faith: 1, cohesion: 1.2 }) },
+  food:       { name: 'Food',       weights: out({ food: 4, prod: 1.5, gold: 0.5, science: 0.8, culture: 0.6, faith: 0.5, cohesion: 0.6 }) },
+  production: { name: 'Production', weights: out({ food: 1.5, prod: 4, gold: 0.5, science: 0.8, culture: 0.6, faith: 0.5, cohesion: 0.6 }) },
+  gold:       { name: 'Gold',       weights: out({ food: 1.5, prod: 1.5, gold: 4, science: 0.8, culture: 0.6, faith: 0.5, cohesion: 0.6 }) },
+  science:    { name: 'Science',    weights: out({ food: 1.5, prod: 1.5, gold: 0.8, science: 4, culture: 0.6, faith: 0.5, cohesion: 0.6 }) },
+  culture:    { name: 'Culture',    weights: out({ food: 1.5, prod: 1.5, gold: 0.8, science: 0.8, culture: 4, faith: 0.8, cohesion: 0.8 }) },
+  faith:      { name: 'Faith',      weights: out({ food: 1.5, prod: 1.5, gold: 0.8, science: 0.6, culture: 0.8, faith: 4, cohesion: 0.6 }) },
 } satisfies Record<string, FocusDef>;
 export type FocusKey = keyof typeof FOCUSES;
 export const isFocusKey = (s: string): s is FocusKey => s in FOCUSES;
@@ -317,7 +354,7 @@ export const weigh = (focus: FocusKey, o: Output): number => {
 
 // Specialists the governor keeps: about a third of the citizens.
 export const specialistsWanted = (pop: number): number => Math.floor(pop / 3);
-const TOWN_PULL = 14;
+const TOWN_PULL = 22;
 
 // How much the governor likes an option, given its yields, the city's food
 // surplus after it, the surplus it wants (enough to grow in about

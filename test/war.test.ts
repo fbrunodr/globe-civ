@@ -71,12 +71,15 @@ describe('WR2: pillage and repair', () => {
     const before = g.tileOutput(farm);
     expect(before.food + before.prod + before.gold).toBeGreaterThan(0);
     const raider = g.createUnit('warrior', 1, farm);
+    g.declareWar(1, 0); // (pillaging is an act of war)
     const gold = g.players[1]!.gold;
     expect(g.pillage(raider)).toBe(true);
     expect(g.players[1]!.gold).toBe(gold + PILLAGE_GOLD);
     const burnt = g.tileOutput(farm);
     expect(burnt.food + burnt.prod + burnt.gold).toBe(0);
-    // No repair while the raider stands there.
+    // No repair while the raider stands there. (A store of food: the burnt
+    // farm must not starve the city, which would leave the tile wild.)
+    city.food = 200;
     turn(g);
     expect(g.pillaged[farm]).toBe(PILLAGE_REPAIR);
     g.removeUnit(raider);

@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import { unitDef } from './rules.ts';
 import { GlobeCamera } from './camera.ts';
-import type { Game, Unit, City } from './game.ts';
+import { HUMAN, type Game, type Unit, type City } from './game.ts';
 import { GROUND_COVERS, SNOW, tileLook, type GroundCover, type TileLook } from './look.ts';
 import { buildTerrainMesh, locate, newSample, type TerrainMesh } from './terrainMesh.ts';
-import { makeTerrainMaterial, makeTable, FAN_ROWS, TILE_ROWS, IMPROVEMENT_CODE, BURNT_CODE, CROP_CODE, type TerrainMaterial } from './terrainMaterial.ts';
+import { makeTerrainMaterial, makeTerrainDepthMaterial, makeTable, FAN_ROWS, TILE_ROWS, IMPROVEMENT_CODE, BURNT_CODE, CROP_CODE, type TerrainMaterial } from './terrainMaterial.ts';
 import { makeSmoke, type Emitter, type Smoke } from './smoke.ts';
 import { buildPaintData, fanCoords, fanFrames, paintAt, softAt, warpAt, FAN_COORDS, FINE_MAX, FINE_WAVELENGTH, type PaintData, type FanFrame } from './paint.ts';
 import { buildRelief, CONE_RADIUS, CRATER, CRATER_DEPTH, type Relief } from './relief.ts';
@@ -18,8 +18,10 @@ import { buildPropGeometry, catalogEntry, CATALOG, CATALOG_KINDS, type CatalogKi
 import { BUILDING_KINDS, buildBuildingGeometry, type BuildingKind } from './buildingCatalog.ts';
 import { houseGeometry, isHouseKind, type HouseKind } from './houses.ts';
 import { isWonderModelKind, wonderGeometry, type WonderModelKind } from './wonderModels.ts';
-import { isFloraRural, isRuralModelKind, ruralGeometry, type RuralModelKind } from './rural/models.ts';
-import { CityProps, tileFrame, type CitySpot } from './cityProps.ts';
+import { isFloraRural, isRuralModelKind, ruralGeometry, ruralModelKind, type RuralModelKind } from './rural/models.ts';
+import { CityProps, tileFrame, SUMMIT_HOUSES, type CitySpot } from './cityProps.ts';
+import { CITY_CELL } from './cityPainter.ts';
+import { RESOURCE_LOOKS, resourceLayout } from './rural/resourceModels.ts';
 import { farmAxis } from './farmPainter.ts';
 import { cropRegion } from './rural/look.ts';
 import { roadLines, ROAD_HALF_WIDTH } from './roads.ts';
@@ -28,6 +30,7 @@ import { mulberry32, makePerlin } from './rng.ts';
 import { USE, WONDERS, improvementFor, type ImprovementKey } from './cities.ts';
 import { farGeometry, makeFloraDepthMaterial, makePropMaterial, instanceGeometry } from './propMaterial.ts';
 import { GpuTimer } from './gpuTimer.ts';
+import { resourceDef } from './resources.ts';
 import { UnitView, type ShownUnit } from './unitView.ts';
 import { loadGroundTextures } from './groundTextures.ts';
 
@@ -167,6 +170,8 @@ const BRIDGE_TIMBER = 0x7a5f45;
 const BRIDGE_STONE = 0xa49c8c;
 // The ground under a direction: its tile, the ground and water as drawn,
 // and the land before rivers cut into it (radii).
+// Machu Picchu's summit cut (levelSummit): first try.
+const LEVEL_AT = 0.78, LEVEL_R = 0.42;
 type Ground = (d: THREE.Vector3) => { t: number; ground: number; water: number; land: number };
 interface Bridges { pos: number[]; col: number[] }
 interface Batch { pos: number[]; col: number[] }
@@ -258,6 +263,9 @@ export class GlobeRenderer {
   private unitView!: UnitView;
   private selUnit: Unit | null = null;
   private readonly citiesGroup = new THREE.Group();
+  // Resource badges (resources.ts) on explored tiles, shown from play distance.
+  private readonly resourcesGroup = new THREE.Group();
+  private resourcesShown = -1;
   private readonly overlayGroup = new THREE.Group();
   private borders: THREE.Mesh | null = null;
   private cityProps: CityProps;
@@ -467,8 +475,10 @@ export class GlobeRenderer {
     }
     // (The highest the ground reaches, for the horizon: peaks show past it.)
     this.maxLift = this.terrain.vertRadius.reduce((m, r) => Math.max(m, r), 1) - 1;
+    const groundDepth = makeTerrainDepthMaterial();
     this.globeMesh = this.chunkedSurface(this.terrain.geometry, this.terrain.triToTile, this.terrainMat.material, (m) => {
       m.renderOrder = GROUND_ORDER;
+      m.customDepthMaterial = groundDepth;
       // (Everything casts shadows but the farms' crops; everything receives them.)
       m.castShadow = true;
       m.receiveShadow = true;
@@ -527,6 +537,8 @@ export class GlobeRenderer {
     this.unitsGroup.add(this.unitView.group);
     g.onBattle = (u, t, ranged) => this.unitView.fight(u.id, t, ranged, performance.now() / 1000);
     this.citiesGroup.userData['stat'] = 'city markers';
+    this.resourcesGroup.userData['stat'] = 'resource badges';
+    this.scene.add(this.resourcesGroup);
     this.overlayGroup.userData['stat'] = 'overlays';
     this.scene.add(this.unitsGroup, this.citiesGroup, this.overlayGroup);
     this.smoke = makeSmoke(s);
@@ -603,6 +615,7 @@ export class GlobeRenderer {
     this.updateRoads(changed.length > 0 || townChanged.length > 0);
     this.updateSmoke();
     this.updateCities();
+    this.updateResources();
     this.updateUnits(sel);
   }
 
@@ -818,6 +831,7 @@ export class GlobeRenderer {
   private updateColors(changed: number[]): void {
     const { vertTiles, tileVerts } = this.terrain;
     const g = this.game;
+    if (changed.some((t) => g.explored[t])) this.weather.setSeen(g.explored);
     const td = this.tileTex.image.data as Float32Array;
     const c = new THREE.Color();
     for (const t of changed) {
@@ -951,6 +965,9 @@ export class GlobeRenderer {
             } else if (use !== USE.wild && use !== USE.rural && !inWater) {
               if (rand() >= FLORA_KEEP.urban[CATALOG[prop.kind].layer]) continue;
             }
+            // (A neighbor's flora feathering in never stands among the
+            // buildings of the tile it is on: a city's center keeps clear.)
+            if (u !== t && !inWater && g.use[t] === USE.center && (!this.cityProps.keepsFloraClear(t) || !this.cityProps.floraClear(t, d))) continue;
             if (prop.ancient) ancient = false;
             q.setFromUnitVectors(UP, d);
             q.multiply(new THREE.Quaternion().setFromAxisAngle(UP, spin * Math.PI * 2));
@@ -1007,6 +1024,38 @@ export class GlobeRenderer {
     return g.boundingBox!.max.y;
   }
 
+  // What a resource shows on its tile (rural/resourceModels.ts), once the
+  // player knows of it: a few small models in a patch toward one corner
+  // (under its badge), a little larger than life so they read from the
+  // board; on the water for a sea resource, never in the water for the
+  // rest, never in a city's center.
+  private readonly resourceCache = new Map<number, { key: string; items: PlacedProp[] }>();
+  private resourceProps(t: number): PlacedProp[] {
+    const g = this.game, r = g.resourceFor(t, HUMAN);
+    if (!r || g.use[t] === USE.center) return [];
+    const hit = this.resourceCache.get(t);
+    if (hit && hit.key === r) return hit.items;
+    const look = RESOURCE_LOOKS[r], rand = mulberry32((t + 11) * 2246822519);
+    const tile = g.tiles[t], { e1, k } = tileFrame(g, t);
+    const mid = tile.center.clone().lerp(g.globe.triCenters[tile.corners[2 % tile.corners.length]!]!, 0.4).normalize();
+    const u = e1.clone().addScaledVector(mid, -e1.dot(mid)).normalize(), w = mid.clone().cross(u);
+    const items: PlacedProp[] = [];
+    let hint = t;
+    for (const m of resourceLayout(r, rand)) {
+      const dir = mid.clone().addScaledVector(u, m.x * k).addScaledVector(w, m.y * k).normalize();
+      const l = locate(g.globe, dir, hint);
+      hint = l.t;
+      const s0 = this.citySpot(l.t, l.i, l.wa, l.wb), wet = s0.water - s0.ground > 0.0003;
+      if (wet !== (look.water === true)) continue;
+      const q = new THREE.Quaternion().setFromUnitVectors(UP, dir).multiply(new THREE.Quaternion().setFromAxisAngle(UP, m.yaw));
+      const sc = k * m.s, shade = 0.92 + 0.12 * rand();
+      items.push({ kind: ruralModelKind(m.model), matrix: new THREE.Matrix4().compose(dir.clone().multiplyScalar(1 + Math.max(s0.ground, s0.water) - 0.00004 * this.scale), q, new THREE.Vector3(sc, sc, sc)),
+        color: new THREE.Color(shade, shade, shade), leaf: new THREE.Color(m.color ?? 0xffffff) });
+    }
+    this.resourceCache.set(t, { key: r, items });
+    return items;
+  }
+
   // Rebuilds the instanced props (flora and city buildings) of explored
   // tiles, chunk by chunk (only `only` if given).
   private updateProps(only?: Set<PropChunk>): void {
@@ -1025,6 +1074,7 @@ export class GlobeRenderer {
         const dim = g.visible[t] ? 1 : 0.38;
         for (const p of this.placeProps(t)) add(p, dim);
         for (const p of this.cityProps.place(t)) add(p, dim);
+        for (const p of this.resourceProps(t)) add(p, dim);
       }
       // (Every kind this chunk shows now, or showed before: those get emptied.)
       for (const kind of new Set<PropKind>([...PROP_KINDS, ...lists.keys(), ...chunk.meshes.keys()])) {
@@ -1141,6 +1191,7 @@ export class GlobeRenderer {
     this.frustum.setFromProjectionMatrix(this.projView.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse));
     // Small props vanish when they would be under a pixel or so.
     const altitude = (dist - 1) / this.scale;
+    this.resourcesGroup.visible = altitude < RESOURCE_BADGES_BELOW && this.view === 'normal';
     // Beyond farDist a tree is under FAR_PX tall on screen.
     const pxPerUnit = this.renderer.domElement.height / (2 * Math.tan((this.camera.fov * Math.PI) / 360));
     const farDist = (this.treeHeight * pxPerUnit) / FAR_PX;
@@ -1266,27 +1317,54 @@ export class GlobeRenderer {
     return [...tiles];
   }
 
-  // Levels the top of a mountain tile for a wonder: within LEVEL_R of the
-  // peak the ground is cut down to LEVEL_AT of the way up, easing back into
-  // the slopes beyond; the cut is flat (its normals straight up).
+  // Levels the top of a mountain tile for a wonder (Machu Picchu): the
+  // ground near the peak is cut flat, easing back into the slopes beyond.
+  // The cut starts high (LEVEL_AT of the way up, within LEVEL_R of the
+  // peak) and goes deeper and wider until its flat top holds at least
+  // SUMMIT_HOUSES one-cell houses (cityProps.ts summit builds them).
   private levelSummit(t: number): void {
     this.levelled.add(t);
-    const topo = this.terrain.topo, H = this.terrain.fields.height;
-    const near = new Set([t, ...this.game.tiles[t].neighbors]);
+    const g = this.game, topo = this.terrain.topo, H = this.terrain.fields.height;
+    const near = new Set([t, ...g.tiles[t].neighbors]);
     let peak = -1;
     for (let v = 0; v < topo.V; v++) if (topo.tile[v] === t && (peak < 0 || H[v]! > H[peak]!)) peak = v;
     if (peak < 0) return;
-    const r0 = this.paint.params.r0;
-    const R = 0.42 * r0, OUT = 0.75 * r0;
-    const base = this.relief.base[t]!, cut = base + 0.78 * (H[peak]! - base);
+    const r0 = this.paint.params.r0, base = this.relief.base[t]!;
     const px = topo.dir[peak * 3]!, py = topo.dir[peak * 3 + 1]!, pz = topo.dir[peak * 3 + 2]!;
+    const P = new THREE.Vector3(px, py, pz);
+    const angOf = (v: number) => Math.acos(Math.min(1, px * topo.dir[v * 3]! + py * topo.dir[v * 3 + 1]! + pz * topo.dir[v * 3 + 2]!));
+    // The houses' grid: a city cell apart, round the peak.
+    const { e1, k } = tileFrame(g, t), cell = CITY_CELL * k;
+    const u = e1.clone().addScaledVector(P, -e1.dot(P)).normalize(), w = P.clone().cross(u);
+    const smp = newSample();
+    let hint = t;
+    // Whether the ground at d would lie on the cut: every vertex under it above the cut, within R.
+    const onCut = (d: THREE.Vector3, cut: number, R: number) => {
+      const l = locate(g.globe, d, hint);
+      hint = l.t;
+      topo.sample(l.t, l.i, l.wa, l.wb, smp);
+      for (let c = 0; c < 3; c++) { const v = smp.v[c]!; if (H[v]! <= cut || angOf(v) > R) return false; }
+      return true;
+    };
+    const fits = (cut: number, R: number) => {
+      let n = 0;
+      const steps = Math.ceil(R / cell) + 1;
+      for (let a = -steps; a <= steps; a++) for (let b = -steps; b <= steps; b++) {
+        const at = (x: number, y: number) => P.clone().addScaledVector(u, x * cell).addScaledVector(w, y * cell).normalize();
+        if ([[a, b], [a - 0.45, b - 0.45], [a + 0.45, b - 0.45], [a + 0.45, b + 0.45], [a - 0.45, b + 0.45]].every(([x, y]) => onCut(at(x!, y!), cut, R))) n++;
+      }
+      return n;
+    };
+    let f = LEVEL_AT, R = LEVEL_R * r0;
+    while (f > 0.3 && fits(base + f * (H[peak]! - base), R) < SUMMIT_HOUSES) { f -= 0.06; R += 0.06 * r0; }
+    const cut = base + f * (H[peak]! - base), OUT = R + 0.33 * r0;
     const changes = new Map<number, { height: number; up: number }>();
     for (let v = 0; v < topo.V; v++) {
       if (!near.has(topo.tile[v]!) || H[v]! <= cut) continue;
-      const ang = Math.acos(Math.min(1, px * topo.dir[v * 3]! + py * topo.dir[v * 3 + 1]! + pz * topo.dir[v * 3 + 2]!));
+      const ang = angOf(v);
       if (ang >= OUT) continue;
-      const k = smoothstep(OUT, R, ang);
-      changes.set(v, { height: H[v]! - k * (H[v]! - cut), up: k });
+      const s = smoothstep(OUT, R, ang);
+      changes.set(v, { height: H[v]! - s * (H[v]! - cut), up: s });
     }
     this.terrain.reshape(changes);
   }
@@ -1736,7 +1814,7 @@ export class GlobeRenderer {
     const shown: ShownUnit[] = g.units
       .filter((u) => g.visible[u.tile] && u.packedIn === null)
       .sort((a, b) => Number(unitDef(a.type).civilian ?? false) - Number(unitDef(b.type).civilian ?? false))
-      .map((u) => ({ id: u.id, type: u.type, civ: g.players[u.owner].name, color: g.players[u.owner].color, tile: u.tile, hp: u.hp, suffrage: false /* (no civics yet: the civic tree will set it) */ }));
+      .map((u) => ({ id: u.id, type: u.type, civ: g.players[u.owner].name, color: g.players[u.owner].color, tile: u.tile, hp: u.hp, suffrage: g.players[u.owner].politics.has('womensSuffrage') }));
     this.unitView.sync(shown, performance.now() / 1000);
   }
 
@@ -1753,6 +1831,37 @@ export class GlobeRenderer {
     sprite.scale.setScalar(0.026);
     sprite.renderOrder = 5;
     return sprite;
+  }
+
+  // A badge over each explored tile's resource the player knows of (a
+  // strategic one once revealed: resources.ts): its code on a dark chip, a
+  // bar of its kind's colour (bonus, luxury, strategic). Rebuilt when more
+  // of the map is explored, or a tech reveals more.
+  private updateResources(): void {
+    const g = this.game;
+    let n = 0;
+    for (let t = 0; t < g.N; t++) if (g.explored[t] && g.resourceFor(t, HUMAN)) n++;
+    if (n === this.resourcesShown) return;
+    // (More known: their models too.)
+    if (this.resourcesShown >= 0) this.updateProps();
+    this.resourcesShown = n;
+    for (const o of this.resourcesGroup.children) if (o instanceof THREE.Sprite) o.material.dispose();
+    this.resourcesGroup.clear();
+    for (let t = 0; t < g.N; t++) {
+      const r = g.explored[t] ? g.resourceFor(t, HUMAN) : null;
+      if (!r) continue;
+      const d = resourceDef(r);
+      const tex = this.texture(`res|${r}`, 96, 48, (ctx) => drawResourceBadge(ctx, d.abbr, RESOURCE_COLORS[d.kind]));
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, sizeAttenuation: false, depthTest: true }));
+      sprite.scale.set(0.024, 0.012, 1);
+      // (Off the center, toward a corner: units and cities stand in the middle.)
+      const tile = g.tiles[t];
+      const dir = tile.center.clone().lerp(g.globe.triCenters[tile.corners[2 % tile.corners.length]!]!, 0.45).normalize();
+      sprite.position.copy(dir).multiplyScalar(this.terrain.centerRadius[t] + 0.006 * this.scale);
+      sprite.renderOrder = 4;
+      sprite.userData['tile'] = t;
+      this.resourcesGroup.add(sprite);
+    }
   }
 
   private updateCities(): void {
@@ -2049,6 +2158,27 @@ function drawUnitIcon(ctx: CanvasRenderingContext2D, color: string, icon: string
     ctx.font = 'bold 26px system-ui, sans-serif';
     ctx.fillText(String(stack), 104, 23);
   }
+}
+
+// A resource's badge: its code on a dark chip with its kind's colour bar.
+const RESOURCE_COLORS = { bonus: '#7fb77e', luxury: '#b48ad6', strategic: '#d6a24c' } as const;
+// Badges show while the camera is lower than this (globe radii at the reference tile size).
+const RESOURCE_BADGES_BELOW = 0.45;
+function drawResourceBadge(ctx: CanvasRenderingContext2D, abbr: string, color: string): void {
+  ctx.fillStyle = 'rgba(16, 19, 24, 0.88)';
+  ctx.beginPath();
+  ctx.roundRect(4, 6, 88, 36, 6);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.fillRect(10, 12, 6, 24);
+  ctx.fillStyle = '#e4e7ec';
+  ctx.font = '600 24px Inter, system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(abbr, 54, 25);
 }
 
 // A city's banner: its size and name, with a health bar when damaged.

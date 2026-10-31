@@ -309,6 +309,27 @@ function makeNoiseTexture(): THREE.Data3DTexture {
   return tex;
 }
 
+// Fog of war: ground no one has explored lies flat at sea level, so no
+// mountain, valley or coast shows through it (nor casts a shadow out of it:
+// makeTerrainDepthMaterial). Only vertices mostly in unexplored tiles move,
+// so explored tiles keep their edges.
+const FOG_FLATTEN = /* glsl */ `
+  transformed = normalize(transformed) * mix(length(transformed), 1.0, smoothstep(0.5, 1.0, unexplored));`;
+
+// The ground as drawn into the sun's shadow map: flattened under fog of war like the ground itself.
+export function makeTerrainDepthMaterial(): THREE.MeshDepthMaterial {
+  const mat = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+  mat.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>
+        attribute float unexplored;`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        ${FOG_FLATTEN}`);
+  };
+  mat.customProgramCacheKey = () => 'terrain-depth';
+  return mat;
+}
+
 export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
   const mat = new THREE.MeshStandardMaterial({ roughness: 1, metalness: 0 });
   const uTime = { value: 0 };
@@ -351,6 +372,7 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
         varying float vShore;
         varying vec3 vObjPos;`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
+        ${FOG_FLATTEN}
         vRing = ring; vFog = unexplored; vShade = shade; vSnow = snow; vDepth = depth; vBank = bank; vShore = shore;
         vPc0 = pc0; vPc1 = pc1;
         vObjPos = position; vObjNormal = normal;`);
@@ -659,7 +681,9 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
           // Hex grid: a thin anti-aliased line where ring reaches 1.
           float fw = fwidth(vRing);
           gridLine = 1.0 - smoothstep(0.0, fw * 1.5, 1.0 - vRing);
-          gridLine *= (1.0 - smoothstep(0.05, 0.16, fw)) * dry; // the water surface draws its own
+          // (The water surface draws its own; under fog of war, everywhere
+          // alike, so the lines never trace an unexplored coast.)
+          gridLine *= (1.0 - smoothstep(0.05, 0.16, fw)) * max(dry, step(0.5, vFog));
           diffuseColor.rgb *= 1.0 - 0.18 * gridLine * uGrid;
 
           // Debug views: the ground's height as colors with contour lines

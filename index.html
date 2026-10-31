@@ -4,6 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Globe Civ</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet" />
   </head>
   <body>
     <canvas id="c"></canvas>
@@ -11,11 +13,15 @@
       <div id="topbar">
         <span id="civ"></span>
         <span id="turn"></span>
-        <span id="gold"></span>
+        <div id="empire"></div>
         <span class="spacer"></span>
-        <span id="hint"></span>
+        <nav id="sheets">
+          <button data-sheet="government">Government</button><button data-sheet="religion">Religion</button><button data-sheet="diplomacy">Diplomacy</button><button data-sheet="log">Log</button>
+        </nav>
         <button data-act="endTurn" class="primary">End turn <kbd>Enter</kbd></button>
       </div>
+      <div id="sheet" class="hidden"></div>
+      <div id="hint" class="hidden"></div>
       <div id="log"></div>
       <div id="selection" class="panel hidden"></div>
       <div id="tileinfo" class="panel hidden"></div>
@@ -29,7 +35,8 @@
         <div>Left-click: select (click again to cycle)</div>
         <div>Right-click: move / attack</div>
         <div>A city that grows asks where its new citizen goes: click a highlighted tile (<kbd>Esc</kbd>: the governor decides at end of turn)</div>
-        <div><kbd>B</kbd> found city · <kbd>F</kbd> fortify · <kbd>P</kbd> pillage · <kbd>Space</kbd> skip</div>
+        <div><kbd>B</kbd> found city · <kbd>F</kbd> fortify · <kbd>P</kbd> pillage · <kbd>Space</kbd> skip · <kbd>R</kbd> rally · <kbd>U</kbd> deploy</div>
+        <div>Research, Politics and Identity: click their tracks in the top bar · Government, Religion, Diplomacy, Log: the buttons (<kbd>Esc</kbd> closes)</div>
         <div><kbd>N</kbd>/<kbd>Tab</kbd> next unit · <kbd>C</kbd> center · <kbd>Enter</kbd> end turn</div>
         <div><kbd>H</kbd> hex grid on/off · <kbd>V</kbd> walk on the surface (first person) · <kbd>J</kbd> debug views (height map, water)</div>
       </details>

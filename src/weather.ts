@@ -20,7 +20,9 @@ import { AIR, airGLSL } from './sky.ts';
 // rivers' flow), each restarting while the other shows.
 //
 // The layer is one sphere at cloud height: lit white from above, gray
-// underneath (seen from the ground), hazy far away. Rain falls from fixed
+// underneath (seen from the ground), hazy far away. No cloud (nor rain)
+// shows over land the player has not explored (setSeen): the sky there
+// would tell of the land under it. Rain falls from fixed
 // columns under thick cloud over wet ground. In the map view the layer only
 // shows from high above (orbit), so it never hides the board.
 
@@ -39,6 +41,12 @@ uniform float uTime;
 uniform float uR0;
 uniform sampler2D uRain;
 uniform highp sampler3D uNoise;
+uniform sampler2D uSeen;
+// 1 over explored land, 0 over the unknown (soft at the edge).
+float wSeen(vec3 p) {
+  vec2 uv = vec2(atan(p.z, p.x) / 6.2831853 + 0.5, asin(clamp(p.y, -1.0, 1.0)) / 3.1415927 + 0.5);
+  return smoothstep(0.35, 0.9, texture(uSeen, uv).r);
+}
 float wWet(vec3 p) {
   vec2 uv = vec2(atan(p.z, p.x) / 6.2831853 + 0.5, asin(clamp(p.y, -1.0, 1.0)) / 3.1415927 + 0.5);
   return texture(uRain, uv).r;
@@ -79,6 +87,8 @@ float wCover(vec3 p, out float rain) {
   // Cold climates are dry, yet still snow: there less moisture is enough.
   float cold = wCold(p);
   float moist = mix(smoothstep(0.35, 0.7, wet), smoothstep(0.08, 0.3, wet), cold);
+  float seen = wSeen(p);
+  cover *= seen;
   rain = smoothstep(0.75, 0.95, u - (1.0 - P) + 0.75) * moist * cover * rainy;
   return cover;
 }
@@ -90,6 +100,8 @@ export interface Weather {
   // ([near, far], or [0, 0] for none); amount: how much of the layer shows (0..1);
   // haze: fog color and density.
   update(time: number, sunDir: THREE.Vector3, fade: [number, number], amount: number, haze: { color: THREE.Color; density: number }): void;
+  // Which tiles the player has explored (1) : the weather shows over those only.
+  setSeen(explored: Uint8Array): void;
 }
 
 export function makeWeather(globe: Globe, rainfall: Float32Array, temperature: Float32Array, r0: number, seed: number): Weather {
@@ -105,7 +117,9 @@ export function makeWeather(globe: Globe, rainfall: Float32Array, temperature: F
     uSun: { value: new THREE.Vector3(0, 1, 0) },
     uHaze: { value: new THREE.Color() },
     uHazeDensity: { value: 0 },
+    uSeen: { value: seenTexture() },
   };
+  const seenTiles = lonLatTiles(globe, SEEN_W, SEEN_H);
 
   // ---- the cloud layer ----
   const layer = new THREE.Mesh(
@@ -258,7 +272,57 @@ export function makeWeather(globe: Globe, rainfall: Float32Array, temperature: F
       uniforms.uHaze.value.copy(haze.color);
       uniforms.uHazeDensity.value = haze.density;
     },
+    setSeen(explored) {
+      const tex = uniforms.uSeen.value, data = tex.image.data as Uint8Array;
+      let f: Float32Array = new Float32Array(SEEN_W * SEEN_H);
+      for (let i = 0; i < f.length; i++) f[i] = explored[seenTiles[i]!] ? 1 : 0;
+      f = blurLonLat(f, SEEN_W, SEEN_H, 2);
+      for (let i = 0; i < f.length; i++) data[i] = Math.round(f[i]! * 255);
+      tex.needsUpdate = true;
+    },
   };
+}
+
+// The explored map, as a small longitude-latitude texture (setSeen fills it).
+const SEEN_W = 360, SEEN_H = 180;
+function seenTexture(): THREE.DataTexture {
+  const tex = new THREE.DataTexture(new Uint8Array(SEEN_W * SEEN_H), SEEN_W, SEEN_H, THREE.RedFormat, THREE.UnsignedByteType);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.magFilter = tex.minFilter = THREE.LinearFilter;
+  tex.needsUpdate = true;
+  return tex;
+}
+// The tile under each pixel of a W×H longitude-latitude map.
+function lonLatTiles(globe: Globe, W: number, H: number): Int32Array {
+  const out = new Int32Array(W * H), d = new THREE.Vector3();
+  let t = 0;
+  for (let y = 0; y < H; y++) {
+    const lat = ((y + 0.5) / H - 0.5) * Math.PI;
+    for (let x = 0; x < W; x++) {
+      const lon = ((x + 0.5) / W - 0.5) * Math.PI * 2;
+      d.set(Math.cos(lat) * Math.cos(lon), Math.sin(lat), Math.cos(lat) * Math.sin(lon));
+      t = nearestTile(globe, d, t);
+      out[y * W + x] = t;
+    }
+  }
+  return out;
+}
+// A box blur of a longitude-latitude map (wrapping east-west), `passes` times.
+function blurLonLat(f: Float32Array, W: number, H: number, passes: number): Float32Array {
+  for (let pass = 0; pass < passes; pass++) {
+    const next = new Float32Array(W * H);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      let s = 0, c = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        const yy = y + dy;
+        if (yy < 0 || yy >= H) continue;
+        for (let dx = -1; dx <= 1; dx++) { s += f[yy * W + ((x + dx + W) % W)]!; c++; }
+      }
+      next[y * W + x] = s / c;
+    }
+    f = next;
+  }
+  return f;
 }
 
 // The tiles' yearly rain as a small longitude-latitude map (0..1), blurred

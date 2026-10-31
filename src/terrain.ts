@@ -20,28 +20,30 @@ export interface BiomeDef {
   readonly defense: number; // fraction, e.g. 0.25 = +25%
 }
 
+// Yields are lean, after Civ IV: most land feeds itself and little more; a
+// site is made by its resources (resources.ts), rivers and coast.
 export const BIOMES = {
   // water
   ocean:               { name: 'Deep ocean',           yields: y(1, 0, 0), water: true,  move: 1, defense: 0 },
-  shallowSea:          { name: 'Shallow sea',          yields: y(2, 0, 1), water: true,  move: 1, defense: 0 },
+  shallowSea:          { name: 'Shallow sea',          yields: y(1, 0, 1), water: true,  move: 1, defense: 0 },
   lake:                { name: 'Lake',                 yields: y(2, 0, 1), water: true,  move: 1, defense: 0 },
   seaIce:              { name: 'Sea ice',              yields: y(0, 0, 0), water: true,  move: 1, defense: 0 },
   // cold
   iceSheet:            { name: 'Ice sheet',            yields: y(0, 0, 0), water: false, move: 3, defense: 0 },
   tundra:              { name: 'Tundra',               yields: y(1, 0, 0), water: false, move: 1, defense: 0 },
-  taiga:               { name: 'Boreal forest',        yields: y(1, 2, 0), water: false, move: 2, defense: 0.25 },
+  taiga:               { name: 'Boreal forest',        yields: y(1, 1, 0), water: false, move: 2, defense: 0.25 },
   // temperate
-  coldDesert:          { name: 'Cold desert',          yields: y(0, 1, 0), water: false, move: 1, defense: 0 },
+  coldDesert:          { name: 'Cold desert',          yields: y(0, 0, 0), water: false, move: 1, defense: 0 },
   steppe:              { name: 'Steppe',               yields: y(1, 1, 0), water: false, move: 1, defense: 0 },
   prairie:             { name: 'Prairie',              yields: y(2, 0, 0), water: false, move: 1, defense: 0 },
-  temperateForest:     { name: 'Temperate forest',     yields: y(1, 2, 0), water: false, move: 2, defense: 0.25 },
-  temperateRainforest: { name: 'Temperate rainforest', yields: y(1, 3, 0), water: false, move: 2, defense: 0.25 },
-  mediterranean:       { name: 'Mediterranean scrub',  yields: y(1, 1, 1), water: false, move: 1, defense: 0 },
+  temperateForest:     { name: 'Temperate forest',     yields: y(1, 1, 0), water: false, move: 2, defense: 0.25 },
+  temperateRainforest: { name: 'Temperate rainforest', yields: y(1, 2, 0), water: false, move: 2, defense: 0.25 },
+  mediterranean:       { name: 'Mediterranean scrub',  yields: y(1, 1, 0), water: false, move: 1, defense: 0 },
   // tropical
-  hotDesert:           { name: 'Hot desert',           yields: y(0, 1, 0), water: false, move: 1, defense: 0 },
-  savanna:             { name: 'Savanna',              yields: y(2, 1, 0), water: false, move: 1, defense: 0 },
-  monsoonForest:       { name: 'Monsoon forest',       yields: y(1, 2, 0), water: false, move: 2, defense: 0.25 },
-  jungle:              { name: 'Jungle',               yields: y(2, 0, 0), water: false, move: 2, defense: 0.25 },
+  hotDesert:           { name: 'Hot desert',           yields: y(0, 0, 0), water: false, move: 1, defense: 0 },
+  savanna:             { name: 'Savanna',              yields: y(1, 1, 0), water: false, move: 1, defense: 0 },
+  monsoonForest:       { name: 'Monsoon forest',       yields: y(1, 1, 0), water: false, move: 2, defense: 0.25 },
+  jungle:              { name: 'Jungle',               yields: y(1, 0, 0), water: false, move: 2, defense: 0.25 },
 } satisfies Record<string, BiomeDef>;
 export type BiomeKey = keyof typeof BIOMES;
 export const biomeDef = (k: BiomeKey): BiomeDef => BIOMES[k];
@@ -73,14 +75,14 @@ export interface FeatureDef {
 export const FEATURES = {
   marsh:      { name: 'Marsh',      yields: y(1, 0, 0), onWater: false, move: 3, defense: -0.15 },
   swamp:      { name: 'Swamp',      yields: y(1, 1, 0), onWater: false, move: 3, defense: 0.1 },
-  mangrove:   { name: 'Mangroves',  yields: y(1, 1, 1), onWater: false, move: 3, defense: 0.25 },
+  mangrove:   { name: 'Mangroves',  yields: y(1, 1, 0), onWater: false, move: 3, defense: 0.25 },
   bog:        { name: 'Peat bog',   yields: y(0, 1, 0), onWater: false, move: 3, defense: 0 },
-  floodplain: { name: 'Floodplain', yields: y(3, 0, 1), onWater: false, move: 1, defense: 0 },
-  oasis:      { name: 'Oasis',      yields: y(3, 0, 1), onWater: false, move: 1, defense: 0 },
+  floodplain: { name: 'Floodplain', yields: y(2, 0, 1), onWater: false, move: 1, defense: 0 },
+  oasis:      { name: 'Oasis',      yields: y(2, 0, 1), onWater: false, move: 1, defense: 0 },
   volcano:    { name: 'Volcano',    yields: y(0, 2, 0), onWater: false, move: 3, defense: 0.5 },
   glacier:    { name: 'Glacier',    yields: y(0, 0, 0), onWater: false, move: 4, defense: 0.5 },
-  reef:       { name: 'Coral reef', yields: y(2, 1, 1), onWater: true,  move: 1, defense: 0 },
-  kelp:       { name: 'Kelp forest', yields: y(2, 1, 0), onWater: true, move: 1, defense: 0 },
+  reef:       { name: 'Coral reef', yields: y(1, 1, 1), onWater: true,  move: 1, defense: 0 },
+  kelp:       { name: 'Kelp forest', yields: y(1, 1, 0), onWater: true, move: 1, defense: 0 },
 } satisfies Record<string, FeatureDef>;
 export type FeatureKey = keyof typeof FEATURES;
 export const featureDef = (k: FeatureKey): FeatureDef => FEATURES[k];

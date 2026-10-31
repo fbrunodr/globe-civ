@@ -48,6 +48,7 @@ scene.add(sun, sun.target);
 
 const TYPES = Object.keys(UNITS) as UnitKey[];
 const FIGHTERS = TYPES.filter((t) => UNITS[t].atk > 0);
+const isRanged = (t: UnitKey): boolean => 'ranged' in UNITS[t] && UNITS[t].ranged === true;
 const DEFENDERS = TYPES.filter((t) => !('civilian' in UNITS[t] && UNITS[t].civilian));
 const CELL_W = 4.2, CELL_D = 4.4; // a cell of the sheet (figure heights)
 const BATTLE_GAP = 7;             // between the two sides of a battle
@@ -105,15 +106,15 @@ function sheetCells(): Cell[] {
   const civs = civFilter === 'all' ? [...ARCH_CIVS] : [civFilter];
   return civs.flatMap((civ, row) => TYPES.map((type, col): Cell => ({
     type, civ, hp: sheetHp, x: col * CELL_W, z: row * CELL_D, facing: 1,
-    target: FIGHTERS.includes(type) ? new THREE.Vector3(col * CELL_W, 0, row * CELL_D + (type === 'archer' ? 7 : SHEET_CHARGE / CHARGE_SHARE)) : null,
-    charges: type !== 'archer', seed: row * 31 + col + 1,
+    target: FIGHTERS.includes(type) ? new THREE.Vector3(col * CELL_W, 0, row * CELL_D + (isRanged(type) ? 7 : SHEET_CHARGE / CHARGE_SHARE)) : null,
+    charges: !isRanged(type), seed: row * 31 + col + 1,
   })));
 }
 
 function battleCells(): Cell[] {
   const a = new THREE.Vector3(0, 0, BATTLE_GAP), d = new THREE.Vector3(0, 0, 0);
   const out: Cell[] = [];
-  if (battle.aHp > 0) out.push({ type: battle.aType, civ: battle.aCiv, hp: battle.aHp, x: a.x, z: a.z, facing: -1, target: d, charges: battle.aType !== 'archer', seed: 11 });
+  if (battle.aHp > 0) out.push({ type: battle.aType, civ: battle.aCiv, hp: battle.aHp, x: a.x, z: a.z, facing: -1, target: d, charges: !isRanged(battle.aType), seed: 11 });
   // (A defending archer shoots back; any other defender strikes where it stands.)
   if (battle.dHp > 0) out.push({ type: battle.dType, civ: battle.dCiv, hp: battle.dHp, x: d.x, z: d.z, facing: 1, target: FIGHTERS.includes(battle.dType) ? a : null, charges: false, seed: 23 });
   return out;
@@ -201,7 +202,7 @@ function pose(now: number): void {
   const m = new THREE.Matrix4(), turn = new THREE.Matrix4(), offset = new THREE.Vector3();
   for (const p of placed) {
     const c = p.cell, fights = fighting && c.target !== null;
-    const ranged = c.type === 'archer', charging = fights && c.charges;
+    const ranged = isRanged(c.type), charging = fights && c.charges;
     offset.set(0, 0, 0);
     if (charging) offset.set(c.target!.x - c.x, 0, c.target!.z - c.z).multiplyScalar(CHARGE_SHARE * out);
     // (Facing its front; turned about to fall back.)
@@ -219,7 +220,7 @@ function pose(now: number): void {
   const volley = fighting ? Math.floor(t * 3) : 0;
   if (volley > loosed && volley <= 2) {
     for (const c of cells) {
-      if (c.type !== 'archer' || !c.target) continue;
+      if (!isRanged(c.type) || !c.target) continue;
       const from = placed.filter((p) => p.cell === c && !p.hair).map((p) => new THREE.Vector3(c.x - p.fx * c.facing, 0.75, c.z + p.fz * c.facing));
       volleys.loose(from, c.target, 1.2, now, c.seed * 3 + volley);
     }
@@ -234,7 +235,13 @@ const smooth = (x: number) => x * x * (3 - 2 * x);
 const unitName = (civ: ArchCiv, type: UnitKey) => `${civ} ${UNITS[type].name.toLowerCase()}`;
 function strengths(): { A: number; D: number; bonus: number } {
   const bonus = GROUNDS[battle.ground]!.bonus + (battle.fortified ? FORTIFY_BONUS : 0);
-  return { A: combatStrength(battle.aType, 'atk', battle.aHp, 0), D: combatStrength(battle.dType, 'def', battle.dHp, bonus), bonus };
+  // (As the game: pikemen fight mounted units at double strength.)
+  const mounted = (t: UnitKey) => t === 'horseman' || t === 'knight';
+  return {
+    A: combatStrength(battle.aType, 'atk', battle.aHp, 0) * (battle.aType === 'pikeman' && mounted(battle.dType) ? 2 : 1),
+    D: combatStrength(battle.dType, 'def', battle.dHp, bonus) * (battle.dType === 'pikeman' && mounted(battle.aType) ? 2 : 1),
+    bonus,
+  };
 }
 function showBattle(): void {
   $('aHp').textContent = `${Math.max(0, battle.aHp)} HP`;
@@ -242,14 +249,14 @@ function showBattle(): void {
   const { A, D, bonus } = strengths();
   const alive = battle.aHp > 0 && battle.dHp > 0;
   $('odds').innerHTML = alive
-    ? `Strength <b>${A.toFixed(2)}</b> against <b>${D.toFixed(2)}</b>${bonus ? ` (defence ${bonus > 0 ? '+' : ''}${Math.round(bonus * 100)}%)` : ''} · each exchange won <b>${Math.round((100 * A) / (A + D))}%</b> of the time${battle.aType === 'archer' ? ' · a volley: three exchanges at most, half the damage back' : ''}`
+    ? `Strength <b>${A.toFixed(2)}</b> against <b>${D.toFixed(2)}</b>${bonus ? ` (defence ${bonus > 0 ? '+' : ''}${Math.round(bonus * 100)}%)` : ''} · each exchange won <b>${Math.round((100 * A) / (A + D))}%</b> of the time${isRanged(battle.aType) ? ' · a volley: three exchanges at most, half the damage back' : ''}`
     : 'One side has fallen: Heal both to fight again.';
   $<HTMLButtonElement>('fight').disabled = !alive || fight !== null;
 }
 function startFight(): void {
   if (mode !== 'battle' || fight || battle.aHp <= 0 || battle.dHp <= 0) return;
   const { A, D } = strengths();
-  const outcome = fightRounds(battle.aHp, battle.dHp, A, D, battle.aType === 'archer', Math.random);
+  const outcome = fightRounds(battle.aHp, battle.dHp, A, D, isRanged(battle.aType), Math.random);
   fight = { t0: performance.now() / 1000, loop: false, outcome };
   $('result').textContent = 'Fighting…';
   showBattle();
@@ -263,7 +270,7 @@ function endFight(): void {
   const lost = (before: number, after: number) => `${before} → ${Math.max(0, after)} HP`;
   const line = o.attacker <= 0 ? `<b class="loss">The ${a} is destroyed</b> by the ${d}.`
     : o.defender <= 0 ? `<b class="win">The ${a} destroys the ${d}.</b>`
-    : `Neither falls${battle.aType === 'archer' ? ' (the volley is spent)' : ''}.`;
+    : `Neither falls${isRanged(battle.aType) ? ' (the volley is spent)' : ''}.`;
   $('result').innerHTML = `${line}<br>${a}: ${lost(battle.aHp, o.attacker)} · ${d}: ${lost(battle.dHp, o.defender)}`;
   battle.aHp = o.attacker;
   battle.dHp = o.defender;

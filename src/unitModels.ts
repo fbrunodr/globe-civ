@@ -97,13 +97,15 @@ const ARM = (side: number) => [-side, SHOULDER, 0.35] as const;
 export const STRIKE = 2;
 const HIT = (pivot: number, amp: number) => [STRIKE, pivot, amp] as const;
 
-type Hold = 'spear' | 'club' | 'bow' | 'staff' | 'banner' | 'none';
+type Hold = 'spear' | 'pike' | 'club' | 'sword' | 'bow' | 'crossbow' | 'musket' | 'rifle' | 'staff' | 'banner' | 'none';
 
 // A figure on foot. `hold`: what the right hand carries (it then stops
 // swinging); `shield`: on the left arm, or none; `pack`: a bundle on the back.
 // `female`: a woman's build (slimmer at the shoulders, her tunic longer;
 // a civilian's to the ankles).
-function figure(gear: Gear, hold: Hold, shield: boolean, opts: { helmet?: boolean; pack?: boolean; quiver?: boolean; female?: boolean; civilian?: boolean } = {}): THREE.BufferGeometry[] {
+// `modern`: a modern soldier (trousers, a steel helmet whatever the civ wore).
+function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boolean; pack?: boolean; quiver?: boolean; female?: boolean; civilian?: boolean; modern?: boolean } = {}): THREE.BufferGeometry[] {
+  const gear: Gear = opts.modern ? { ...gear0, legs: 0x4a4e44, helmet: 'kettle' } : gear0;
   const f = opts.female === true, shoulder = f ? 0.13 : 0.15, skirt = f ? (opts.civilian ? 0.34 : 0.26) : 0.2;
   const legColor = gear.legs === 'bare' ? SKIN : gear.legs;
   const legTag = (side: number): Tag => ({ skin: gear.legs === 'bare', limb: LEG(side) });
@@ -124,12 +126,19 @@ function figure(gear: Gear, hold: Hold, shield: boolean, opts: { helmet?: boolea
   const bowUp = HIT(SHOULDER, 1.3); // (an archer raises his bow to loose)
   out.push(rod(V(-shoulder, SHOULDER, 0), V(-shoulder - 0.03, 0.46, shield || hold === 'bow' ? 0.08 : 0.02), 0.035, 0.03, 3, CLOTH, { team: true, ...(swingL ? { limb: ARM(-1) } : hold === 'bow' ? { limb: bowUp } : {}) }));
   // (A spear dips forward in a fight, a club swings down hard.)
-  const strike = hold === 'spear' ? HIT(SHOULDER, 1.1) : hold === 'club' ? HIT(SHOULDER, 1.5) : null;
+  const strike = hold === 'spear' || hold === 'pike' ? HIT(SHOULDER, 1.1) : hold === 'club' || hold === 'sword' ? HIT(SHOULDER, 1.5)
+    : hold === 'crossbow' || hold === 'musket' || hold === 'rifle' ? HIT(SHOULDER, 0.9) : null;
   const armR = swingR ? { limb: ARM(1) } : strike ? { limb: strike } : {};
   out.push(rod(V(shoulder, SHOULDER, 0), V(shoulder + 0.03, 0.46, hold === 'none' ? 0.02 : 0.08), 0.035, 0.03, 3, CLOTH, { team: true, ...armR }));
   const w: Tag = strike ? { limb: strike } : {};
   if (hold === 'spear') out.push(rod(V(0.19, 0.12, 0.09), V(0.19, 1.32, 0.09), 0.014, 0.012, 3, WOOD, w), shape(new THREE.ConeGeometry(0.03, 0.12, 4, 1, true).translate(0, 0.06, 0), METAL, { x: 0.19, y: 1.32, z: 0.09 }, w));
   if (hold === 'club') out.push(rod(V(0.19, 0.42, 0.1), V(0.24, 0.8, 0.22), 0.022, 0.045, 4, WOOD, w));
+  if (hold === 'sword') out.push(rod(V(0.19, 0.44, 0.1), V(0.21, 0.5, 0.14), 0.02, 0.02, 3, LEATHER, w), rod(V(0.21, 0.5, 0.14), V(0.25, 0.86, 0.3), 0.022, 0.008, 3, METAL, w));
+  if (hold === 'pike') out.push(rod(V(0.19, 0.05, 0.09), V(0.19, 1.75, 0.09), 0.014, 0.012, 3, WOOD, w), shape(new THREE.ConeGeometry(0.028, 0.14, 4, 1, true).translate(0, 0.07, 0), METAL, { x: 0.19, y: 1.75, z: 0.09 }, w));
+  // (A long gun at the shoulder, its muzzle up; a rifle's with a bayonet.)
+  if (hold === 'musket' || hold === 'rifle') out.push(rod(V(0.18, 0.42, 0.08), V(0.2, 1.12, 0.12), 0.018, 0.014, 4, WOOD, w), rod(V(0.2, 0.86, 0.12), V(0.205, 1.14, 0.125), 0.012, 0.012, 3, METAL, w));
+  if (hold === 'rifle') out.push(rod(V(0.205, 1.14, 0.125), V(0.21, 1.3, 0.13), 0.008, 0.002, 3, METAL, w));
+  if (hold === 'crossbow') out.push(rod(V(0.12, 0.6, 0.06), V(0.12, 0.62, 0.36), 0.025, 0.02, 4, WOOD, w), rod(V(-0.04, 0.62, 0.32), V(0.28, 0.62, 0.32), 0.012, 0.012, 3, WOOD, w));
   if (hold === 'staff') out.push(rod(V(0.19, 0.02, 0.1), V(0.19, 1.05, 0.1), 0.015, 0.013, 3, WOOD));
   if (hold === 'banner') {
     // A tall pole with the owner's banner hanging from a crossbar, a finial on top.
@@ -182,8 +191,10 @@ function helmetOf(h: Helmet): THREE.BufferGeometry[] {
 }
 
 // A rider on his horse (the horse's legs swing in diagonal pairs).
-// `officer`: a commander's (a cape and a plume in the owner's colour, no lance).
-function rider(gear: Gear, coat: number, female: boolean, officer = false): THREE.BufferGeometry[] {
+// `officer`: a commander's (a cape and a plume in the owner's colour, no
+// lance); `heavy`: a knight's (the horse in a long cloth, a helmet whatever
+// the civ wears); `saber`: a cavalryman's (a sabre for the lance).
+function rider(gear: Gear, coat: number, female: boolean, officer = false, heavy = false, saber = false): THREE.BufferGeometry[] {
   const LEG_TOP = 0.5, HORSE_LEG = (side: number) => [side, LEG_TOP, 0.4] as const;
   const leg = (x: number, z: number, side: number) => shape(new THREE.CylinderGeometry(0.035, 0.045, LEG_TOP, 4, 1, true).translate(0, LEG_TOP / 2, 0), coat, { x, z }, { limb: HORSE_LEG(side) });
   const out: THREE.BufferGeometry[] = [
@@ -205,10 +216,35 @@ function rider(gear: Gear, coat: number, female: boolean, officer = false): THRE
     rod(V(-0.13, 1.05, 0), V(-0.15, 0.88, 0.14), 0.032, 0.028, 3, CLOTH, { team: true }),
   );
   if (officer) out.push(box(0.26, 0.42, 0.03, CLOTH, { y: 0.86, z: -0.13, rx: 0.15 }, { team: true }), box(0.03, 0.12, 0.16, PAINT, { y: 1.33 + (gear.helmet === 'none' ? -0.05 : 0.05) }, { team: true }));
+  else if (saber) out.push(rod(V(0.18, 0.86, 0.12), V(0.24, 1.3, 0.32), 0.016, 0.006, 3, METAL, { limb: HIT(1.05, 0.9) }));
   else out.push(rod(V(0.19, 0.7, -0.2), V(0.19, 1.45, 0.55), 0.012, 0.01, 3, WOOD, { limb: HIT(1.05, 0.6) }));
-  out.push(...helmetOf(gear.helmet).map((g) => g.translate(0, RIDER_HEAD, 0)));
+  out.push(...helmetOf(heavy && (gear.helmet === 'none' || gear.helmet === 'cap' || gear.helmet === 'turban' || gear.helmet === 'feather' || gear.helmet === 'hat') ? 'kettle' : gear.helmet).map((g) => g.translate(0, RIDER_HEAD, 0)));
+  if (heavy) out.push(box(0.3, 0.32, 0.66, CLOTH, { y: 0.56 }, { team: true }));
   return out;
 }
+
+// ---- machines ----
+// Guns and tanks: no one walks, no skin or hair; a little of the owner's
+// colour on the carriage or hull. About a figure's height, longer.
+const IRON = 0x4a4d52, GUNMETAL = 0x2e3034, OLIVE = 0x5d6248;
+function cannon(heavy: boolean): THREE.BufferGeometry[] {
+  const wheel = (x: number) => shape(new THREE.CylinderGeometry(heavy ? 0.24 : 0.28, heavy ? 0.24 : 0.28, 0.06, 10, 1, false), heavy ? GUNMETAL : WOOD, { x, y: heavy ? 0.24 : 0.28, rz: Math.PI / 2 });
+  return [
+    wheel(0.22), wheel(-0.22),
+    box(0.3, 0.14, 0.7, PAINT, { y: 0.32, z: -0.18, rx: -0.25 }, { team: true }),
+    shape(new THREE.CylinderGeometry(heavy ? 0.07 : 0.09, heavy ? 0.09 : 0.12, heavy ? 1.1 : 0.85, 8, 1, false), heavy ? OLIVE : IRON, { y: 0.5, z: 0.25, rx: Math.PI / 2 - (heavy ? 0.35 : 0.2) }),
+    ...(heavy ? [box(0.62, 0.36, 0.03, OLIVE, { y: 0.55, z: 0.02 })] : []),
+  ];
+}
+function tank(): THREE.BufferGeometry[] {
+  return [
+    box(0.2, 0.3, 1.5, GUNMETAL, { x: 0.36, y: 0.16 }), box(0.2, 0.3, 1.5, GUNMETAL, { x: -0.36, y: 0.16 }),
+    box(0.62, 0.28, 1.36, PAINT, { y: 0.4 }, { team: true }),
+    box(0.46, 0.22, 0.56, OLIVE, { y: 0.65, z: -0.08 }),
+    shape(new THREE.CylinderGeometry(0.035, 0.04, 0.8, 6, 1, false), GUNMETAL, { y: 0.66, z: 0.55, rx: Math.PI / 2 }),
+  ];
+}
+export const isMachine = (type: UnitKey): boolean => type === 'cannon' || type === 'artillery' || type === 'tank';
 
 // ---- hair ----
 // Hair, drawn apart from the figures (an instanced mesh per style, shared by
@@ -244,7 +280,9 @@ export function hairModel(style: HairStyle): THREE.BufferGeometry {
   return g;
 }
 // Whether a type's figures wear helmets (their hair then mostly hidden).
-export const wearsHelmet = (type: UnitKey, civ: ArchCiv): boolean => (type === 'spearman' || type === 'horseman' || type === 'commander') && GEAR[civ].helmet !== 'none';
+export const wearsHelmet = (type: UnitKey, civ: ArchCiv): boolean =>
+  type === 'knight' || type === 'infantry' || ((type === 'spearman' || type === 'horseman' || type === 'commander' || type === 'swordsman' || type === 'pikeman'
+    || type === 'crossbowman' || type === 'musketman' || type === 'rifleman' || type === 'cavalry') && GEAR[civ].helmet !== 'none');
 
 // ---- who serves ----
 // The share of women among a unit's figures: about half of the civilians
@@ -258,13 +296,17 @@ export const womenShare = (type: UnitKey, suffrage: boolean): number =>
 // for fighting units (fewer as it is hurt), a small party for the others.
 export const FORMATION = { cols: 4, rows: 3 } as const;
 export const FULL_FORMATION = FORMATION.cols * FORMATION.rows;
-// Fighting units' figures shown at `hp` (of 100): one per 8 HP or part of it, at most a full formation.
-export const figuresFor = (hp: number): number => Math.max(1, Math.min(FULL_FORMATION, Math.ceil(hp / 8)));
+// Fighting units' figures shown at `hp` (of 100), of `full` at full
+// strength: soldiers one per 8 HP or part of it (at most a dozen), machines
+// one per a share of it.
+export const figuresFor = (hp: number, full = FULL_FORMATION): number =>
+  Math.max(1, Math.min(full, full === FULL_FORMATION ? Math.ceil(hp / 8) : Math.ceil((hp * full) / 100)));
 
 export interface UnitLook {
   readonly party: 'formation' | 'group'; // a fighting formation, or a small party
   readonly count: number;                // figures at full strength
   readonly spacing: readonly [number, number]; // between figures, across and front to back (model units)
+  readonly cols?: number;                // a formation's ranks are this wide (default FORMATION.cols)
 }
 export const UNIT_LOOK: Record<UnitKey, UnitLook> = {
   warrior:  { party: 'formation', count: FULL_FORMATION, spacing: [0.55, 0.6] },
@@ -273,7 +315,24 @@ export const UNIT_LOOK: Record<UnitKey, UnitLook> = {
   horseman: { party: 'formation', count: FULL_FORMATION, spacing: [0.6, 1.05] },
   scout:    { party: 'group', count: 2, spacing: [0.5, 0.5] },
   commander: { party: 'group', count: 2, spacing: [0.75, 0.5] },
+  swordsman:   { party: 'formation', count: FULL_FORMATION, spacing: [0.55, 0.6] },
+  pikeman:     { party: 'formation', count: FULL_FORMATION, spacing: [0.5, 0.55] },
+  crossbowman: { party: 'formation', count: FULL_FORMATION, spacing: [0.55, 0.6] },
+  knight:      { party: 'formation', count: FULL_FORMATION, spacing: [0.62, 1.1] },
   settler:  { party: 'group', count: 4, spacing: [0.55, 0.55] },
+  musketman: { party: 'formation', count: FULL_FORMATION, spacing: [0.52, 0.58] },
+  rifleman:  { party: 'formation', count: FULL_FORMATION, spacing: [0.52, 0.58] },
+  infantry:  { party: 'formation', count: FULL_FORMATION, spacing: [0.6, 0.62] },
+  cavalry:   { party: 'formation', count: FULL_FORMATION, spacing: [0.6, 1.05] },
+  cannon:    { party: 'formation', count: 4, cols: 2, spacing: [0.95, 1.3] },
+  artillery: { party: 'formation', count: 4, cols: 2, spacing: [1.0, 1.5] },
+  tank:      { party: 'formation', count: 4, cols: 2, spacing: [1.1, 1.9] },
+};
+// A unit's figures at full strength, and its formation's width.
+export const fullCount = (type: UnitKey): number => UNIT_LOOK[type].count;
+export const colsOf = (type: UnitKey, n: number): number => {
+  const look = UNIT_LOOK[type];
+  return look.party === 'formation' ? look.cols ?? FORMATION.cols : Math.ceil(Math.sqrt(n));
 };
 
 // Where a unit's figures stand (model units: x across, z forward, around
@@ -282,8 +341,8 @@ export const UNIT_LOOK: Record<UnitKey, UnitLook> = {
 // `rand` jitters them (none: exact ranks).
 export function formationSlots(type: UnitKey, hp: number, rand?: () => number): [number, number][] {
   const look = UNIT_LOOK[type];
-  const n = look.party === 'formation' ? figuresFor(hp) : look.count;
-  const cols = look.party === 'formation' ? FORMATION.cols : Math.ceil(Math.sqrt(look.count));
+  const n = look.party === 'formation' ? figuresFor(hp, look.count) : look.count;
+  const cols = colsOf(type, look.count);
   const rows = Math.ceil(look.count / cols);
   const jitter = look.party === 'group' ? 0.35 : 0.08, j = () => (rand ? (rand() - 0.5) * jitter : 0);
   return Array.from({ length: n }, (_, i) => {
@@ -306,6 +365,17 @@ export function unitModel(type: UnitKey, civ: ArchCiv, variant = 0, female = fal
       case 'scout': return figure(gear, 'staff', false, { helmet: false, pack: true, female, civilian: true });
       case 'settler': return figure(gear, variant % 2 ? 'staff' : 'none', false, { pack: variant % 2 === 0, female, civilian: true });
       // (Its two figures: the commander mounted, and the standard-bearer.)
+      case 'swordsman': return figure(gear, 'sword', true, { helmet: true, female });
+      case 'pikeman': return figure(gear, 'pike', false, { helmet: true, female });
+      case 'crossbowman': return figure(gear, 'crossbow', false, { helmet: true, quiver: true, female });
+      case 'knight': return rider(gear, HORSE[variant % HORSE.length]!, female, false, true);
+      case 'musketman': return figure(gear, 'musket', false, { helmet: true, female });
+      case 'rifleman': return figure(gear, 'rifle', false, { helmet: true, female });
+      case 'infantry': return figure(gear, 'rifle', false, { helmet: true, female, modern: true, pack: true });
+      case 'cavalry': return rider(gear, HORSE[variant % HORSE.length]!, female, false, false, true);
+      case 'cannon': return cannon(false);
+      case 'artillery': return cannon(true);
+      case 'tank': return tank();
       case 'commander': return variant === 0 ? rider(gear, HORSE[0], female, true) : figure(gear, 'banner', false, { helmet: true, female });
     }
   })();
@@ -314,10 +384,10 @@ export function unitModel(type: UnitKey, civ: ArchCiv, variant = 0, female = fal
   return g;
 }
 // How many variants of a type's model there are (instances pick among them).
-export const unitVariants = (type: UnitKey): number => (type === 'horseman' ? HORSE.length : type === 'settler' || type === 'commander' ? 2 : 1);
+export const unitVariants = (type: UnitKey): number => (type === 'horseman' || type === 'knight' || type === 'cavalry' ? HORSE.length : type === 'settler' || type === 'commander' ? 2 : 1);
 // The model variant of a unit's i-th figure (a commander's are set: first
 // the commander, then the standard-bearer; others drawn).
 export const variantOf = (type: UnitKey, i: number, rand: () => number): number =>
   type === 'commander' ? i % 2 : Math.floor(rand() * unitVariants(type));
 // Whether a figure rides (its head higher, its shadow longer).
-export const rides = (type: UnitKey, variant: number): boolean => type === 'horseman' || (type === 'commander' && variant === 0);
+export const rides = (type: UnitKey, variant: number): boolean => type === 'horseman' || type === 'knight' || type === 'cavalry' || (type === 'commander' && variant === 0);

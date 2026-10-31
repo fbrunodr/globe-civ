@@ -3,8 +3,10 @@
 // it. Everything goes through the game's own rules (growth options, what a
 // city may build, wonder sites), so a lab city is a city the game could make.
 
+import { TECH_KEYS, techDef } from './techs.ts';
+import { POLITICS_KEYS, politicsDef } from './politics.ts';
 import type { Game, City } from './game.ts';
-import { ERAS, USE, WONDERS, type BuildingKey, type WonderKey, type FocusKey, type EraIndex } from './cities.ts';
+import { USE, WONDERS, type BuildingKey, type WonderKey, type FocusKey, type EraIndex } from './cities.ts';
 
 export function foundCity(g: Game, tile: number, owner: number): City | null {
   const settler = g.createUnit('settler', owner, tile);
@@ -36,16 +38,18 @@ export function shrink(g: Game, c: City, n: number): void {
   for (let i = 0; i < n && c.pop > 1; i++) g.removeCitizen(c);
 }
 
+// (With every tech and politics of that era and before: what it can build.)
 export function setEra(g: Game, owner: number, era: EraIndex): void {
   const p = g.players[owner]!;
   p.era = era;
-  p.science = Math.max(p.science, ERAS[era].science);
+  for (const k of TECH_KEYS) if (techDef(k).era <= era) p.techs.add(k);
+  for (const k of POLITICS_KEYS) if (politicsDef(k).era <= era) p.politics.add(k);
   g.useVersion++;
 }
 
-// Adds building k, if the city may have it.
+// Adds building k, if the city may have it (strategic resources aside: the lab has them all).
 export function addBuilding(g: Game, c: City, k: BuildingKey): boolean {
-  if (!g.canBuild(c, k)) return false;
+  if (!g.canBuild(c, k, true)) return false;
   g.addBuilding(c, k);
   return true;
 }
@@ -102,7 +106,7 @@ export const PRESETS: readonly Preset[] = [
 ];
 
 // Owners by era, so cities of one era share a civ (eras are per civ).
-const ERA_OWNERS: Record<EraIndex, readonly number[]> = { 0: [0, 3], 1: [1, 4, 7], 2: [2, 5, 6] };
+const ERA_OWNERS: Record<EraIndex, readonly number[]> = { 0: [0, 3], 1: [1, 4, 7], 2: [2, 5, 6], 3: [8, 9], 4: [10, 11], 5: [12, 13] };
 
 export interface BuiltPreset {
   preset: Preset;
@@ -113,7 +117,7 @@ export interface BuiltPreset {
 // Builds every preset on the world, far apart, on sites that fit.
 export function buildPresets(g: Game, presets: readonly Preset[] = PRESETS): BuiltPreset[] {
   const used: number[] = [];
-  const turn: Record<EraIndex, number> = { 0: 0, 1: 0, 2: 0 };
+  const turn: Record<EraIndex, number> = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
   const order = g.tiles.map((t) => t.id).sort((a, b) => ((a * 2654435761) >>> 0) - ((b * 2654435761) >>> 0));
   const out: BuiltPreset[] = [];
   for (const p of presets) {

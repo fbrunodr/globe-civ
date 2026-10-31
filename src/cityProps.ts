@@ -26,8 +26,8 @@ import { SCATTER_GAP, areaLook, cropRegion, scatterIn, type Fill, type RGB } fro
 import { ruralModelKind, type RuralModel } from './rural/models.ts';
 import { SAFE_RHO, len as len2, pointInPoly, sub as sub2, type Pt as Pt2 } from './town/geometry.ts';
 import { mulberry32, type Rng } from './rng.ts';
-import { dressCity } from './cityDress.ts';
-import { paintCity } from './cityPainter.ts';
+import { dressCity, type DressEra } from './cityDress.ts';
+import { paintCity, CITY_CELL } from './cityPainter.ts';
 
 // The ground at a spot of a tile (render.ts samples the terrain).
 export interface CitySpot {
@@ -98,6 +98,10 @@ const HARVEST: Fill = { t: 'scatter', model: 'haystack', color: 0xc9a85a, per: 1
 // Models are enlarged a little over true scale so towns read from afar
 // (the drawings' lot sizes assume this scale).
 const HOUSE_SCALE = 1.5;
+// Machu Picchu: the least houses its summit holds (render.ts cuts it deeper
+// until they fit), and how level ground must be to count as the cut's top.
+export const SUMMIT_HOUSES = 6;
+const SUMMIT_FLAT = 0.00008;
 // Foundations: under a building whose footprint's corners differ by more
 // than this (× the world scale); the model is FOUNDATION_UNIT on a side.
 const FOUNDATION_MIN = 0.00005;
@@ -115,6 +119,12 @@ const RURAL: Record<ImprovementKey, BuildingKind> = {
   farm: 'farmstead', mine: 'mineHead', camp: 'lodge', quarry: 'quarryStones', wetland: 'stiltHut', boats: 'fishingBoat',
 };
 
+
+// The look a city takes in a game era (cityDress.ts has four): the
+// Renaissance keeps the medieval town; the Industrial and Modern eras build
+// in their own styles (cityDress era 3, skyscrapers and all).
+const DRESS_ERA: Record<EraIndex, DressEra> = { 0: 0, 1: 1, 2: 2, 3: 2, 4: 3, 5: 3 };
+const dressEraOf = (e: EraIndex): DressEra => DRESS_ERA[e];
 
 // Roofs follow the era and the climate: thatch in the Ancient era and small
 // towns, then tiles in the warm south and slate in the cold.
@@ -134,7 +144,7 @@ const mix = (a: number, b: number) => { let h = Math.imul(a ^ 0x9e3779b9, 0x85eb
 export const isFarmland = (g: Game, t: number): boolean => g.use[t] === USE.rural && g.tiles[t].corners.length === 6 && !g.isWater(t)
   && (() => { const k = improvementFor(g.terrainAt(t)); return k !== null && WORK_OF[k] !== null; })();
 // How far a city's countryside has filled up: by its civ's era (until the tech tree).
-const ruralDensity = (g: Game, city: City): RuralDensity => (['low', 'medium', 'high'] as const)[g.players[city.owner]!.era] ?? 'high';
+const ruralDensity = (g: Game, city: City): RuralDensity => { const e = g.players[city.owner]!.era; return e === 0 ? 'low' : e === 1 ? 'medium' : 'high'; };
 
 // Built-up tiles: the cities' centers.
 export const isBuilt = (g: Game, t: number): boolean => g.use[t] === USE.center && g.tiles[t].corners.length === 6 && !g.isWater(t);
@@ -295,7 +305,7 @@ export class CityProps {
     // tile) and the one going up, as scaffolding.
     const wonders: SiteModel[] = [...g.wondersAt(city.tile).flatMap((w) => (w === 'machuPicchu' ? [] : [w])), ...(city.wonderTile === city.tile ? ['scaffold' as const] : [])];
     const dressed = dressCity({
-      civ: g.players[city.owner]!.name, era, pop: city.pop, wonders, walled, seed: mix(city.id, 0xc17),
+      civ: g.players[city.owner]!.name, era: dressEraOf(era), pop: city.pop, wonders, walled, seed: mix(city.id, 0xc17),
       free: (p) => !wet(this.sampleDir(toDir(p))),
     });
     // (The painter keeps them apart and off the water: each stands where painted.)
@@ -437,25 +447,43 @@ export class CityProps {
     return r;
   }
 
-  // A wonder on a mountain top: at the highest point of the tile (levelled
-  // for it by the renderer).
-  private summit(t: number, kind: BuildingKind): PlacedBuilding[] {
+  // Machu Picchu: houses and shrines of dressed stone, a city cell each, on
+  // the summit cut flat for them (render.ts levelSummit), filling every cell
+  // of the flat top on a grid round its highest point.
+  private machuPicchu(t: number): PlacedBuilding[] {
     const rand = mulberry32((t + 3) * 2654435761);
-    let best: CitySpot | null = null;
-    for (const sp of this.tileSpots(t, 6, rand)) {
+    let top: CitySpot | null = null;
+    for (const sp of this.tileSpots(t, 8, rand)) {
       const s = this.sample(t, sp.i, sp.wa, sp.wb);
-      if (!best || s.ground > best.ground) best = s;
+      if (!top || s.ground > top.ground) top = s;
     }
-    const c = this.sample(t, 0, 0.01, 0.01);
-    if (!best || c.ground >= best.ground) best = c;
-    return this.stand(kind, best.dir, rand() * Math.PI * 2, HOUSE_SCALE, buildingEntry(kind).leaf, rand, this.game.ownerOf(t));
+    if (!top) return [];
+    const P = top.dir, { e1, k } = tileFrame(this.game, t), cell = CITY_CELL * k;
+    const u = e1.clone().addScaledVector(P, -e1.dot(P)).normalize(), w = P.clone().cross(u);
+    const at = (x: number, y: number) => P.clone().addScaledVector(u, x * cell).addScaledVector(w, y * cell).normalize();
+    const flat = (d: THREE.Vector3) => Math.abs(this.sampleDir(d).ground - top!.ground) < SUMMIT_FLAT * this.scale;
+    const out: PlacedBuilding[] = [];
+    // (Nudged so the grid's cells fall round the top, not across it.)
+    for (const [ox, oy] of [[0, 0], [0.5, 0], [0, 0.5], [0.5, 0.5]] as const) {
+      const here: PlacedBuilding[] = [];
+      for (let a = -6; a <= 6; a++) for (let b = -6; b <= 6; b++) {
+        const x = a + ox, y = b + oy;
+        if (![[x, y], [x - 0.45, y - 0.45], [x + 0.45, y - 0.45], [x + 0.45, y + 0.45], [x - 0.45, y + 0.45]].every(([p, q]) => flat(at(p!, q!)))) continue;
+        const d = at(x, y), quarter = Math.floor(rand() * 4);
+        const qn = new THREE.Quaternion().setFromUnitVectors(UP, d).multiply(new THREE.Quaternion().setFromAxisAngle(UP, facing(d, at(x + 1, y)) + Math.PI / 2 + quarter * Math.PI / 2));
+        const pos = d.clone().multiplyScalar(1 + top.ground - 0.00005 * this.scale);
+        here.push({ kind: ruralModelKind(rand() < 0.2 ? 'incaShrine' : 'incaHouse'), matrix: new THREE.Matrix4().compose(pos, qn, new THREE.Vector3(k, k, k)), color: new THREE.Color(1, 1, 1).multiplyScalar(0.92 + 0.12 * rand()), leaf: new THREE.Color(1, 1, 1) });
+      }
+      if (here.length > out.length) out.splice(0, out.length, ...here);
+    }
+    return out;
   }
 
   // The wonder standing on tile t beside its city, or going up there.
   // (On a mountain or the sea; on flat land it is the city's layout's.)
   private besideWonder(t: number): PlacedBuilding[] | null {
     const g = this.game, w = g.wonderOn(t);
-    if (w === 'machuPicchu') return this.summit(t, 'machuPicchu');
+    if (w === 'machuPicchu') return this.machuPicchu(t);
     if (w) return wonderBeside(w) === 'sea' ? this.seaWonder(t, wonderModelKind(w)) : null;
     if (!g.cities.some((c) => c.wonderTile === t) || this.landWonderOf(t)) return null;
     return g.isSea(t) ? this.seaWonder(t, wonderModelKind('scaffold')) : this.landmark(t, 'scaffold', mulberry32((t + 1) * 2654435761));
@@ -471,7 +499,7 @@ export class CityProps {
   // Whether the flora of tile t keeps clear of what the city's layout puts there.
   keepsFloraClear(t: number): boolean {
     const g = this.game;
-    return g.use[t] === USE.center || isFarmland(g, t) || (g.use[t] === USE.wild && this.landWonderOf(t) !== null);
+    return g.use[t] === USE.center || isFarmland(g, t) || (g.use[t] === USE.wild && (this.landWonderOf(t) !== null || g.wonderOn(t) === 'machuPicchu'));
   }
 
   // Where a wonder on the sea stands: on the line from the tile's middle to
@@ -558,6 +586,11 @@ export class CityProps {
   // every building and street of its town by FLORA_GAP, off its squares.
   // (So a town keeps the trees that grew there, never more than the wild.)
   floraClear(t: number, d: THREE.Vector3): boolean {
+    if (this.game.use[t] === USE.wild && this.game.wonderOn(t) === 'machuPicchu') {
+      // (Clear of Machu Picchu's houses by most of a cell.)
+      const gap = 0.75 * CITY_CELL * tileFrame(this.game, t).k, at = new THREE.Vector3();
+      return this.place(t).every((b) => at.setFromMatrixPosition(b.matrix).normalize().angleTo(d) > gap);
+    }
     const city = this.game.cityById.get(this.game.tileCity[t]);
     if (!city) return true;
     const l = this.layout(city);
