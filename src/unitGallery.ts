@@ -357,5 +357,5 @@ addEventListener('resize', resize);
 resize();
 frame(build());
 showBattle();
-if (import.meta.env.DEV) Object.assign(window, { __units: { volleys, battle, setMode, startFight } });
+if (import.meta.env.DEV) Object.assign(window, { __units: { volleys, battle, setMode, startFight, camera, controls } });
 renderer.setAnimationLoop(() => { time.value = performance.now() / 1000; pose(time.value); keyboard(); controls.update(); renderer.render(scene, camera); });

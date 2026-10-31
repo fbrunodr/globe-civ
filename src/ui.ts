@@ -9,7 +9,7 @@ import { RELIGIONS } from './religion.ts';
 import { resourceDef, empireBonus } from './resources.ts';
 import { BORDER_AT, BORDER_MAX } from './cities.ts';
 import {
-  USE, FOCUSES, IMPROVEMENTS, ERAS, SPECIALISTS, SPECIALIST_KINDS, improvementFor, isFocusKey, specialistYield,
+  USE, FOCUSES, IMPROVEMENTS, ERAS, SPECIALISTS, SPECIALIST_KINDS, isFocusKey, specialistYield,
   type FocusKey, type GrowthKind, type GrowthOption, type Output, type BuildingKey, type SpecialistKind, type WonderKey,
 } from './cities.ts';
 
@@ -318,7 +318,7 @@ export class UI {
     const tc = g.cityById.get(g.tileCity[t]);
     if (tc) {
       const u = g.use[t];
-      const k = improvementFor(g.terrainAt(t));
+      const k = g.improvementAt(t);
       const o = g.tileOutput(t);
       const what = u === USE.center ? esc(tc.name)
         : `${u === USE.rural && k ? IMPROVEMENTS[k].name : `Wild${k ? ` <small>(${IMPROVEMENTS[k].name.toLowerCase()} if developed)</small>` : ''}`} of ${esc(tc.name)}`;

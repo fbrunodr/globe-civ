@@ -9,6 +9,7 @@
 // place the same things.
 
 import type { BiomeKey, FeatureKey } from '../terrain.ts';
+import type { ResourceKey } from '../resources.ts';
 import type { ImprovementKey } from '../cities.ts';
 import { len, pointInPoly, sub, type Pt } from '../town/geometry.ts';
 import { mulberry32 } from '../rng.ts';
@@ -65,9 +66,15 @@ const CROPS: Partial<Record<BiomeKey, readonly AreaLook[]>> = {
 // Which palette a farm's plots are painted in (terrainMaterial.ts, CROP_CODE).
 // (A wetland is worked as rice paddies where warm, cut for peat where
 // colder than PEAT_BELOW.)
-export type CropRegion = 'temperate' | 'steppe' | 'mediterranean' | 'savanna' | 'tropical' | 'oasis' | 'cold' | 'paddy' | 'peat';
+export type CropRegion = 'temperate' | 'steppe' | 'mediterranean' | 'savanna' | 'tropical' | 'oasis' | 'cold' | 'paddy' | 'peat' | 'wheat' | 'maize' | 'pasture' | 'plantation';
 export const PEAT_BELOW = 9;
-export function cropRegion(imp: ImprovementKey | null, biome: BiomeKey, feature: FeatureKey | null, temp: number): CropRegion {
+// (A resource's farm grows that resource: wheat, maize, rice.)
+export function cropRegion(imp: ImprovementKey | null, biome: BiomeKey, feature: FeatureKey | null, temp: number, res: ResourceKey | null = null): CropRegion {
+  if (imp === 'pasture') return 'pasture';
+  if (imp === 'plantation') return 'plantation';
+  if (res === 'wheat' && imp === 'farm') return 'wheat';
+  if (res === 'maize' && imp === 'farm') return 'maize';
+  if (res === 'rice' && imp === 'wetland') return 'paddy';
   if (imp === 'wetland') return temp < PEAT_BELOW ? 'peat' : 'paddy';
   if (feature === 'oasis' || feature === 'floodplain') return 'oasis';
   switch (biome) {
@@ -88,7 +95,9 @@ export function areaLook(imp: ImprovementKey, biome: BiomeKey, feature: FeatureK
     case 'quarry': return { name: 'quarry', ground: rgb(0xa8a08e), fill: { t: 'scatter', model: 'block', color: 0xe2dac8, per: 7 } };
     case 'camp': return { name: 'logging', ground: rgb(0x4a3a24), fill: { t: 'scatter', model: 'stump', color: 0x6a5038, per: 14 }, extra: { t: 'scatter', model: 'logs', color: 0x7a5f45, per: 3 } };
     case 'wetland': return temp < PEAT_BELOW ? PEAT : RICE;
-    case 'boats': return { name: 'water', ground: GRASS, fill: { t: 'none' } };
+    case 'boats': case 'well': return { name: 'water', ground: GRASS, fill: { t: 'none' } };
+    case 'pasture': return MEADOW;
+    case 'plantation': return ORCHARD;
     case 'farm': {
       const list = feature === 'oasis' || feature === 'floodplain' ? [DATES, IRRIGATED, WHEAT] : CROPS[biome] ?? [WHEAT, BARLEY, MEADOW];
       const r = mulberry32(seed * 977 + i * 131)();

@@ -14,8 +14,9 @@ import { mulberry32 } from './rng.ts';
 export type Work = 'cultivation' | 'extraction' | 'forest';
 export const WORK_OF: Record<ImprovementKey, Work | null> = {
   farm: 'cultivation', wetland: 'cultivation', mine: 'extraction', quarry: 'extraction', camp: 'forest', boats: null,
+  pasture: 'cultivation', plantation: 'cultivation', well: null,
 };
-// How far the countryside has filled up (by era, until the tech tree).
+// How far the countryside has filled up (by its improvement's stage: rural/stages.ts).
 export type RuralDensity = 'low' | 'medium' | 'high';
 
 // Which way a tile's farm runs: along one of its hex's sides (the terrain

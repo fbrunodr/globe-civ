@@ -11,8 +11,16 @@
 
 import type { CropRegion } from './look.ts';
 
-// A plot's size (tile steps: across, along).
-export const PLOT_SIZE = [0.11, 0.24] as const;
+// A plot's size (tile steps: across, along), by the farm's stage (its
+// owner's farming techs, techs.ts improvementStage): a first farm's small
+// patches, the plough's long strips, enclosed fields, larger fields, the
+// machine age's great ones.
+export const PLOT_SIZES = [[0.075, 0.11], [0.055, 0.3], [0.11, 0.24], [0.15, 0.3], [0.22, 0.42]] as const;
+export const MAX_STAGE = PLOT_SIZES.length - 1;
+// A plantation's rows across a plot, this far apart (tile steps; its plants on every other).
+export const PLANT_ROW_W = 0.016;
+// A first farm's plots wander (no surveyor yet): the frame bent by this much.
+export const PLOT_WARP = 0.02;
 
 // The integer hash of a cell and a salt, in [0, 1) (24 bits).
 export function plotHash(x: number, y: number, salt: number): number {
@@ -29,9 +37,12 @@ export interface Plot {
   readonly edge: number; // the distance to its border (tile steps)
 }
 
-// The plot at uv (tile steps, in the farm's turned frame) of tile `salt`.
-export function plotAt(u: number, v: number, salt: number): Plot {
-  let [sx, sy] = PLOT_SIZE;
+// The plot at uv (tile steps, in the farm's turned frame) of tile `salt`, at `stage`.
+export function plotAt(u0: number, v0: number, salt: number, stage = 2): Plot {
+  const st = Math.max(0, Math.min(MAX_STAGE, stage));
+  let [sx, sy]: [number, number] = [PLOT_SIZES[st]![0], PLOT_SIZES[st]![1]];
+  const w = st === 0 ? PLOT_WARP : 0;
+  const u = u0 + w * Math.sin(v0 * 31 + salt * 0.37), v = v0 + w * Math.sin(u0 * 27 + salt * 0.53);
   const cx = u / sx;
   const cy = v / sy + plotHash(Math.floor(cx), 0, salt * 4 + 1) * 3;
   let ix = Math.floor(cx), iy = Math.floor(cy);
@@ -56,8 +67,11 @@ float plotHash(int x, int y, int salt) {
   h = h ^ (h >> 15u);
   return float(h >> 8u) / 16777216.0;
 }
-float plotAt(vec2 uv, int salt, out vec2 f, out float edge) {
-  vec2 sz = vec2(${PLOT_SIZE[0]}, ${PLOT_SIZE[1]});
+const vec2 PLOT_SIZES[${PLOT_SIZES.length}] = vec2[](${PLOT_SIZES.map(([a, b]) => `vec2(${a}, ${b})`).join(', ')});
+float plotAt(vec2 uv0, int salt, int stage, out vec2 f, out float edge) {
+  vec2 sz = PLOT_SIZES[clamp(stage, 0, ${MAX_STAGE})];
+  float w = stage == 0 ? ${PLOT_WARP} : 0.0;
+  vec2 uv = uv0 + w * vec2(sin(uv0.y * 31.0 + float(salt) * 0.37), sin(uv0.x * 27.0 + float(salt) * 0.53));
   float cx = uv.x / sz.x;
   float cy = uv.y / sz.y + plotHash(int(floor(cx)), 0, salt * 4 + 1) * 3.0;
   int ix = int(floor(cx)), iy = int(floor(cy));
@@ -76,10 +90,15 @@ float plotAt(vec2 uv, int salt, out vec2 f, out float edge) {
 `;
 
 // What grows on a plot, by its hash: grain, a second crop, pasture,
-// ploughed earth (bare), a fourth crop.
+// ploughed earth (bare), a fourth crop. (A first farm leaves more of its
+// land fallow: grass and bare earth.)
 export type CropIndex = 0 | 1 | 2 | 3 | 4;
-export const cropIndex = (h: number): CropIndex => (h < 0.3 ? 0 : h < 0.55 ? 1 : h < 0.72 ? 2 : h < 0.86 ? 3 : 4);
-export const CROP_INDEX_GLSL = 'int cropIndex(float h) { return h < 0.3 ? 0 : h < 0.55 ? 1 : h < 0.72 ? 2 : h < 0.86 ? 3 : 4; }';
+export const cropIndex = (h: number, stage = 2): CropIndex => stage === 0
+  ? (h < 0.28 ? 0 : h < 0.42 ? 1 : h < 0.74 ? 2 : h < 0.86 ? 3 : 4)
+  : (h < 0.3 ? 0 : h < 0.55 ? 1 : h < 0.72 ? 2 : h < 0.86 ? 3 : 4);
+export const CROP_INDEX_GLSL = `int cropIndex(float h, int stage) { return stage == 0
+  ? (h < 0.28 ? 0 : h < 0.42 ? 1 : h < 0.74 ? 2 : h < 0.86 ? 3 : 4)
+  : (h < 0.3 ? 0 : h < 0.55 ? 1 : h < 0.72 ? 2 : h < 0.86 ? 3 : 4); }`;
 
 // How much of their saturation the crops keep (fields read as fields, not a quilt).
 export const CROP_SATURATION = 0.5;
@@ -95,6 +114,12 @@ export const CROP_PALETTE: Record<CropRegion, readonly [number, number, number, 
   // Rice standing in its flooded paddies; peat cut in dark beds.
   paddy:         [0x7fb43f, 0x9cc85a, 0x6aa24a, 0x4f7a6e, 0x8ebe4c],
   peat:          [0x4a3a2c, 0x5a4632, 0x3e3328, 0x2e261e, 0x6a5a3a],
+  // A resource's own farm: all wheat, all maize (a little fallow).
+  wheat:         [0xd2a73c, 0xc99a34, 0x7a8a40, 0x6e5233, 0xdcb24a],
+  maize:         [0x6f9a36, 0x86a840, 0x7a8a40, 0x5e4a30, 0x9aae48],
+  // Pasture: meadows of a few greens; a plantation's rows on bare earth.
+  pasture:       [0x5f8a36, 0x6e9640, 0x557f30, 0x7a9a48, 0x68903a],
+  plantation:    [0x4f7a30, 0x5e8a3a, 0x6a5a3c, 0x5a4a32, 0x46702c],
 };
 
 // The crops standing on the plots keep more of theirs (the stalks' shading

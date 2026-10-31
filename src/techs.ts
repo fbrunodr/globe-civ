@@ -1,6 +1,6 @@
-import type { BuildingKey, EraIndex, WonderKey } from './cities.ts';
+import type { BuildingKey, EraIndex, WonderKey, ImprovementKey } from './cities.ts';
 import type { UnitKey } from './rules.ts';
-import { onImprovement, onResource, perSpecialist, prodPct, yieldPct, pct, count, type Effect } from './effects.ts';
+import { onImprovement, perSpecialist, prodPct, yieldPct, pct, count, type Effect } from './effects.ts';
 
 // The technology tree, after Civ VI's (a deep web, strictly: each tech
 // needs one or more before it): each costs science, belongs to an era (a
@@ -54,7 +54,7 @@ const t = (name: string, era: EraIndex, cost: number, needs: readonly TechKey[],
 export const TECHS: Record<TechKey, TechDef> = {
   // ---- Ancient ----
   pottery:         t('Pottery', 0, 25, [], { buildings: ['granary'] }),
-  animalHusbandry: t('Animal Husbandry', 0, 25, []),                     // (reveals Horses)
+  animalHusbandry: t('Animal Husbandry', 0, 25, [], { effects: [onImprovement('pasture', { food: 1 })] }), // (reveals Horses)
   mining:          t('Mining', 0, 25, [], { effects: [onImprovement('quarry', { prod: 1 })] }),
   sailing:         t('Sailing', 0, 30, [], { buildings: ['lighthouse'], wonders: ['greatLighthouse'] }),
   astrology:       t('Astrology', 0, 30, [], { buildings: ['shrine'], wonders: ['stonehenge'] }),
@@ -80,7 +80,7 @@ export const TECHS: Record<TechKey, TechDef> = {
   trade:           t('Trade', 1, 40, ['currency', 'horsebackRiding'], { buildings: ['caravanserai'] }),
   philosophy:      t('Philosophy', 1, 45, ['writing', 'mysticism'], { effects: [yieldPct('science', 5)] }),
   shipbuilding:    t('Shipbuilding', 1, 40, ['celestialNavigation', 'fishing'], { buildings: ['harbor'] }),
-  calendar:        t('Calendar', 1, 35, ['astrology', 'irrigation'], { effects: [onResource('luxury', { gold: 1 })] }),
+  calendar:        t('Calendar', 1, 35, ['astrology', 'irrigation'], { effects: [onImprovement('plantation', { gold: 1 })] }),
   // ---- Medieval ----
   education:       t('Education', 2, 55, ['mathematics', 'philosophy'], { buildings: ['academy'] }),
   apprenticeship:  t('Apprenticeship', 2, 50, ['currency', 'construction'], { buildings: ['smithy'] }),
@@ -97,16 +97,16 @@ export const TECHS: Record<TechKey, TechDef> = {
   paper:           t('Paper', 2, 50, ['literature', 'currency'], { effects: [perSpecialist('scientist', { science: 1 })] }),
   // ---- Renaissance ----
   printingPress:   t('Printing Press', 3, 85, ['education', 'paper'], { buildings: ['university'] }),
-  gunpowder:       t('Gunpowder', 3, 85, ['machinery', 'militaryTactics'], { units: ['musketman'] }), // (reveals Niter)
+  gunpowder:       t('Gunpowder', 3, 85, ['machinery', 'militaryTactics'], { units: ['musketman'], effects: [onImprovement('camp', { gold: 1 })] }), // (reveals Niter)
   astronomy:       t('Astronomy', 3, 85, ['education', 'compass'], { buildings: ['observatory'], wonders: ['tajMahal'] }),
-  banking:         t('Banking', 3, 85, ['craftGuilds', 'printingPress'], { buildings: ['bank'] }),
+  banking:         t('Banking', 3, 85, ['craftGuilds', 'printingPress'], { buildings: ['bank'], effects: [onImprovement('plantation', { gold: 1 })] }),
   metallurgy:      t('Metallurgy', 3, 90, ['gunpowder', 'metalCasting'], { units: ['cannon'] }),
   navigation:      t('Navigation', 3, 80, ['compass', 'astronomy'], { effects: [onImprovement('boats', { gold: 1 })] }),
   physics:         t('Physics', 3, 85, ['astronomy', 'printingPress'], { effects: [yieldPct('science', 5)] }),
   chemistry:       t('Chemistry', 3, 85, ['education', 'metalCasting'], { effects: [onImprovement('mine', { prod: 1 })] }),
   accounting:      t('Accounting', 3, 75, ['banking'], { effects: [perSpecialist('merchant', { gold: 1 })] }),
   architecture:    t('Architecture', 3, 80, ['domes', 'printingPress'], { effects: [prodPct('building', 10)] }),
-  cropRotation:    t('Crop Rotation', 3, 75, ['plough', 'education'], { effects: [onImprovement('farm', { food: 1 })] }),
+  cropRotation:    t('Crop Rotation', 3, 75, ['plough', 'education'], { effects: [onImprovement('farm', { food: 1 }), onImprovement('pasture', { food: 1 })] }),
   magnetism:       t('Magnetism', 3, 80, ['navigation', 'physics'], { effects: [onImprovement('boats', { prod: 1 })] }),
   patronage:       t('Patronage', 3, 75, ['architecture', 'banking'], { effects: [perSpecialist('artist', { culture: 1 })] }),
   // ---- Industrial ----
@@ -117,9 +117,9 @@ export const TECHS: Record<TechKey, TechDef> = {
   militaryScience: t('Military Science', 4, 140, ['rifling', 'stirrups'], { units: ['cavalry'] }),
   ballistics:      t('Ballistics', 4, 145, ['rifling', 'industrialization'], { units: ['artillery'] }),
   steamPower:      t('Steam Power', 4, 140, ['industrialization', 'physics'], { effects: [onImprovement('mine', { prod: 1 })] }),
-  railroad:        t('Railroad', 4, 145, ['steamPower'], { buildings: ['railwayStation'] }),
+  railroad:        t('Railroad', 4, 145, ['steamPower'], { buildings: ['railwayStation'], effects: [onImprovement('camp', { prod: 1 })] }),
   economics:       t('Economics', 4, 135, ['industrialization', 'accounting'], { buildings: ['stockExchange'] }),
-  fertilizer:      t('Fertilizer', 4, 130, ['cropRotation', 'chemistry'], { effects: [onImprovement('farm', { food: 1 })] }),
+  fertilizer:      t('Fertilizer', 4, 130, ['cropRotation', 'chemistry'], { effects: [onImprovement('farm', { food: 1 }), onImprovement('plantation', { gold: 1 })] }),
   archaeology:     t('Archaeology', 4, 125, ['patronage', 'scientificTheory'], { buildings: ['museum'] }),
   pedagogy:        t('Pedagogy', 4, 125, ['scientificTheory', 'printingPress'], { buildings: ['publicSchool'] }),
   biology:         t('Biology', 4, 135, ['scientificTheory'], { effects: [pct('growth', -10)] }),
@@ -127,14 +127,14 @@ export const TECHS: Record<TechKey, TechDef> = {
   // ---- Modern ----
   electricity:     t('Electricity', 5, 200, ['scientificTheory', 'steamPower'], { effects: [yieldPct('science', 5), yieldPct('prod', 5)] }),
   refining:        t('Refining', 5, 195, ['industrialization', 'chemistry'], {}), // (reveals Oil)
-  combustion:      t('Combustion', 5, 210, ['refining', 'steamPower']),
+  combustion:      t('Combustion', 5, 210, ['refining', 'steamPower'], { effects: [onImprovement('well', { prod: 1 })] }),
   replaceableParts: t('Replaceable Parts', 5, 215, ['electricity', 'militaryScience'], { units: ['infantry'] }),
   radio:           t('Radio', 5, 205, ['electricity'], { buildings: ['broadcastTower'] }),
   motorizedWarfare: t('Motorized Warfare', 5, 235, ['combustion', 'replaceableParts'], { units: ['tank'] }),
-  electronics:     t('Electronics', 5, 215, ['electricity', 'refining'], { buildings: ['powerPlant'] }),
+  electronics:     t('Electronics', 5, 215, ['electricity', 'refining'], { buildings: ['powerPlant'], effects: [onImprovement('well', { prod: 1 })] }),
   steel:           t('Steel', 5, 205, ['railroad', 'ballistics'], { wonders: ['empireState'], effects: [prodPct('building', 10)] }),
   massProduction:  t('Mass Production', 5, 220, ['replaceableParts', 'steel'], { effects: [prodPct('all', 10)] }),
-  refrigeration:   t('Refrigeration', 5, 205, ['electricity', 'sanitation'], { effects: [onImprovement('farm', { food: 1 }), onImprovement('wetland', { food: 1 })] }),
+  refrigeration:   t('Refrigeration', 5, 205, ['electricity', 'sanitation'], { effects: [onImprovement('farm', { food: 1 }), onImprovement('wetland', { food: 1 }), onImprovement('pasture', { food: 1 })] }),
   medicine:        t('Medicine', 5, 210, ['biology', 'refrigeration'], { effects: [count('heal', 10), pct('growth', -10)] }),
   atomicTheory:    t('Atomic Theory', 5, 225, ['electricity', 'chemistry'], { buildings: ['researchLab'] }),
   telecommunications: t('Telecommunications', 5, 225, ['radio', 'electronics'], { effects: [yieldPct('cohesion', 10), yieldPct('culture', 10)] }),
@@ -154,3 +154,20 @@ export function techPath(goal: TechKey, known: ReadonlySet<TechKey>): TechKey[] 
   visit(goal);
   return out;
 }
+
+// ---- what improves the land ----
+// The techs that improve an improvement (an `improvement` effect), in the
+// tree's order (by era): each adds to its yield and takes its look a stage
+// on (its farms tidier, its mines deeper: rural/stages.ts), so a civ sees
+// its land worked better as it learns.
+const stageTechs = new Map<ImprovementKey, TechKey[]>();
+for (const k of TECH_KEYS) for (const e of TECHS[k].effects ?? []) {
+  if (e.k !== 'improvement') continue;
+  const l = stageTechs.get(e.imp) ?? [];
+  if (!l.includes(k)) l.push(k);
+  stageTechs.set(e.imp, l);
+}
+for (const l of stageTechs.values()) l.sort((a, b) => TECHS[a].era - TECHS[b].era);
+export const STAGE_TECHS = (imp: ImprovementKey): readonly TechKey[] => stageTechs.get(imp) ?? [];
+// How many of them a civ knows: its improvement's stage (0: none yet).
+export const improvementStage = (techs: ReadonlySet<TechKey>, imp: ImprovementKey): number => STAGE_TECHS(imp).filter((k) => techs.has(k)).length;

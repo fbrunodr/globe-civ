@@ -1,4 +1,4 @@
-import { out, OUTPUT_KEYS, type Output } from './cities.ts';
+import { out, OUTPUT_KEYS, type Output, type ImprovementKey } from './cities.ts';
 import type { BiomeKey, FeatureKey, ReliefKey } from './terrain.ts';
 import type { Globe } from './goldberg.ts';
 import { mulberry32 } from './rng.ts';
@@ -90,6 +90,17 @@ export const RESOURCES = {
 export type ResourceKey = keyof typeof RESOURCES;
 export const RESOURCE_KEYS = Object.keys(RESOURCES) as ResourceKey[];
 export const resourceDef = (k: ResourceKey): ResourceDef => RESOURCES[k];
+// How each resource is worked: its tile's improvement, whatever the land
+// (cities.ts improvementFor) once its owner knows of it. Grain is farmed,
+// rice grown in paddies, animals pastured or hunted, ores and gems mined,
+// tree and bush crops planted, fish and pearls taken by boat.
+export const RESOURCE_IMPROVEMENT: Record<ResourceKey, ImprovementKey> = {
+  wheat: 'farm', rice: 'wetland', maize: 'farm', bananas: 'plantation', cattle: 'pasture', sheep: 'pasture', deer: 'camp', fish: 'boats',
+  stone: 'quarry', copper: 'mine',
+  wine: 'plantation', incense: 'plantation', silk: 'plantation', spices: 'plantation', furs: 'camp', ivory: 'camp', dyes: 'plantation',
+  gold: 'mine', gems: 'mine', pearls: 'boats', salt: 'mine', cotton: 'plantation', tea: 'plantation', amber: 'camp',
+  horses: 'pasture', iron: 'mine', niter: 'mine', coal: 'mine', oil: 'well',
+};
 export const LUXURY_KEYS = RESOURCE_KEYS.filter((k) => RESOURCES[k].kind === 'luxury');
 export type StrategicKey = 'horses' | 'iron' | 'niter' | 'coal' | 'oil';
 export const STRATEGIC_KEYS: readonly StrategicKey[] = ['horses', 'iron', 'niter', 'coal', 'oil'];

@@ -66,6 +66,10 @@ export const IMPROVEMENTS = {
   quarry:  { name: 'Quarry',          bonus: out({ prod: 1 }) },
   wetland: { name: 'Wetland harvest', bonus: out({ food: 1 }) },
   boats:   { name: 'Fishing boats',   bonus: out({ food: 1 }) },
+  // (Only on resources: resources.ts RESOURCE_IMPROVEMENT.)
+  pasture: { name: 'Pasture',         bonus: out({ food: 1 }) },
+  plantation: { name: 'Plantation',   bonus: out({ gold: 1 }) },
+  well:    { name: 'Oil well',        bonus: out({ prod: 2 }) },
 } satisfies Record<string, ImprovementDef>;
 export type ImprovementKey = keyof typeof IMPROVEMENTS;
 
@@ -75,9 +79,12 @@ export type ImprovementKey = keyof typeof IMPROVEMENTS;
 export const drained = (t: TileTerrain): TileTerrain => (t.feature === 'bog' ? { ...t, feature: null } : t);
 
 // The improvement a tile gets when it is developed, or null where the tile
-// stays wild (mountains, ice, deep ocean). A total function of the terrain:
-// the player picks the tile, never the improvement.
-export function improvementFor(t: TileTerrain): ImprovementKey | null {
+// stays wild (mountains, ice, deep ocean). A total function of the terrain
+// and of the resource on it its owner knows of (`onResource`: that
+// resource's improvement, resources.ts RESOURCE_IMPROVEMENT): the player
+// picks the tile, never the improvement. Cattle are pastured, never farmed.
+export function improvementFor(t: TileTerrain, onResource: ImprovementKey | null = null): ImprovementKey | null {
+  if (onResource) return onResource;
   if (t.feature === 'bog') return improvementFor(drained(t));
   if (BIOMES[t.biome].water) {
     if (t.biome === 'shallowSea' || t.biome === 'lake') return 'boats';
@@ -137,8 +144,8 @@ export function centerYield(t: TileTerrain, river: boolean): Output {
 
 // A worked tile's yield: its terrain, its improvement and what the owner's
 // techs and traits add to that improvement (`extra`, effects.ts tileBonus).
-export function ruralYield(t0: TileTerrain, river: boolean, extra: (k: ImprovementKey) => Output = () => ZERO): Output {
-  const t = drained(t0), k = improvementFor(t);
+export function ruralYield(t0: TileTerrain, river: boolean, extra: (k: ImprovementKey) => Output = () => ZERO, onResource: ImprovementKey | null = null): Output {
+  const t = drained(t0), k = improvementFor(t, onResource);
   const base = fromYields(terrainYield(t));
   return withRiver(k ? addOut(addOut(base, IMPROVEMENTS[k].bonus), extra(k)) : base, river);
 }

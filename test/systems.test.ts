@@ -4,7 +4,13 @@ import { TECH_KEYS, techDef, techPath } from '../src/techs.ts';
 import { POLITICS_KEYS, politicsDef, GOVERNMENT_KEYS, POLICY_KEYS } from '../src/politics.ts';
 import { TRAIT_KEYS, FAITH_KEYS, PATH_KEYS, PATHS, MAX_TRAITS, traitDef, traitCost, pathTraits, pathLevels } from '../src/identity.ts';
 import { RELIGION_KEYS } from '../src/religion.ts';
-import { RESOURCES, LUXURY_KEYS, empireBonus, type ResourceKey } from '../src/resources.ts';
+import * as THREE from 'three';
+import { RESOURCES, RESOURCE_KEYS, RESOURCE_IMPROVEMENT, LUXURY_KEYS, empireBonus, type ResourceKey } from '../src/resources.ts';
+import { IMPROVEMENTS, type ImprovementKey } from '../src/cities.ts';
+import { STAGE_TECHS } from '../src/techs.ts';
+import { stageLook } from '../src/rural/stages.ts';
+import { KIT_MODELS, kitModel } from '../src/rural/kit.ts';
+import { unitModel } from '../src/unitModels.ts';
 import { cityUpkeep } from '../src/economy.ts';
 import { BORDER_AT, CITY_REACH, USE } from '../src/cities.ts';
 import { UNITS, BUILDINGS, WONDERS, type BuildKey } from '../src/rules.ts';
@@ -307,5 +313,59 @@ describe('S6: the record', () => {
     const kinds = new Set(g.events.map((e) => e.kind));
     for (const k of ['start', 'turn', 'summary', 'research', 'politics', 'trait', 'cityFounded', 'unitCreated', 'move'] as const) expect(kinds.has(k), k).toBe(true);
     expect(new Set(g.events.filter((e) => e.kind === 'summary').map((e) => e.player)).size).toBe(g.players.length);
+  });
+});
+
+describe('S8: worked land: each resource its improvement; techs take it on a stage', () => {
+  it('a resource decides its tile\'s improvement: cattle are pastured, never farmed; rice in paddies; ores mined', () => {
+    expect(RESOURCE_IMPROVEMENT.cattle).toBe('pasture');
+    expect(RESOURCE_IMPROVEMENT.rice).toBe('wetland');
+    expect(RESOURCE_IMPROVEMENT.iron).toBe('mine');
+    const g = fresh();
+    const c = settle(g, HUMAN);
+    const t = g.tilesWithin(c.tile, 1).find((x) => x !== c.tile && !g.isWater(x) && g.relief[x] === 'flat' && g.improvementAt(x) === 'farm');
+    if (t === undefined) return;
+    g.resources[t] = 'cattle';
+    expect(g.improvementAt(t)).toBe('pasture');
+    const option = g.growthOptions(c).find((o) => o.kind === 'rural' && o.tile === t);
+    if (option?.kind === 'rural') expect(option.improvement).toBe('pasture');
+    // (A strategic its owner has not revealed works as its land.)
+    g.resources[t] = 'horses';
+    expect(g.improvementAt(t)).toBe('farm');
+    g.players[HUMAN]!.techs.add('animalHusbandry');
+    expect(g.improvementAt(t)).toBe('pasture');
+  });
+  it('every improvement a resource needs has techs that improve it, in the tree\'s order; each raises its yield and its stage', () => {
+    for (const imp of new Set(Object.values(RESOURCE_IMPROVEMENT))) {
+      const st = STAGE_TECHS(imp);
+      expect(st.length, imp).toBeGreaterThan(0);
+      for (let i = 1; i < st.length; i++) expect(techDef(st[i]!).era).toBeGreaterThanOrEqual(techDef(st[i - 1]!).era);
+    }
+    const g = fresh();
+    const c = settle(g, HUMAN);
+    const t = g.tilesWithin(c.tile, 1).find((x) => x !== c.tile && !g.isWater(x) && g.relief[x] === 'flat' && g.improvementAt(x) === 'farm');
+    if (t === undefined) return;
+    g.resources[t] = 'cattle';
+    const before = g.workedYield(t, HUMAN), s0 = g.stageAt(t, HUMAN);
+    g.players[HUMAN]!.techs.add('animalHusbandry');
+    expect(g.stageAt(t, HUMAN)).toBe(s0 + 1);
+    expect(g.workedYield(t, HUMAN).food).toBe(before.food + 1);
+  });
+  it('every stage of every improvement shows models the kit has', () => {
+    for (const imp of Object.keys(IMPROVEMENTS) as ImprovementKey[]) {
+      for (let st = 0; st <= STAGE_TECHS(imp).length; st++) {
+        for (const res of [null, ...RESOURCE_KEYS.filter((r) => RESOURCE_IMPROVEMENT[r] === imp)]) {
+          const look = stageLook(imp, st, res);
+          for (const th of look.things) expect(KIT_MODELS, `${imp} ${st} ${th.model}`).toContain(th.model);
+          for (const m of look.herd?.models ?? []) expect(KIT_MODELS).toContain(m);
+          if (look.plants) expect(KIT_MODELS).toContain(look.plants.model);
+        }
+      }
+    }
+  });
+  it('the animals, the workers and the units\' figures build, with no stray vertex', () => {
+    const finite = (gs: readonly THREE.BufferGeometry[]) => gs.every((g) => { const p = g.getAttribute('position'); for (let i = 0; i < p.count * 3; i++) if (!Number.isFinite((p.array as Float32Array)[i])) return false; return true; });
+    for (const k of KIT_MODELS) expect(finite(kitModel(k)), k).toBe(true);
+    for (const type of Object.keys(UNITS) as (keyof typeof UNITS)[]) expect(finite([unitModel(type, 'Romans', 0, false), unitModel(type, 'Chinese', 1, true)]), type).toBe(true);
   });
 });

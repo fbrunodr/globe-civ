@@ -124,7 +124,7 @@ export function specialistBonus(effects: readonly Effect[], kind: SpecialistKind
 // A short description of an effect, for the panels.
 export const YIELD_NAME: Record<OutputKey, string> = { food: 'food', prod: 'production', gold: 'gold', science: 'science', culture: 'culture', faith: 'faith', cohesion: 'cohesion' };
 const TARGET_NAME: Record<ProdTarget, string> = { military: 'military units', melee: 'melee units', ranged: 'ranged units', mounted: 'mounted units', siege: 'siege units', settler: 'Settlers', building: 'buildings', wonder: 'wonders', all: 'everything' };
-const IMPROVEMENT_NAME: Record<ImprovementKey, string> = { farm: 'Farm', mine: 'Mine', camp: 'Camp', quarry: 'Quarry', wetland: 'Wetland harvest', boats: 'Fishing boats' };
+const IMPROVEMENT_NAME: Record<ImprovementKey, string> = { farm: 'Farm', mine: 'Mine', camp: 'Camp', quarry: 'Quarry', wetland: 'Wetland harvest', boats: 'Fishing boats', pasture: 'Pasture', plantation: 'Plantation', well: 'Oil well' };
 const SPECIALIST_NAME: Record<SpecialistKind, string> = { scientist: 'Scientist', merchant: 'Merchant', engineer: 'Engineer', artist: 'Artist' };
 const sign = (n: number) => (n > 0 ? `+${n}` : `${n}`);
 const flats = (o: Output) => OUTPUT_KEYS.filter((y) => o[y]).map((y) => `${sign(o[y])} ${YIELD_NAME[y]}`).join(', ');

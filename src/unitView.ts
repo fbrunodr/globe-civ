@@ -70,29 +70,33 @@ const UNIT_VERTEX_DECL = /* glsl */ `
   attribute vec3 aAnim;     // per figure: phase, how much it marches, how hard it strikes (0..1)
   attribute vec3 aSkinTone; // per figure
   uniform float uTime;`;
+// The limb's turn now (radians, about the x axis through its pivot):
+// marching, swinging to and fro; striking, thrust forward again and again.
+const UNIT_LIMB = /* glsl */ `
+  float beat = uTime * 9.0 + aAnim.x;
+  float limbA = aLimb.z <= 0.0 ? 0.0 : aLimb.x > ${(STRIKE - 0.5).toFixed(1)} ? -aAnim.z * aLimb.z * (0.6 + 0.4 * sin(uTime * 13.0 + aAnim.x))
+                                     : sin(beat) * aAnim.y * aLimb.x * aLimb.z;
+  float limbC = cos(limbA), limbS = sin(limbA);`;
+const UNIT_NORMAL = /* glsl */ `
+  ${UNIT_LIMB}
+  objectNormal.yz = vec2(limbC * objectNormal.y - limbS * objectNormal.z, limbS * objectNormal.y + limbC * objectNormal.z);`;
 const UNIT_VERTEX = /* glsl */ `
   {
-    float beat = uTime * 9.0 + aAnim.x;
-    if (aLimb.z > 0.0) {
-      // (Marching: swinging to and fro; striking: thrust forward, again and again.)
-      float a = aLimb.x > ${(STRIKE - 0.5).toFixed(1)} ? -aAnim.z * aLimb.z * (0.6 + 0.4 * sin(uTime * 13.0 + aAnim.x))
-                                         : sin(beat) * aAnim.y * aLimb.x * aLimb.z;
-      float c = cos(a), s = sin(a);
-      vec2 yz = transformed.yz - vec2(aLimb.y, 0.0);
-      transformed.yz = vec2(aLimb.y, 0.0) + vec2(c * yz.x - s * yz.y, s * yz.x + c * yz.y);
-    }
+    vec2 yz = transformed.yz - vec2(aLimb.y, 0.0);
+    transformed.yz = vec2(aLimb.y, 0.0) + vec2(limbC * yz.x - limbS * yz.y, limbS * yz.x + limbC * yz.y);
     transformed.y += abs(sin(beat)) * 0.03 * aAnim.y;
   }`;
 
-// The figures' material: the props' look (flat-shaded, painted), the
+// The figures' material: the props' look (smooth-shaded, painted), the
 // owner's colour on the team parts (the instance colour), each figure's
 // skin, and the limbs swinging on the march (`time`: seconds).
 export function makeUnitMaterial(time: { value: number }): THREE.MeshStandardMaterial {
-  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, flatShading: true, side: THREE.DoubleSide });
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, side: THREE.DoubleSide });
   mat.onBeforeCompile = (shader) => {
     shader.uniforms['uTime'] = time;
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>\n${UNIT_VERTEX_DECL}`)
+      .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>\n${UNIT_NORMAL}`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>\n${UNIT_VERTEX}`)
       .replace('#include <color_vertex>', `#include <color_vertex>
         #ifdef USE_INSTANCING_COLOR

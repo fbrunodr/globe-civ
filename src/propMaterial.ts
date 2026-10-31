@@ -218,8 +218,10 @@ export function makeFloraDepthMaterial(flora: FloraUniforms): THREE.MeshDepthMat
 // `flora.cropFar` (world units): a farm's crops (cardUv z 2) shrink into
 // the ground as they near this distance from the camera, and are gone past
 // it (the painted plots go on alone, at no cost).
-export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Vector3, flora?: FloraUniforms): THREE.MeshStandardMaterial {
-  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, flatShading: !flora, side: THREE.DoubleSide });
+// `smooth`: smooth-shaded over the models' own normals (people, animals,
+// plants: rural/kit.ts), not flat.
+export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Vector3, flora?: FloraUniforms, smooth = false): THREE.MeshStandardMaterial {
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: smooth ? 0.85 : 1, flatShading: !flora && !smooth, side: THREE.DoubleSide });
   const day = sunDir !== undefined;
   mat.onBeforeCompile = (shader) => {
     if (day) shader.uniforms['uSunDir'] = { value: sunDir };
@@ -278,7 +280,7 @@ export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Ve
     shader.fragmentShader = frag;
   };
   // Distinct programs per bounce, saturation and sun.
-  mat.customProgramCacheKey = () => `prop-${bounce}-${saturation}-${day}-${!!flora}`;
+  mat.customProgramCacheKey = () => `prop-${bounce}-${saturation}-${day}-${!!flora}-${smooth}`;
   return mat;
 }
 

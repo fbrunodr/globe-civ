@@ -21,19 +21,15 @@ import {
   type FocusKey, type GrowthOption, type TileUse, type Output, type SpecialistKind, type WonderKey, type WonderSite, type EraIndex, type ImprovementKey,
 } from './cities.ts';
 import { IMPROVEMENTS, out, OUTPUT_KEYS } from './cities.ts';
-import { techDef, techPath, type TechKey } from './techs.ts';
+import { techDef, techPath, improvementStage, type TechKey } from './techs.ts';
 import { politicsDef, politicsPath, GOVERNMENTS, governmentDef, policyDef, fits, SLOT_KINDS, type PoliticsKey, type GovernmentKey, type PolicyKey, type PolicySlot } from './politics.ts';
 import { traitDef, traitBlock, traitCost, type TraitKey } from './identity.ts';
 import { religionDef, PRESSURE_REACH, HOLY_PRESSURE, CITY_PRESSURE, BUILDING_PRESSURE, CONVERT_AT, TITHE, type ReligionKey } from './religion.ts';
-import { placeResources, resourceDef, empireBonus, type ResourceKey } from './resources.ts';
+import { placeResources, resourceDef, empireBonus, RESOURCE_IMPROVEMENT, type ResourceKey } from './resources.ts';
 import { total, yieldBonus, prodBonus, flat, tileBonus, specialistBonus, movesBonus, type Effect, type ProdTarget } from './effects.ts';
 import { cityUpkeep, unitUpkeep, buildingUpkeep, inflation, SHORTFALL_SCIENCE, WEALTH_RATE } from './economy.ts';
 import type { GameEvent, GameEventKind } from './gameLog.ts';
 
-const IMPROVEMENT_NAME = (t: TileTerrain): string => {
-  const k = improvementFor(t);
-  return k ? IMPROVEMENTS[k].name.toLowerCase() : 'land';
-};
 
 export const HUMAN = 0;
 
@@ -738,7 +734,7 @@ export class Game {
     this.useVersion++;
     if (u.owner === HUMAN || victim === HUMAN) {
       const city = this.cityById.get(this.tileCity[t]!);
-      this.log(`${this.players[u.owner].name} pillaged ${city ? `${city.name}'s` : 'a'} ${IMPROVEMENT_NAME(this.terrainAt(t))}.`);
+      this.log(`${this.players[u.owner].name} pillaged ${city ? `${city.name}'s` : 'a'} ${(() => { const k = this.improvementAt(t); return k ? IMPROVEMENTS[k].name.toLowerCase() : 'land'; })()}.`);
     }
     return true;
   }
@@ -867,7 +863,7 @@ export class Game {
   governorTileToBuy(city: City): number | null {
     let best: number | null = null, bestS = -Infinity;
     for (const t of this.buyableTiles(city)) {
-      const k = improvementFor(this.terrainAt(t));
+      const k = this.improvementAt(t);
       const s = k ? weigh(city.focus, this.workedYield(t, city.owner)) : -1;
       if (s > bestS) { best = t; bestS = s; }
     }
@@ -929,7 +925,7 @@ export class Game {
   }
   // The city's rural tiles worked with an improvement.
   private worked(city: City, k: ImprovementKey): number {
-    return this.cityTiles(city, USE.rural).filter((t) => !this.pillaged[t] && improvementFor(this.terrainAt(t)) === k).length;
+    return this.cityTiles(city, USE.rural).filter((t) => !this.pillaged[t] && this.improvementAt(t) === k).length;
   }
   specialistCount(city: City): number { return SPECIALIST_KINDS.reduce((n, k) => n + city.specialists[k], 0); }
 
@@ -1060,7 +1056,18 @@ export class Game {
   workedYield(t: number, owner: number): Output {
     const res = this.resourceFor(t, owner), fx = owner >= 0 ? this.effectsOf(this.players[owner]!) : [];
     const kind = res ? resourceDef(res).kind : null;
-    return addOut(ruralYield(this.terrainAt(t), this.map.riverTile[t] === 1, (k) => tileBonus(fx, k, kind)), res ? resourceDef(res).yields : ZERO);
+    return addOut(ruralYield(this.terrainAt(t), this.map.riverTile[t] === 1, (k) => tileBonus(fx, k, kind), res ? RESOURCE_IMPROVEMENT[res] : null), res ? resourceDef(res).yields : ZERO);
+  }
+  // The improvement tile t gets worked (by `owner`: the resource it knows
+  // of there decides it; cities.ts improvementFor).
+  improvementAt(t: number, owner: number = this.ownerOf(t)): ImprovementKey | null {
+    const res = this.resourceFor(t, owner);
+    return improvementFor(this.terrainAt(t), res ? RESOURCE_IMPROVEMENT[res] : null);
+  }
+  // How far its owner's techs have taken tile t's improvement (techs.ts improvementStage).
+  stageAt(t: number, owner: number = this.ownerOf(t)): number {
+    const k = this.improvementAt(t, owner);
+    return k && owner >= 0 ? improvementStage(this.players[owner]!.techs, k) : 0;
   }
 
   // What a developed tile adds to its city (wild tiles add nothing).
@@ -1108,7 +1115,7 @@ export class Game {
     const out: GrowthOption[] = [];
     for (const t of this.tilesWithin(city.tile, CITY_REACH)) {
       if (this.tileCity[t] !== city.id || this.blockedFor(city, t) || this.use[t] !== USE.wild) continue;
-      const improvement = improvementFor(this.terrainAt(t));
+      const improvement = this.improvementAt(t, city.owner);
       if (improvement) out.push({ kind: 'rural', tile: t, improvement });
     }
     for (const k of SPECIALIST_KINDS) if (this.specialistRoom(city, k) > 0) out.push({ kind: 'specialist', specialist: k });
@@ -1514,6 +1521,8 @@ export class Game {
     if (got < techDef(k).cost) { p.techProgress[k] = got; return; }
     p.techs.add(k);
     delete p.techProgress[k];
+    // (A tech that improves the land restyles it: rural/stages.)
+    if ((techDef(k).effects ?? []).some((e) => e.k === 'improvement')) this.useVersion++;
     this.record('researched', p.id, { tech: k });
     if (p.isHuman) this.log(`Researched ${techDef(k).name}.`);
     const era = Math.max(...[...p.techs].map((t) => techDef(t).era)) as EraIndex;

@@ -12,7 +12,7 @@
 
 import * as THREE from 'three';
 import type { Game, City } from './game.ts';
-import { USE, improvementFor, wonderBeside, isWonderKey, type ImprovementKey, type EraIndex } from './cities.ts';
+import { USE, wonderBeside, isWonderKey, type ImprovementKey, type EraIndex } from './cities.ts';
 import { ROOFS, buildingEntry, isFloraModel, isLotModel, placedGeometry, waterRule, type BuildingKind, type LotModelKind, type PlacedKind } from './buildingCatalog.ts';
 import { ON_BARE_GROUND, isWonderModelKind, wonderModelKind, type SiteModel } from './wonderModels.ts';
 import type { CatalogKind } from './propCatalog.ts';
@@ -21,9 +21,13 @@ import { styleOf } from './architecture.ts';
 import { LOT_SIZE, rhoOf, type Floors, type Footprint } from './town/geometry.ts';
 import { planRoads, roadLines, ROAD_HALF_WIDTH } from './roads.ts';
 import { farmAxis, paintFarm, WORK_OF, type Farm, type RuralDensity } from './farmPainter.ts';
-import { CROP_HEIGHT, CROP_PALETTE, CROP_STAND_SATURATION, cropIndex, plotAt } from './rural/plots.ts';
+import { CROP_HEIGHT, CROP_PALETTE, CROP_STAND_SATURATION, PLOT_SIZES, MAX_STAGE, PLANT_ROW_W, cropIndex, plotAt } from './rural/plots.ts';
 import { SCATTER_GAP, areaLook, cropRegion, scatterIn, type Fill, type RGB } from './rural/look.ts';
 import { ruralModelKind, type RuralModel } from './rural/models.ts';
+import { stageLook, waterLook, plotStage, pastureFences, herdSize, type StageLook } from './rural/stages.ts';
+import { kitBoost, FIGURES, FENCE_BOOST, PLANT_BOOST, type KitModel } from './rural/kit.ts';
+import { CREATURE_SCALE } from './creatures.ts';
+import { RESOURCE_IMPROVEMENT, type ResourceKey } from './resources.ts';
 import { SAFE_RHO, len as len2, pointInPoly, sub as sub2, type Pt as Pt2 } from './town/geometry.ts';
 import { mulberry32, type Rng } from './rng.ts';
 import { dressCity, type DressEra } from './cityDress.ts';
@@ -116,7 +120,7 @@ export const WATER_GAP = 0.012;
 
 
 const RURAL: Record<ImprovementKey, BuildingKind> = {
-  farm: 'farmstead', mine: 'mineHead', camp: 'lodge', quarry: 'quarryStones', wetland: 'stiltHut', boats: 'fishingBoat',
+  farm: 'farmstead', mine: 'mineHead', camp: 'lodge', quarry: 'quarryStones', wetland: 'stiltHut', boats: 'fishingBoat', pasture: 'farmstead', plantation: 'farmstead', well: 'mineHead',
 };
 
 
@@ -142,9 +146,7 @@ const mix = (a: number, b: number) => { let h = Math.imul(a ^ 0x9e3779b9, 0x85eb
 
 // A rural tile drawn with a rural drawing: land, a hex, its improvement a kind of work.
 export const isFarmland = (g: Game, t: number): boolean => g.use[t] === USE.rural && g.tiles[t].corners.length === 6 && !g.isWater(t)
-  && (() => { const k = improvementFor(g.terrainAt(t)); return k !== null && WORK_OF[k] !== null; })();
-// How far a city's countryside has filled up: by its civ's era (until the tech tree).
-const ruralDensity = (g: Game, city: City): RuralDensity => { const e = g.players[city.owner]!.era; return e === 0 ? 'low' : e === 1 ? 'medium' : 'high'; };
+  && (() => { const k = g.improvementAt(t); return k !== null && WORK_OF[k] !== null; })();
 
 // Built-up tiles: the cities' centers.
 export const isBuilt = (g: Game, t: number): boolean => g.use[t] === USE.center && g.tiles[t].corners.length === 6 && !g.isWater(t);
@@ -175,7 +177,7 @@ export class CityProps {
     if (m !== undefined) return m;
     const g = this.game;
     const wonders = g.cityWonders(city).map((w) => `${w}@${g.wondersBuilt.get(w)}`).join(',');
-    const farms = this.farmland(city).map((t) => `${t}:${improvementFor(g.terrainAt(t))}:${g.pillaged[t]}`).join(';');
+    const farms = this.farmland(city).map((t) => `${t}:${g.improvementAt(t)}:${g.stageAt(t, city.owner)}:${g.pillaged[t]}`).join(';');
     const sig = `${city.id}|${city.pop}|${g.players[city.owner]!.era}|${city.buildings.has('walls') ? 'w' : ''}|${city.wonderTile ?? ''}|${city.building ?? ''}|${this.version}|${wonders}|${farms}`;
     memo?.set(city.id, sig);
     return sig;
@@ -243,8 +245,9 @@ export class CityProps {
     const u = g.use[t];
     const rand = mulberry32((t + 1) * 2654435761 ^ city.id * 40503);
     if (u === USE.rural && !isFarmland(g, t)) {
-      const k = improvementFor(g.terrainAt(t));
-      return [...(k ? this.rural(t, RURAL[k], rand) : []), ...(this.besideWonder(t) ?? [])];
+      const k = g.improvementAt(t);
+      const here = k === 'boats' || k === 'well' ? this.works(t, k, g.stageAt(t), rand) : k ? this.rural(t, RURAL[k], rand) : [];
+      return [...here, ...(this.besideWonder(t) ?? [])];
     }
     return this.layout(city).byTile.get(t) ?? [];
   }
@@ -374,9 +377,10 @@ export class CityProps {
     // farm's homestead and a few yards (farmPainter.ts), each filled with
     // what the tile grows or digs (rural/look.ts): haystacks by the grain,
     // a herd, a grove, heaps, stones, logs.
-    const density = ruralDensity(g, city);
     for (const t of this.farmland(city)) {
-      const imp = improvementFor(g.terrainAt(t))!, work = WORK_OF[imp]!;
+      const imp = g.improvementAt(t)!, work = WORK_OF[imp]!, stage = g.stageAt(t, city.owner);
+      const r0 = g.resourceFor(t, city.owner), res = r0 && RESOURCE_IMPROVEMENT[r0] === imp ? r0 : null;
+      const look = stageLook(imp, stage, res), density = look.density;
       const { toDir: toT } = onTile(g, t);
       const ko = keep.get(t);
       const farm = paintFarm({ work, axis: farmAxis(t), density, seed: mix(t, 0x51), free: (p) => (!ko || len2(sub2(p, ko.p)) > ko.r) && !wet(this.sampleDir(toT(p))) && clear.free([toT(p)]) });
@@ -386,14 +390,18 @@ export class CityProps {
         for (const shrink of [1, 0.85]) { const bs = make(shrink); if (clearHere.free(this.footprint(bs[0]!)) && dryAround(bs[0]!)) return bs; }
         return [];
       };
-      const one = (m: RuralModel, p: Pt2, yaw: number, s: number, leaf: number) => {
+      const taken: { p: Pt2; r: number }[] = [];
+      // One model at p (wet: may stand in shallow water: a paddy's farmers).
+      const one = (m: RuralModel, p: Pt2, yaw: number, s: number, leaf: number, wetOk = false, scale?: THREE.Vector3) => {
         const dir = toT(p), smp = this.sampleDir(dir);
-        if (wet(smp)) return;
+        if (wet(smp) && !(wetOk && smp.water - smp.ground < 0.0004 * this.scale)) return false;
         const q = new THREE.Quaternion().setFromUnitVectors(UP, dir).multiply(new THREE.Quaternion().setFromAxisAngle(UP, yaw));
         const pos = dir.clone().multiplyScalar(1 + smp.ground - 0.00005 * this.scale);
-        const b: PlacedBuilding = { kind: ruralModelKind(m), matrix: new THREE.Matrix4().compose(pos, q, new THREE.Vector3(s, s, s)), color: new THREE.Color(1, 1, 1), leaf: new THREE.Color(leaf) };
+        const b: PlacedBuilding = { kind: ruralModelKind(m), matrix: new THREE.Matrix4().compose(pos, q, scale ?? new THREE.Vector3(s, s, s)), color: new THREE.Color(1, 1, 1), leaf: new THREE.Color(leaf) };
         // (Never on a road crossing the farm.)
-        if (clearHere.free(this.footprint(b))) put(t, b);
+        if (!clearHere.free(this.footprint(b))) return false;
+        put(t, b);
+        return true;
       };
       // (Yaws on the tile: the angle of a direction drawn there.)
       const yawOf = (a: Pt2, b: Pt2) => { const da = toT(a), db = toT(b); return facing(da, db) + Math.PI / 2; };
@@ -403,20 +411,58 @@ export class CityProps {
           for (const p of scatterIn(poly, fl.per, seed, SCATTER_GAP[fl.model])) one(fl.model, p, r() * 6.28, D * (0.8 + 0.4 * r()), fl.color);
         }
       };
-      if (imp === 'mine') this.adits(t, farm.home, ko, ADITS[density], (bs) => put(t, ...bs), settle, (poly, seed) => fillWith(areaLook(imp, g.biome[t]!, null, 0, 0, t).fill, poly, seed), city.owner);
-      // (A mine's yards are its adits' spoil.)
-      if (imp !== 'mine') farm.yards.forEach((poly, i) => {
-        const look = areaLook(imp, g.biome[t]!, g.feature[t] ?? null, g.map.temperature[t]!, i, t);
-        // (The crop itself is painted: its yard holds the harvest.)
-        fillWith(look.fill.t === 'rows' ? HARVEST : look.fill, poly, mix(t, i));
-        if (look.extra) fillWith(look.extra, poly, mix(t, i + 99));
-        // A camp's drying rack by each clearing.
+      if (imp === 'mine' && look.adits > 0) this.adits(t, farm.home, ko, ADITS[density] * look.adits, (bs) => put(t, ...bs), settle, (poly, seed) => fillWith(areaLook(imp, g.biome[t]!, null, 0, 0, t).fill, poly, seed), city.owner);
+      // The yards: a crop's holds its harvest, a pasture's its herd (fenced
+      // from the plough on), a quarry's its stone; a mine's are its adits' spoil.
+      if (imp !== 'mine' && !look.herd) farm.yards.forEach((poly, i) => {
+        const al = areaLook(imp, g.biome[t]!, g.feature[t] ?? null, g.map.temperature[t]!, i, t);
+        if (imp !== 'plantation') {
+          // (The crop itself is painted: its yard holds the harvest.)
+          fillWith(al.fill.t === 'rows' ? HARVEST : al.fill, poly, mix(t, i));
+          if (al.extra) fillWith(al.extra, poly, mix(t, i + 99));
+        }
+        // A camp's drying rack by each clearing (before its hunters' racks).
         const near = poly.reduce((a, p) => (len2(sub2(p, farm.home)) < len2(sub2(a, farm.home)) ? p : a));
-        if (imp === 'camp') one('rack', near, yawOf(near, farm.home), D, 0xffffff);
+        if (imp === 'camp' && stage === 0 && !res) one('rack', near, yawOf(near, farm.home), D, 0xffffff);
       });
-      // (Farms and rice paddies grow crops; peat is only cut.)
-      if (imp === 'farm' || (imp === 'wetland' && cropRegion(imp, g.biome[t]!, g.feature[t] ?? null, g.map.temperature[t]!) === 'paddy')) {
-        this.crops(t, farm, ko, (b) => { if (clearHere.free(this.footprint(b))) put(t, b); });
+      // A pasture's herd, grazing over the whole tile (inside its fences
+      // once it has them: round the farm, across it into paddocks).
+      if (look.herd) {
+        if (look.fence) for (const line of pastureFences(stage, farmAxis(t))) this.fenceAlong(line, look.fence, (m, p, yaw, sc) => one(m, p, yaw, 0, 0xffffff, false, sc), toT, D);
+        const r = mulberry32(mix(t, 0x6e)), want = herdSize(stage);
+        for (let n = 0, tries = 0; n < want && tries < want * 10; tries++) {
+          const p = { x: (r() - 0.5) * 1.1, y: (r() - 0.5) * 1.1 };
+          if (rhoOf(6, p) > SAFE_RHO - 0.09 || len2(sub2(p, farm.home)) < 0.1 || farm.yards.some((poly) => pointInPoly(p, poly))) continue;
+          const m = look.herd.models[n % look.herd.models.length]!;
+          if (one(m, p, r() * 6.28, D * kitBoost(m as KitModel) * (0.9 + 0.2 * r()), look.herd.colors[n % look.herd.colors.length]!)) n++;
+        }
+      }
+      // (Farms and rice paddies grow crops; peat is only cut. A plantation its plants.)
+      if (imp === 'farm' || (imp === 'wetland' && cropRegion(imp, g.biome[t]!, g.feature[t] ?? null, g.map.temperature[t]!, res) === 'paddy')) {
+        this.crops(t, farm, ko, stage, res, (b) => { if (clearHere.free(this.footprint(b))) put(t, b); });
+      }
+      if (look.plants) this.plants(t, farm, ko, stage, look.plants, (b) => { if (clearHere.free(this.footprint(b))) put(t, b); });
+      // The stage's things: by the homestead, in a yard, out in the fields.
+      const v = { x: -farm.u.y, y: farm.u.x };
+      const r = mulberry32(mix(t, 0x7f));
+      let homeSlot = 0;
+      const homeSpots = [[0.07, 0.03], [-0.06, 0.06], [0.06, -0.07], [-0.08, -0.05], [0.11, 0.08]] as const;
+      for (const th of look.things) for (let n = 0; n < th.n; n++) {
+        const m = th.model, s = D * kitBoost(m) * (0.9 + 0.2 * r()), leaf = th.colors ? th.colors[Math.floor(r() * th.colors.length)]! : 0xffffff;
+        const rad = 0.025 * kitBoost(m) * (FIGURES.has(m) ? 0.4 : 1);
+        const free = (p: Pt2) => rhoOf(6, p) < SAFE_RHO - 0.03 && taken.every((q) => len2(sub2(p, q.p)) > q.r + rad) && (!ko || len2(sub2(p, ko.p)) > ko.r);
+        for (let tries = 0; tries < 30; tries++) {
+          let p: Pt2;
+          if (th.where === 'home') { const [a, b] = homeSpots[(homeSlot + tries) % homeSpots.length]!; p = { x: farm.home.x + (a + (r() - 0.5) * 0.02) * (1 + Math.floor(tries / 5) * 0.4) * farm.u.x * 1 + b * v.x, y: farm.home.y + a * farm.u.y + b * v.y * (1 + Math.floor(tries / 5) * 0.4) }; }
+          else if (th.where === 'yard' && farm.yards.length) { const poly = farm.yards[Math.floor(r() * farm.yards.length)]!; const xs = poly.map((q) => q.x), ys = poly.map((q) => q.y); p = { x: Math.min(...xs) + r() * (Math.max(...xs) - Math.min(...xs)), y: Math.min(...ys) + r() * (Math.max(...ys) - Math.min(...ys)) }; }
+          else p = { x: (r() - 0.5) * 1.0, y: (r() - 0.5) * 1.0 };
+          if (!free(p) || (th.where === 'field' && (len2(sub2(p, farm.home)) < 0.08 || farm.yards.some((poly) => pointInPoly(p, poly))))) continue;
+          // (The plough and the tractor on ploughed earth, the combine in the grain.)
+          if (m === 'ploughTeam' || m === 'tractor' || m === 'combine') { const pu = p.x * farm.u.x + p.y * farm.u.y, pv = p.x * v.x + p.y * v.y, k = cropIndex(plotAt(pu, pv, t, plotStage(imp, stage)).h, plotStage(imp, stage)); if (tries < 25 && k !== (m === 'combine' ? 0 : 3)) continue; }
+          // (Machines and teams work along the plots; people face about.)
+          const yaw = th.where === 'field' && !FIGURES.has(m) || m === 'ploughTeam' ? facing(toT(p), toT({ x: p.x + farm.u.x, y: p.y + farm.u.y })) : r() * 6.28;
+          if (one(m, p, yaw, s, leaf, imp === 'wetland')) { taken.push({ p, r: rad }); if (th.where === 'home') homeSlot++; break; }
+        }
       }
       // The homestead: a house in the civ's style and its barn, facing along the grid.
       const placeLot = (kind: Footprint, floors: Floors, p: Pt2, lr: Rng) => {
@@ -427,9 +473,10 @@ export class CityProps {
         const [lw, ld] = LOT_SIZE[kind];
         put(t, ...settleHere((k) => this.standLot(hk, s0.dir, facing(s0.dir, f) + Math.PI / 2, lw, ld, D * local(s0.dir, f) * k, lr, city.owner)));
       };
-      const v = { x: -farm.u.y, y: farm.u.x };
-      placeLot('b22', 1, { x: farm.home.x - 0.012 * v.x, y: farm.home.y - 0.012 * v.y }, mulberry32(mix(t, 0x5a)));
-      if (density !== 'low') placeLot('b32', 1, { x: farm.home.x + 0.02 * v.x, y: farm.home.y + 0.02 * v.y }, mulberry32(mix(t, 0x5b)));
+      // (A first hunting camp or logging camp has its tents, no house; the steam age its sawmill.)
+      const camped = imp === 'camp' && stage === 0;
+      if (!camped) placeLot('b22', 1, { x: farm.home.x - 0.012 * v.x, y: farm.home.y - 0.012 * v.y }, mulberry32(mix(t, 0x5a)));
+      if (density !== 'low' && imp !== 'camp' && imp !== 'mine') placeLot('b32', 1, { x: farm.home.x + 0.02 * v.x, y: farm.home.y + 0.02 * v.y }, mulberry32(mix(t, 0x5b)));
     }
     return { sig, byTile, streets, pavings };
   }
@@ -692,9 +739,9 @@ export class CityProps {
   // hedges, the bare ploughed plots, the homestead and its yards, the water
   // (rice stands in it, its foot under: up to PADDY_DEPTH of its height);
   // each the colour and height of its plot's crop.
-  private crops(t: number, farm: Farm, keepOut: { p: Pt2; r: number } | undefined, put: (b: PlacedBuilding) => void): void {
+  private crops(t: number, farm: Farm, keepOut: { p: Pt2; r: number } | undefined, stage: number, res: ResourceKey | null, put: (b: PlacedBuilding) => void): void {
     const g = this.game, D = g.globe.avgEdgeAngle, { toDir } = onTile(g, t);
-    const region = cropRegion(improvementFor(g.terrainAt(t)), g.biome[t]!, g.feature[t] ?? null, g.map.temperature[t]!);
+    const region = cropRegion(g.improvementAt(t), g.biome[t]!, g.feature[t] ?? null, g.map.temperature[t]!, res);
     const tint = CROP_PALETTE[region].map((h) => {
       const c = new THREE.Color(h), l = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b;
       return new THREE.Color(l + (c.r - l) * CROP_STAND_SATURATION, l + (c.g - l) * CROP_STAND_SATURATION, l + (c.b - l) * CROP_STAND_SATURATION);
@@ -705,8 +752,10 @@ export class CityProps {
       const pu = x + (rand() - 0.5) * CROP_ROW * 0.3, pv = y + (rand() - 0.5) * CROP_STEP * 0.8, yaw = rand() * Math.PI, shade = 0.9 + 0.2 * rand();
       const p = { x: pu * u.x + pv * v.x, y: pu * u.y + pv * v.y };
       if (rhoOf(6, p) > SAFE_RHO - CROP_MARGIN) continue;
-      const plot = plotAt(pu, pv, t), k = cropIndex(plot.h), height = CROP_HEIGHT[k];
+      const plot = plotAt(pu, pv, t, stage), k = cropIndex(plot.h, stage), height = CROP_HEIGHT[k];
       if (height === 0 || plot.edge < CROP_EDGE) continue;
+      // (A first farm is patchy: its crop thin and uneven, its edges ragged.)
+      if (stage === 0 && (rand() < 0.35 || rhoOf(6, { x: pu * u.x + pv * v.x, y: pu * u.y + pv * v.y }) > SAFE_RHO - CROP_MARGIN - 0.05 * rand())) continue;
       if (len2(sub2(p, farm.home)) < CROP_HOME_GAP || farm.yards.some((poly) => pointInPoly(p, poly)) || (keepOut && len2(sub2(p, keepOut.p)) < keepOut.r)) continue;
       const dir = toDir(p), smp = this.sampleDir(dir), tall = height * D * (0.9 + 0.2 * rand());
       if (smp.water - smp.ground > (region === 'paddy' ? PADDY_DEPTH * tall : DRY)) continue;
@@ -714,6 +763,60 @@ export class CityProps {
       const pos = dir.clone().multiplyScalar(1 + smp.ground - 0.00005 * this.scale);
       put({ kind: ruralModelKind('crop'), matrix: new THREE.Matrix4().compose(pos, q, new THREE.Vector3(CROP_WIDTH * D, tall, CROP_WIDTH * D)),
         color: new THREE.Color(1, 1, 1), leaf: tint[k]!.clone().multiplyScalar(shade) });
+    }
+  }
+
+  // A fence along a line: runs of it along each stretch, a unit (model
+  // length 1 m at the kit's scale) stretched to each.
+  private fenceAlong(line: readonly Pt2[], kind: 'wattle' | 'rails' | 'wire', one: (m: RuralModel, p: Pt2, yaw: number, scale: THREE.Vector3) => boolean, toT: (p: Pt2) => THREE.Vector3, D: number): void {
+    const unit = CREATURE_SCALE * FENCE_BOOST; // (a run's length, tile steps)
+    line.slice(0, -1).forEach((a, i) => {
+      const b = line[i + 1]!, len = Math.hypot(b.x - a.x, b.y - a.y), n = Math.max(1, Math.round(len / (unit * 3)));
+      for (let k = 0; k < n; k++) {
+        const p = { x: a.x + ((k + 0.5) / n) * (b.x - a.x), y: a.y + ((k + 0.5) / n) * (b.y - a.y) };
+        const yaw = facing(toT(p), toT(b));
+        one(kind, p, yaw, new THREE.Vector3((len / n / unit) * D * FENCE_BOOST, D * FENCE_BOOST, D * FENCE_BOOST));
+      }
+    });
+  }
+  // A plantation's plants: in rows along its plots (the rows the ground is
+  // painted with), or scattered clumps on a first one; off the homestead
+  // and its yards, inside the safe zone.
+  private plants(t: number, farm: Farm, keepOut: { p: Pt2; r: number } | undefined, stage: number, plants: NonNullable<StageLook['plants']>, put: (b: PlacedBuilding) => void): void {
+    const g = this.game, D = g.globe.avgEdgeAngle, { toDir } = onTile(g, t);
+    const a = farmAxis(t), u = { x: Math.cos(a), y: Math.sin(a) }, v = { x: -u.y, y: u.x };
+    const rand = mulberry32(mix(t, 0xd7)), s0 = D * PLANT_BOOST * 0.9;
+    const hedge = plants.model === 'vine' || plants.model === 'teaBush', step = plants.model === 'bananaPlant' || plants.model === 'mulberryBush' || plants.model === 'incenseTree' ? 0.05 : hedge ? 0.022 : 0.028;
+    const spots: Pt2[] = [];
+    if (plants.rows) {
+      // (On every other painted row of its plot: terrainMaterial.ts paints
+      // rows ROW_W apart across each plot, the plants stand on the green.)
+      const sx = PLOT_SIZES[Math.min(stage, MAX_STAGE)]![0];
+      // (Across each line, a plant where it crosses the middle of an even row.)
+      for (let y = -0.45; y <= 0.45; y += step) {
+        let last = '';
+        for (let x = -0.45; x <= 0.45; x += 0.001) {
+          const plot = plotAt(x, y, t, stage), row = (plot.f[0] * sx) / PLANT_ROW_W, id = `${plot.h}|${Math.floor(row)}`;
+          if (Math.floor(row) % 2 || row % 1 < 0.72 || id === last) continue;
+          last = id;
+          if (plot.edge >= 0.01 && cropIndex(plot.h, stage) !== 3) spots.push({ x: x * u.x + y * v.x, y: x * u.y + y * v.y });
+        }
+      }
+    } else {
+      for (let n = 0; n < 9; n++) {
+        const c = { x: (rand() - 0.5) * 0.8, y: (rand() - 0.5) * 0.8 };
+        for (let k = 0; k < 5; k++) spots.push({ x: c.x + (rand() - 0.5) * 0.12, y: c.y + (rand() - 0.5) * 0.12 });
+      }
+    }
+    for (const p of spots) {
+      if (rhoOf(6, p) > SAFE_RHO - CROP_MARGIN || len2(sub2(p, farm.home)) < CROP_HOME_GAP || farm.yards.some((poly) => pointInPoly(p, poly)) || (keepOut && len2(sub2(p, keepOut.p)) < keepOut.r)) continue;
+      const dir = toDir(p), smp = this.sampleDir(dir);
+      if (smp.water - smp.ground > DRY) continue;
+      // (A row's plants turned along it: hedges meet end to end.)
+      const along = facing(dir, toDir({ x: p.x + 0.01 * v.x, y: p.y + 0.01 * v.y }));
+      const q = new THREE.Quaternion().setFromUnitVectors(UP, dir).multiply(new THREE.Quaternion().setFromAxisAngle(UP, plants.rows ? along + (rand() - 0.5) * 0.08 : rand() * 6.28));
+      const sc = s0 * (0.85 + 0.3 * rand());
+      put({ kind: ruralModelKind(plants.model), matrix: new THREE.Matrix4().compose(dir.clone().multiplyScalar(1 + smp.ground - 0.00005 * this.scale), q, new THREE.Vector3(sc, sc, sc)), color: new THREE.Color(1, 1, 1).multiplyScalar(0.9 + 0.2 * rand()), leaf: new THREE.Color(0xffffff) });
     }
   }
 
@@ -751,6 +854,42 @@ export class CityProps {
       spoil([at(at(c, down, -0.035), side, -0.06), at(at(c, down, -0.035), side, 0.06), at(at(c, down, 0.035), side, 0.06), at(at(c, down, 0.035), side, -0.06)], mix(t, 0xad + placed.length));
       placed.push(p);
     }
+  }
+
+  // A fishing tile's boats and an oil well's works, by stage (rural/stages.ts
+  // waterLook): boats afloat, the well's derricks, pumpjacks and tanks on
+  // dry ground; apart, off the roads and clear of a wonder on the sea.
+  private works(t: number, imp: 'boats' | 'well', stage: number, rand: Rng): PlacedBuilding[] {
+    const g = this.game, D = g.globe.avgEdgeAngle, out: PlacedBuilding[] = [], at: THREE.Vector3[] = [];
+    const clearOf = g.wonderOn(t) || g.cities.some((c) => c.wonderTile === t) ? this.seaSpot(t) : null;
+    for (const th of waterLook(imp, stage)) for (let n = 0; n < th.n; n++) {
+      for (let tries = 0; tries < 30; tries++) {
+        const s = this.sample(t, Math.floor(rand() * g.tiles[t].corners.length), 0.12 + 0.45 * rand(), 0.1 + 0.3 * rand());
+        const afloat = s.water - s.ground > 0.0003;
+        if (afloat !== (imp === 'boats') || (clearOf && s.dir.angleTo(clearOf.dir) < clearOf.r * 1.6) || at.some((d) => d.angleTo(s.dir) < D * 0.12)) continue;
+        const sc = D * kitBoost(th.model) * (0.9 + 0.2 * rand());
+        const q = new THREE.Quaternion().setFromUnitVectors(UP, s.dir).multiply(new THREE.Quaternion().setFromAxisAngle(UP, rand() * Math.PI * 2));
+        const b: PlacedBuilding = { kind: ruralModelKind(th.model), matrix: new THREE.Matrix4().compose(s.dir.clone().multiplyScalar(1 + (afloat ? s.water : s.ground) - 0.00004 * this.scale), q, new THREE.Vector3(sc, sc, sc)),
+          color: new THREE.Color(1, 1, 1), leaf: new THREE.Color(th.colors ? th.colors[Math.floor(rand() * th.colors.length)]! : 0xffffff) };
+        if (this.onRoadDir(s.dir, D * 0.05)) continue;
+        out.push(b); at.push(s.dir);
+        break;
+      }
+    }
+    return out;
+  }
+  private onRoadDir(dir: THREE.Vector3, r: number): boolean {
+    this.roadLines();
+    const clear = ROAD_HALF_WIDTH * this.game.globe.avgEdgeAngle + r;
+    for (const pts of this.roads) {
+      if (pts[0]!.distanceTo(dir) > 0.3) continue;
+      for (let i = 0; i + 1 < pts.length; i++) {
+        const a = pts[i]!, ab = pts[i + 1]!.clone().sub(a), l2 = ab.lengthSq();
+        const u = l2 > 0 ? Math.max(0, Math.min(1, dir.clone().sub(a).dot(ab) / l2)) : 0;
+        if (a.clone().addScaledVector(ab, u).distanceTo(dir) < clear) return true;
+      }
+    }
+    return false;
   }
 
   // One structure per rural tile (two boats on the water), off the roads.

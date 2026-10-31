@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { mulberry32 } from './rng.ts';
 import type { ImprovementKey } from './cities.ts';
 import type { CropRegion } from './rural/look.ts';
-import { CROP_INDEX_GLSL, CROP_PALETTE, CROP_SATURATION, PLOTS_GLSL } from './rural/plots.ts';
+import { CROP_INDEX_GLSL, CROP_PALETTE, CROP_SATURATION, PLOTS_GLSL, MAX_STAGE, PLANT_ROW_W } from './rural/plots.ts';
 import { SAFE_RHO } from './town/geometry.ts';
 import { GROUND_LAYER, GROUND_TEX, groundUniform } from './groundTextures.ts';
 
@@ -245,9 +245,11 @@ float cPlots(vec3 P, vec2 size, float salt, out vec2 f, out float edge) {
 
 // A pillaged rural tile (burnt fields until repaired).
 export const BURNT_CODE = 7;
-export const IMPROVEMENT_CODE = { none: 0, farm: 1, mine: 2, camp: 3, quarry: 4, wetland: 5, boats: 6 } as const satisfies Record<ImprovementKey | 'none', number>;
+export const IMPROVEMENT_CODE = { none: 0, farm: 1, mine: 2, camp: 3, quarry: 4, wetland: 5, boats: 6, pasture: 8, plantation: 9, well: 10 } as const satisfies Record<ImprovementKey | 'none', number>;
 // A farm's crops by climate (the plots' palette, CROP_GLSL).
-export const CROP_CODE = { temperate: 0, steppe: 1, mediterranean: 2, savanna: 3, tropical: 4, oasis: 5, cold: 6, paddy: 7, peat: 8 } as const satisfies Record<CropRegion, number>;
+export const CROP_CODE = { temperate: 0, steppe: 1, mediterranean: 2, savanna: 3, tropical: 4, oasis: 5, cold: 6, paddy: 7, peat: 8, wheat: 9, maize: 10, pasture: 11, plantation: 12 } as const satisfies Record<CropRegion, number>;
+// The crops' cell in the tile table holds the region and the farm's stage (STAGE_STEP apart).
+export const STAGE_STEP = 16;
 // (In the shader's linear space, as THREE.Color holds them.)
 const hexVec = (h: number) => {
   const c = new THREE.Color(h), l = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b;
@@ -259,7 +261,7 @@ const CROP_GLSL = /* glsl */ `
 const vec3 CROPS[${Object.keys(CROP_CODE).length * 5}] = vec3[](${(Object.keys(CROP_CODE) as CropRegion[]).sort((a, b) => CROP_CODE[a] - CROP_CODE[b]).flatMap((k) => CROP_PALETTE[k].map(hexVec)).join(', ')});
 ${PLOTS_GLSL}
 ${CROP_INDEX_GLSL}
-vec3 cropColor(float region, float h) { return CROPS[int(region + 0.5) * 5 + cropIndex(h)]; }
+vec3 cropColor(int region, float h, int stage) { return CROPS[region * 5 + cropIndex(h, stage)]; }
 `;
 
 export interface TerrainMaterial {
@@ -558,27 +560,43 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
             // painting: each fills its own hex's safe zone (rural/plots.ts),
             // its plots laid along the hex's sides, a hedge round it.
             int me = int(ids.x), meCode = int(tileRow(me, 5).z + 0.5);
-            if (meCode == 1 || meCode == 5) {
+            if (meCode == 1 || meCode == 5 || meCode == 8 || meCode == 9) {
               vec4 fr0 = tileRow(me, 7), fr1 = tileRow(me, 8), fr2 = tileRow(me, 9);
+              int region = int(mod(fr1.w + 0.5, ${STAGE_STEP}.0)), stage = int((fr1.w + 0.5) / ${STAGE_STEP}.0);
               // (The inverse of onTile's projection, exactly.)
               vec3 d = normalize(P);
               vec2 lp = vec2(dot(d, fr1.xyz), dot(d, fr2.xyz)) / (dot(d, fr0.xyz) * fr0.w);
               float ca = cos(fr2.w), sa = sin(fr2.w);
               vec2 uv = vec2(ca * lp.x + sa * lp.y, -sa * lp.x + ca * lp.y);
               float ringW = fwidth(vRing);
-              // (A paddy's plots go on under its water.)
-              float farm = (1.0 - smoothstep(${SAFE_RHO.toFixed(3)}, ${SAFE_RHO.toFixed(3)} + ringW, vRing)) * (meCode == 5 ? 1.0 - snowCover : keep);
+              // (A paddy's plots go on under its water. A first farm's
+              // edge is ragged: it fades into the wild.)
+              float rim = ${SAFE_RHO.toFixed(3)} - (stage == 0 ? 0.06 * (tFbm(P / (0.12 * uR0) + 1.7, 2) - 0.2) : 0.0);
+              float farm = (1.0 - smoothstep(rim, rim + ringW + (stage == 0 ? 0.04 : 0.0), vRing)) * (meCode == 5 ? 1.0 - snowCover : keep);
               vec2 f; float edge;
-              float h = plotAt(uv, me, f, edge);
-              vec3 crop = cropColor(fr1.w, h);
+              float h = plotAt(uv, me, stage, f, edge);
+              vec3 crop = cropColor(region, h, stage);
               crop *= 0.94 + 0.12 * fract(h * 7.3);
-              // Furrows along each plot, and hedges between plots and round the farm.
               float tile = fr0.w; // world units per tile step
-              crop *= 1.0 + 0.05 * sin(f.y * 40.0) * tFade(40.0 / (0.24 * tile));
-              float hedge = (1.0 - smoothstep(0.004, 0.004 + 1.5 * fwidth(edge), edge)) * tFade(1.0 / (0.02 * tile));
-              hedge = max(hedge, smoothstep(${(SAFE_RHO - 0.025).toFixed(3)}, ${(SAFE_RHO - 0.025).toFixed(3)} + ringW, vRing));
-              crop = mix(crop, vec3(0.2, 0.25, 0.15), hedge * 0.7);
-              diffuseColor.rgb = mix(diffuseColor.rgb, crop * vShade, farm * 0.9);
+              if (meCode == 9) {
+                // A plantation: rows of its plants on bare earth, along each plot.
+                float rows = step(0.45, fract(f.x * PLOT_SIZES[clamp(stage, 0, ${MAX_STAGE})].x / ${PLANT_ROW_W}));
+                crop = mix(vec3(0.36, 0.29, 0.2), crop, mix(0.5, rows, tFade(6.0 / (0.08 * tile))));
+              } else {
+                // Furrows along each plot.
+                crop *= 1.0 + 0.05 * sin(f.y * 40.0) * tFade(40.0 / (0.24 * tile));
+              }
+              // A first farm: weeds and grass through its patches.
+              if (stage == 0) crop = mix(crop, diffuseColor.rgb / max(vShade, 0.05), 0.35 * smoothstep(0.45, 0.7, tFbm(P / (0.05 * uR0) + 5.3, 2)));
+              // Between the plots: grass balks (the plough's strips), hedges
+              // (enclosed fields, a pasture's), thin ones later, none in the
+              // machine age; round the farm, a hedge from enclosure on.
+              float bw = stage == 0 ? 0.0 : stage == 1 ? 0.003 : stage == 4 ? 0.0015 : 0.004;
+              float hedge = bw > 0.0 ? (1.0 - smoothstep(bw, bw + 1.5 * fwidth(edge), edge)) * tFade(1.0 / (0.02 * tile)) : 0.0;
+              if (stage >= 2 && stage <= 3) hedge = max(hedge, smoothstep(${(SAFE_RHO - 0.025).toFixed(3)}, ${(SAFE_RHO - 0.025).toFixed(3)} + ringW, vRing));
+              vec3 hedgeC = stage == 1 ? vec3(0.32, 0.4, 0.2) : stage == 4 ? vec3(0.42, 0.38, 0.3) : vec3(0.2, 0.25, 0.15);
+              crop = mix(crop, hedgeC, hedge * (stage == 1 ? 0.6 : 0.7));
+              diffuseColor.rgb = mix(diffuseColor.rgb, crop * vShade, farm * (meCode == 8 && stage == 0 ? 0.55 : 0.9));
             }
             if (quarryS > 0.02) {
               // Open pits: a couple of irregular hollows per tile, cut in

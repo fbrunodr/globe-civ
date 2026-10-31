@@ -12,7 +12,7 @@ import { MAP_SCRIPTS, MAP_SIZES, isMapScript, tileCount, type MapScriptKey, type
 import { terrainName } from './terrain.ts';
 import {
   USE, BUILDINGS, BUILDING_KEYS, WONDERS, WONDER_KEYS, FOCUSES, ERAS, IMPROVEMENTS, SPECIALIST_KINDS,
-  improvementFor, specialistYield, wonderBeside, type BuildingKey, type WonderKey, type EraIndex, type FocusKey, type Output, type SpecialistKind,
+  specialistYield, wonderBeside, type BuildingKey, type WonderKey, type EraIndex, type FocusKey, type Output, type SpecialistKind,
 } from './cities.ts';
 import { specialistName } from './ui.ts';
 import { buildPresets, foundCity, grow, shrink, setEra, addBuilding, addWonder } from './sandbox.ts';
@@ -181,7 +181,7 @@ function renderTile(): void {
   const c = game.cityById.get(game.tileCity[t]!);
   if (c) {
     const u = game.use[t];
-    const k = improvementFor(game.terrainAt(t));
+    const k = game.improvementAt(t);
     const ws = game.wondersAt(t);
     const what = u === USE.center ? esc(c.name) : `${u === USE.rural && k ? `${IMPROVEMENTS[k].name}${game.pillaged[t] ? ' (burnt)' : ''}` : 'Wild'} of ${esc(c.name)}`;
     lines.push(`${what} ${u !== USE.wild || ws.length ? `<small>${yieldsStr(game.tileOutput(t))}</small>` : ''}`);

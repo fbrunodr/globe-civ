@@ -4,7 +4,7 @@ import { GlobeCamera } from './camera.ts';
 import { HUMAN, type Game, type Unit, type City } from './game.ts';
 import { GROUND_COVERS, SNOW, tileLook, type GroundCover, type TileLook } from './look.ts';
 import { buildTerrainMesh, locate, newSample, type TerrainMesh } from './terrainMesh.ts';
-import { makeTerrainMaterial, makeTerrainDepthMaterial, makeTable, FAN_ROWS, TILE_ROWS, IMPROVEMENT_CODE, BURNT_CODE, CROP_CODE, type TerrainMaterial } from './terrainMaterial.ts';
+import { makeTerrainMaterial, makeTerrainDepthMaterial, makeTable, FAN_ROWS, TILE_ROWS, IMPROVEMENT_CODE, BURNT_CODE, CROP_CODE, STAGE_STEP, type TerrainMaterial } from './terrainMaterial.ts';
 import { makeSmoke, type Emitter, type Smoke } from './smoke.ts';
 import { buildPaintData, fanCoords, fanFrames, paintAt, softAt, warpAt, FAN_COORDS, FINE_MAX, FINE_WAVELENGTH, type PaintData, type FanFrame } from './paint.ts';
 import { buildRelief, CONE_RADIUS, CRATER, CRATER_DEPTH, type Relief } from './relief.ts';
@@ -18,16 +18,18 @@ import { buildPropGeometry, catalogEntry, CATALOG, CATALOG_KINDS, type CatalogKi
 import { BUILDING_KINDS, buildBuildingGeometry, type BuildingKind } from './buildingCatalog.ts';
 import { houseGeometry, isHouseKind, type HouseKind } from './houses.ts';
 import { isWonderModelKind, wonderGeometry, type WonderModelKind } from './wonderModels.ts';
-import { isFloraRural, isRuralModelKind, ruralGeometry, ruralModelKind, type RuralModelKind } from './rural/models.ts';
+import { isFloraRural, isSmoothRural, isRuralModelKind, ruralGeometry, ruralModelKind, type RuralModelKind } from './rural/models.ts';
 import { CityProps, tileFrame, SUMMIT_HOUSES, type CitySpot } from './cityProps.ts';
 import { CITY_CELL } from './cityPainter.ts';
-import { RESOURCE_LOOKS, resourceLayout } from './rural/resourceModels.ts';
+import { RESOURCE_WILD, RESOURCE_WORKED, resourceLayout } from './rural/resourceModels.ts';
+import { RESOURCE_IMPROVEMENT } from './resources.ts';
+import { plotStage } from './rural/stages.ts';
 import { farmAxis } from './farmPainter.ts';
 import { cropRegion } from './rural/look.ts';
 import { roadLines, ROAD_HALF_WIDTH } from './roads.ts';
 import { Vegetation, type SpotEnv } from './vegetation.ts';
 import { mulberry32, makePerlin } from './rng.ts';
-import { USE, WONDERS, improvementFor, type ImprovementKey } from './cities.ts';
+import { USE, WONDERS, type ImprovementKey } from './cities.ts';
 import { farGeometry, makeFloraDepthMaterial, makePropMaterial, instanceGeometry } from './propMaterial.ts';
 import { GpuTimer } from './gpuTimer.ts';
 import { resourceDef } from './resources.ts';
@@ -112,6 +114,9 @@ const FLORA_KEEP: Record<'urban' | ImprovementKey, Record<Layer, number>> = {
   camp:    { Canopy: 0.85, Understory: 0.7, Ground: 0.8, Accent: 1 },
   wetland: { Canopy: 0.2, Understory: 0.12, Ground: 0.08, Accent: 0.3 }, // (paddies and peat beds: cleared as fields are)
   boats:   { Canopy: 1, Understory: 1, Ground: 1, Accent: 1 },
+  pasture: { Canopy: 0.25, Understory: 0.1, Ground: 0.3, Accent: 0.5 },
+  plantation: { Canopy: 0.15, Understory: 0.08, Ground: 0.08, Accent: 0.3 },
+  well:    { Canopy: 0.4, Understory: 0.4, Ground: 0.4, Accent: 0.6 },
 };
 
 // Roads between cities, and streets: dirt, then paving from the Classical era.
@@ -248,6 +253,8 @@ export class GlobeRenderer {
   // Where the shadow map was last drawn: round what, for which sun, how far (setShadows, updateSun).
   private shadowAt: { center: THREE.Vector3; dir: THREE.Vector3; half: number } | null = null;
   private readonly buildingMat = makePropMaterial(0.32, 0.6, this.sunDir);
+  // (People, animals, plants: round, smooth-shaded.)
+  private readonly smoothMat = makePropMaterial(0.25, 0.7, this.sunDir, undefined, true);
   private readonly propGeo = new Map<PropKind, THREE.BufferGeometry>();
   private readonly vegetation: Vegetation;
   // Per terrain vertex, for prop placement: ground slope, signed distance to
@@ -772,7 +779,7 @@ export class GlobeRenderer {
     td[o + 21] = this.paint.group[t];
     // The tile's own frame (cityProps.onTile), its crops and its farm's axis.
     const f = tileFrame(g, t);
-    td.set([f.c.x, f.c.y, f.c.z, f.k, f.e1.x, f.e1.y, f.e1.z, CROP_CODE[cropRegion(improvementFor(g.terrainAt(t)), g.biome[t]!, g.feature[t] ?? null, g.map.temperature[t]!)], f.e2.x, f.e2.y, f.e2.z, farmAxis(t)], o + 28);
+    td.set([f.c.x, f.c.y, f.c.z, f.k, f.e1.x, f.e1.y, f.e1.z, CROP_CODE[cropRegion(g.improvementAt(t), g.biome[t]!, g.feature[t] ?? null, g.map.temperature[t]!)], f.e2.x, f.e2.y, f.e2.z, farmAxis(t)], o + 28);
     // What the ground is made of: the soil's color and the main cover
     // material (the largest share), alone: the shader shows one material
     // per tile, fading into its neighbours' across borders.
@@ -951,13 +958,13 @@ export class GlobeRenderer {
             // (What grows in the water, mangroves and reeds, stays: no house stands there.)
             // (Not in a worked wetland: its paddies and peat beds are cleared.)
             const inWater = env.water - env.ground > 0 && catalogEntry(prop.kind).water !== undefined
-              && !(use === USE.rural && improvementFor(g.terrainAt(u)) === 'wetland');
+              && !(use === USE.rural && g.improvementAt(u) === 'wetland');
             // On built ground the tile's own flora stays where it stands clear of
             // the buildings and streets (a town keeps its trees, never adds any).
             // A rural tile keeps a share of it (fields keep hedgerow trees),
             // and that clear of what stands on the farm too.
             if (use === USE.rural && !inWater) {
-              const imp = improvementFor(g.terrainAt(u));
+              const imp = g.improvementAt(u);
               if (rand() >= FLORA_KEEP[imp ?? 'urban'][CATALOG[prop.kind].layer]) continue;
             }
             if (this.cityProps.keepsFloraClear(u) && !inWater) {
@@ -1030,18 +1037,25 @@ export class GlobeRenderer {
   // board; on the water for a sea resource, never in the water for the
   // rest, never in a city's center.
   private readonly resourceCache = new Map<number, { key: string; items: PlacedProp[] }>();
+  // Wild, it shows the resource as nature has it; worked for it (its
+  // improvement the resource's), only its own touches: the rest is the
+  // improvement's look (the farm, the pasture, the mine: cityProps.ts).
   private resourceProps(t: number): PlacedProp[] {
     const g = this.game, r = g.resourceFor(t, HUMAN);
     if (!r || g.use[t] === USE.center) return [];
+    const worked = g.use[t] === USE.rural && g.improvementAt(t) === RESOURCE_IMPROVEMENT[r] && !g.pillaged[t];
+    const key = `${r}|${worked}`;
     const hit = this.resourceCache.get(t);
-    if (hit && hit.key === r) return hit.items;
-    const look = RESOURCE_LOOKS[r], rand = mulberry32((t + 11) * 2246822519);
+    if (hit && hit.key === key) return hit.items;
+    const look = worked ? RESOURCE_WORKED[r] : RESOURCE_WILD[r];
+    if (!look) { this.resourceCache.set(t, { key, items: [] }); return []; }
+    const rand = mulberry32((t + 11) * 2246822519);
     const tile = g.tiles[t], { e1, k } = tileFrame(g, t);
     const mid = tile.center.clone().lerp(g.globe.triCenters[tile.corners[2 % tile.corners.length]!]!, 0.4).normalize();
     const u = e1.clone().addScaledVector(mid, -e1.dot(mid)).normalize(), w = mid.clone().cross(u);
     const items: PlacedProp[] = [];
     let hint = t;
-    for (const m of resourceLayout(r, rand)) {
+    for (const m of resourceLayout(r, rand, look)) {
       const dir = mid.clone().addScaledVector(u, m.x * k).addScaledVector(w, m.y * k).normalize();
       const l = locate(g.globe, dir, hint);
       hint = l.t;
@@ -1052,7 +1066,7 @@ export class GlobeRenderer {
       items.push({ kind: ruralModelKind(m.model), matrix: new THREE.Matrix4().compose(dir.clone().multiplyScalar(1 + Math.max(s0.ground, s0.water) - 0.00004 * this.scale), q, new THREE.Vector3(sc, sc, sc)),
         color: new THREE.Color(shade, shade, shade), leaf: new THREE.Color(m.color ?? 0xffffff) });
     }
-    this.resourceCache.set(t, { key: r, items });
+    this.resourceCache.set(t, { key, items });
     return items;
   }
 
@@ -1090,7 +1104,7 @@ export class GlobeRenderer {
           const cap = Math.ceil(items.length * 1.3) + 8;
           // (A farm's crops are drawn with the flora, and hide from high up as its understory does.)
           const crop = isRuralModelKind(kind) && isFloraRural(kind);
-          mesh = new THREE.InstancedMesh(instanceGeometry(this.geometryOf(kind), cap), isFloraKind(kind) || crop ? this.propMat : this.buildingMat, cap);
+          mesh = new THREE.InstancedMesh(instanceGeometry(this.geometryOf(kind), cap), isFloraKind(kind) || crop ? this.propMat : isRuralModelKind(kind) && isSmoothRural(kind) ? this.smoothMat : this.buildingMat, cap);
           mesh.userData['hideAbove'] = isFloraKind(kind) ? HIDE_ABOVE[CATALOG[kind].layer] : Infinity;
           // (Crops hide once the camera is higher than they reach, cullProps.)
           if (crop) mesh.userData['crop'] = true;
@@ -1377,10 +1391,12 @@ export class GlobeRenderer {
     for (let t = 0; t < g.N; t++) {
       const o = t * TILE_ROWS * 4 + 20;
       const u = g.use[t];
-      const imp = u === USE.rural ? improvementFor(g.terrainAt(t)) : null;
+      const imp = u === USE.rural ? g.improvementAt(t) : null;
       td[o] = u === USE.center ? 1 : 0;
       td[o + 2] = g.pillaged[t] ? BURNT_CODE : imp ? IMPROVEMENT_CODE[imp] : IMPROVEMENT_CODE.none;
       td[o + 3] = u === USE.center ? 1 : 0;
+      // Its crops (the resource's own, if a farm of it) and its farm's stage (its owner's techs).
+      td[t * TILE_ROWS * 4 + 35] = CROP_CODE[cropRegion(imp ?? g.improvementAt(t), g.biome[t]!, g.feature[t] ?? null, g.map.temperature[t]!, g.resourceFor(t, g.ownerOf(t)))] + STAGE_STEP * plotStage(imp, g.stageAt(t));
     }
     this.tileTex.needsUpdate = true;
   }
