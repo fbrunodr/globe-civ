@@ -17,6 +17,7 @@
 import * as THREE from 'three';
 import { tf, type Tf } from '../propCatalog.ts';
 import { finish, tube, ellipsoid, horn, fleece, loft, smooth, S, creature, COAT, coat, CREATURE_SCALE, type Paint, type Species } from '../creatures.ts';
+import { hull, limb, R } from '../lowpoly.ts';
 import { person, hatShapes, hairShapes, handAt, HANG, HOLD, WORK, RAISE, SKIN_PAINT, CLOTH_PAINT, type ArmPose, type Dress, type Part } from '../people.ts';
 
 type G = THREE.BufferGeometry;
@@ -52,7 +53,8 @@ function worker(dress: Dress, armL: ArmPose, armR: ArmPose, skin: number, extra:
     }
     return p.geo;
   });
-  out.push(...hairShapes(hair).map((g) => recolor(g, 0x3a2a1e)));
+  // (Under a hat only what shows below it: the beard, the bun.)
+  out.push(...hairShapes(hair).slice(hat ? 1 : 0).map((g) => recolor(g, 0x3a2a1e)));
   if (hat) out.push(...hatShapes(hat, hat === 'straw' ? 0xd8bc78 : hat === 'felt' ? 0x4a3a2a : 0x6a5a48));
   out.push(...extra(handAt(1, armL, dress.female), handAt(-1, armR, dress.female)));
   // (People face +z; the kit faces +x. 1 tall: 1.72 m.)
@@ -62,16 +64,19 @@ function worker(dress: Dress, armL: ArmPose, armR: ArmPose, skin: number, extra:
 const recolor = (g: G, c: number): G => { const col = g.getAttribute('color') as THREE.BufferAttribute, k = new THREE.Color(c); for (let i = 0; i < col.count; i++) col.setXYZ(i, k.r, k.g, k.b); return g; };
 const vv = (p: THREE.Vector3): V3 => [p.x, p.y, p.z];
 const TROUSERS = 0x5a4a38;
-// (Tools, in figure units: a figure is 1 tall.)
-const hoe = (hR: THREE.Vector3, hL: THREE.Vector3) => { const a = hL.clone().add(new THREE.Vector3(0, 0.35, -0.1)), b = hR.clone().add(hR.clone().sub(a).normalize().multiplyScalar(0.25)); return [beam(vv(a), vv(b), 0.012, TIMBER), box(0.09, 0.05, 0.012, IRON, { x: b.x, y: b.y - 0.03, z: b.z })]; };
-const staffIn = (h: THREE.Vector3) => [beam([h.x, 0.02, h.z], [h.x, h.y + 0.55, h.z], 0.012, TIMBER), ...[0, 1].map((i) => beam([h.x, h.y + 0.55, h.z], [h.x + 0.05 * (i ? 1 : -1) * 0, h.y + 0.62, h.z + 0.06], 0.011, TIMBER))];
-const bowIn = (h: THREE.Vector3) => [tube([[h.x, h.y + 0.36, h.z - 0.05], [h.x, h.y, h.z + 0.04], [h.x, h.y - 0.36, h.z - 0.05]], [0.007, 0.011, 0.007], TIMBER, 5, 3), beam([h.x, h.y + 0.36, h.z - 0.05], [h.x, h.y - 0.36, h.z - 0.05], 0.002, 0xd8d0c0, 3)];
-const quiver = () => [cyl(0.034, 0.03, 0.3, 8, 0x6a4a30, { x: 0.05, y: 0.5, z: -0.09, rz: -0.3 }), ...[0, 1, 2].map((i) => beam([-0.03 + i * 0.012, 0.77, -0.09], [-0.05 + i * 0.012, 0.83, -0.095], 0.005, 0xe0d8c8, 3))];
-const gunIn = (hR: THREE.Vector3, hL: THREE.Vector3) => { const muzzle = hL.clone().add(new THREE.Vector3(0, 0.34, 0.06)); return [beam(vv(hR.clone().add(new THREE.Vector3(0, -0.08, -0.03))), vv(hL), 0.018, DARK_WOOD), beam(vv(hL), vv(muzzle), 0.01, IRON)]; };
-const basket = () => [cyl(0.08, 0.1, 0.16, 10, 0xb08a52, { y: 0.56, z: -0.12 }), cyl(0.098, 0.098, 0.012, 10, 0x8a6a3a, { y: 0.72, z: -0.12 })];
-const pickOnShoulder = () => [beam([0.1, 0.5, -0.12], [0.16, 0.95, 0.12], 0.012, TIMBER), tube([[0.12, 0.98, 0.04], [0.16, 0.95, 0.12], [0.2, 0.9, 0.2]], [0.01, 0.016, 0.008], IRON, 5, 2)];
-const axeUp = (hR: THREE.Vector3) => [beam(vv(hR.clone().add(new THREE.Vector3(0, -0.06, 0))), vv(hR.clone().add(new THREE.Vector3(0, 0.34, 0.1))), 0.012, TIMBER), box(0.016, 0.07, 0.08, IRON, { x: hR.x, y: hR.y + 0.3, z: hR.z + 0.14 })];
-const scythe = (hR: THREE.Vector3, hL: THREE.Vector3) => { const top = hL.clone().add(new THREE.Vector3(0.02, 0.2, -0.05)), low = hR.clone().add(new THREE.Vector3(0, -0.4, 0.2)); return [beam(vv(top), vv(low), 0.011, TIMBER), tube([vv(low), [low.x - 0.15, low.y + 0.02, low.z + 0.08], [low.x - 0.32, low.y + 0.06, low.z + 0.05]], [0.012, 0.01, 0.003], STEEL, 4, 2, 0.3)]; };
+// (Tools, in figure units: a figure is 1 tall; low-poly as the people are:
+// three-sided rods, few faces.)
+const rodLp = (a: V3, b: V3, r: number, c: Paint) => limb([a, b], [r, r], c, 3, { caps: [false, false] });
+const boxLp = (w: number, h: number, d: number, c: Paint, o: Tf = {}) => limb([[0, 0, 0], [0, h, 0]], [w / 2, w / 2], c, 4, {}, d / w).applyMatrix4(tf(o));
+const hoe = (hR: THREE.Vector3, hL: THREE.Vector3) => { const a = hL.clone().add(new THREE.Vector3(0, 0.35, -0.1)), b = hR.clone().add(hR.clone().sub(a).normalize().multiplyScalar(0.25)); return [rodLp(vv(a), vv(b), 0.012, TIMBER), boxLp(0.09, 0.05, 0.012, IRON, { x: b.x, y: b.y - 0.03, z: b.z })]; };
+const staffIn = (h: THREE.Vector3) => [rodLp([h.x, 0.02, h.z], [h.x, h.y + 0.55, h.z], 0.012, TIMBER), rodLp([h.x, h.y + 0.55, h.z], [h.x, h.y + 0.62, h.z + 0.06], 0.011, TIMBER)];
+const bowIn = (h: THREE.Vector3) => [limb([[h.x, h.y + 0.36, h.z - 0.05], [h.x, h.y, h.z + 0.04], [h.x, h.y - 0.36, h.z - 0.05]], [0.007, 0.011, 0.007], TIMBER, 3, { caps: [false, false] }), rodLp([h.x, h.y + 0.36, h.z - 0.05], [h.x, h.y - 0.36, h.z - 0.05], 0.002, 0xd8d0c0)];
+const quiver = () => [limb([[0, 0, 0], [0, 0.3, 0]], [0.03, 0.034], 0x6a4a30, 4, { caps: [true, false] }).applyMatrix4(tf({ x: 0.05, y: 0.5, z: -0.09, rz: -0.3 })), ...[0, 1].map((i) => rodLp([-0.03 + i * 0.012, 0.77, -0.09], [-0.05 + i * 0.012, 0.83, -0.095], 0.005, 0xe0d8c8))];
+const gunIn = (hR: THREE.Vector3, hL: THREE.Vector3) => { const muzzle = hL.clone().add(new THREE.Vector3(0, 0.34, 0.06)); return [rodLp(vv(hR.clone().add(new THREE.Vector3(0, -0.08, -0.03))), vv(hL), 0.018, DARK_WOOD), rodLp(vv(hL), vv(muzzle), 0.01, IRON)]; };
+const basket = () => [hull([R([0, 0.56, -0.12], 0.08), R([0, 0.72, -0.12], 0.1)], 6, (p) => (p.y > 0.7 ? 0x8a6a3a : 0xb08a52), { caps: [true, false] })];
+const pickOnShoulder = () => [rodLp([0.1, 0.5, -0.12], [0.16, 0.95, 0.12], 0.012, TIMBER), limb([[0.12, 0.98, 0.04], [0.16, 0.95, 0.12], [0.2, 0.9, 0.2]], [0.01, 0.016, 0.006], IRON, 3, { caps: [false, false] })];
+const axeUp = (hR: THREE.Vector3) => [rodLp(vv(hR.clone().add(new THREE.Vector3(0, -0.06, 0))), vv(hR.clone().add(new THREE.Vector3(0, 0.34, 0.1))), 0.012, TIMBER), boxLp(0.016, 0.07, 0.08, IRON, { x: hR.x, y: hR.y + 0.3, z: hR.z + 0.14 })];
+const scythe = (hR: THREE.Vector3, hL: THREE.Vector3) => { const top = hL.clone().add(new THREE.Vector3(0.02, 0.2, -0.05)), low = hR.clone().add(new THREE.Vector3(0, -0.4, 0.2)); return [rodLp(vv(top), vv(low), 0.011, TIMBER), limb([vv(low), [low.x - 0.15, low.y + 0.02, low.z + 0.08], [low.x - 0.32, low.y + 0.06, low.z + 0.05]], [0.012, 0.01, 0.003], STEEL, 3, { caps: [false, false] }, 0.3)]; };
 
 export type Worker = 'farmer' | 'reaper' | 'herder' | 'hunter' | 'gunHunter' | 'picker' | 'miner' | 'woodcutter';
 export function workerModel(kind: Worker, variant: number): G[] {

@@ -19,9 +19,10 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { ARCH_CIVS, type ArchCiv } from './architecture.ts';
 import { CIVS, UNITS, type UnitKey } from './rules.ts';
 import { FORTIFY_BONUS, combatStrength, fightRounds } from './game.ts';
-import { HAIR_STYLES, RIDER_HEAD, formationSlots, hairModel, rides, unitModel, variantOf, womenShare } from './unitModels.ts';
+import { HAIR_STYLES, RIDER_HEAD, formationSlots, hairModel, isMachine, rides, unitModel, variantOf, womenShare } from './unitModels.ts';
 import { Volleys, figureLooks, makeUnitMaterial, prepareUnitGeometry } from './unitView.ts';
 import { WorldLabel, disposeLabels } from './worldLabel.ts';
+import { triangles } from './lowpoly.ts';
 import { mulberry32 } from './rng.ts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -93,8 +94,8 @@ let fight: { t0: number; loop: boolean; outcome: { attacker: number; defender: n
 // The battle's sides.
 const battle = { aCiv: 'Romans' as ArchCiv, aType: 'spearman' as UnitKey, aHp: 100, dCiv: 'Egyptians' as ArchCiv, dType: 'archer' as UnitKey, dHp: 100, ground: 0, fortified: false };
 
-function label(text: string, x: number, z: number, bold = false): void {
-  const o = new WorldLabel([{ text, bold }], 0.45);
+function label(text: string, x: number, z: number, bold = false, sub?: string): void {
+  const o = new WorldLabel(sub ? [{ text, bold }, { text: sub, small: true }] : [{ text, bold }], sub ? 0.8 : 0.45);
   o.position.set(x, 0.25, z);
   o.rotation.x = -Math.PI / 2.6;
   world.add(o);
@@ -141,9 +142,17 @@ function build(): { w: number; d: number } {
     }
   }
   placed = [];
+  // (Triangles: each model's, and the field's in all; per type, a figure's
+  // most with its hair.)
+  let drawn = 0;
+  const perFigure = new Map<UnitKey, number>(), hairTris = new Map<string, number>();
   for (const [key, list] of figs) {
     const [a, b, c, d] = key.split('|') as [string, string, string | undefined, string | undefined];
     const geo = prepareUnitGeometry(a === 'hair' ? hairModel(HAIR_STYLES[Number(b)]!) : unitModel(a as UnitKey, b as ArchCiv, Number(c), d === '1'), list.length);
+    const n = triangles([geo]);
+    drawn += n * list.length;
+    if (a === 'hair') hairTris.set(b, n);
+    else perFigure.set(a as UnitKey, Math.max(perFigure.get(a as UnitKey) ?? 0, n));
     const mesh = new THREE.InstancedMesh(geo, material, list.length);
     const tone = geo.getAttribute('aSkinTone') as THREE.InstancedBufferAttribute;
     list.forEach((f, i) => {
@@ -154,10 +163,12 @@ function build(): { w: number; d: number } {
     mesh.castShadow = mesh.receiveShadow = true;
     world.add(mesh);
   }
+  $('tris').textContent = `${placed.filter((p) => !p.hair).length} figures · ${drawn.toLocaleString()} triangles`;
   let w = 0, d = BATTLE_GAP;
   if (mode === 'sheet') {
     cells.filter((c) => c.x === 0).forEach((c) => label(c.civ, -2.6, c.z, true));
-    TYPES.forEach((type, col) => label(UNITS[type].name, col * CELL_W, -2.4, true));
+    const hairMost = Math.max(0, ...hairTris.values());
+    TYPES.forEach((type, col) => { const n = perFigure.get(type); label(UNITS[type].name, col * CELL_W, -2.4, true, n === undefined ? undefined : `${n + (isMachine(type) ? 0 : hairMost)} tris / figure`); });
     w = (TYPES.length - 1) * CELL_W;
     d = (cells.length / TYPES.length - 1) * CELL_D;
   }

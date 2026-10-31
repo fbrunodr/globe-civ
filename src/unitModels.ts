@@ -1,8 +1,9 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { part, seg, tf, V, type Tf } from './propCatalog.ts';
-import { person, riderBody, handAt, hairShapes, HAIR_STYLE_KEYS, HIP, SHOULDER, HEAD_Y, HEAD_R, HANG, HOLD, RAISE, SHIELD, type ArmPose, type Dress, type Part, type HairStyleKey } from './people.ts';
-import { horseParts, ellipsoid } from './creatures.ts';
+import { person, riderBody, handAt, hairShapes, headShell, HAIR_STYLE_KEYS, HIP, SHOULDER, HEAD_Y, HANG, HOLD, RAISE, SHIELD, type ArmPose, type Dress, type Part, type HairStyleKey } from './people.ts';
+import { horseParts } from './creatures.ts';
+import { hull, plate, R } from './lowpoly.ts';
 import type { ArchCiv } from './architecture.ts';
 import type { UnitKey } from './rules.ts';
 
@@ -87,9 +88,13 @@ function tag(g: THREE.BufferGeometry, t: Tag = {}): THREE.BufferGeometry {
   return g;
 }
 const shape = (geo: THREE.BufferGeometry, color: number, o: Tf, t?: Tag) => tag(part(geo, color, tf(o)), t);
-const ball = (r: number, color: number, o: Tf, t?: Tag) => shape(new THREE.IcosahedronGeometry(r, 0), color, o, t);
+const ball = (r: number, color: number, o: Tf, t?: Tag) => shape(new THREE.OctahedronGeometry(r, 0), color, o, t);
 const box = (w: number, h: number, d: number, color: number, o: Tf, t?: Tag) => shape(new THREE.BoxGeometry(w, h, d), color, o, t);
-const rod = (a: THREE.Vector3, b: THREE.Vector3, r0: number, r1: number, n: number, color: number, t?: Tag) => tag(seg(a, b, r0, r1, n, color), t);
+// (Low-poly: a rod is three-sided whatever `n` asks; a thick one four.)
+const rod = (a: THREE.Vector3, b: THREE.Vector3, r0: number, r1: number, n: number, color: number, t?: Tag) => tag(seg(a, b, r0, r1, Math.min(n, r0 > 0.015 ? 4 : 3), color), t);
+// A low-poly piece (lowpoly.ts) tagged.
+const lp = (g: THREE.BufferGeometry, o: Tf = {}, t?: Tag) => { g.deleteAttribute('leafMask'); return tag(g.applyMatrix4(tf(o)), t); };
+const point = (h: number, r: number, n: number, color: number, o: Tf, t?: Tag) => lp(hull([R([0, 0, 0], r), R([0, h, 0], 0, 0)], n, color, { side: [0, 0, 1] }), o, t);
 
 // The march: legs swing from the hip, arms against them from the shoulder.
 const LEG = (side: number) => [side, HIP, 0.45] as const;
@@ -115,7 +120,7 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
   const f = opts.female === true;
   const dress: Dress = {
     female: f, skirt: opts.modern ? 'none' : opts.civilian && f ? 'ankle' : 'knee', legs: gear.legs,
-    sleeves: gear.legs === 'bare' && !opts.modern ? 'short' : 'long', belt: LEATHER,
+    sleeves: gear.legs === 'bare' && !opts.modern ? 'short' : 'long',
   };
   // The arms: the right one carries the weapon, the left the shield (or the bow).
   const armR: ArmPose = hold === 'none' ? HANG : hold === 'bow' ? HANG : hold === 'club' || hold === 'sword' ? HOLD : HOLD;
@@ -131,10 +136,10 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
   const hR = handAt(-1, armR, f), hL = handAt(1, armL, f);
   const w: Tag = strike ? { limb: strike } : {};
   const up = (d: number) => v3(hR).add(V(0, d, 0));
-  if (hold === 'spear') out.push(rod(up(-0.42), up(0.86), 0.012, 0.011, 5, WOOD, w), shape(new THREE.ConeGeometry(0.026, 0.11, 6).translate(0, 0.055, 0), METAL, { x: hR.x, y: hR.y + 0.86, z: hR.z }, w));
-  if (hold === 'pike') out.push(rod(up(-0.4), up(1.25), 0.012, 0.011, 5, WOOD, w), shape(new THREE.ConeGeometry(0.024, 0.13, 6).translate(0, 0.065, 0), METAL, { x: hR.x, y: hR.y + 1.25, z: hR.z }, w));
+  if (hold === 'spear') out.push(rod(up(-0.42), up(0.86), 0.012, 0.011, 5, WOOD, w), point(0.11, 0.026, 3, METAL, { x: hR.x, y: hR.y + 0.86, z: hR.z }, w));
+  if (hold === 'pike') out.push(rod(up(-0.4), up(1.25), 0.012, 0.011, 5, WOOD, w), point(0.13, 0.024, 3, METAL, { x: hR.x, y: hR.y + 1.25, z: hR.z }, w));
   if (hold === 'club') out.push(rod(v3(hR).add(V(0, -0.04, -0.02)), v3(hR).add(V(-0.02, 0.3, 0.08)), 0.012, 0.028, 6, WOOD, w));
-  if (hold === 'sword') out.push(rod(v3(hR).add(V(0, -0.03, 0)), v3(hR).add(V(0, 0.04, 0.01)), 0.014, 0.014, 5, LEATHER, w), rod(v3(hR).add(V(-0.04, 0.04, 0.01)), v3(hR).add(V(0.04, 0.04, 0.01)), 0.008, 0.008, 4, METAL, w), rod(v3(hR).add(V(0, 0.04, 0.01)), v3(hR).add(V(0, 0.4, 0.1)), 0.016, 0.005, 4, METAL, w));
+  if (hold === 'sword') out.push(rod(v3(hR).add(V(-0.04, 0.04, 0.01)), v3(hR).add(V(0.04, 0.04, 0.01)), 0.008, 0.008, 4, METAL, w), rod(v3(hR).add(V(0, 0.04, 0.01)), v3(hR).add(V(0, 0.4, 0.1)), 0.016, 0.005, 4, METAL, w));
   if (hold === 'staff') out.push(rod(up(-0.42), up(0.6), 0.013, 0.011, 5, WOOD));
   // (A long gun held across the body, its muzzle up; a rifle's with a bayonet.)
   if (hold === 'musket' || hold === 'rifle') {
@@ -149,7 +154,7 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
   if (hold === 'banner') {
     // A tall pole with the owner's banner hanging from a crossbar, a finial on top.
     out.push(rod(up(-0.42), up(1.22), 0.016, 0.014, 5, WOOD), rod(up(1.1).add(V(0, 0, -0.22)), up(1.1).add(V(0, 0, 0.22)), 0.01, 0.01, 4, WOOD),
-      box(0.015, 0.42, 0.44, PAINT, { x: hR.x, y: hR.y + 0.88, z: hR.z }, { team: true }), ball(0.03, 0xd8b440, { x: hR.x, y: hR.y + 1.24, z: hR.z }));
+      lp(plate([[0, 0.21], [0.44, 0.21], [0.44, -0.21], [0, -0.21]], PAINT), { x: hR.x, y: hR.y + 0.88, z: hR.z - 0.22, ry: -Math.PI / 2 }, { team: true }), ball(0.03, 0xd8b440, { x: hR.x, y: hR.y + 1.24, z: hR.z }));
   }
   if (hold === 'bow') {
     // A bow in the left hand: two limbs bent forward from the grip, and the string.
@@ -157,46 +162,48 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
     out.push(rod(g, g.clone().add(V(0, 0.36, -0.06)), 0.011, 0.007, 4, WOOD, { limb: bowUp }), rod(g, g.clone().add(V(0, -0.36, -0.06)), 0.011, 0.007, 4, WOOD, { limb: bowUp }),
       rod(g.clone().add(V(0, 0.36, -0.06)), g.clone().add(V(0, -0.36, -0.06)), 0.003, 0.003, 3, 0xd8d0c0, { limb: bowUp }));
   }
-  if (opts.quiver) out.push(shape(new THREE.CylinderGeometry(0.036, 0.032, 0.3, 7, 1, false).translate(0, 0.15, 0), LEATHER, { x: 0.06, y: 0.5, z: -0.09, rz: -0.35 }),
-    ...[-0.012, 0, 0.012].map((dx) => rod(V(0.06 + dx - 0.1, 0.78, -0.09), V(0.06 + dx - 0.12, 0.84, -0.095), 0.006, 0.006, 3, 0xd8d0c0)));
-  if (opts.pack) out.push(box(0.2, 0.22, 0.1, 0x9a8462, { y: 0.62, z: -0.11 }), box(0.22, 0.05, 0.12, 0x7a6448, { y: 0.75, z: -0.11 }), rod(V(-0.11, 0.77, -0.1), V(0.11, 0.77, -0.1), 0.02, 0.02, 6, 0x6a5440));
+  if (opts.quiver) out.push(lp(hull([R([0, 0, 0], 0.032), R([0, 0.3, 0], 0.036)], 4, LEATHER, { caps: [true, false] }), { x: 0.06, y: 0.5, z: -0.09, rz: -0.35 }),
+    ...[0].map((dx) => rod(V(0.06 + dx - 0.1, 0.78, -0.09), V(0.06 + dx - 0.12, 0.84, -0.095), 0.006, 0.006, 3, 0xd8d0c0)));
+  if (opts.pack) out.push(box(0.2, 0.22, 0.1, 0x9a8462, { y: 0.62, z: -0.11 }), rod(V(-0.11, 0.77, -0.1), V(0.11, 0.77, -0.1), 0.022, 0.022, 4, 0x6a5440));
   if (shield) out.push(...shieldOf(gear.shield, hL));
   if (opts.helmet) out.push(...helmetOf(gear.helmet));
   return out;
 }
 
-// The shield on the left forearm, its face painted (team), standing forward.
+// The shield on the left forearm, its face painted (team), standing
+// forward: a flat polygon (both faces drawn) and its boss.
 function shieldOf(s: Shield, hand: THREE.Vector3): THREE.BufferGeometry[] {
   const at: Tf = { x: hand.x - 0.02, y: hand.y + 0.02, z: hand.z + 0.035 };
-  const boss = ball(0.026, METAL, { ...at, z: (at.z ?? 0) + 0.02 });
-  const rim = (r: number, sy = 1) => shape(new THREE.TorusGeometry(r, 0.008, 4, 16), WOOD, { ...at, z: (at.z ?? 0) + 0.004, sy });
-  const dish = (r: number, sy = 1) => shape(new THREE.SphereGeometry(r, 14, 6, 0, Math.PI * 2, 0, 0.5).rotateX(Math.PI / 2), PAINT, { ...at, z: (at.z ?? 0) - r * 0.85, sy }, { team: true });
+  const boss = point(0.025, 0.026, 3, METAL, { ...at, z: (at.z ?? 0) + 0.004, rx: Math.PI / 2 });
+  const ngon = (r: number, sy = 1, n = 8) => lp(plate(Array.from({ length: n }, (_, i) => [Math.cos((i + 0.5) * 2 * Math.PI / n) * r, Math.sin((i + 0.5) * 2 * Math.PI / n) * r * sy] as const), PAINT), at, { team: true });
   switch (s) {
-    case 'round': return [dish(0.2), rim(0.155), boss];
-    case 'big round': return [dish(0.25), rim(0.195), boss];
-    case 'small': return [dish(0.14), rim(0.11), boss];
-    case 'oval': return [dish(0.15, 1.6), rim(0.118, 1.6), boss];
-    case 'scutum': return [shape(new THREE.CylinderGeometry(0.2, 0.2, 0.42, 12, 1, true, -0.62, 1.24).rotateY(Math.PI), PAINT, { ...at, z: (at.z ?? 0) + 0.18, y: (at.y ?? 0) - 0.02 }, { team: true }), boss];
-    case 'pavise': return [box(0.26, 0.46, 0.025, PAINT, { ...at, y: (at.y ?? 0) - 0.03 }, { team: true }), box(0.05, 0.4, 0.03, WOOD, { ...at, y: (at.y ?? 0) - 0.03, z: (at.z ?? 0) + 0.01 })];
-    case 'kite': {
-      const k = new THREE.Shape([new THREE.Vector2(-0.12, 0.14), new THREE.Vector2(0.12, 0.14), new THREE.Vector2(0.11, -0.03), new THREE.Vector2(0, -0.29), new THREE.Vector2(-0.11, -0.03)]);
-      return [shape(new THREE.ExtrudeGeometry(k, { depth: 0.012, bevelEnabled: false }), PAINT, at, { team: true }), boss];
-    }
+    case 'round': return [ngon(0.16), boss];
+    case 'big round': return [ngon(0.2), boss];
+    case 'small': return [ngon(0.11), boss];
+    case 'oval': return [ngon(0.12, 1.6), boss];
+    case 'scutum': return [shape(new THREE.CylinderGeometry(0.2, 0.2, 0.42, 3, 1, true, -0.62, 1.24).rotateY(Math.PI), PAINT, { ...at, z: (at.z ?? 0) + 0.18, y: (at.y ?? 0) - 0.02 }, { team: true }), boss];
+    case 'pavise': return [box(0.26, 0.46, 0.025, PAINT, { ...at, y: (at.y ?? 0) - 0.03 }, { team: true })];
+    case 'kite': return [lp(plate([[-0.12, 0.14], [0.12, 0.14], [0.11, -0.03], [0, -0.29], [-0.11, -0.03]], PAINT), at, { team: true }), boss];
   }
 }
 
-// Helmets and headgear, on a head at HEAD_Y.
+// Helmets and headgear, on a head at HEAD_Y: shells over the head's own
+// five-sided rings (people.ts headShell), so the head never shows through.
 function helmetOf(h: Helmet): THREE.BufferGeometry[] {
-  const y = HEAD_Y + 0.006, R = HEAD_R * 1.12;
-  const dome = (color: number, o: Tf = {}) => shape(new THREE.SphereGeometry(R, 14, 7, 0, Math.PI * 2, 0, Math.PI * 0.55), color, { y, ...o });
+  const Y = HEAD_Y;
+  const shell = (levels: readonly (readonly [number, number])[], color: number, t?: Tag) => lp(headShell(levels, color), {}, t);
+  // (A dome: the rim at the brow, round over the crown to a low point.)
+  const DOME = [[-0.004, 1.16], [0.07, 1.3], [0.098, 0]] as const;
+  const brim = (r: number, color: number, dy = 0) => lp(plate(Array.from({ length: 6 }, (_, i) => [Math.cos(i * Math.PI / 3) * r, Math.sin(i * Math.PI / 3) * r] as const), color), { y: Y + dy, rx: -Math.PI / 2 });
   switch (h) {
-    case 'crest': return [dome(METAL), box(0.024, 0.075, 0.17, PAINT, { y: y + R + 0.02 }, { team: true }), ...[1, -1].map((s) => box(0.008, 0.06, 0.04, METAL, { x: s * R * 0.92, y: y - 0.03, z: 0.02 }))];
-    case 'cone': return [shape(new THREE.ConeGeometry(R, 0.15, 12).translate(0, 0.075, 0), METAL, { y: y + 0.01 }), box(0.012, 0.05, 0.012, METAL, { y: y - 0.03, z: R * 0.92 })];
-    case 'kettle': return [dome(METAL), shape(new THREE.CylinderGeometry(0.135, 0.135, 0.008, 16), METAL, { y: y + 0.012 })];
-    case 'hat': return [shape(new THREE.ConeGeometry(0.17, 0.08, 14).translate(0, 0.04, 0), 0xb8a070, { y: y + 0.04 })];
-    case 'feather': return [shape(new THREE.CylinderGeometry(R * 0.95, R, 0.04, 14), PAINT, { y: y + 0.03 }, { team: true }), ...[-0.05, -0.025, 0, 0.025, 0.05].map((x) => box(0.02, 0.16, 0.006, x === 0 ? 0xd8b440 : 0x3a8a6a, { x, y: y + 0.12, z: -0.05, rz: -x * 3 }))];
-    case 'turban': return [ellipsoid([0, y + 0.03, -0.004], [R * 1.05, R * 0.75, R * 1.05], 0xece6d6, 12)];
-    case 'cap': return [dome(0xe6dcc4, { sy: 0.85 })];
+    case 'crest': return [shell(DOME, METAL), lp(plate([[-0.085, 0], [0.085, 0], [0.07, 0.075], [-0.07, 0.075]], PAINT), { y: Y + 0.085, ry: Math.PI / 2 }, { team: true })];
+    case 'cone': return [shell([[-0.004, 1.16], [0.07, 1.25], [0.17, 0]], METAL), lp(plate([[-0.006, 0], [0.006, 0], [0.006, -0.05], [-0.006, -0.05]], METAL), { y: Y + 0.005, z: 0.084 })];
+    case 'kettle': return [shell(DOME, METAL), brim(0.135, METAL, 0.002)];
+    case 'hat': return [shell([[0.0, 1.18], [0.07, 1.3], [0.12, 0]], 0xb8a070), brim(0.17, 0xb8a070, 0.006)];
+    case 'feather': return [shell([[0.0, 1.14], [0.045, 1.14]], PAINT, { team: true }),
+      ...[-0.05, -0.025, 0, 0.025, 0.05].map((x) => lp(plate([[-0.01, 0], [0.01, 0], [0, 0.16]], x === 0 ? 0xd8b440 : 0x3a8a6a), { x, y: Y + 0.04, z: -0.05, rz: -x * 3 }))];
+    case 'turban': return [shell([[-0.004, 1.2], [0.03, 1.32], [0.075, 1.38], [0.105, 0]], 0xece6d6)];
+    case 'cap': return [shell([[-0.004, 1.14], [0.07, 1.22], [0.09, 0]], 0xe6dcc4)];
     case 'none': return [];
   }
 }
@@ -219,17 +226,17 @@ function rider(gear: Gear, coat: number, female: boolean, officer = false, heavy
     tag(paint(h.legs.fl), { limb: HORSE_LEG(1) }), tag(paint(h.legs.fr), { limb: HORSE_LEG(-1) }),
     tag(paint(h.legs.hl), { limb: HORSE_LEG(-1) }), tag(paint(h.legs.hr), { limb: HORSE_LEG(1) }),
     // The saddle cloth, in the owner's colour, and the saddle on it.
-    shape(new THREE.CylinderGeometry(0.2, 0.2, 0.3, 14, 1, true, -1.2, 2.4).rotateZ(Math.PI / 2).rotateY(Math.PI / 2), CLOTH, { y: SEAT - 0.17, z: 0.02 }, { team: true }),
+    ...(heavy ? [] : [shape(new THREE.CylinderGeometry(0.2, 0.2, 0.3, 4, 1, true, -1.2, 2.4).rotateZ(Math.PI / 2).rotateY(Math.PI / 2), CLOTH, { y: SEAT - 0.17, z: 0.02 }, { team: true })]),
     box(0.16, 0.05, 0.22, LEATHER, { y: SEAT - 0.03, z: 0.02 }),
   ];
-  const dress: Dress = { female, legs: gear.legs, sleeves: 'long', belt: LEATHER };
+  const dress: Dress = { female, legs: gear.legs, sleeves: 'long' };
   const lance = !officer && !saber;
   const armR: ArmPose = HOLD, armL: ArmPose = HOLD;
   out.push(...tagged(riderBody(dress, SEAT, armL, armR)));
   const hR = handAt(-1, armR, female).add(V(0, SEAT - HIP, 0));
-  if (officer) out.push(box(0.24, 0.4, 0.02, CLOTH, { y: SEAT + 0.12, z: -0.11, rx: 0.12 }, { team: true }), box(0.024, 0.11, 0.15, PAINT, { y: SEAT - HIP + HEAD_Y + 0.12 + (gear.helmet === 'none' ? -0.03 : 0.04) }, { team: true }));
+  if (officer) out.push(lp(plate([[-0.12, 0.2], [0.12, 0.2], [0.14, -0.2], [-0.14, -0.2]], CLOTH), { y: SEAT + 0.12, z: -0.11, rx: 0.12 }, { team: true }), box(0.024, 0.11, 0.15, PAINT, { y: SEAT - HIP + HEAD_Y + 0.12 + (gear.helmet === 'none' ? -0.03 : 0.04) }, { team: true }));
   else if (saber) out.push(rod(hR, hR.clone().add(V(0, 0.42, 0.18)), 0.014, 0.005, 4, METAL, { limb: HIT(SEAT + 0.3, 0.9) }));
-  if (lance) out.push(rod(hR.clone().add(V(0, -0.15, -0.35)), hR.clone().add(V(0, 0.55, 0.75)), 0.011, 0.009, 5, WOOD, { limb: HIT(SEAT + 0.3, 0.6) }), shape(new THREE.ConeGeometry(0.02, 0.1, 6).translate(0, 0.05, 0), METAL, { x: hR.x, y: hR.y + 0.55, z: hR.z + 0.75, rx: 1.0 }));
+  if (lance) out.push(rod(hR.clone().add(V(0, -0.15, -0.35)), hR.clone().add(V(0, 0.55, 0.75)), 0.011, 0.009, 5, WOOD, { limb: HIT(SEAT + 0.3, 0.6) }), point(0.1, 0.02, 3, METAL, { x: hR.x, y: hR.y + 0.55, z: hR.z + 0.75, rx: 1.0 }));
   out.push(...helmetOf(heavy && (gear.helmet === 'none' || gear.helmet === 'cap' || gear.helmet === 'turban' || gear.helmet === 'feather' || gear.helmet === 'hat') ? 'kettle' : gear.helmet).map((g) => g.translate(0, RIDER_HEAD, 0)));
   if (heavy) out.push(tag(caparison(), { team: true }));
   return out;
@@ -238,14 +245,14 @@ function rider(gear: Gear, coat: number, female: boolean, officer = false, heavy
 // following its body (a little out from it), hanging down its flanks to
 // the knees, open below; a darker band at its hem.
 function caparison(): THREE.BufferGeometry {
-  const S = HORSE_SCALE, keys = [[-0.84, 1.13, 0.24, 0.2], [-0.62, 1.15, 0.34, 0.28], [-0.25, 1.1, 0.34, 0.27], [0.12, 1.09, 0.37, 0.29], [0.44, 1.13, 0.34, 0.25], [0.62, 1.13, 0.27, 0.21]] as const;
-  const A = 24, pos: number[] = [], col: number[] = [], idx: number[] = [], c = new THREE.Color(CLOTH), hem = new THREE.Color(0x707070);
+  const S = HORSE_SCALE, keys = [[-0.8, 1.15, 0.3, 0.25], [-0.5, 1.15, 0.36, 0.29], [0.2, 1.1, 0.39, 0.3], [0.62, 1.15, 0.32, 0.24]] as const;
+  const A = 6, pos: number[] = [], col: number[] = [], idx: number[] = [], c = new THREE.Color(CLOTH), hem = new THREE.Color(0x707070);
   keys.forEach(([x, y, a, b]) => {
     for (let j = 0; j <= A; j++) {
       const th = -1.95 + (3.9 * j) / A, drop = Math.max(0, Math.abs(th) - 1.3) * 0.5;
       // (Facing +z: the horse's length along z, its sides along x.)
       pos.push(Math.sin(th) * b * 1.12 * S, (y + Math.cos(th) * a * 1.12 - drop) * S, x * S);
-      const k = Math.abs(th) > 1.8 ? hem : c;
+      const k = Math.abs(th) > 1.5 ? hem : c;
       col.push(k.r, k.g, k.b);
     }
   });
@@ -254,8 +261,9 @@ function caparison(): THREE.BufferGeometry {
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
   g.setIndex(idx);
-  g.computeVertexNormals();
-  return g.toNonIndexed();
+  const flat = g.toNonIndexed();
+  flat.computeVertexNormals();
+  return flat;
 }
 // (A creature's coat, its leaf-marked vertices, painted a colour.)
 function coatIt(g: THREE.BufferGeometry, coat: number): void {
@@ -299,8 +307,8 @@ export type HairStyle = HairStyleKey;
 // The styles each wears, drawn from (repeated: more often), bareheaded and
 // under a helmet (only what shows below it: 'bald' there shows none).
 export const HAIR_BY: Record<'man' | 'woman', { bare: readonly HairStyle[]; helmet: readonly HairStyle[] }> = {
-  man: { bare: ['short', 'short', 'short', 'beard', 'beard', 'bald', 'long', 'tail'], helmet: ['bald', 'bald', 'beard', 'long'] },
-  woman: { bare: ['long', 'long', 'bun', 'bun', 'tail', 'tail', 'short'], helmet: ['long', 'long', 'bald'] },
+  man: { bare: ['short', 'short', 'short', 'beard', 'beard', 'bald', 'long', 'tail'], helmet: ['bald', 'bald', 'helmBeard', 'helmLong'] },
+  woman: { bare: ['long', 'long', 'bun', 'bun', 'tail', 'tail', 'short'], helmet: ['helmLong', 'helmLong', 'bald'] },
 };
 export function hairModel(style: HairStyle): THREE.BufferGeometry {
   const g = mergeGeometries(hairShapes(style).map((p) => tag(p, { team: true })), false);
