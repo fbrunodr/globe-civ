@@ -25,6 +25,7 @@ export const UNITS = {
   spearman: { name: 'Spearman', icon: 'P', atk: 1, def: 2, mv: 1, cost: 20, desc: 'Good defender.' },
   archer:   { name: 'Archer',   icon: 'A', atk: 3, def: 2, mv: 1, cost: 25, ranged: true, desc: 'Ranged: attacks without moving in, taking half the damage back. Cannot take cities.' },
   horseman: { name: 'Horseman', icon: 'H', atk: 2, def: 1, mv: 2, cost: 20 },
+  commander: { name: 'Commander', icon: 'C', atk: 0, def: 2, mv: 2, cost: 40, desc: 'Leads an army: rallies up to 4 units from its tile and the tiles next to it, which then march with it as one; deploys them again there. A fighting unit may share its tile. Its army defends it; if it falls, its army is lost.' },
 } satisfies Record<string, UnitDef>;
 export type UnitKey = keyof typeof UNITS;
 export const unitDef = (k: UnitKey): UnitDef => UNITS[k];

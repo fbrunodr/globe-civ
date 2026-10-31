@@ -1,7 +1,7 @@
 import { floraLabel } from './flora.ts';
 import { unitDef, buildDef, isUnitKey, isWonder, growthCost, BUILDINGS, WONDERS, type BuildKey } from './rules.ts';
 import { terrainName } from './terrain.ts';
-import { HUMAN, BUILDABLE, PILLAGE_GOLD, type Game, type City, type Unit } from './game.ts';
+import { HUMAN, BUILDABLE, PILLAGE_GOLD, COMMANDER_CAPACITY, type Game, type City, type Unit } from './game.ts';
 import type { Selection } from './render.ts';
 import {
   USE, FOCUSES, IMPROVEMENTS, ERAS, SPECIALISTS, SPECIALIST_KINDS, improvementFor, isFocusKey, specialistYield,
@@ -14,6 +14,8 @@ export type Action =
   | { type: 'wake' }
   | { type: 'skip' }
   | { type: 'disband' }
+  | { type: 'rally' }
+  | { type: 'deploy' }
   | { type: 'pillage' }
   | { type: 'raze' }
   | { type: 'build'; key: BuildKey | null }
@@ -140,6 +142,11 @@ export class UI {
         const ok = g.canFoundCity(u.tile, u.owner);
         buttons.push(`<button data-act="found" ${ok ? '' : 'disabled title="Too close to another city, or invalid terrain"'}>Found city <kbd>B</kbd></button>`);
       }
+      if (u.type === 'commander') {
+        const can = g.rallyable(u).length, army = g.armyOf(u).length;
+        buttons.push(`<button data-act="rally" ${can ? '' : `disabled title="${army >= COMMANDER_CAPACITY ? 'The army is full' : 'No units of yours on its tile or the tiles next to it'}"`}>Rally ${can ? `${can} ` : ''}<kbd>R</kbd></button>`);
+        if (army) buttons.push(`<button data-act="deploy">Deploy <kbd>U</kbd></button>`);
+      }
       if (!T.civilian) {
         buttons.push(u.fortified ? `<button data-act="wake">Wake</button>` : `<button data-act="fortify">Fortify <kbd>F</kbd></button>`);
         if (g.canPillage(u)) buttons.push(`<button data-act="pillage" title="Burn this enemy tile: it yields nothing until repaired; you take ${PILLAGE_GOLD} gold">Pillage <kbd>P</kbd></button>`);
@@ -147,10 +154,15 @@ export class UI {
       buttons.push(`<button data-act="skip">Skip <kbd>Space</kbd></button>`, `<button data-act="disband" class="danger">Disband</button>`);
     }
     const status = u.fortified ? 'Fortified' : u.goal != null ? 'Moving…' : '';
+    const armyUnits = u.type === 'commander' ? g.armyOf(u) : [];
+    const army = u.type === 'commander'
+      ? `<div class="desc">Army ${armyUnits.length}/${COMMANDER_CAPACITY}${armyUnits.length ? `: ${armyUnits.map((v) => `${esc(unitDef(v.type).name)} <small>${v.hp} HP</small>`).join(', ')}` : ' · rally units from its tile and the tiles next to it'}</div>`
+      : '';
     return `<h3>${esc(T.name)} <small>${esc(g.players[u.owner].name)}</small></h3>
       <div class="stats">⚔ ${T.atk} · 🛡 ${T.def} · Moves ${u.moves}/${T.mv} · HP ${u.hp}</div>
       ${T.desc ? `<div class="desc">${esc(T.desc)}</div>` : ''}
       ${status ? `<div class="desc">${status}</div>` : ''}
+      ${army}
       ${mine ? '<div class="desc">Right-click a tile to move or attack.</div>' : ''}
       <div class="buttons">${buttons.join('')}</div>`;
   }

@@ -1732,8 +1732,9 @@ export class GlobeRenderer {
   private updateUnits(sel: Selection): void {
     const g = this.game;
     this.selUnit = sel?.kind === 'unit' ? sel.unit : null;
+    // (Units packed in an army are carried by their commander, not shown.)
     const shown: ShownUnit[] = g.units
-      .filter((u) => g.visible[u.tile])
+      .filter((u) => g.visible[u.tile] && u.packedIn === null)
       .sort((a, b) => Number(unitDef(a.type).civilian ?? false) - Number(unitDef(b.type).civilian ?? false))
       .map((u) => ({ id: u.id, type: u.type, civ: g.players[u.owner].name, color: g.players[u.owner].color, tile: u.tile, hp: u.hp, suffrage: false /* (no civics yet: the civic tree will set it) */ }));
     this.unitView.sync(shown, performance.now() / 1000);
@@ -1744,8 +1745,10 @@ export class GlobeRenderer {
   private unitFlag(s: ShownUnit): THREE.Sprite {
     const g = this.game, u = g.units.find((x) => x.id === s.id);
     const icon = unitDef(s.type).icon, selected = u !== undefined && u === this.selUnit, fortified = u?.fortified ?? false;
-    const key = `u|${s.color}|${icon}|1|${Math.ceil(s.hp / 10)}|${selected}|${fortified}`;
-    const tex = this.texture(key, 128, 128, (ctx) => drawUnitIcon(ctx, s.color, icon, 1, s.hp, selected, fortified));
+    // (A commander's flag counts it and its army.)
+    const count = u?.type === 'commander' ? 1 + g.armyOf(u).length : 1;
+    const key = `u|${s.color}|${icon}|${count}|${Math.ceil(s.hp / 10)}|${selected}|${fortified}`;
+    const tex = this.texture(key, 128, 128, (ctx) => drawUnitIcon(ctx, s.color, icon, count, s.hp, selected, fortified));
     const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, sizeAttenuation: false }));
     sprite.scale.setScalar(0.026);
     sprite.renderOrder = 5;

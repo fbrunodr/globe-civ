@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { ArchCiv } from './architecture.ts';
 import type { UnitKey } from './rules.ts';
-import { UNIT_LOOK, figuresFor, formationSlots, unitModel, unitVariants, hairModel, wearsHelmet, womenShare, GEAR, FORMATION, HAIR_BY, HAIR_STYLES, RIDER_HEAD, STRIKE } from './unitModels.ts';
+import { UNIT_LOOK, figuresFor, formationSlots, unitModel, variantOf, rides, hairModel, wearsHelmet, womenShare, GEAR, FORMATION, HAIR_BY, HAIR_STYLES, RIDER_HEAD, STRIKE } from './unitModels.ts';
 import { mulberry32 } from './rng.ts';
 
 // The units on the globe, as figurines (unitModels.ts): a fighting unit is a
@@ -228,8 +228,8 @@ export class UnitView {
     for (const s of drawn) {
       const { walk, strike } = this.pose(s, now);
       color.set(s.unit.color);
-      const lift = s.unit.type === 'horseman' ? RIDER_HEAD : 0;
       for (const f of s.figures) {
+        const lift = rides(s.unit.type, f.variant) ? RIDER_HEAD : 0;
         // (Model axes: x = up × forward, y up, z forward.)
         x.crossVectors(f.up, s.forward).normalize();
         z.crossVectors(x, f.up).normalize();
@@ -237,7 +237,7 @@ export class UnitView {
         put(this.key(s, f), f.pos, color, f, walk, strike);
         if (f.hair >= 0) put(`hair|${f.hair}`, head.copy(f.pos).addScaledVector(f.up, lift * this.size), f.hairColor, f, walk, 0);
         // Its shadow: a soft disc on the ground under it (longer under a horse).
-        m.compose(f.pos.clone().addScaledVector(f.up, 0.002 * this.size), q, scale.set(this.size * 0.42, 1, this.size * (s.unit.type === 'horseman' ? 0.95 : 0.42)));
+        m.compose(f.pos.clone().addScaledVector(f.up, 0.002 * this.size), q, scale.set(this.size * 0.42, 1, this.size * (rides(s.unit.type, f.variant) ? 0.95 : 0.42)));
         this.shadows.setMatrixAt(shadowN++, m);
       }
     }
@@ -343,8 +343,8 @@ export class UnitView {
   // and (for horses) coat.
   private dress(s: Shown): void {
     const u = s.unit, rand = mulberry32(u.id * 104729 + 3);
-    s.figures = formationSlots(u.type, u.hp, rand).map(([x, z]) => ({
-      x, z, variant: Math.floor(rand() * unitVariants(u.type)), ...figureLooks(u.type, u.civ, womenShare(u.type, u.suffrage), rand),
+    s.figures = formationSlots(u.type, u.hp, rand).map(([x, z], i) => ({
+      x, z, variant: variantOf(u.type, i, rand), ...figureLooks(u.type, u.civ, womenShare(u.type, u.suffrage), rand),
       phase: rand() * Math.PI * 2, pos: new THREE.Vector3(), up: new THREE.Vector3(),
     }));
   }

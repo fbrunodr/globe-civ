@@ -72,11 +72,22 @@ export function fightRounds(hpA: number, hpD: number, A: number, D: number, rang
   return { attacker: hpA, defender: hpD };
 }
 
+// ---- one unit per tile, and commanders ----
+// A tile holds at most one military unit and one civilian of a player (a
+// unit's slot). A commander leads an army: up to COMMANDER_CAPACITY military
+// units rallied from its tile and the tiles next to it, carried with it
+// (packed: off the map, on its tile) until it deploys them there again. It
+// takes the civilian slot, so a fighting unit may stand with it.
+export type Slot = 'military' | 'civilian';
+export const slotOf = (type: UnitKey): Slot => (unitDef(type).civilian || type === 'commander' ? 'civilian' : 'military');
+export const COMMANDER_CAPACITY = 4;
+
 export interface Unit {
   id: number;
   type: UnitKey;
   owner: number;
   tile: number;
+  packedIn: number | null;             // the commander carrying it (its tile is the commander's)
   moves: number;
   hp: number;
   fortified: boolean;
@@ -222,12 +233,32 @@ export class Game {
     return c < 0 ? -1 : this.cityById.get(c)!.owner;
   }
 
-  unitsAt(t: number): Unit[] { return this.units.filter((u) => u.tile === t); }
+  // The units standing on a tile (not those packed in an army there).
+  unitsAt(t: number): Unit[] { return this.units.filter((u) => u.tile === t && u.packedIn === null); }
+
+  // A commander's army: the units packed in it.
+  armyOf(c: Unit): Unit[] { return this.units.filter((u) => u.packedIn === c.id); }
+
+  // Whether a unit could stand on a tile: dry, and its slot there free of
+  // its owner's other units (an enemy there is a fight, not a place).
+  canStand(u: { type: UnitKey; owner: number; id?: number }, t: number): boolean {
+    if (this.isWater(t)) return false;
+    const slot = slotOf(u.type);
+    return !this.units.some((v) => v.tile === t && v.packedIn === null && v.id !== u.id && v.owner === u.owner && slotOf(v.type) === slot);
+  }
+
+  // The nearest tile to t (t itself first) where a new unit of its type can
+  // stand, free of enemies; null if none within a few rings.
+  freeTileNear(type: UnitKey, owner: number, t: number): number | null {
+    const near = [...this.tilesWithinMap(t, 3)].sort((a, b) => a[1] - b[1]);
+    for (const [x] of near) if (this.canStand({ type, owner }, x) && !this.isEnemyOccupied(x, owner) && this.relief[x] !== 'mountains') return x;
+    return null;
+  }
 
   isEnemyOccupied(t: number, owner: number): boolean {
     const city = this.cityByTile.get(t);
     if (city && city.owner !== owner) return true;
-    return this.units.some((u) => u.tile === t && u.owner !== owner);
+    return this.units.some((u) => u.tile === t && u.packedIn === null && u.owner !== owner);
   }
 
   canAttack(u: Unit): boolean { return unitDef(u.type).atk > 0; }
@@ -283,11 +314,15 @@ export class Game {
 
   // A* over the tile graph. Returns the tiles to step through (excluding the
   // start), or null if unreachable. Enemy-occupied tiles are only allowed as
-  // the final destination (that step becomes an attack).
+  // the final destination (that step becomes an attack). Tiles where the
+  // unit's own side already has a unit of its slot are gone round (one
+  // unit per tile), but for the goal next to it: that step is a swap.
   findPath(u: Unit, goal: number): number[] | null {
     if (goal === u.tile) return [];
     if (this.isWater(goal)) return null;
     if (this.isEnemyOccupied(goal, u.owner) && !this.canAttack(u)) return null;
+    const swap = this.tiles[u.tile].neighbors.includes(goal) && this.swapPartner(u, goal) !== null;
+    if (!swap && !this.canStand(u, goal) && !this.isEnemyOccupied(goal, u.owner)) return null;
 
     const tiles = this.tiles;
     const goalC = tiles[goal].center;
@@ -306,7 +341,7 @@ export class Game {
       closed.add(cur);
       for (const nb of tiles[cur].neighbors) {
         if (this.isWater(nb) || closed.has(nb)) continue;
-        if (nb !== goal && this.isEnemyOccupied(nb, u.owner)) continue;
+        if (nb !== goal && (this.isEnemyOccupied(nb, u.owner) || !this.canStand(u, nb))) continue;
         const ng = g.get(cur)! + this.moveCost(nb);
         if (ng < (g.get(nb) ?? Infinity)) {
           g.set(nb, ng);
@@ -333,17 +368,77 @@ export class Game {
 
   // ---------- actions ----------
 
+  // A new unit on `tile`, or (one unit per tile) the nearest free tile.
   createUnit(type: UnitKey, owner: number, tile: number): Unit {
-    const u: Unit = { id: this.nextId++, type, owner, tile, moves: UNITS[type].mv, hp: 100,
+    tile = this.freeTileNear(type, owner, tile) ?? tile;
+    const u: Unit = { id: this.nextId++, type, owner, tile, packedIn: null, moves: UNITS[type].mv, hp: 100,
       fortified: false, skipped: false, goal: null, dead: false, aiTarget: null };
     this.units.push(u);
     return u;
   }
 
+  // A unit gone (with a commander, its army: lost with it).
   removeUnit(u: Unit): void {
     const i = this.units.indexOf(u);
     if (i >= 0) this.units.splice(i, 1);
     u.dead = true;
+    if (u.type === 'commander') for (const v of this.armyOf(u)) this.removeUnit(v);
+  }
+
+  // ---- armies ----
+
+  // The units a commander could rally now: its owner's military units on
+  // its tile and the tiles next to it, while its army has room.
+  rallyable(c: Unit): Unit[] {
+    if (c.type !== 'commander') return [];
+    const room = COMMANDER_CAPACITY - this.armyOf(c).length;
+    const nbs = new Set([c.tile, ...this.tiles[c.tile].neighbors]);
+    return this.units.filter((u) => u.owner === c.owner && u.packedIn === null && nbs.has(u.tile) && slotOf(u.type) === 'military' && u.type !== 'commander').slice(0, Math.max(0, room));
+  }
+
+  // The commander rallies every unit it can: each marches in (its turn
+  // spent) and is carried from now on.
+  rally(c: Unit): number {
+    const units = this.rallyable(c);
+    for (const u of units) {
+      u.packedIn = c.id;
+      u.tile = c.tile;
+      u.moves = 0;
+      u.fortified = false;
+      u.goal = null;
+    }
+    return units.length;
+  }
+
+  // The commander deploys its army: one unit on its own tile, the others on
+  // the free tiles round it (each spends its turn); those with no room stay
+  // packed.
+  deploy(c: Unit): number {
+    let n = 0;
+    for (const u of this.armyOf(c)) {
+      const t = [c.tile, ...this.tiles[c.tile].neighbors].find((x) => this.relief[x] !== 'mountains' && !this.isEnemyOccupied(x, c.owner) && this.canStand(u, x));
+      if (t === undefined) break;
+      u.packedIn = null;
+      u.tile = t;
+      u.moves = 0;
+      n++;
+    }
+    return n;
+  }
+
+  // A unit of `u`'s side and slot on the tile next to it that could swap
+  // places with it (both with moves left; neither packed).
+  swapPartner(u: Unit, t: number): Unit | null {
+    if (u.moves <= 0) return null;
+    const slot = slotOf(u.type);
+    return this.units.find((v) => v.tile === t && v.packedIn === null && v.owner === u.owner && v !== u && slotOf(v.type) === slot && v.moves > 0) ?? null;
+  }
+
+  // Moves a unit one tile (its army with it).
+  private step(u: Unit, t: number): void {
+    u.moves = Math.max(0, u.moves - this.moveCost(t));
+    u.tile = t;
+    for (const v of this.armyOf(u)) v.tile = t;
   }
 
   goTo(u: Unit, goal: number): void {
@@ -363,8 +458,17 @@ export class Game {
         u.goal = null;
         break;
       }
-      u.moves = Math.max(0, u.moves - this.moveCost(next));
-      u.tile = next;
+      // (Onto one of its own: they swap places.)
+      const other = this.swapPartner(u, next);
+      if (other) {
+        const from = u.tile;
+        this.step(u, next);
+        this.step(other, from);
+        other.goal = null;
+        u.goal = null;
+        break;
+      }
+      this.step(u, next);
     }
     if (u.tile === u.goal) u.goal = null;
     if (u.owner === HUMAN) this.updateVisibility();
@@ -381,9 +485,11 @@ export class Game {
 
   bestDefender(tile: number, attackerOwner: number): Unit | null {
     let best: Unit | null = null, bestS = -1;
+    // (An army's units defend their commander, on its tile; the commander
+    // itself only once none is left.)
     for (const d of this.units) {
       if (d.tile !== tile || d.owner === attackerOwner || unitDef(d.type).civilian) continue;
-      const s = this.unitStrength(d, 'def', tile);
+      const s = this.unitStrength(d, 'def', tile) + (d.type === 'commander' ? -1000 : 0);
       if (s > bestS) { best = d; bestS = s; }
     }
     return best;
@@ -426,13 +532,14 @@ export class Game {
       return;
     }
     if (ranged) return; // ranged units never move in
-    // Civilians are captured and the attacker moves in.
+    // Civilians are captured and the attacker moves in (its army with it).
     for (const v of this.unitsAt(tile)) {
       if (v.owner === u.owner) continue;
       if (v.owner === HUMAN || u.owner === HUMAN) this.log(`${this.players[v.owner].name} ${unitDef(v.type).name} was captured.`);
       this.removeUnit(v);
     }
     u.tile = tile;
+    for (const v of this.armyOf(u)) v.tile = tile;
     if (city && city.owner !== u.owner) this.captureCity(city, u.owner);
   }
 
@@ -1019,6 +1126,7 @@ export class Game {
     this.players.forEach((p, i) => {
       const s = this.world.starts[i];
       if (s === undefined) return; // (a City Lab civ past the map's starts)
+      // (Each on its own tile: createUnit finds the next free one.)
       this.createUnit('settler', p.id, s);
       const nb = this.tiles[s].neighbors.find((x) => !this.isWater(x)) ?? s;
       this.createUnit('warrior', p.id, nb);

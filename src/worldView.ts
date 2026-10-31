@@ -88,7 +88,7 @@ sightBtn.addEventListener('click', toggleSight);
 // Units to look at (dev): U drops one of each kind for a few civs round
 // where the camera looks, on dry land; M marches every unit a tile; B sets
 // them fighting their neighbours.
-const UNIT_SAMPLE: UnitKey[] = ['warrior', 'spearman', 'archer', 'horseman', 'scout', 'settler'];
+const UNIT_SAMPLE: UnitKey[] = ['warrior', 'spearman', 'archer', 'horseman', 'scout', 'settler', 'commander'];
 const dropUnits = () => {
   const at = view.looking;
   let start = 0;

@@ -19,7 +19,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { ARCH_CIVS, type ArchCiv } from './architecture.ts';
 import { CIVS, UNITS, type UnitKey } from './rules.ts';
 import { FORTIFY_BONUS, combatStrength, fightRounds } from './game.ts';
-import { HAIR_STYLES, RIDER_HEAD, formationSlots, hairModel, unitModel, unitVariants, womenShare } from './unitModels.ts';
+import { HAIR_STYLES, RIDER_HEAD, formationSlots, hairModel, rides, unitModel, variantOf, womenShare } from './unitModels.ts';
 import { Volleys, figureLooks, makeUnitMaterial, prepareUnitGeometry } from './unitView.ts';
 import { WorldLabel, disposeLabels } from './worldLabel.ts';
 import { mulberry32 } from './rng.ts';
@@ -132,11 +132,11 @@ function build(): { w: number; d: number } {
   const push = (key: string, f: Fig) => { const list = figs.get(key) ?? []; list.push(f); figs.set(key, list); };
   for (const cell of cells) {
     const rand = mulberry32(cell.seed);
-    for (const [fx, fz] of formationSlots(cell.type, cell.hp, rand)) {
-      const variant = Math.floor(rand() * unitVariants(cell.type)), looks = figureLooks(cell.type, cell.civ, womenShare(cell.type, suffrage), rand), phase = rand() * Math.PI * 2;
+    for (const [i, [fx, fz]] of formationSlots(cell.type, cell.hp, rand).entries()) {
+      const variant = variantOf(cell.type, i, rand), looks = figureLooks(cell.type, cell.civ, womenShare(cell.type, suffrage), rand), phase = rand() * Math.PI * 2;
       const f: Fig = { cell, fx, fz, lift: 0, color: new THREE.Color(colorOf(cell.civ)), skin: looks.skin, phase, hair: false };
       push(`${cell.type}|${cell.civ}|${variant}|${looks.female ? 1 : 0}`, f);
-      if (looks.hair >= 0) push(`hair|${looks.hair}`, { ...f, lift: cell.type === 'horseman' ? RIDER_HEAD : 0, color: looks.hairColor, hair: true });
+      if (looks.hair >= 0) push(`hair|${looks.hair}`, { ...f, lift: rides(cell.type, variant) ? RIDER_HEAD : 0, color: looks.hairColor, hair: true });
     }
   }
   placed = [];
