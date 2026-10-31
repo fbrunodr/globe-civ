@@ -13,7 +13,7 @@ import {
   isWaterBiome, terrainMoveCost, terrainDefense,
   type BiomeKey, type ReliefKey, type FeatureKey, type TileTerrain, type Yields,
 } from './terrain.ts';
-import { aiTurn, aiPickTech, aiPickPolitics, aiGovern, aiAcceptsPeace, aiPickTraits } from './ai.ts';
+import { aiTurn, aiPickTech, aiPickPolitics, aiGovern, aiAcceptsPeace, aiAcceptsDeal, aiPickTraits } from './ai.ts';
 import {
   USE, FOOD_PER_CITIZEN, ZERO, CITY_REACH, START_REACH, tileCost, GROWTH_TURNS, SPECIALIST_KINDS, AQUEDUCT_KEEP, BUILDINGS as CITY_BUILDINGS,
   addOut, scaleOut, centerYield, ruralYield, improvementFor, governorScore, specialistsWanted, borderRing,
@@ -25,7 +25,7 @@ import { techDef, techPath, type TechKey } from './techs.ts';
 import { politicsDef, politicsPath, GOVERNMENTS, governmentDef, policyDef, fits, SLOT_KINDS, type PoliticsKey, type GovernmentKey, type PolicyKey, type PolicySlot } from './politics.ts';
 import { traitDef, traitBlock, traitCost, type TraitKey } from './identity.ts';
 import { religionDef, PRESSURE_REACH, HOLY_PRESSURE, CITY_PRESSURE, BUILDING_PRESSURE, CONVERT_AT, TITHE, type ReligionKey } from './religion.ts';
-import { placeResources, resourceDef, LUXURY_CAPITAL, type ResourceKey } from './resources.ts';
+import { placeResources, resourceDef, empireBonus, type ResourceKey } from './resources.ts';
 import { total, yieldBonus, prodBonus, flat, tileBonus, specialistBonus, movesBonus, type Effect, type ProdTarget } from './effects.ts';
 import { cityUpkeep, unitUpkeep, buildingUpkeep, inflation, SHORTFALL_SCIENCE, WEALTH_RATE } from './economy.ts';
 import type { GameEvent, GameEventKind } from './gameLog.ts';
@@ -88,13 +88,25 @@ export interface Ledger {
   readonly cityUpkeep: number;
   readonly unitUpkeep: number;
   readonly tithes: number;       // from cities following its religion
+  readonly luxuries: Output;     // its luxuries' empire bonus (in income too)
+  readonly trade: number;        // gold a turn from its deals (paid: negative)
 }
-const EMPTY_LEDGER: Ledger = { income: ZERO, cityUpkeep: 0, unitUpkeep: 0, tithes: 0 };
+const EMPTY_LEDGER: Ledger = { income: ZERO, cityUpkeep: 0, unitUpkeep: 0, tithes: 0, luxuries: ZERO, trade: 0 };
 
 // Relations between two civs: at peace (the start), or at war since a turn.
 export interface Relation { war: boolean; since: number }
 // War, peace: a war lasts at least MIN_WAR turns before peace can be made.
 export const MIN_WAR = 8;
+
+// A trade between two civs at peace, for DEAL_TURNS: what each side gives,
+// a resource (a spare copy: it keeps one for itself) and gold a turn, or
+// either. The resource counts as the taker's while the deal holds (a
+// luxury's empire bonus, a strategic's units and buildings) but yields
+// nothing on a tile. A war between them, a spare copy lost, or a payer
+// out of gold ends it.
+export interface DealSide { readonly civ: number; readonly resource: ResourceKey | null; readonly gold: number }
+export interface Deal { readonly sides: readonly [DealSide, DealSide]; readonly until: number }
+export const DEAL_TURNS = 30;
 // The capital's palace.
 export const PALACE = { prod: 1, gold: 2, science: 2, culture: 2 } as const;
 // A rival city takes a border tile when its culture presses this much harder.
@@ -252,6 +264,8 @@ export class Game {
   readonly relations: Relation[][];             // [a][b], symmetric
   readonly met: Uint8Array[];                   // [a][b]: a has met b
   readonly peaceOffers = new Set<string>();     // "from>to": peace offered, not yet answered
+  readonly deals: Deal[] = [];                  // trades in force
+  readonly dealOffers: Deal[] = [];             // trades the computer offered the human, for this turn (sides[0]: the offerer)
   readonly events: GameEvent[] = [];            // everything every player did (gameLog.ts)
 
   constructor({ size, seed, script = 'continents', everyCiv = false }: GameOptions) {
@@ -1082,7 +1096,7 @@ export class Game {
     // Its civ's: the palace and the capital's bonuses, its religion's, and
     // the percentages of its government and policies.
     const p = this.players[city.owner]!, fx = this.effectsOf(p);
-    if (p.capital === city.id) sum = addOut(addOut(addOut(sum, out(PALACE)), flat(fx, 'capital')), scaleOut(addOut(LUXURY_CAPITAL, flat(fx, 'luxury')), this.luxuriesOf(p.id).length));
+    if (p.capital === city.id) sum = addOut(addOut(sum, out(PALACE)), flat(fx, 'capital'));
     if (city.religion) sum = addOut(sum, flat(religionDef(city.religion).follower, 'follower'));
     sum = out(Object.fromEntries(OUTPUT_KEYS.map((y) => [y, Math.max(0, Math.floor(sum[y] * (100 + yieldBonus(fx, y)) / 100))])));
     return { ...sum, surplus: sum.food - FOOD_PER_CITIZEN * city.pop };
@@ -1263,6 +1277,21 @@ export class Game {
 
   // What a city makes this turn, summed per civ (endTurn's accounts).
   private turnIncome: Output[] = [];
+  private turnLuxuries: Output[] = [];
+
+  // Its luxuries' empire bonus, to the civ as a whole (its culture to
+  // identity, not to any city's borders).
+  private addLuxuries(p: Player): void {
+    if (!this.cities.some((c) => c.owner === p.id)) return;
+    const y = this.luxuryYield(p);
+    p.gold += y.gold;
+    p.faith += y.faith;
+    this.addScience(p, y.science);
+    this.addCohesion(p, y.cohesion);
+    this.addCulture(p, y.culture);
+    this.turnLuxuries[p.id] = y;
+    this.turnIncome[p.id] = addOut(this.turnIncome[p.id] ?? ZERO, y);
+  }
 
   // ---------- what a civ can do ----------
 
@@ -1326,8 +1355,134 @@ export class Game {
     }
     return out;
   }
-  hasResource(owner: number, r: ResourceKey): boolean { return this.ownedResources(owner).has(r); }
-  luxuriesOf(owner: number): ResourceKey[] { return [...this.ownedResources(owner)].filter((r) => resourceDef(r).kind === 'luxury'); }
+  // How many tiles of each it owns (its copies).
+  resourceCopies(owner: number): Map<ResourceKey, number> {
+    const out = new Map<ResourceKey, number>();
+    for (let t = 0; t < this.N; t++) {
+      if (!this.resources[t] || this.ownerOf(t) !== owner || this.pillaged[t]) continue;
+      const r = this.resourceFor(t, owner);
+      if (r) out.set(r, (out.get(r) ?? 0) + 1);
+    }
+    return out;
+  }
+  // What it has: its own and what its deals bring it.
+  availableResources(owner: number): Set<ResourceKey> {
+    const out = this.ownedResources(owner);
+    for (const r of this.imports(owner)) out.add(r);
+    return out;
+  }
+  hasResource(owner: number, r: ResourceKey): boolean { return this.availableResources(owner).has(r); }
+  luxuriesOf(owner: number): ResourceKey[] { return [...this.availableResources(owner)].filter((r) => resourceDef(r).kind === 'luxury'); }
+  // The empire bonus of its luxuries (one copy of each kind counts), and its effects' per luxury.
+  luxuryYield(p: Player): Output {
+    const kinds = this.luxuriesOf(p.id), per = flat(this.effectsOf(p), 'luxury');
+    return kinds.reduce((s, k) => addOut(addOut(s, empireBonus(k, p.era)), per), ZERO);
+  }
+
+  // ---------- trade ----------
+
+  // What its deals bring it, and what it sends away (one entry a deal).
+  imports(owner: number): ResourceKey[] {
+    return this.deals.flatMap((d) => { const [a, b] = d.sides; const from = a.civ === owner ? b : b.civ === owner ? a : null; return from?.resource ? [from.resource] : []; });
+  }
+  exports(owner: number): ResourceKey[] {
+    return this.deals.flatMap((d) => d.sides.filter((s) => s.civ === owner && s.resource).map((s) => s.resource!));
+  }
+  // The copies it could still trade away: past the one it keeps and those already sent.
+  spareResources(owner: number): Map<ResourceKey, number> {
+    const out = new Map<ResourceKey, number>(), sent = this.exports(owner);
+    for (const [r, n] of this.resourceCopies(owner)) {
+      const spare = n - 1 - sent.filter((x) => x === r).length;
+      if (spare > 0) out.set(r, spare);
+    }
+    return out;
+  }
+  // Whether two civs may trade: met, at peace, both alive.
+  canTrade(a: number, b: number): boolean {
+    return a !== b && this.players[a]!.alive && this.players[b]!.alive && !!this.met[a]![b] && !this.atWar(a, b);
+  }
+  // What `from` could give `to`: a spare copy of something `to` has
+  // revealed (a strategic) and lacks.
+  tradeable(from: number, to: number): ResourceKey[] {
+    const has = this.availableResources(to), techs = this.players[to]!.techs;
+    return [...this.spareResources(from).keys()].filter((r) => !has.has(r) && (!resourceDef(r).reveal || techs.has(resourceDef(r).reveal!)));
+  }
+  // Why a deal can't be made now, or null.
+  dealBlock(sides: readonly [DealSide, DealSide]): string | null {
+    const [a, b] = sides;
+    if (!this.canTrade(a.civ, b.civ)) return 'Only civilizations at peace can trade.';
+    if (!a.resource && !b.resource && !a.gold && !b.gold) return 'Nothing is traded.';
+    if (a.gold < 0 || b.gold < 0) return 'Gold is given, not taken.';
+    for (const [s, o] of [[a, b], [b, a]] as const) {
+      if (s.resource && !this.tradeable(s.civ, o.civ).includes(s.resource)) return `The ${this.players[s.civ]!.name} have no spare ${resourceDef(s.resource).name} the ${this.players[o.civ]!.name} could use.`;
+      if (s.gold > this.players[s.civ]!.gold + this.goldRate(s.civ)) return `The ${this.players[s.civ]!.name} cannot pay ${s.gold} gold a turn.`;
+    }
+    return null;
+  }
+  // A civ's gold a turn, last turn, before its deals.
+  goldRate(owner: number): number {
+    const l = this.players[owner]!.ledger;
+    return Math.max(0, Math.floor(l.income.gold + l.tithes - l.cityUpkeep - l.unitUpkeep));
+  }
+  // Proposes a deal (sides[0]: the proposer): a computer answers at once
+  // (ai.ts), the human in the diplomacy panel. Whether it was signed (or offered).
+  proposeDeal(sides: readonly [DealSide, DealSide]): boolean {
+    if (this.dealBlock(sides) !== null) return false;
+    const [from, to] = sides;
+    const deal: Deal = { sides, until: this.turn + DEAL_TURNS };
+    if (this.players[to.civ]!.isHuman) {
+      if (this.dealOffers.some((d) => d.sides[0].civ === from.civ)) return false;
+      this.dealOffers.push(deal);
+      this.log(`The ${this.players[from.civ]!.name} offer a trade (Diplomacy).`);
+      return true;
+    }
+    if (!aiAcceptsDeal(this, this.players[to.civ]!, sides)) return false;
+    this.signDeal(deal);
+    return true;
+  }
+  // The human answers an offer.
+  answerDeal(i: number, yes: boolean): boolean {
+    const d = this.dealOffers[i];
+    if (!d) return false;
+    this.dealOffers.splice(i, 1);
+    if (!yes || this.dealBlock(d.sides) !== null) return false;
+    this.signDeal({ ...d, until: this.turn + DEAL_TURNS });
+    return true;
+  }
+  private signDeal(d: Deal): void {
+    this.deals.push(d);
+    const [a, b] = d.sides;
+    this.record('trade', a.civ, { with: b.civ, gives: a.resource, gold: a.gold, gets: b.resource, theirGold: b.gold, until: d.until });
+    if (a.civ === HUMAN || b.civ === HUMAN) this.log(`Trade with the ${this.players[a.civ === HUMAN ? b.civ : a.civ]!.name} signed, for ${DEAL_TURNS} turns.`);
+  }
+  private endDeal(d: Deal, why: string): void {
+    const i = this.deals.indexOf(d);
+    if (i < 0) return;
+    this.deals.splice(i, 1);
+    const [a, b] = d.sides;
+    this.record('tradeEnded', a.civ, { with: b.civ, why });
+    if (a.civ === HUMAN || b.civ === HUMAN) this.log(`Trade with the ${this.players[a.civ === HUMAN ? b.civ : a.civ]!.name} ended: ${why}.`);
+  }
+  // Each turn: deals that ran out, lost their goods or their peace end; the gold is paid.
+  private settleDeals(): void {
+    for (const d of [...this.deals]) {
+      const [a, b] = d.sides;
+      if (this.turn >= d.until) { this.endDeal(d, 'its term is over'); continue; }
+      if (!this.canTrade(a.civ, b.civ)) { this.endDeal(d, 'no longer at peace'); continue; }
+      const lost = d.sides.find((s) => s.resource && (this.resourceCopies(s.civ).get(s.resource) ?? 0) <= this.exports(s.civ).filter((x) => x === s.resource).length);
+      if (lost) { this.endDeal(d, `the ${this.players[lost.civ]!.name} lost their spare ${resourceDef(lost.resource!).name}`); continue; }
+      const broke = d.sides.find((s) => s.gold > this.players[s.civ]!.gold);
+      if (broke) { this.endDeal(d, `the ${this.players[broke.civ]!.name} could not pay`); continue; }
+      for (const [s, o] of [[a, b], [b, a]] as const) {
+        this.players[s.civ]!.gold -= s.gold;
+        this.players[o.civ]!.gold += s.gold;
+      }
+    }
+  }
+  // Its net gold a turn from deals.
+  dealGold(owner: number): number {
+    return this.deals.reduce((n, d) => n + d.sides.reduce((m, s) => m + (s.civ === owner ? -s.gold : d.sides.some((x) => x.civ === owner) ? s.gold : 0), 0), 0);
+  }
 
   // ---------- research and politics ----------
 
@@ -1561,7 +1716,7 @@ export class Game {
       this.record('shortfall', p.id, { gold: short });
       if (p.isHuman) this.log(`The treasury is empty: ${short} gold short, taken from research.`);
     }
-    p.ledger = { income: this.turnIncome[p.id] ?? ZERO, cityUpkeep: up.cities, unitUpkeep: up.units, tithes };
+    p.ledger = { income: this.turnIncome[p.id] ?? ZERO, cityUpkeep: up.cities, unitUpkeep: up.units, tithes, luxuries: this.turnLuxuries[p.id] ?? ZERO, trade: this.dealGold(p.id) };
   }
 
   // What a civ has, for the record.
@@ -1570,7 +1725,8 @@ export class Game {
     return {
       cities: cities.length, pop: cities.reduce((s, c) => s + c.pop, 0), units: this.units.filter((u) => u.owner === p.id).length,
       gold: p.gold, techs: p.techs.size, politics: p.politics.size, traits: [...p.identity], era: p.era, government: p.government,
-      income: p.ledger.income, upkeep: +(p.ledger.cityUpkeep + p.ledger.unitUpkeep).toFixed(2), tithes: p.ledger.tithes,
+      income: p.ledger.income, upkeep: +(p.ledger.cityUpkeep + p.ledger.unitUpkeep).toFixed(2), tithes: p.ledger.tithes, luxuries: p.ledger.luxuries, trade: p.ledger.trade,
+      deals: this.deals.filter((d) => d.sides.some((s) => s.civ === p.id)).length,
       wars: this.players.filter((o) => o.id !== p.id && this.atWar(p.id, o.id)).map((o) => o.id),
     };
   }
@@ -1605,6 +1761,8 @@ export class Game {
     this.met[a]![b] = this.met[b]![a] = 1;
     this.peaceOffers.delete(`${a}>${b}`);
     this.peaceOffers.delete(`${b}>${a}`);
+    for (const d of this.deals.filter((x) => x.sides.some((s) => s.civ === a) && x.sides.some((s) => s.civ === b))) this.endDeal(d, 'war');
+    for (let i = this.dealOffers.length - 1; i >= 0; i--) if (this.dealBlock(this.dealOffers[i]!.sides) !== null) this.dealOffers.splice(i, 1);
     this.record('war', a, { on: b });
     if (a === HUMAN || b === HUMAN) this.log(`${this.players[a]!.name} declared war on ${this.players[b]!.name}!`);
   }
@@ -1659,11 +1817,15 @@ export class Game {
     if (this.over) return;
     // Citizens the human left unplaced: the governor places them.
     for (const c of this.cities) if (c.growth > 0) this.autoPlace(c);
+    this.dealOffers.length = 0; // (unanswered offers lapse; the computer may make new ones)
     for (const p of this.players) {
       if (!p.isHuman && p.alive) aiTurn(this, p);
     }
     this.turnIncome = [];
+    this.turnLuxuries = [];
     for (const city of [...this.cities]) this.processCity(city);
+    for (const p of this.players) if (p.alive) this.addLuxuries(p);
+    this.settleDeals();
     for (const p of this.players) if (p.alive) this.settleAccounts(p);
     this.contestBorders();
     this.spreadReligions();

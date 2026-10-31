@@ -4,14 +4,14 @@ import { TECH_KEYS, techDef, techPath } from '../src/techs.ts';
 import { POLITICS_KEYS, politicsDef, GOVERNMENT_KEYS, POLICY_KEYS } from '../src/politics.ts';
 import { TRAIT_KEYS, FAITH_KEYS, PATH_KEYS, PATHS, MAX_TRAITS, traitDef, traitCost, pathTraits, pathLevels } from '../src/identity.ts';
 import { RELIGION_KEYS } from '../src/religion.ts';
-import { RESOURCES, LUXURY_KEYS, type ResourceKey } from '../src/resources.ts';
+import { RESOURCES, LUXURY_KEYS, empireBonus, type ResourceKey } from '../src/resources.ts';
 import { cityUpkeep } from '../src/economy.ts';
 import { BORDER_AT, CITY_REACH, USE } from '../src/cities.ts';
 import { UNITS, BUILDINGS, WONDERS, type BuildKey } from '../src/rules.ts';
 
 // The game's systems: research, politics (governments and policies),
 // identity (traits, faiths), religion, resources, borders, upkeep,
-// diplomacy and the record.
+// diplomacy, trade and the record.
 
 const fresh = () => {
   const g = new Game({ size: 'small', seed: 5 });
@@ -230,6 +230,72 @@ describe('S5: diplomacy', () => {
     g.turn += MIN_WAR;
     expect(g.makePeace(0, 1)).toBe(true);
     expect(g.atWar(0, 1)).toBe(false);
+  });
+});
+
+describe('S7: luxuries and trade', () => {
+  // Two civs, met and at peace, each a city whose land holds only `goods`.
+  const twoCivs = (mine: ResourceKey, theirs: ResourceKey) => {
+    const g = fresh();
+    const a = settle(g, 0), b = settle(g, 1);
+    g.met[0]![1] = g.met[1]![0] = 1;
+    g.players[1]!.isHuman = false;
+    for (let t = 0; t < g.N; t++) if (g.tileCity[t] >= 0) g.resources[t] = null;
+    const plant = (c: typeof a, r: ResourceKey, n: number) => g.tilesWithin(c.tile, 2).filter((t) => g.tileCity[t] === c.id && t !== c.tile).slice(0, n).forEach((t) => { g.resources[t] = r; });
+    plant(a, mine, 2);
+    plant(b, theirs, 2);
+    return g;
+  };
+  const side = (civ: number, resource: ResourceKey | null, gold = 0) => ({ civ, resource, gold });
+
+  it('the first copy of each luxury gives the whole civilization its bonus, once, mostly cohesion', () => {
+    for (const k of LUXURY_KEYS) expect(RESOURCES[k].empire?.cohesion ?? 0, k).toBeGreaterThan(0);
+    const g = twoCivs('silk', 'wine');
+    const p = g.players[0]!;
+    expect(g.luxuriesOf(0)).toEqual(['silk']);
+    expect(g.luxuryYield(p)).toEqual(empireBonus('silk', p.era));
+    g.endTurn(); g.over = null;
+    expect(p.ledger.luxuries.cohesion).toBe(empireBonus('silk', p.era).cohesion);
+    // (It grows with the era.)
+    expect(empireBonus('silk', 5).cohesion).toBeGreaterThan(empireBonus('silk', 0).cohesion);
+  });
+
+  it('spare copies trade for goods or gold; a civ keeps one; the goods count as the taker\'s', () => {
+    const g = twoCivs('silk', 'wine');
+    expect(g.spareResources(0).get('silk')).toBe(1);
+    expect(g.tradeable(0, 1)).toEqual(['silk']);
+    // (A computer refuses to give for nothing.)
+    expect(g.proposeDeal([side(0, null), side(1, 'wine')])).toBe(false);
+    expect(g.proposeDeal([side(0, 'silk'), side(1, 'wine')])).toBe(true);
+    expect(g.hasResource(1, 'silk')).toBe(true);
+    expect(g.luxuriesOf(0).sort()).toEqual(['silk', 'wine']);
+    expect(g.tradeable(0, 1)).toEqual([]);
+    expect(g.spareResources(0).get('silk')).toBeUndefined();
+    // (No second deal for the copy it keeps.)
+    expect(g.dealBlock([side(0, 'silk'), side(1, null, 1)])).not.toBeNull();
+  });
+
+  it('a deal ends with war, or when the giver loses its spare copy', () => {
+    let g = twoCivs('silk', 'wine');
+    g.proposeDeal([side(0, 'silk'), side(1, 'wine')]);
+    g.declareWar(0, 1);
+    expect(g.deals.length).toBe(0);
+    expect(g.hasResource(1, 'silk')).toBe(false);
+    g = twoCivs('silk', 'wine');
+    g.proposeDeal([side(0, 'silk'), side(1, 'wine')]);
+    g.resources[g.resources.indexOf('silk')] = null;
+    g.endTurn(); g.over = null;
+    expect(g.deals.length).toBe(0);
+    expect(g.events.some((e) => e.kind === 'tradeEnded')).toBe(true);
+  });
+
+  it('gold a turn is paid while the deal holds', () => {
+    const g = twoCivs('silk', 'wine');
+    g.players[1]!.gold = 100;
+    g.players[0]!.gold = 0;
+    expect(g.proposeDeal([side(0, 'silk'), side(1, null, 1)])).toBe(true);
+    g.endTurn(); g.over = null;
+    expect(g.players[0]!.ledger.trade).toBe(1);
   });
 });
 

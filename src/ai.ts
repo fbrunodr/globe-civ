@@ -1,11 +1,13 @@
 import { unitDef, buildDef, UNITS, type BuildKey, type UnitKey } from './rules.ts';
-import { BUILDING_KEYS, WONDER_KEYS, weigh, type BuildingKey } from './cities.ts';
+import { BUILDING_KEYS, BUILDINGS, WONDER_KEYS, weigh, addOut, OUTPUT_KEYS, type BuildingKey } from './cities.ts';
+import { resourceDef, empireBonus, type ResourceKey } from './resources.ts';
+import { flat } from './effects.ts';
 import { buildingUpkeep } from './economy.ts';
 import { TECH_KEYS, techDef, type TechKey } from './techs.ts';
 import { POLITICS_KEYS, politicsDef, policyDef, SLOT_KINDS, fits, type PoliticsKey, type GovernmentKey, type PolicyKey } from './politics.ts';
 import { TRAIT_KEYS, traitDef, PATH_KEYS, PATHS, type PathKey, type TraitKey } from './identity.ts';
 import { mulberry32 } from './rng.ts';
-import { MIN_WAR, type Game, type Player, type Unit, type City } from './game.ts';
+import { MIN_WAR, type Game, type Player, type Unit, type City, type DealSide } from './game.ts';
 
 // Deliberately simple AI: expand with settlers, keep a garrison in every
 // city, attack adjacent enemies when the odds are good and, at war with a
@@ -20,6 +22,7 @@ export function aiTurn(g: Game, p: Player): void {
   if (!p.studying) { const c = aiPickPolitics(g, p); if (c) g.setPolitics(p, c); }
   aiPickTraits(g, p);
   aiDiplomacy(g, p);
+  aiTrade(g, p);
   const cities = g.cities.filter((c) => c.owner === p.id);
   const units = g.units.filter((u) => u.owner === p.id);
   const settlers = units.filter((u) => u.type === 'settler').length;
@@ -304,4 +307,51 @@ function aiDiplomacy(g: Game, p: Player): void {
 export function aiAcceptsPeace(g: Game, p: Player, from: number): boolean {
   if (g.turn - g.relations[p.id]![from]!.since < MIN_WAR) return false;
   return power(g, p.id) < 1.25 * power(g, from) || g.turn - g.relations[p.id]![from]!.since > 25;
+}
+
+// ---- trade ----
+
+// What having resource r is worth to civ p a turn, in yield points: a
+// luxury's empire bonus; a strategic more when something it can build needs
+// it. Nothing if it has it already.
+export function resourceWorth(g: Game, p: Player, r: ResourceKey): number {
+  if (g.hasResource(p.id, r)) return 0;
+  const d = resourceDef(r);
+  if (d.kind === 'luxury') { const y = addOut(empireBonus(r, p.era), flat(g.effectsOf(p), 'luxury')); return OUTPUT_KEYS.reduce((s, k) => s + y[k], 0); }
+  if (d.kind !== 'strategic') return 0;
+  const needs = (k: BuildKey) => (k in UNITS ? unitDef(k as UnitKey).needs : k in BUILDINGS ? BUILDINGS[k as BuildingKey].resource : undefined);
+  return [...g.unlocked(p)].some((k) => needs(k) === r) ? 6 : 2;
+}
+// What giving a spare copy away costs it: a little (it would rather keep
+// its goods), more for a strategic to a civ stronger than itself.
+const giveCost = (g: Game, p: Player, r: ResourceKey | null, to: number): number =>
+  !r ? 0 : resourceDef(r).kind === 'strategic' && power(g, to) > power(g, p.id) ? 3 : 1;
+
+// Whether it signs a deal: what it gets must beat what it gives by a point.
+export function aiAcceptsDeal(g: Game, p: Player, sides: readonly [DealSide, DealSide]): boolean {
+  const mine = sides.find((s) => s.civ === p.id), theirs = sides.find((s) => s.civ !== p.id);
+  if (!mine || !theirs || g.dealBlock(sides) !== null) return false;
+  const gain = (theirs.resource ? resourceWorth(g, p, theirs.resource) : 0) + theirs.gold;
+  return gain - giveCost(g, p, mine.resource, theirs.civ) - mine.gold >= 1;
+}
+
+// Now and then, a trade with a civ it is at peace with: goods for goods,
+// or its spares sold for gold a turn, or theirs bought. To the human, an
+// offer to answer (one a turn at most).
+function aiTrade(g: Game, p: Player): void {
+  if (g.rng() > 0.3) return;
+  for (const o of g.players.filter((x) => g.canTrade(p.id, x.id))) {
+    if (o.isHuman && (g.rng() > 0.3 || g.dealOffers.length)) continue;
+    const byWorth = (to: Player) => (a: ResourceKey, b: ResourceKey) => resourceWorth(g, to, b) - resourceWorth(g, to, a);
+    const give = g.tradeable(p.id, o.id).sort(byWorth(o))[0] ?? null;
+    const get = g.tradeable(o.id, p.id).sort(byWorth(p))[0] ?? null;
+    const side = (civ: number, resource: ResourceKey | null, gold = 0): DealSide => ({ civ, resource, gold });
+    const wantGet = get !== null && resourceWorth(g, p, get) >= 2;
+    if (give && wantGet) g.proposeDeal([side(p.id, give), side(o.id, get)]);
+    else if (give) g.proposeDeal([side(p.id, give), side(o.id, null, Math.max(1, resourceWorth(g, o, give) - 2))]);
+    else if (wantGet) {
+      const pay = Math.max(1, Math.floor(resourceWorth(g, p, get) / 2));
+      if (pay <= g.goldRate(p.id) / 3) g.proposeDeal([side(p.id, null, pay), side(o.id, get)]);
+    }
+  }
 }

@@ -1,4 +1,4 @@
-import { HUMAN, type Game, type Player } from './game.ts';
+import { HUMAN, DEAL_TURNS, type Game, type Player, type DealSide, type Deal } from './game.ts';
 import { TECH_KEYS, techDef, techPath, type TechKey, type TechDef } from './techs.ts';
 import {
   POLITICS_KEYS, politicsDef, politicsPath, GOVERNMENT_KEYS, governmentDef, policyDef, fits, SLOT_KINDS, POLICY_KINDS, POLICY_KEYS,
@@ -9,12 +9,12 @@ import {
   type PathKey, type TraitKey,
 } from './identity.ts';
 import { RELIGION_KEYS, religionDef } from './religion.ts';
-import { RESOURCE_KEYS, resourceDef } from './resources.ts';
+import { RESOURCE_KEYS, resourceDef, empireBonus, type ResourceKey } from './resources.ts';
 import { describe as describeEffect, describeAll, flat } from './effects.ts';
 import { ERAS, BUILDINGS, WONDERS, type EraIndex } from './cities.ts';
 import { UNITS } from './rules.ts';
-import { power } from './ai.ts';
-import { outStr } from './ui.ts';
+import { power, aiAcceptsDeal, resourceWorth } from './ai.ts';
+import { outStr, bonusStr } from './ui.ts';
 
 // The empire's sheets: full-screen pages over the map, opened from the top
 // bar (data-sheet: the research, politics and identity tracks, and the
@@ -25,7 +25,8 @@ import { outStr } from './ui.ts';
 //   government  three tabs: the government in place and its policies, the
 //               policy cards to slot, and the governments to adopt
 //   religion    the world's religions and the civ's cities' faith
-//   diplomacy   the civs met: at war or peace, declare war, offer or accept peace
+//   diplomacy   the civs met: at war or peace, declare war, offer or accept peace;
+//               trade (resources, gold a turn): offers, deals in force, a proposal
 //   log         the game's record of events (gameLog.ts), to download
 // They change the game directly and then call `changed` (main.ts redraws).
 
@@ -44,6 +45,8 @@ export class Sheets {
   private filter: PolicyKind | 'all' = 'all';
   private target: { slot: PolicySlot; i: number } | null = null;   // the slot a policy card will go to
   private notice = '';
+  // The trade being drawn up: with whom, what each side gives.
+  private draft: { civ: number; give: ResourceKey | null; get: ResourceKey | null; pay: number; paid: number } | null = null;
 
   constructor(private readonly game: Game, private readonly changed: () => void, private readonly downloadLog: () => void) {
     this.el = document.getElementById('sheet')!;
@@ -67,7 +70,7 @@ export class Sheets {
     document.querySelectorAll<HTMLElement>('#sheets [data-sheet]').forEach((b) => {
       b.classList.toggle('active', b.dataset['sheet'] === this.open);
       const k = b.dataset['sheet'];
-      const pending = (k === 'diplomacy' && [...this.game.peaceOffers].some((o) => o.endsWith(`>${HUMAN}`)))
+      const pending = (k === 'diplomacy' && ([...this.game.peaceOffers].some((o) => o.endsWith(`>${HUMAN}`)) || this.game.dealOffers.length > 0))
         || (k === 'government' && this.freeSlots() > 0);
       b.querySelector('.dot')?.remove();
       if (pending) b.insertAdjacentHTML('beforeend', '<span class="dot"></span>');
@@ -121,6 +124,29 @@ export class Sheets {
       case 'war': g.declareWar(HUMAN, Number(d['civ'])); break;
       case 'peace': g.offerPeace(HUMAN, Number(d['civ'])); break;
       case 'accept': { const from = Number(d['civ']); if (g.peaceOffers.has(`${from}>${HUMAN}`)) g.makePeace(from, HUMAN); break; }
+      case 'tradeWith': this.draft = { civ: Number(d['civ']), give: null, get: null, pay: 0, paid: 0 }; break;
+      case 'tradePick': {
+        if (!this.draft) return;
+        const k = (d['key'] ?? '') as ResourceKey, side = d['side'] === 'give' ? 'give' : 'get';
+        this.draft[side] = this.draft[side] === k ? null : k;
+        break;
+      }
+      case 'tradeGold': {
+        if (!this.draft) return;
+        const side = d['side'] === 'pay' ? 'pay' : 'paid';
+        this.draft[side] = Math.max(0, this.draft[side] + Number(d['n']));
+        break;
+      }
+      case 'tradeCancel': this.draft = null; break;
+      case 'tradePropose': {
+        if (!this.draft) return;
+        const sides = this.draftSides(this.draft);
+        const who = g.players[this.draft.civ]!.name;
+        if (g.proposeDeal(sides)) { this.draft = null; this.notice = `The ${who} signed.`; }
+        else this.notice = g.dealBlock(sides) ?? `The ${who} decline: offer them more.`;
+        break;
+      }
+      case 'dealAnswer': g.answerDeal(Number(d['i']), d['yes'] === '1'); break;
       case 'download': this.downloadLog(); return;
       default: return;
     }
@@ -381,11 +407,66 @@ export class Sheets {
         : g.canMakePeace(HUMAN, o.id) ? `<button data-do="peace" data-civ="${o.id}">Offer peace</button>` : `<small>Peace possible in ${wait} turns</small>`;
       const cities = g.cities.filter((c) => c.owner === o.id).length;
       const known = epithet(o.identity);
+      const trade = g.canTrade(HUMAN, o.id) ? `<button data-do="tradeWith" data-civ="${o.id}" class="${this.draft?.civ === o.id ? 'active' : ''}">Trade</button>` : '';
       return `<tr><td><span class="swatch" style="background:${o.color}"></span> ${esc(o.name)}${known ? ` <small>${esc(known)}</small>` : ''}</td><td><span class="pill ${war ? 'war' : 'peace'}">${war ? `War since turn ${r.since}` : 'Peace'}</span></td>
-        <td>${esc(governmentDef(o.government).name)}</td><td class="num">${cities}</td><td>${strength}</td><td>${action}</td></tr>`;
+        <td>${esc(governmentDef(o.government).name)}</td><td class="num">${cities}</td><td>${strength}</td><td>${trade}</td><td>${action}</td></tr>`;
     }).join('');
     return `<p class="note">Everyone starts at peace. At peace, units cannot enter each other's tiles; attacking a civilization declares war. A war lasts at least 8 turns before peace can be made. An AI accepts peace when the war is going badly for it, or has lasted long.</p>
-      <table class="grid"><tr><th>Civilization</th><th>Relation</th><th>Government</th><th>Cities</th><th>Military vs yours</th><th></th></tr>${rows}</table>`;
+      <table class="grid"><tr><th>Civilization</th><th>Relation</th><th>Government</th><th>Cities</th><th>Military vs yours</th><th></th><th></th></tr>${rows}</table>
+      ${this.tradeHtml()}`;
+  }
+
+  // ---- trade ----
+
+  private draftSides(d: NonNullable<Sheets['draft']>): [DealSide, DealSide] {
+    return [{ civ: HUMAN, resource: d.give, gold: d.pay }, { civ: d.civ, resource: d.get, gold: d.paid }];
+  }
+  private dealText(d: Deal): string {
+    const side = (s: DealSide) => [s.resource ? resourceDef(s.resource).name : '', s.gold ? `${s.gold} gold a turn` : ''].filter(Boolean).join(' + ') || 'nothing';
+    const mine = d.sides.find((s) => s.civ === HUMAN)!, theirs = d.sides.find((s) => s.civ !== HUMAN)!;
+    return `<td><span class="swatch" style="background:${this.game.players[theirs.civ]!.color}"></span> ${esc(this.game.players[theirs.civ]!.name)}</td><td>${side(mine)}</td><td>${side(theirs)}</td>`;
+  }
+  // What a resource does for whoever takes it.
+  private goodsNote(k: ResourceKey, to: Player): string {
+    const d = resourceDef(k);
+    return d.kind === 'luxury' ? bonusStr(empireBonus(k, to.era)) : `<small>${d.kind}${resourceWorth(this.game, to, k) > 2 ? ' · needed' : ''}</small>`;
+  }
+
+  private tradeHtml(): string {
+    const g = this.game, p = this.me;
+    const luxuries = g.luxuriesOf(HUMAN), imported = new Set(g.imports(HUMAN)), spare = g.spareResources(HUMAN);
+    const lux = luxuries.length
+      ? luxuries.map((k) => `<tr><td>${esc(resourceDef(k).name)}</td><td>${imported.has(k) && !g.ownedResources(HUMAN).has(k) ? 'Traded in' : 'Your land'}</td><td>${bonusStr(empireBonus(k, p.era))}</td><td class="num">${spare.get(k) ?? 0}</td></tr>`).join('')
+      : '<tr><td colspan="4"><small>None yet: settle near luxuries, or trade for them.</small></td></tr>';
+    const offers = g.dealOffers.map((d, i) => `<tr>${this.dealText(d)}<td><small>${DEAL_TURNS} turns</small></td><td><button class="primary" data-do="dealAnswer" data-i="${i}" data-yes="1">Accept</button> <button data-do="dealAnswer" data-i="${i}" data-yes="0">Decline</button></td></tr>`).join('');
+    const mine = g.deals.filter((d) => d.sides.some((s) => s.civ === HUMAN));
+    const deals = mine.map((d) => `<tr>${this.dealText(d)}<td class="num">${d.until - g.turn}</td></tr>`).join('');
+    const strategics = [...spare].filter(([k]) => resourceDef(k).kind !== 'luxury');
+    return `<h3>Trade</h3>${!this.draft && this.notice ? `<p class="notice">${esc(this.notice)}</p>` : ''}
+      <p class="note">The first copy of each luxury gives your whole civilization its bonus every turn, mostly cohesion, and it grows with the era. More copies add nothing, so you can trade them: a spare copy (you always keep one) for another civilization's goods or for gold a turn, for ${DEAL_TURNS} turns. A strategic resource you trade for lets you build what needs it. A war, losing the spare tile, or a payer running out of gold ends a deal.</p>
+      ${offers ? `<h3>Offers to you</h3><table class="grid"><tr><th>From</th><th>You give</th><th>You get</th><th>Term</th><th></th></tr>${offers}</table>` : ''}
+      ${this.draftHtml()}
+      <h3>Your luxuries</h3><table class="grid"><tr><th>Luxury</th><th>From</th><th>Bonus to your civilization</th><th>Spare copies</th></tr>${lux}</table>
+      ${strategics.length ? `<p class="note">Spare strategic copies: ${strategics.map(([k, n]) => `${esc(resourceDef(k).name)} ×${n}`).join(', ')}.</p>` : ''}
+      ${deals ? `<h3>Deals in force</h3><table class="grid"><tr><th>With</th><th>You give</th><th>You get</th><th>Turns left</th></tr>${deals}</table>` : ''}`;
+  }
+
+  private draftHtml(): string {
+    const g = this.game, d = this.draft;
+    if (!d || !g.canTrade(HUMAN, d.civ)) return '';
+    const o = g.players[d.civ]!;
+    const chips = (keys: ResourceKey[], side: 'give' | 'get', to: Player) => keys.length
+      ? keys.map((k) => `<button class="tchip ${d[side] === k ? 'picked' : ''}" data-do="tradePick" data-side="${side}" data-key="${k}"><b>${esc(resourceDef(k).name)}</b> ${this.goodsNote(k, to)}</button>`).join('')
+      : '<small class="none">No spare goods the other side lacks.</small>';
+    const gold = (side: 'pay' | 'paid') => `<div class="tgold"><span>Gold a turn</span>${[-5, -1].map((n) => `<button data-do="tradeGold" data-side="${side}" data-n="${n}">${n}</button>`).join('')}<b>${d[side]}</b>${[1, 5].map((n) => `<button data-do="tradeGold" data-side="${side}" data-n="${n}">+${n}</button>`).join('')}</div>`;
+    const sides = this.draftSides(d), block = g.dealBlock(sides);
+    const verdict = block ?? (aiAcceptsDeal(g, o, sides) ? `The ${esc(o.name)} would accept.` : `The ${esc(o.name)} want more.`);
+    return `<h3>Trade with the ${esc(o.name)}</h3>
+      <div class="tradebox">
+        <div class="tside"><span class="label">You give</span><div class="tchips">${chips(g.tradeable(HUMAN, o.id), 'give', o)}</div>${gold('pay')}</div>
+        <div class="tside"><span class="label">The ${esc(o.name)} give</span><div class="tchips">${chips(g.tradeable(o.id, HUMAN), 'get', this.me)}</div>${gold('paid')}</div>
+      </div>
+      <div class="tfoot"><span class="${block ? 'bad' : ''}">${verdict}</span>${this.notice ? ` <b>${esc(this.notice)}</b>` : ''}<span class="grow"></span><button data-do="tradeCancel">Cancel</button> <button class="primary" data-do="tradePropose" ${block ? 'disabled' : ''}>Propose for ${DEAL_TURNS} turns</button></div>`;
   }
 
   private logHtml(): string {

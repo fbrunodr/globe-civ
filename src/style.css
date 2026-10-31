@@ -299,3 +299,16 @@ p.notice { color: var(--warn); margin: 0 0 12px; }
 #settingsMenu h4 { margin: 0 0 2px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
 #settingsMenu label { display: flex; align-items: center; gap: 8px; cursor: pointer; white-space: nowrap; }
 #settingsMenu select { margin-left: auto; }
+
+/* Trade (diplomacy): what each side gives, side by side. */
+.tradebox { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; max-width: 1100px; }
+.tside { background: var(--surface); border: 1px solid var(--border); border-radius: 5px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+.tchips { display: flex; flex-wrap: wrap; gap: 6px; }
+.tchip { display: flex; gap: 8px; align-items: baseline; }
+.tchip.picked { border-color: var(--accent); background: var(--accent-soft); }
+.tgold { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.tgold span { margin-right: auto; }
+.tgold b { min-width: 28px; text-align: center; color: var(--text); font-variant-numeric: tabular-nums; }
+.tfoot { display: flex; align-items: center; gap: 8px; max-width: 1100px; margin-top: 10px; }
+.tfoot .grow { flex: 1; }
+@media (max-width: 700px) { .tradebox { grid-template-columns: 1fr; } }

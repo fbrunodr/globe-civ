@@ -447,7 +447,7 @@ export class CityProps {
     return r;
   }
 
-  // Machu Picchu: houses and shrines of dressed stone, a city cell each, on
+  // Machu Picchu: houses and halls of dressed stone, a city cell each, on
   // the summit cut flat for them (render.ts levelSummit), filling every cell
   // of the flat top on a grid round its highest point.
   private machuPicchu(t: number): PlacedBuilding[] {
@@ -472,7 +472,7 @@ export class CityProps {
         const d = at(x, y), quarter = Math.floor(rand() * 4);
         const qn = new THREE.Quaternion().setFromUnitVectors(UP, d).multiply(new THREE.Quaternion().setFromAxisAngle(UP, facing(d, at(x + 1, y)) + Math.PI / 2 + quarter * Math.PI / 2));
         const pos = d.clone().multiplyScalar(1 + top.ground - 0.00005 * this.scale);
-        here.push({ kind: ruralModelKind(rand() < 0.2 ? 'incaShrine' : 'incaHouse'), matrix: new THREE.Matrix4().compose(pos, qn, new THREE.Vector3(k, k, k)), color: new THREE.Color(1, 1, 1).multiplyScalar(0.92 + 0.12 * rand()), leaf: new THREE.Color(1, 1, 1) });
+        here.push({ kind: ruralModelKind(rand() < 0.3 ? 'incaHall' : 'incaHouse'), matrix: new THREE.Matrix4().compose(pos, qn, new THREE.Vector3(k, k, k)), color: new THREE.Color(1, 1, 1).multiplyScalar(0.92 + 0.12 * rand()), leaf: new THREE.Color(1, 1, 1) });
       }
       if (here.length > out.length) out.splice(0, out.length, ...here);
     }
@@ -594,11 +594,15 @@ export class CityProps {
     const city = this.game.cityById.get(this.game.tileCity[t]);
     if (!city) return true;
     const l = this.layout(city);
-    l.flora ??= this.floraIndex(l);
+    l.flora ??= this.floraIndex(l, city.tile);
     return l.flora(d);
   }
-  private floraIndex(l: CityLayout): (d: THREE.Vector3) => boolean {
+  private floraIndex(l: CityLayout, center: number): (d: THREE.Vector3) => boolean {
     const D = this.game.globe.avgEdgeAngle, gap = FLORA_GAP * D;
+    // The town itself: the hull round the buildings of its center, where no
+    // tree stands, though a gap between two houses would fit one (a town
+    // keeps the trees round it, not among its houses).
+    const hull = townHull([...(l.byTile.get(center) ?? [])].filter((b) => !isFloraModel(b.kind) && b.kind !== 'foundation').flatMap((b) => this.footprint(b)), this.game.tiles[center]!.center);
     // Buildings: each a box in its own frame (its matrix's inverse), bucketed by where it stands.
     const cell = 0.15 * D, key = (p: THREE.Vector3, dx = 0, dy = 0, dz = 0) => `${Math.floor(p.x / cell) + dx},${Math.floor(p.y / cell) + dy},${Math.floor(p.z / cell) + dz}`;
     interface Box { inv: THREE.Matrix4; hx: number; hz: number; gx: number; gz: number; at: THREE.Vector3; reach: number }
@@ -625,6 +629,7 @@ export class CityProps {
       return Math.abs(p.x) < bx.hx + bx.gx && Math.abs(p.z) < bx.hz + bx.gz;
     };
     return (d) => {
+      if (hull && hull.near(d, gap)) return false;
       for (const bx of big) if (inBox(bx, d)) return false;
       for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
         for (const bx of cells.get(key(d, dx, dy, dz)) ?? []) if (inBox(bx, d)) return false;
@@ -935,3 +940,34 @@ export function facing(dir: THREE.Vector3, target: THREE.Vector3): number {
   return Math.atan2(-local.z, local.x);
 }
 
+// The convex hull of points (unit directions) on the tangent plane at c;
+// near(d, r): whether d is inside it or within r of it. Null under three points.
+function townHull(pts: THREE.Vector3[], c: THREE.Vector3): { near: (d: THREE.Vector3, r: number) => boolean } | null {
+  if (pts.length < 3) return null;
+  const e1 = Math.abs(c.y) < 0.9 ? new THREE.Vector3(0, 1, 0).cross(c).normalize() : new THREE.Vector3(1, 0, 0).cross(c).normalize(), e2 = c.clone().cross(e1);
+  const flat = (v: THREE.Vector3): [number, number] => [v.dot(e1), v.dot(e2)];
+  const p = pts.map(flat).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cross = (o: [number, number], a: [number, number], b: [number, number]) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const half = (list: [number, number][]) => {
+    const h: [number, number][] = [];
+    for (const q of list) { while (h.length >= 2 && cross(h[h.length - 2]!, h[h.length - 1]!, q) <= 0) h.pop(); h.push(q); }
+    return h.slice(0, -1);
+  };
+  const poly = [...half(p), ...half([...p].reverse())];   // counter-clockwise
+  if (poly.length < 3) return null;
+  return {
+    near: (d, r) => {
+      if (d.dot(c) < 0) return false;
+      const q = flat(d);
+      let inside = true, best = Infinity;
+      for (let i = 0; i < poly.length; i++) {
+        const a = poly[i]!, b = poly[(i + 1) % poly.length]!;
+        if (cross(a, b, q) < 0) inside = false;
+        const abx = b[0] - a[0], aby = b[1] - a[1], l2 = abx * abx + aby * aby;
+        const u = l2 > 0 ? Math.max(0, Math.min(1, ((q[0] - a[0]) * abx + (q[1] - a[1]) * aby) / l2)) : 0;
+        best = Math.min(best, Math.hypot(q[0] - a[0] - u * abx, q[1] - a[1] - u * aby));
+      }
+      return inside || best < r;
+    },
+  };
+}

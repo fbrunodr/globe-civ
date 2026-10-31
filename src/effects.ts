@@ -26,7 +26,7 @@ import { OUTPUT_KEYS, out, ZERO, addOut, type Output, type OutputKey, type Impro
 //   improvement    flat yields on every worked tile with an improvement
 //   resource       flat yields on every worked tile with a resource of a kind
 //   specialist     flat yields for every specialist of a kind
-//   luxury         flat yields in the capital for each kind of luxury owned
+//   luxury         flat yields to the whole civ for each kind of luxury it has
 //   follower       flat yields in each city following a religion (religion.ts)
 //   pressure       +pct% to the religious pressure of its cities
 //   tithe          +n gold to a religion's founder per city following it
@@ -150,7 +150,7 @@ export function describe(e: Effect): string {
     case 'improvement': return `${flats(e.o)} on each worked ${IMPROVEMENT_NAME[e.imp]}`;
     case 'resource': return `${flats(e.o)} on each worked ${e.kind} resource`;
     case 'specialist': return `${flats(e.o)} per ${SPECIALIST_NAME[e.kind]}`;
-    case 'luxury': return `${flats(e.o)} in the capital per luxury owned`;
+    case 'luxury': return `${flats(e.o)} to the civilization per kind of luxury it has`;
     case 'follower': return `${flats(e.o)} in each city following it`;
     case 'pressure': return `${sign(e.pct)}% religious pressure`;
     case 'tithe': return `${sign(e.n)} gold per city following your religion`;

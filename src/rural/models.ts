@@ -12,7 +12,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { cone, cyl, part, tf, type Tf } from '../propCatalog.ts';
 import { RESOURCE_MODELS, RESOURCE_MODEL_KEYS } from './resourceModels.ts';
 
-export const RURAL_MODELS = ['crop', 'sheep', 'cow', 'heap', 'block', 'logs', 'stump', 'haystack', 'adit', 'rack', 'incaHouse', 'incaShrine', ...RESOURCE_MODEL_KEYS] as const;
+export const RURAL_MODELS = ['crop', 'sheep', 'cow', 'heap', 'block', 'logs', 'stump', 'haystack', 'adit', 'rack', 'incaHouse', 'incaHall', ...RESOURCE_MODEL_KEYS] as const;
 export type RuralModel = (typeof RURAL_MODELS)[number];
 export type RuralModelKind = `rural|${RuralModel}`;
 export const ruralModelKind = (m: RuralModel): RuralModelKind => `rural|${m}`;
@@ -39,34 +39,58 @@ function trapezoid(wb: number, wt: number, h: number, c: number, o: Tf = {}): TH
   g.setAttribute('position', new THREE.Float32BufferAttribute([-wb / 2, 0, 0, wb / 2, 0, 0, wt / 2, h, 0, -wb / 2, 0, 0, wt / 2, h, 0, -wt / 2, h, 0], 3));
   return P(g, c, o);
 }
-// Machu Picchu's houses (cityProps.ts summit), a city cell each: dressed
-// granite walls on a darker course, trapezoidal doors and niches, steep
-// thatch on stone gables; and a roofless shrine with trapezoidal windows.
-const GRANITE = 0xa8a294, COURSE = 0x8a8476, THATCH = 0xa88d52, RIDGE = 0x8a7240;
-function incaHouse(): THREE.BufferGeometry[] {
-  const w = 0.021, d = 0.014, h = 0.0075;
-  const out = [box(w + 0.0016, 0.0016, d + 0.0016, COURSE), box(w, h, d, GRANITE, { y: 0.0016 })];
-  // The stone gables, and the thatch over them (eaves overhanging).
-  out.push(prism(w, d, 0.009, GRANITE, { y: 0.0016 + h }));
-  out.push(prism(w + 0.0024, d + 0.0034, 0.0104, THATCH, { y: 0.0011 + h }), box(w + 0.0026, 0.0009, 0.0012, RIDGE, { y: 0.0011 + h + 0.0099 }));
-  out.push(trapezoid(0.0042, 0.003, 0.0058, DARK, { y: 0.0016, z: d / 2 + 0.00005 }));
-  for (const x of [-0.0065, 0.0065]) out.push(trapezoid(0.0022, 0.0016, 0.0028, DARK, { x, y: 0.0046, z: d / 2 + 0.00005 }));
-  // Its stone pegs (the roof was lashed to them).
-  for (const x of [-0.008, 0, 0.008]) out.push(box(0.0006, 0.0006, 0.0016, COURSE, { x, y: 0.0016 + h - 0.001, z: d / 2 + 0.0006 }));
+// Machu Picchu's houses (cityProps.ts summit), a city cell each, as the
+// Inca built them: walls of dressed granite, battered (leaning in) on a
+// darker footing course; stone gables rising at both ends past a thick
+// thatch laid between them, its eaves over the long walls; trapezoidal
+// doors under a stone lintel, trapezoidal niches, and the stone pegs the
+// roof was lashed to jutting from the gables. Two plans: the house, its
+// door on a long side; the hall, longer, its door in a gable end.
+const GRANITE = 0xb2ac9e, COURSE = 0x8e887b, LINTEL = 0xc4beb0, THATCH = 0xb0954f, THATCH_DARK = 0x8c7438;
+// A battered block: w by d at the foot, `inset` narrower each side at the top.
+function battered(w: number, h: number, d: number, inset: number, c: number, o: Tf = {}): THREE.BufferGeometry {
+  const g = new THREE.BoxGeometry(w, h, d).translate(0, h / 2, 0);
+  const pos = g.getAttribute('position') as THREE.BufferAttribute;
+  for (let i = 0; i < pos.count; i++) if (pos.getY(i) > h / 2) {
+    pos.setX(i, pos.getX(i) * (w - 2 * inset) / w);
+    pos.setZ(i, pos.getZ(i) * (d - 2 * inset) / d);
+  }
+  return P(g, c, o);
+}
+// One Inca house of w by d (walls h, gables rising gh more); the door on
+// the long side (+z), or in the gable end (+x).
+function incaBuilding(w: number, d: number, h: number, gh: number, doorInGable: boolean): THREE.BufferGeometry[] {
+  const foot = 0.0014, inset = 0.0006, t = 0.0018, top = foot + h;
+  const wt = w - 2 * inset, dt = d - 2 * inset;     // the walls' top
+  const out = [box(w + 0.0018, foot, d + 0.0018, COURSE), battered(w, h, d, inset, GRANITE, { y: foot })];
+  // The gables: stone triangles on the end walls, a little proud of the thatch.
+  for (const x of [-wt / 2 + t / 2, wt / 2 - t / 2]) out.push(prism(t, dt, gh + 0.0006, GRANITE, { x, y: top }));
+  // The thatch, thick, between the gables, its eaves out past the long walls.
+  const eave = 0.0022, slope = gh / (dt / 2);
+  out.push(prism(wt - 2 * t, dt + 2 * eave, gh + eave * slope, THATCH, { y: top - eave * slope + 0.0003 }));
+  out.push(box(wt - 2 * t, 0.0008, 0.0014, THATCH_DARK, { y: top + gh - 0.0002 }));   // the ridge, bound
+  // The door under its lintel, and the niches, on the battered face: built
+  // on a +z face at `half` from the middle, turned to +x for a gable end.
+  const lean = Math.atan2(inset, h), onFace = (y: number, half: number) => half - inset * (y - foot) / h + 0.00006;
+  const openings = (half: number, door: boolean, niches: readonly number[]) => {
+    const g: THREE.BufferGeometry[] = [];
+    if (door) g.push(trapezoid(0.0040, 0.0028, 0.0056, DARK, { y: foot, z: onFace(foot, half), rx: -lean }), box(0.0048, 0.0009, 0.0012, LINTEL, { y: foot + 0.0056, z: onFace(foot + 0.006, half) - 0.0003 }));
+    for (const x of niches) g.push(trapezoid(0.0022, 0.0016, 0.0026, DARK, { x, y: foot + 0.0032, z: onFace(foot + 0.0032, half), rx: -lean }));
+    return g;
+  };
+  if (doorInGable) {
+    out.push(...openings(w / 2, true, []).map((g) => g.applyMatrix4(new THREE.Matrix4().makeRotationY(Math.PI / 2))));
+    out.push(...openings(d / 2, false, [-w / 4, w / 4]));
+  } else out.push(...openings(d / 2, true, [-w / 2 + 0.0045, w / 2 - 0.0045]));
+  // The gables' stone pegs, in a row under the eaves line.
+  for (const s of [-1, 1]) for (const z of [-dt / 4, dt / 4]) out.push(box(0.0014, 0.0007, 0.0007, COURSE, { x: s * (wt / 2 + 0.0005), y: top + gh - Math.abs(z) * slope - 0.0022, z }));
   return out;
 }
-function incaShrine(): THREE.BufferGeometry[] {
-  const w = 0.02, d = 0.016, h = 0.0105, t = 0.0022;
-  const out = [box(w + 0.003, 0.0022, d + 0.003, COURSE)];
-  // Three walls (open to the front), windows in the back one.
-  out.push(box(w, h, t, GRANITE, { y: 0.0022, z: -d / 2 + t / 2 }), box(t, h, d, GRANITE, { x: -w / 2 + t / 2, y: 0.0022 }), box(t, h, d, GRANITE, { x: w / 2 - t / 2, y: 0.0022 }));
-  for (const x of [-0.0055, 0, 0.0055]) out.push(trapezoid(0.0026, 0.0018, 0.0034, DARK, { x, y: 0.0062, z: -d / 2 + t + 0.00005 }));
-  out.push(box(0.008, 0.0024, 0.0045, GRANITE, { y: 0.0022, z: -0.002 }));   // the altar stone
-  return out;
-}
+const incaHouse = (): THREE.BufferGeometry[] => incaBuilding(0.020, 0.0135, 0.0098, 0.0072, false);
+const incaHall = (): THREE.BufferGeometry[] => incaBuilding(0.023, 0.0125, 0.0106, 0.0068, true);
 
 const MODELS: Record<Exclude<RuralModel, 'crop'>, () => THREE.BufferGeometry[]> = {
-  ...RESOURCE_MODELS, incaHouse, incaShrine,
+  ...RESOURCE_MODELS, incaHouse, incaHall,
   sheep: () => [box(0.0042, 0.0026, 0.0026, LEAF, { y: 0.0012 }), box(0.0014, 0.0014, 0.0014, DARK, { x: 0.0026, y: 0.0024 }), ...[[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([a, b]) => box(0.0005, 0.0012, 0.0005, DARK, { x: a! * 0.0014, z: b! * 0.0008 }))],
   cow: () => [box(0.0065, 0.0034, 0.0032, LEAF, { y: 0.0018 }), box(0.002, 0.0022, 0.0022, LEAF, { x: 0.0042, y: 0.0034 }), ...[[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([a, b]) => box(0.0007, 0.0018, 0.0007, DARK, { x: a! * 0.0024, z: b! * 0.0011 }))],
   heap: () => [cone(0.018, 0.015, 7, LEAF), cone(0.009, 0.008, 6, LEAF, { x: 0.012, z: 0.006 })],

@@ -12,7 +12,7 @@ export type GameEventKind =
   | 'cityFounded' | 'cityGrew' | 'cityCaptured' | 'cityDestroyed' | 'tileBought' | 'tileFlipped'
   | 'build' | 'built' | 'bought'
   | 'unitCreated' | 'move' | 'attack' | 'unitLost' | 'rally' | 'deploy' | 'pillage' | 'raze' | 'upgrade'
-  | 'war' | 'peace' | 'peaceOffered' | 'shortfall';
+  | 'war' | 'peace' | 'peaceOffered' | 'trade' | 'tradeEnded' | 'shortfall';
 
 export interface GameEvent {
   readonly turn: number;

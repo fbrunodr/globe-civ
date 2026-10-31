@@ -1,4 +1,4 @@
-import { out, type Output } from './cities.ts';
+import { out, OUTPUT_KEYS, type Output } from './cities.ts';
 import type { BiomeKey, FeatureKey, ReliefKey } from './terrain.ts';
 import type { Globe } from './goldberg.ts';
 import { mulberry32 } from './rng.ts';
@@ -7,9 +7,13 @@ import type { TechKey } from './techs.ts';
 // Resources, after Civ IV's: with lean terrain (terrain.ts), they are what
 // makes a city site good.
 //   bonus      more food or production on the tile
-//   luxury     gold and culture or faith on the tile; and each kind a civ
-//              owns adds LUXURY_CAPITAL to its capital (one per kind,
-//              however many tiles of it: no reward for size alone)
+//   luxury     gold and culture or faith on the tile; and the first copy
+//              of each kind a civ has (its own, or bought in a trade) gives
+//              the whole civ its `empire` bonus every turn: cohesion above
+//              all (a people content with its goods holds together), some
+//              culture, faith, science or gold. Growing with the era
+//              (LUXURY_ERA_SCALE), not with the copies: the spares are for
+//              trade (game.ts: deals)
 //   strategic  a little production on the tile, and needed to build some
 //              units and buildings (rules.ts, cities.ts): Horses, Iron,
 //              Niter, Coal, Oil. Each is hidden until a tech reveals it
@@ -38,9 +42,12 @@ export interface ResourceDef {
   readonly reliefs: readonly ReliefKey[];
   readonly features?: readonly FeatureKey[]; // also on these features (any biome)
   readonly reveal?: TechKey;                  // hidden until its owner knows this
+  readonly empire?: Output;                   // a luxury's: to the whole civ, for its first copy
 }
 const r = (name: string, kind: ResourceKind, abbr: string, yields: Parameters<typeof out>[0], biomes: readonly BiomeKey[], reliefs: readonly ReliefKey[] = ['flat'], features?: readonly FeatureKey[], reveal?: TechKey): ResourceDef =>
   ({ name, kind, abbr, yields: out(yields), biomes, reliefs, ...(features ? { features } : {}), ...(reveal ? { reveal } : {}) });
+const lux = (name: string, abbr: string, yields: Parameters<typeof out>[0], empire: Parameters<typeof out>[0], biomes: readonly BiomeKey[], reliefs: readonly ReliefKey[] = ['flat'], features?: readonly FeatureKey[]): ResourceDef =>
+  ({ ...r(name, 'luxury', abbr, yields, biomes, reliefs, features), empire: out(empire) });
 
 const WARM_FOREST: BiomeKey[] = ['jungle', 'monsoonForest'];
 const COOL_FOREST: BiomeKey[] = ['taiga', 'temperateForest', 'temperateRainforest'];
@@ -59,20 +66,20 @@ export const RESOURCES = {
   stone:   r('Stone', 'bonus', 'St', { prod: 2 }, ['hotDesert', 'coldDesert', 'steppe', 'tundra', 'mediterranean', 'prairie'], ['hills']),
   copper:  r('Copper', 'bonus', 'Cu', { prod: 1, gold: 1 }, ['savanna', 'steppe', 'hotDesert', 'temperateForest', 'jungle'], ['hills']),
   // ---- luxury ----
-  wine:    r('Wine', 'luxury', 'Wn', { gold: 1, culture: 1 }, ['mediterranean', 'temperateForest', 'prairie'], ['hills', 'flat']),
-  incense: r('Incense', 'luxury', 'In', { gold: 1, faith: 1 }, ['hotDesert', 'mediterranean', 'savanna'], ['flat'], ['oasis']),
-  silk:    r('Silk', 'luxury', 'Si', { gold: 2 }, ['temperateForest', 'monsoonForest', 'temperateRainforest'], ['flat']),
-  spices:  r('Spices', 'luxury', 'Sp', { food: 1, gold: 1 }, WARM_FOREST, ['flat', 'hills']),
-  furs:    r('Furs', 'luxury', 'Fu', { prod: 1, gold: 1 }, ['taiga', 'tundra'], ['flat', 'hills']),
-  ivory:   r('Ivory', 'luxury', 'Iv', { prod: 1, gold: 1 }, ['savanna', 'jungle'], ['flat']),
-  dyes:    r('Dyes', 'luxury', 'Dy', { gold: 1, culture: 1 }, ['jungle', 'temperateRainforest', 'monsoonForest'], ['flat']),
-  gold:    r('Gold ore', 'luxury', 'Au', { gold: 3 }, ['hotDesert', 'coldDesert', 'steppe', 'tundra', 'savanna', 'temperateForest', 'taiga', 'mediterranean'], ['hills']),
-  gems:    r('Gems', 'luxury', 'Ge', { gold: 2, culture: 1 }, ['jungle', 'monsoonForest', 'savanna', 'tundra'], ['hills']),
-  pearls:  r('Pearls', 'luxury', 'Pe', { gold: 2 }, ['shallowSea'], ['flat'], ['reef']),
-  salt:    r('Salt', 'luxury', 'Sa', { food: 1, gold: 1 }, ['hotDesert', 'coldDesert', 'steppe'], ['flat']),
-  cotton:  r('Cotton', 'luxury', 'Ct', { gold: 2 }, ['savanna', 'mediterranean', 'prairie'], ['flat'], ['floodplain']),
-  tea:     r('Tea', 'luxury', 'Te', { gold: 1, science: 1 }, ['monsoonForest', 'temperateRainforest'], ['hills', 'flat']),
-  amber:   r('Amber', 'luxury', 'Am', { gold: 1, culture: 1 }, ['taiga', 'temperateForest'], ['flat']),
+  wine:    lux('Wine', 'Wn', { gold: 1, culture: 1 }, { cohesion: 1, culture: 1 }, ['mediterranean', 'temperateForest', 'prairie'], ['hills', 'flat']),
+  incense: lux('Incense', 'In', { gold: 1, faith: 1 }, { cohesion: 1, faith: 1 }, ['hotDesert', 'mediterranean', 'savanna'], ['flat'], ['oasis']),
+  silk:    lux('Silk', 'Si', { gold: 2 }, { cohesion: 2 }, ['temperateForest', 'monsoonForest', 'temperateRainforest'], ['flat']),
+  spices:  lux('Spices', 'Sp', { food: 1, gold: 1 }, { cohesion: 2 }, WARM_FOREST, ['flat', 'hills']),
+  furs:    lux('Furs', 'Fu', { prod: 1, gold: 1 }, { cohesion: 2 }, ['taiga', 'tundra'], ['flat', 'hills']),
+  ivory:   lux('Ivory', 'Iv', { prod: 1, gold: 1 }, { cohesion: 1, culture: 1 }, ['savanna', 'jungle'], ['flat']),
+  dyes:    lux('Dyes', 'Dy', { gold: 1, culture: 1 }, { cohesion: 1, culture: 1 }, ['jungle', 'temperateRainforest', 'monsoonForest'], ['flat']),
+  gold:    lux('Gold ore', 'Au', { gold: 3 }, { cohesion: 1, gold: 2 }, ['hotDesert', 'coldDesert', 'steppe', 'tundra', 'savanna', 'temperateForest', 'taiga', 'mediterranean'], ['hills']),
+  gems:    lux('Gems', 'Ge', { gold: 2, culture: 1 }, { cohesion: 1, culture: 1 }, ['jungle', 'monsoonForest', 'savanna', 'tundra'], ['hills']),
+  pearls:  lux('Pearls', 'Pe', { gold: 2 }, { cohesion: 1, culture: 1 }, ['shallowSea'], ['flat'], ['reef']),
+  salt:    lux('Salt', 'Sa', { food: 1, gold: 1 }, { cohesion: 2 }, ['hotDesert', 'coldDesert', 'steppe'], ['flat']),
+  cotton:  lux('Cotton', 'Ct', { gold: 2 }, { cohesion: 2 }, ['savanna', 'mediterranean', 'prairie'], ['flat'], ['floodplain']),
+  tea:     lux('Tea', 'Te', { gold: 1, science: 1 }, { cohesion: 1, science: 1 }, ['monsoonForest', 'temperateRainforest'], ['hills', 'flat']),
+  amber:   lux('Amber', 'Am', { gold: 1, culture: 1 }, { cohesion: 1, culture: 1 }, ['taiga', 'temperateForest'], ['flat']),
   // ---- strategic ----
   horses:  r('Horses', 'strategic', 'Ho', { food: 1, prod: 1 }, OPEN, ['flat'], undefined, 'animalHusbandry'),
   iron:    r('Iron', 'strategic', 'Fe', { prod: 2 }, [...OPEN, ...COOL_FOREST, ...WARM_FOREST, 'tundra', 'hotDesert', 'coldDesert'], ['hills'], undefined, 'bronzeWorking'),
@@ -86,8 +93,12 @@ export const resourceDef = (k: ResourceKey): ResourceDef => RESOURCES[k];
 export const LUXURY_KEYS = RESOURCE_KEYS.filter((k) => RESOURCES[k].kind === 'luxury');
 export type StrategicKey = 'horses' | 'iron' | 'niter' | 'coal' | 'oil';
 export const STRATEGIC_KEYS: readonly StrategicKey[] = ['horses', 'iron', 'niter', 'coal', 'oil'];
-// Each kind of luxury a civ owns adds this to its capital.
-export const LUXURY_CAPITAL = out({ gold: 1, culture: 1 });
+// A luxury's empire bonus, by its civ's era (so it keeps mattering).
+export const LUXURY_ERA_SCALE = [1, 1.5, 2, 3, 4, 5] as const;
+export const empireBonus = (k: ResourceKey, era: number): Output => {
+  const e = RESOURCES[k].empire ?? out(), f = LUXURY_ERA_SCALE[Math.min(era, LUXURY_ERA_SCALE.length - 1)]!;
+  return out(Object.fromEntries(OUTPUT_KEYS.map((y) => [y, Math.floor(e[y] * f)])));
+};
 
 // Density: the chance a fitting tile holds a bonus resource; a cluster of
 // each luxury and strategic per FIT_PER_CLUSTER of the tiles it fits.

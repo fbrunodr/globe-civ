@@ -6,7 +6,7 @@ import type { Selection } from './render.ts';
 import { techDef } from './techs.ts';
 import { politicsDef } from './politics.ts';
 import { RELIGIONS } from './religion.ts';
-import { resourceDef, LUXURY_CAPITAL } from './resources.ts';
+import { resourceDef, empireBonus } from './resources.ts';
 import { BORDER_AT, BORDER_MAX } from './cities.ts';
 import {
   USE, FOCUSES, IMPROVEMENTS, ERAS, SPECIALISTS, SPECIALIST_KINDS, improvementFor, isFocusKey, specialistYield,
@@ -93,6 +93,9 @@ const ICONS: Record<keyof Output, [string, string]> = {
 export const outStr = (o: Output, sign = false) => (Object.keys(ICONS) as (keyof Output)[])
   .filter((k) => k === 'food' || k === 'prod' || k === 'gold' || o[k] !== 0)
   .map((k) => `<span class="y ${ICONS[k][0]}" title="${ICONS[k][1]}">${sign ? signed(o[k]) : o[k]}</span>`).join('');
+// A bonus: only what it adds.
+export const bonusStr = (o: Output) => (Object.keys(ICONS) as (keyof Output)[])
+  .filter((k) => o[k] !== 0).map((k) => `<span class="y ${ICONS[k][0]}" title="${ICONS[k][1]}">${signed(o[k])}</span>`).join('');
 const yieldStr = (food: number, prod: number, gold: number) =>
   `<span class="y food" title="Food">${food}</span><span class="y prod" title="Production">${prod}</span><span class="y gold" title="Gold">${gold}</span>`;
 
@@ -142,7 +145,7 @@ export class UI {
   // points toward its next trait.
   private empireHtml(): string {
     const g = this.game, p = g.players[HUMAN]!, l = p.ledger;
-    const net = l.income.gold + l.tithes - l.cityUpkeep - l.unitUpkeep;
+    const net = l.income.gold + l.tithes + l.trade - l.cityUpkeep - l.unitUpkeep;
     const stat = (label: string, cls: string, value: string, delta: string) =>
       `<div class="stat"><span class="label">${label}</span><b class="y ${cls}">${value}<span class="delta">${delta}</span></b></div>`;
     const track = (sheet: string, label: string, cls: string, name: string | null, progress: number, cost: number, rate: number, prompt = 'Choose…') => {
@@ -322,7 +325,7 @@ export class UI {
       lines.push(`${what}${u === USE.wild && !g.wondersAt(t).length ? '' : ` ${outStr(o)}`}`);
     }
     const res = g.resourceFor(t, HUMAN);
-    if (res) { const d = resourceDef(res); lines.push(`<b>${esc(d.name)}</b> <small>${d.kind}</small> ${outStr(d.yields, true)}${d.kind === 'luxury' ? ` <small>· owned: ${outStr(LUXURY_CAPITAL, true)} in the capital</small>` : d.kind === 'strategic' ? ' <small>· owned: needed for some units and buildings</small>' : ''}`); }
+    if (res) { const d = resourceDef(res); lines.push(`<b>${esc(d.name)}</b> <small>${d.kind}</small> ${outStr(d.yields, true)}${d.kind === 'luxury' ? ` <small>· its first copy: ${bonusStr(empireBonus(res, g.players[HUMAN]!.era))} to your whole civilization</small>` : d.kind === 'strategic' ? ' <small>· owned: needed for some units and buildings</small>' : ''}`); }
     if (tc && !g.tilesWithin(tc.tile, 2).includes(t)) lines.push('<small>Beyond its citizens\' reach: held for its resources, not worked</small>');
     for (const w of g.wondersAt(t)) lines.push(`<b>${esc(WONDERS[w].name)}</b> <small>${esc(WONDERS[w].desc)}</small>`);
     const site = g.cities.find((c) => c.wonderTile === t);
