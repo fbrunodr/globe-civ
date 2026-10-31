@@ -1,4 +1,4 @@
-import { unitDef, buildDef, UNITS, type BuildKey, type UnitKey } from './rules.ts';
+import { unitDef, buildDef, domainOf, UNITS, type BuildKey, type UnitKey, type UnitDef } from './rules.ts';
 import { BUILDING_KEYS, BUILDINGS, WONDER_KEYS, weigh, addOut, OUTPUT_KEYS, type BuildingKey } from './cities.ts';
 import { resourceDef, empireBonus, type ResourceKey } from './resources.ts';
 import { flat } from './effects.ts';
@@ -27,7 +27,8 @@ export function aiTurn(g: Game, p: Player): void {
   const units = g.units.filter((u) => u.owner === p.id);
   const settlers = units.filter((u) => u.type === 'settler').length;
   const isMilitary = (u: Unit) => !unitDef(u.type).civilian;
-  const garrisoned = (c: City) => units.some((u) => u.tile === c.tile && isMilitary(u));
+  // (A garrison is a land unit: ships in port and aircraft don't hold a city.)
+  const garrisoned = (c: City) => units.some((u) => u.tile === c.tile && isMilitary(u) && domainOf(unitDef(u.type)) === 'land');
   const spare = units.filter((u) => isMilitary(u) && unitDef(u.type).atk > 0 && !g.cityByTile.has(u.tile)).length;
   const military = units.filter(isMilitary).length;
   p.offensive = spare >= 3 && g.players.some((o) => g.atWar(p.id, o.id));
@@ -54,17 +55,23 @@ export function aiTurn(g: Game, p: Player): void {
   for (const u of units) {
     if (u.dead) continue;
     if (u.type === 'settler') settlerTurn(g, u);
+    else if (domainOf(unitDef(u.type)) === 'air') airTurn(g, u);
+    else if (domainOf(unitDef(u.type)) === 'sea') seaTurn(g, u);
     else militaryTurn(g, u, p, cities, garrisoned);
   }
 }
 
 // The best unit a city can build now for a role: defending (its defense),
 // attacking (its attack), from those it has unlocked (and the resources).
-function bestUnit(g: Game, city: City, role: 'def' | 'atk'): UnitKey {
+// (`siege`: the best siege engine, for an army that means to take cities;
+// `sea`, `air`: the best ship, the best aircraft.)
+function bestUnit(g: Game, city: City, role: 'def' | 'atk' | 'siege' | 'sea' | 'air'): UnitKey {
   let best: UnitKey = 'warrior', bestS = -1;
+  const domain = role === 'sea' || role === 'air' ? role : 'land';
   for (const k of Object.keys(UNITS) as UnitKey[]) {
-    const d = unitDef(k);
-    if (d.civilian || k === 'commander' || k === 'scout' || !g.canBuild(city, k)) continue;
+    const d: UnitDef = unitDef(k);
+    if (d.civilian || k === 'commander' || k === 'scout' || !g.canBuild(city, k) || domainOf(d) !== domain) continue;
+    if (domain === 'land' && (role === 'siege') !== (d.siege === true)) continue;
     const s = (role === 'def' ? d.def * 1.5 + d.atk : d.atk * 1.5 + d.def + (d.mv > 1 ? 1 : 0)) / Math.sqrt(d.cost);
     if (s > bestS) { best = k; bestS = s; }
   }
@@ -96,6 +103,12 @@ function chooseBuild(g: Game, city: City, expansion: number, garrisoned: boolean
     return null; // bank the production as gold
   }
   if (g.turn < 15 && r < 0.2) return 'scout';
+  // (Now and then an engine for the walls, once there is one to build.)
+  const siege = bestUnit(g, city, 'siege'), ship = bestUnit(g, city, 'sea'), plane = bestUnit(g, city, 'air');
+  if (r < 0.12 && unitDef(siege).siege) return siege;
+  // (A ship now and then from a port, an aircraft once there are any.)
+  if (r >= 0.12 && r < 0.2 && domainOf(unitDef(ship)) === 'sea') return ship;
+  if (r >= 0.2 && r < 0.27 && domainOf(unitDef(plane)) === 'air') return plane;
   return bestUnit(g, city, r < 0.65 ? 'atk' : 'def');
 }
 
@@ -141,13 +154,38 @@ function settlerTurn(g: Game, u: Unit): void {
   if (!u.dead && u.tile === u.aiTarget) g.foundCity(u);
 }
 
+// An aircraft strikes the best target in its range it is likely to win
+// against; else it waits in its city.
+function airTurn(g: Game, u: Unit): void {
+  let best: number | null = null, bestOdds = 0.55;
+  for (const t of g.tilesWithin(u.tile, unitDef(u.type).range ?? 1)) {
+    if (!g.isEnemyOccupied(t, u.owner) || g.attackBlockAt(u, t) !== null) continue;
+    const pv = g.combatPreview(u, t), odds = pv ? pv.atk / (pv.atk + pv.def) : 0.6;
+    if (odds > bestOdds) { best = t; bestOdds = odds; }
+  }
+  if (best !== null) g.goTo(u, best);
+}
+// A ship goes for an enemy within a few tiles it can reach and likely beat;
+// else it keeps to port (or where it is).
+function seaTurn(g: Game, u: Unit): void {
+  for (const t of g.tilesWithin(u.tile, 3)) {
+    if (!g.isEnemyOccupied(t, u.owner) || g.attackBlockAt(u, t) !== null) continue;
+    const pv = g.combatPreview(u, t);
+    if (pv && pv.atk / (pv.atk + pv.def) < 0.55) continue;
+    if (g.tiles[u.tile].neighbors.includes(t)) { g.attack(u, t); return; }
+    const path = g.findPath(u, t);
+    if (path && path.length <= 3) { g.goTo(u, t); return; }
+  }
+  u.fortified = true;
+}
+
 function militaryTurn(g: Game, u: Unit, p: Player, cities: City[], garrisoned: (c: City) => boolean): void {
   const T = unitDef(u.type);
 
   // Stay as the garrison if this city has no other defender.
   const here = g.cityByTile.get(u.tile);
   if (here && here.owner === u.owner) {
-    const defenders = g.units.filter((x) => x.tile === u.tile && x.owner === u.owner && !unitDef(x.type).civilian);
+    const defenders = g.units.filter((x) => x.tile === u.tile && x.owner === u.owner && !unitDef(x.type).civilian && domainOf(unitDef(x.type)) === 'land');
     if (defenders[0] === u) { u.fortified = true; return; }
   }
 
@@ -158,7 +196,7 @@ function militaryTurn(g: Game, u: Unit, p: Player, cities: City[], garrisoned: (
   if (T.atk > 0) {
     for (const nb of g.tiles[u.tile].neighbors) {
       // (isEnemyOccupied: civs at war with it only.)
-      if (!g.isEnemyOccupied(nb, u.owner) || g.isWater(nb)) continue;
+      if (!g.isEnemyOccupied(nb, u.owner) || g.isWater(nb) || g.attackBlockAt(u, nb) !== null) continue;
       const pv = g.combatPreview(u, nb);
       if (!pv || pv.atk / (pv.atk + pv.def) > 0.55) { g.attack(u, nb); return; }
     }

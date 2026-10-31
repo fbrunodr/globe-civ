@@ -17,10 +17,11 @@ import './style.css';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { ARCH_CIVS, type ArchCiv } from './architecture.ts';
-import { CIVS, UNITS, type UnitKey } from './rules.ts';
-import { FORTIFY_BONUS, combatStrength, fightRounds } from './game.ts';
-import { HAIR_STYLES, RIDER_HEAD, formationSlots, hairModel, isMachine, rides, unitModel, variantOf, womenShare } from './unitModels.ts';
-import { Volleys, figureLooks, makeUnitMaterial, prepareUnitGeometry } from './unitView.ts';
+import { CIVS, UNITS, domainOf, type UnitKey } from './rules.ts';
+import { FORTIFY_BONUS, combatStrength, fightRounds, matchup } from './game.ts';
+import { HAIR_STYLES, formationSlots, hairModel, headOffset, isMachine, unitModel, variantOf, womenShare } from './unitModels.ts';
+import { PLAYS, Volleys, figureLooks, makeUnitMaterial, playAt, playOf, prepareUnitGeometry, type Play } from './unitView.ts';
+import { attackBlock, attackStyle, siegeStyle } from './unitClasses.ts';
 import { WorldLabel, disposeLabels } from './worldLabel.ts';
 import { triangles } from './lowpoly.ts';
 import { mulberry32 } from './rng.ts';
@@ -52,6 +53,7 @@ const FIGHTERS = TYPES.filter((t) => UNITS[t].atk > 0);
 const isRanged = (t: UnitKey): boolean => 'ranged' in UNITS[t] && UNITS[t].ranged === true;
 const DEFENDERS = TYPES.filter((t) => !('civilian' in UNITS[t] && UNITS[t].civilian));
 const CELL_W = 4.2, CELL_D = 4.4; // a cell of the sheet (figure heights)
+const SEA_DEPTH = 0.45; // the ships' basin below the field (figure heights)
 const BATTLE_GAP = 7;             // between the two sides of a battle
 // A fight, as in the game (unitView.ts): FIGHT seconds (then a pause, looping
 // on the sheet), and how far a melee unit charges (a share of the way to
@@ -74,9 +76,9 @@ const colorOf = (civ: ArchCiv) => CIVS.find((c) => c.name === civ)?.color ?? '#c
 // A unit on the field: what it is, where it stands and which way it faces
 // (+1: its front toward +z), and whom it fights (the spot it charges or
 // shoots at; null: it doesn't fight).
-interface Cell { type: UnitKey; civ: ArchCiv; hp: number; x: number; z: number; facing: 1 | -1; target: THREE.Vector3 | null; charges: boolean; seed: number }
+interface Cell { type: UnitKey; civ: ArchCiv; hp: number; x: number; z: number; facing: 1 | -1; target: THREE.Vector3 | null; play: Play | null; fired: number; seed: number }
 // Every figure drawn: its mesh and slot, its cell and place in it.
-interface Placed { mesh: THREE.InstancedMesh; i: number; cell: Cell; fx: number; fz: number; lift: number; phase: number; hair: boolean }
+interface Placed { mesh: THREE.InstancedMesh; i: number; cell: Cell; fx: number; fz: number; lift: readonly [number, number]; phase: number; hair: boolean }
 let cells: Cell[] = [];
 let placed: Placed[] = [];
 
@@ -107,17 +109,19 @@ function sheetCells(): Cell[] {
   const civs = civFilter === 'all' ? [...ARCH_CIVS] : [civFilter];
   return civs.flatMap((civ, row) => TYPES.map((type, col): Cell => ({
     type, civ, hp: sheetHp, x: col * CELL_W, z: row * CELL_D, facing: 1,
-    target: FIGHTERS.includes(type) ? new THREE.Vector3(col * CELL_W, 0, row * CELL_D + (isRanged(type) ? 7 : SHEET_CHARGE / CHARGE_SHARE)) : null,
-    charges: !isRanged(type), seed: row * 31 + col + 1,
+    target: FIGHTERS.includes(type) ? new THREE.Vector3(col * CELL_W, 0, row * CELL_D + (PLAYS[siegeStyle(type) ?? 'melee'].charge === 0 ? 7 : SHEET_CHARGE / CHARGE_SHARE)) : null,
+    play: FIGHTERS.includes(type) ? playOf(siegeStyle(type), type) : null, fired: 0, seed: row * 31 + col + 1,
   })));
 }
 
 function battleCells(): Cell[] {
   const a = new THREE.Vector3(0, 0, BATTLE_GAP), d = new THREE.Vector3(0, 0, 0);
   const out: Cell[] = [];
-  if (battle.aHp > 0) out.push({ type: battle.aType, civ: battle.aCiv, hp: battle.aHp, x: a.x, z: a.z, facing: -1, target: d, charges: !isRanged(battle.aType), seed: 11 });
+  // (A pair that can't fight (unitClasses.ts) stands still.)
+  const style = attackStyle(battle.aType, battle.dType);
+  if (battle.aHp > 0) out.push({ type: battle.aType, civ: battle.aCiv, hp: battle.aHp, x: a.x, z: a.z, facing: -1, target: style ? d : null, play: style ? PLAYS[style] : null, fired: 0, seed: 11 });
   // (A defending archer shoots back; any other defender strikes where it stands.)
-  if (battle.dHp > 0) out.push({ type: battle.dType, civ: battle.dCiv, hp: battle.dHp, x: d.x, z: d.z, facing: 1, target: FIGHTERS.includes(battle.dType) ? a : null, charges: false, seed: 23 });
+  if (battle.dHp > 0) out.push({ type: battle.dType, civ: battle.dCiv, hp: battle.dHp, x: d.x, z: d.z, facing: 1, target: style ? a : null, play: style ? playOf(null, battle.dType) : null, fired: 0, seed: 23 });
   return out;
 }
 
@@ -129,16 +133,16 @@ function build(): { w: number; d: number } {
   scene.add(world);
   cells = mode === 'sheet' ? sheetCells() : battleCells();
   // Each model's figures (and each hair style's): its colour and skin.
-  type Fig = { cell: Cell; fx: number; fz: number; lift: number; color: THREE.Color; skin: THREE.Color; phase: number; hair: boolean };
+  type Fig = { cell: Cell; fx: number; fz: number; lift: readonly [number, number]; color: THREE.Color; skin: THREE.Color; phase: number; hair: boolean };
   const figs = new Map<string, Fig[]>();
   const push = (key: string, f: Fig) => { const list = figs.get(key) ?? []; list.push(f); figs.set(key, list); };
   for (const cell of cells) {
     const rand = mulberry32(cell.seed);
     for (const [i, [fx, fz]] of formationSlots(cell.type, cell.hp, rand).entries()) {
       const variant = variantOf(cell.type, i, rand), looks = figureLooks(cell.type, cell.civ, womenShare(cell.type, suffrage), rand), phase = rand() * Math.PI * 2;
-      const f: Fig = { cell, fx, fz, lift: 0, color: new THREE.Color(colorOf(cell.civ)), skin: looks.skin, phase, hair: false };
+      const f: Fig = { cell, fx, fz, lift: [0, 0], color: new THREE.Color(colorOf(cell.civ)), skin: looks.skin, phase, hair: false };
       push(`${cell.type}|${cell.civ}|${variant}|${looks.female ? 1 : 0}`, f);
-      if (looks.hair >= 0) push(`hair|${looks.hair}`, { ...f, lift: rides(cell.type, variant) ? RIDER_HEAD : 0, color: looks.hairColor, hair: true });
+      if (looks.hair >= 0) push(`hair|${looks.hair}`, { ...f, lift: headOffset(cell.type, variant), color: looks.hairColor, hair: true });
     }
   }
   placed = [];
@@ -172,10 +176,29 @@ function build(): { w: number; d: number } {
     w = (TYPES.length - 1) * CELL_W;
     d = (cells.length / TYPES.length - 1) * CELL_D;
   }
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(w + 14, d + 14).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x8a9a5a, roughness: 1 }));
-  ground.position.set(w / 2, 0, d / 2);
+  // The field, and the ships' water: a basin sunk into it (the sea bed
+  // SEA_DEPTH down, earth banks round it), the water level with the field.
+  const sea = cells.filter((c) => domainOf(UNITS[c.type]) === 'sea');
+  const [hx, hz] = mode === 'sheet' ? [CELL_W / 2, CELL_D / 2] : [3, 4.5];
+  const basin = sea.length ? { x0: Math.min(...sea.map((c) => c.x)) - hx, x1: Math.max(...sea.map((c) => c.x)) + hx, z0: Math.min(...sea.map((c) => c.z)) - hz, z1: Math.max(...sea.map((c) => c.z)) + hz } : null;
+  // (The field's outline in the plane's own coordinates: x, and -z.)
+  const field = new THREE.Shape([new THREE.Vector2(-7, 7), new THREE.Vector2(w + 7, 7), new THREE.Vector2(w + 7, -d - 7), new THREE.Vector2(-7, -d - 7)]);
+  if (basin) field.holes.push(new THREE.Path([new THREE.Vector2(basin.x0, -basin.z0), new THREE.Vector2(basin.x0, -basin.z1), new THREE.Vector2(basin.x1, -basin.z1), new THREE.Vector2(basin.x1, -basin.z0)]));
+  const ground = new THREE.Mesh(new THREE.ShapeGeometry(field).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x8a9a5a, roughness: 1 }));
   ground.receiveShadow = true;
   world.add(ground);
+  if (basin) {
+    const { x0, x1, z0, z1 } = basin, W = x1 - x0, D = z1 - z0, mid = new THREE.Vector3((x0 + x1) / 2, 0, (z0 + z1) / 2);
+    const bed = new THREE.Mesh(new THREE.PlaneGeometry(W, D).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x8a7e5e, roughness: 1 }));
+    bed.position.set(mid.x, -SEA_DEPTH, mid.z);
+    bed.receiveShadow = true;
+    const bank = new THREE.MeshStandardMaterial({ color: 0x6a5a40, roughness: 1, side: THREE.DoubleSide });
+    const wall = (len: number, x: number, z: number, ry: number) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(len, SEA_DEPTH), bank); m.position.set(x, -SEA_DEPTH / 2, z); m.rotation.y = ry; world.add(m); };
+    wall(W, mid.x, z0, 0); wall(W, mid.x, z1, 0); wall(D, x0, mid.z, Math.PI / 2); wall(D, x1, mid.z, Math.PI / 2);
+    const water = new THREE.Mesh(new THREE.PlaneGeometry(W, D).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x2f6688, roughness: 0.25, metalness: 0.1, transparent: true, opacity: 0.72, depthWrite: false }));
+    water.position.set(mid.x, 0, mid.z);
+    world.add(bed, water);
+  }
   // The sun's shadows over the whole field.
   const half = Math.max(w, d) / 2 + 7;
   sun.position.set(w / 2 - 20, 40, d / 2 + 25);
@@ -200,46 +223,45 @@ function frame(d: { w: number; d: number }): void {
 // ---- posing ----
 
 // Every figure posed for now: standing, marching on the spot, or in the
-// fight (melee charging at the enemy and falling back, striking; archers
-// with their bows raised, loosing a volley at a third and at two thirds).
-let loosed = 0;
+// fight as its play says (unitView.ts PLAYS: charging in and falling back,
+// striking; shooters aiming, loosing their arrows, stones, shells or bullets).
 function pose(now: number): void {
   let t = 2;
   if (fight) {
     t = fight.loop ? ((now - fight.t0) % CYCLE) / FIGHT : (now - fight.t0) / FIGHT;
     if (!fight.loop && t >= 1) { endFight(); return; }
   }
-  const fighting = t < 1, out = !fighting ? 0 : t < 0.3 ? smooth(t / 0.3) : t < 0.75 ? 1 : 1 - smooth((t - 0.75) / 0.25);
+  const fighting = t < 1;
   const m = new THREE.Matrix4(), turn = new THREE.Matrix4(), offset = new THREE.Vector3();
   for (const p of placed) {
-    const c = p.cell, fights = fighting && c.target !== null;
-    const ranged = isRanged(c.type), charging = fights && c.charges;
+    const c = p.cell, play = fighting && c.target !== null ? c.play : null;
+    const st = play ? playAt(play, t) : null;
     offset.set(0, 0, 0);
-    if (charging) offset.set(c.target!.x - c.x, 0, c.target!.z - c.z).multiplyScalar(CHARGE_SHARE * out);
+    if (play && st) offset.set(c.target!.x - c.x, 0, c.target!.z - c.z).multiplyScalar(CHARGE_SHARE * play.charge * st.out);
     // (Facing its front; turned about to fall back.)
-    const back = charging && t > 0.75;
-    m.makeTranslation(c.x + offset.x - p.fx * c.facing, 0, c.z + offset.z + p.fz * c.facing);
-    m.multiply(turn.makeRotationY((c.facing === 1 ? 0 : Math.PI) + (back ? Math.PI : 0)));
-    if (p.lift) m.multiply(turn.makeTranslation(0, p.lift, 0));
+    m.makeTranslation(c.x + offset.x - p.fx * c.facing, (play?.fly ?? 0) * (st?.out ?? 0), c.z + offset.z + p.fz * c.facing);
+    m.multiply(turn.makeRotationY((c.facing === 1 ? 0 : Math.PI) + (st?.back ? Math.PI : 0)));
+    if (p.lift[0] || p.lift[1]) m.multiply(turn.makeTranslation(0, p.lift[0], p.lift[1]));
     p.mesh.setMatrixAt(p.i, m);
-    const walk = (marching && mode === 'sheet') || (charging && (t < 0.3 || t > 0.75)) ? 1 : 0;
-    const strike = !fights ? 0 : ranged ? Math.min(1, t * 4) * (t < 0.85 ? 1 : (1 - t) / 0.15) : t > 0.2 && t < 0.8 ? 1 : 0;
-    (p.mesh.geometry.getAttribute('aAnim') as THREE.InstancedBufferAttribute).setXYZ(p.i, p.phase, walk, strike);
+    const walk = (marching && mode === 'sheet') || st?.moving ? 1 : 0;
+    (p.mesh.geometry.getAttribute('aAnim') as THREE.InstancedBufferAttribute).setXYZ(p.i, p.phase, walk, st?.strike ?? 0);
   }
   for (const mesh of new Set(placed.map((p) => p.mesh))) { mesh.instanceMatrix.needsUpdate = true; mesh.geometry.getAttribute('aAnim').needsUpdate = true; }
-  // The archers' volleys.
-  const volley = fighting ? Math.floor(t * 3) : 0;
-  if (volley > loosed && volley <= 2) {
-    for (const c of cells) {
-      if (!isRanged(c.type) || !c.target) continue;
-      const from = placed.filter((p) => p.cell === c && !p.hair).map((p) => new THREE.Vector3(c.x - p.fx * c.facing, 0.75, c.z + p.fz * c.facing));
-      volleys.loose(from, c.target, 1.2, now, c.seed * 3 + volley);
-    }
+  // The shots, each on time (from where the unit stands now).
+  for (const c of cells) {
+    if (!fighting) { c.fired = 0; continue; }
+    if (!c.play || !c.target) continue;
+    if (t < (c.play.shots[0]?.t ?? 1) && c.fired > 0) c.fired = 0; // (the loop began again)
+    const shot = c.play.shots[c.fired];
+    if (!shot || t <= shot.t) continue;
+    c.fired++;
+    const out = playAt(c.play, t).out * c.play.charge * CHARGE_SHARE;
+    const up = 0.75 + (c.play.fly ?? 0) * playAt(c.play, t).out;
+    const from = placed.filter((p) => p.cell === c && !p.hair).map((p) => new THREE.Vector3(c.x - p.fx * c.facing + (c.target!.x - c.x) * out, up, c.z + p.fz * c.facing + (c.target!.z - c.z) * out));
+    volleys.loose(from, c.target, 1.2, now, c.seed * 3 + c.fired, shot.kind);
   }
-  loosed = fighting ? volley : 0;
   volleys.update(now);
 }
-const smooth = (x: number) => x * x * (3 - 2 * x);
 
 // ---- the battle ----
 
@@ -247,10 +269,9 @@ const unitName = (civ: ArchCiv, type: UnitKey) => `${civ} ${UNITS[type].name.toL
 function strengths(): { A: number; D: number; bonus: number } {
   const bonus = GROUNDS[battle.ground]!.bonus + (battle.fortified ? FORTIFY_BONUS : 0);
   // (As the game: pikemen fight mounted units at double strength.)
-  const mounted = (t: UnitKey) => t === 'horseman' || t === 'knight';
   return {
-    A: combatStrength(battle.aType, 'atk', battle.aHp, 0) * (battle.aType === 'pikeman' && mounted(battle.dType) ? 2 : 1),
-    D: combatStrength(battle.dType, 'def', battle.dHp, bonus) * (battle.dType === 'pikeman' && mounted(battle.aType) ? 2 : 1),
+    A: combatStrength(battle.aType, 'atk', battle.aHp, 0) * matchup(battle.aType, battle.dType, 'atk'),
+    D: combatStrength(battle.dType, 'def', battle.dHp, bonus) * matchup(battle.dType, battle.aType, 'def'),
     bonus,
   };
 }
@@ -258,14 +279,14 @@ function showBattle(): void {
   $('aHp').textContent = `${Math.max(0, battle.aHp)} HP`;
   $('dHp').textContent = `${Math.max(0, battle.dHp)} HP`;
   const { A, D, bonus } = strengths();
-  const alive = battle.aHp > 0 && battle.dHp > 0;
-  $('odds').innerHTML = alive
+  const alive = battle.aHp > 0 && battle.dHp > 0, block = attackBlock(battle.aType, battle.dType);
+  $('odds').innerHTML = block ? `<b class="loss">The ${UNITS[battle.aType].name.toLowerCase()} ${block}</b> (${UNITS[battle.dType].name.toLowerCase()}).` : alive
     ? `Strength <b>${A.toFixed(2)}</b> against <b>${D.toFixed(2)}</b>${bonus ? ` (defence ${bonus > 0 ? '+' : ''}${Math.round(bonus * 100)}%)` : ''} · each exchange won <b>${Math.round((100 * A) / (A + D))}%</b> of the time${isRanged(battle.aType) ? ' · a volley: three exchanges at most, half the damage back' : ''}`
     : 'One side has fallen: Heal both to fight again.';
-  $<HTMLButtonElement>('fight').disabled = !alive || fight !== null;
+  $<HTMLButtonElement>('fight').disabled = !alive || fight !== null || block !== null;
 }
 function startFight(): void {
-  if (mode !== 'battle' || fight || battle.aHp <= 0 || battle.dHp <= 0) return;
+  if (mode !== 'battle' || fight || battle.aHp <= 0 || battle.dHp <= 0 || attackBlock(battle.aType, battle.dType)) return;
   const { A, D } = strengths();
   const outcome = fightRounds(battle.aHp, battle.dHp, A, D, isRanged(battle.aType), Math.random);
   fight = { t0: performance.now() / 1000, loop: false, outcome };

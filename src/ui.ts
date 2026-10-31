@@ -352,7 +352,10 @@ export class UI {
       const blocker = g.isForeignBlocked(t, u.owner) ? (g.cityByTile.get(t)?.owner ?? g.unitsAt(t).find((v) => v.owner !== u.owner)?.owner) : undefined;
       if (blocker !== undefined) lines.push(`<span class="bad">At peace with the ${esc(g.players[blocker]!.name)}: declare war (Diplomacy) to attack</span>`);
       else if (!path) lines.push('<span class="bad">Unreachable</span>');
-      else if (g.isEnemyOccupied(t, u.owner)) {
+      else if (g.isEnemyOccupied(t, u.owner) && g.attackBlockAt(u, t) !== null) {
+        const d = g.bestDefender(t, u.owner);
+        lines.push(`<span class="bad">${unitDef(u.type).name} ${g.attackBlockAt(u, t)}${d ? ` (${unitDef(d.type).name})` : ''}</span>`);
+      } else if (g.isEnemyOccupied(t, u.owner)) {
         const pv = g.combatPreview(u, t);
         const city = g.cityByTile.get(t);
         lines.push(pv

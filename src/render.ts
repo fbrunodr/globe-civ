@@ -1,3 +1,4 @@
+import type { AttackStyle } from './unitClasses.ts';
 import * as THREE from 'three';
 import { unitDef } from './rules.ts';
 import { GlobeCamera } from './camera.ts';
@@ -542,7 +543,7 @@ export class GlobeRenderer {
       step: g.globe.avgEdgeAngle,
     }, (u) => this.unitFlag(u));
     this.unitsGroup.add(this.unitView.group);
-    g.onBattle = (u, t, ranged) => this.unitView.fight(u.id, t, ranged, performance.now() / 1000);
+    g.onBattle = (u, t, style) => this.unitView.fight(u.id, t, style, performance.now() / 1000);
     this.citiesGroup.userData['stat'] = 'city markers';
     this.resourcesGroup.userData['stat'] = 'resource badges';
     this.scene.add(this.resourcesGroup);
@@ -1816,7 +1817,7 @@ export class GlobeRenderer {
   }
 
   // A fight shown without the game's rules (dev views): a unit attacking a tile.
-  showBattle(unit: number, tile: number, ranged: boolean): void { this.unitView.fight(unit, tile, ranged, performance.now() / 1000); }
+  showBattle(unit: number, tile: number, style: AttackStyle): void { this.unitView.fight(unit, tile, style, performance.now() / 1000); }
 
   // Where the camera looks (a unit vector).
   get looking(): THREE.Vector3 { return (this.walk.active ? this.walk.position : this.cam.target).clone().normalize(); }
@@ -1830,7 +1831,7 @@ export class GlobeRenderer {
     const shown: ShownUnit[] = g.units
       .filter((u) => g.visible[u.tile] && u.packedIn === null)
       .sort((a, b) => Number(unitDef(a.type).civilian ?? false) - Number(unitDef(b.type).civilian ?? false))
-      .map((u) => ({ id: u.id, type: u.type, civ: g.players[u.owner].name, color: g.players[u.owner].color, tile: u.tile, hp: u.hp, suffrage: g.players[u.owner].politics.has('womensSuffrage') }));
+      .map((u) => ({ id: u.id, type: u.type, civ: g.players[u.owner].name, color: g.players[u.owner].color, tile: u.tile, hp: u.hp, suffrage: g.players[u.owner].politics.has('womensSuffrage'), embarked: g.isEmbarked(u) }));
     this.unitView.sync(shown, performance.now() / 1000);
   }
 

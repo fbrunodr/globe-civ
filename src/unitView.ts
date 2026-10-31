@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import type { ArchCiv } from './architecture.ts';
-import { unitDef, type UnitKey } from './rules.ts';
-import { UNIT_LOOK, figuresFor, formationSlots, unitModel, variantOf, rides, hairModel, wearsHelmet, womenShare, isMachine, colsOf, GEAR, HAIR_BY, HAIR_STYLES, RIDER_HEAD, STRIKE } from './unitModels.ts';
+import { unitDef, domainOf, type UnitKey } from './rules.ts';
+import { returnFire, type AttackStyle, type Projectile } from './unitClasses.ts';
+import { UNIT_LOOK, figuresFor, formationSlots, unitModel, variantOf, rides, headOffset, hairModel, transportModel, wearsHelmet, womenShare, isMachine, colsOf, GEAR, HAIR_BY, HAIR_STYLES, STRIKE } from './unitModels.ts';
 import { mulberry32 } from './rng.ts';
 
 // The units on the globe, as figurines (unitModels.ts): a fighting unit is a
@@ -13,10 +14,13 @@ import { mulberry32 } from './rng.ts';
 // shadow lies under each figure (they cast none into the sun's shadow map,
 // which would then be redrawn whenever one moved). Above each unit flies
 // its flag (made by the caller), which alone shows from far away.
-// In a fight (fight()), a melee unit charges at the enemy, strikes and falls
-// back; archers raise their bows and loose volleys of arrows (Volleys); the
-// units attacked strike back where they stand. A unit killed in a fight is
-// shown until the fight is over.
+// In a fight (fight()) the attacker plays its attack's style (its class
+// against the defender's: unitClasses.ts): a melee unit walks in, strikes
+// and falls back, cavalry gallops in, archers loose volleys of arrows,
+// engines lob stones, guns fire bursts or shells (Volleys), riflemen fire
+// and then go in with the bayonet, armour rolls in firing. The units
+// attacked shoot back (archers, guns) or strike where they stand. A unit
+// killed in a fight is shown until the fight is over.
 
 // A figure's height, in tile steps (the distance between tile centers).
 const FIGURE = 0.075;
@@ -32,6 +36,43 @@ const MIN_PX = 3;
 // the way to the enemy's tile).
 const FIGHT = 1.8, CHARGE = 0.42;
 
+// How a fight plays out, over its FIGHT seconds (shares of it): how far the
+// unit goes in (a share of CHARGE: 0 stays put), when it sets out and has
+// arrived, when it falls back; when its arms strike (or, aiming, `aim`:
+// weapons raised the whole time); its shots (Volleys); `fly`: how high it
+// climbs on the way (figure heights: aircraft).
+export interface Play { readonly fly?: number; readonly charge: number; readonly go: readonly [number, number]; readonly back: number; readonly strike: readonly [number, number]; readonly aim: boolean; readonly shots: readonly { readonly t: number; readonly kind: Projectile }[] }
+const still = (shots: Play['shots']): Play => ({ charge: 0, go: [0, 0], back: 1, strike: [0, 0], aim: true, shots });
+export const PLAYS: Record<AttackStyle, Play> = {
+  melee: { charge: 1, go: [0, 0.3], back: 0.75, strike: [0.2, 0.8], aim: false, shots: [] },
+  charge: { charge: 1.25, go: [0, 0.18], back: 0.75, strike: [0.14, 0.8], aim: false, shots: [] },
+  volley: still([{ t: 1 / 3, kind: 'arrow' }, { t: 2 / 3, kind: 'arrow' }]),
+  lob: still([{ t: 0.2, kind: 'stone' }]),
+  shell: still([{ t: 0.2, kind: 'shell' }, { t: 0.55, kind: 'shell' }]),
+  fire: still([{ t: 0.15, kind: 'bullet' }, { t: 0.35, kind: 'bullet' }, { t: 0.55, kind: 'bullet' }]),
+  fireCharge: { charge: 1, go: [0.25, 0.45], back: 0.8, strike: [0.42, 0.8], aim: false, shots: [{ t: 0.1, kind: 'bullet' }] },
+  roll: { charge: 0.6, go: [0, 0.55], back: 0.8, strike: [0, 0], aim: false, shots: [{ t: 0.25, kind: 'shell' }, { t: 0.6, kind: 'bullet' }] },
+  // (Out all the way to the target, high, and back: the shots fall from there.)
+  sortie: { fly: 3, charge: 1 / CHARGE, go: [0, 0.4], back: 0.6, strike: [0, 0], aim: false, shots: [{ t: 0.42, kind: 'shell' }, { t: 0.5, kind: 'bullet' }] },
+};
+// Where a play is at `t` (a share of the fight): how far out (0..1, of its
+// charge), whether it is moving (legs) and striking (arms), whether it has
+// turned to fall back.
+export function playAt(p: Play, t: number): { out: number; moving: boolean; strike: number; back: boolean } {
+  const [g0, g1] = p.go;
+  const out = t < g0 ? 0 : t < g1 ? smooth((t - g0) / (g1 - g0)) : t < p.back ? 1 : 1 - smooth((t - p.back) / (1 - p.back));
+  const moving = p.charge > 0 && ((t >= g0 && t < g1) || t > p.back);
+  const strike = p.aim ? Math.min(1, t * 4) * (t < 0.85 ? 1 : (1 - t) / 0.15) : t > p.strike[0] && t < p.strike[1] ? 1 : 0;
+  return { out, moving, strike, back: p.charge > 0 && t > p.back };
+}
+// A defender: shoots back once, or strikes where it stands.
+const DEFEND: Play = { charge: 0, go: [0, 0], back: 1, strike: [0.2, 0.8], aim: false, shots: [] };
+export const playOf = (style: AttackStyle | null, type: UnitKey): Play => {
+  if (style) return PLAYS[style];
+  const kind = returnFire(type);
+  return kind ? still([{ t: 0.45, kind }]) : DEFEND;
+};
+
 export interface ShownUnit {
   readonly id: number;
   readonly type: UnitKey;
@@ -40,6 +81,7 @@ export interface ShownUnit {
   readonly tile: number;
   readonly hp: number;
   readonly suffrage: boolean; // its civ has women's suffrage (half its figures women)
+  readonly embarked?: boolean; // a land unit on the water (shown as its boat)
 }
 export interface UnitViewEnv {
   readonly center: (t: number) => THREE.Vector3;               // a tile's center (unit vector)
@@ -54,9 +96,10 @@ interface Shown {
   forward: THREE.Vector3;      // the way it faces (tangent)
   figures: Figure[];
   spread: number;              // ranks closed up to fit (1: full spacing)
+  alt: number;                 // how high it flies now (figure heights: aircraft on a sortie)
   march: { from: THREE.Vector3; to: THREE.Vector3; t0: number; dur: number } | null;
-  // A fight: the enemy's spot, and how far it charges (0: strikes where it stands).
-  fight: { at: THREE.Vector3; home: THREE.Vector3; t0: number; charge: number; ranged: boolean; loosed: number } | null;
+  // A fight: the enemy's spot, how it plays (PLAYS), the shots fired so far.
+  fight: { at: THREE.Vector3; home: THREE.Vector3; t0: number; play: Play; fired: number } | null;
   gone: boolean;               // no longer in the game (shown until its fight is over)
   flag: THREE.Sprite;
   k: number;                   // its place among the units on its tile (0: the middle)
@@ -148,7 +191,10 @@ export class UnitView {
         if (s) this.drop(s);
         s = this.add(u, k);
       } else if (s.unit.tile !== u.tile) {
+        // (Embarking or landing: its figures become its boat, or come back out.)
+        const swap = (s.unit.embarked ?? false) !== (u.embarked ?? false);
         s.unit = u;
+        if (swap) this.dress(s);
         s.k = k;
         const from = (s.fight?.home ?? s.dir).clone(), { dir } = this.spot(u, k, s.forward);
         const start = s.fight ? s.fight.t0 + FIGHT : now;
@@ -174,17 +220,17 @@ export class UnitView {
   // A fight: the attacker charges at the tile (or, ranged, looses arrows at
   // it); every unit shown there strikes back where it stands. (Call before
   // the sync that follows it: the fallen are still shown.)
-  fight(attacker: number, tile: number, ranged: boolean, now: number): void {
+  fight(attacker: number, tile: number, style: AttackStyle, now: number): void {
     const a = this.shown.get(attacker);
     const defenders = [...this.shown.values()].filter((s) => s.unit.tile === tile && s !== a);
     const at = defenders[0]?.dir.clone() ?? this.env.center(tile).clone();
-    if (a) this.startFight(a, at, ranged ? 0 : CHARGE, ranged, now);
-    for (const d of defenders) this.startFight(d, a?.dir.clone() ?? at, 0, unitDef(d.unit.type).ranged === true, now);
+    if (a) this.startFight(a, at, PLAYS[style], now);
+    for (const d of defenders) this.startFight(d, a?.dir.clone() ?? at, playOf(null, d.unit.type), now);
   }
 
-  private startFight(s: Shown, at: THREE.Vector3, charge: number, ranged: boolean, now: number): void {
+  private startFight(s: Shown, at: THREE.Vector3, play: Play, now: number): void {
     const home = s.fight?.home ?? s.dir.clone();
-    s.fight = { at, home, t0: now, charge, ranged, loosed: 0 };
+    s.fight = { at, home, t0: now, play, fired: 0 };
     s.march = null;
   }
 
@@ -233,13 +279,13 @@ export class UnitView {
       const { walk, strike } = this.pose(s, now);
       color.set(s.unit.color);
       for (const f of s.figures) {
-        const lift = rides(s.unit.type, f.variant) ? RIDER_HEAD : 0;
+        const [lift, back] = headOffset(s.unit.type, f.variant);
         // (Model axes: x = up × forward, y up, z forward.)
         x.crossVectors(f.up, s.forward).normalize();
         z.crossVectors(x, f.up).normalize();
         q.setFromRotationMatrix(basis.makeBasis(x, f.up, z));
         put(this.key(s, f), f.pos, color, f, walk, strike);
-        if (f.hair >= 0) put(`hair|${f.hair}`, head.copy(f.pos).addScaledVector(f.up, lift * this.size), f.hairColor, f, walk, 0);
+        if (f.hair >= 0) put(`hair|${f.hair}`, head.copy(f.pos).addScaledVector(f.up, lift * this.size).addScaledVector(z, back * this.size), f.hairColor, f, walk, 0);
         // Its shadow: a soft disc on the ground under it (longer under a horse).
         m.compose(f.pos.clone().addScaledVector(f.up, 0.002 * this.size), q, scale.set(this.size * (isMachine(s.unit.type) ? 0.8 : 0.42), 1, this.size * (isMachine(s.unit.type) ? 1.4 : rides(s.unit.type, f.variant) ? 0.95 : 0.42)));
         this.shadows.setMatrixAt(shadowN++, m);
@@ -257,33 +303,34 @@ export class UnitView {
     this.volleys.update(now);
   }
 
-  // A fight going on: a melee unit charges out (the first third), holds
-  // striking, and falls back home (the last quarter); an archer's volleys
-  // fly at a third and at two thirds of it. Over, the fallen leave.
+  // A fight going on, as its play says: out, striking, back home; its
+  // shots loosed on time. Over, the fallen leave.
   private fighting(s: Shown, now: number): void {
     const f = s.fight!, t = (now - f.t0) / FIGHT;
     if (t >= 1) {
       s.fight = null;
+      s.alt = 0;
       if (s.gone) { this.drop(s); return; }
       s.dir.copy(f.home);
       if (!s.march) this.settle(s, s.k);
       return;
     }
-    const out = t < 0.3 ? smooth(t / 0.3) : t < 0.75 ? 1 : 1 - smooth((t - 0.75) / 0.25);
-    s.dir.copy(f.home).lerp(f.at, f.charge * out).normalize();
-    this.face(s, t < 0.75 || f.charge === 0 ? f.at.clone().sub(f.home) : f.home.clone().sub(f.at));
+    const p = f.play, { out, back } = playAt(p, t);
+    s.alt = (p.fly ?? 0) * out;
+    s.dir.copy(f.home).lerp(f.at, CHARGE * p.charge * out).normalize();
+    this.face(s, !back ? f.at.clone().sub(f.home) : f.home.clone().sub(f.at));
     this.layout(s);
-    if (f.ranged && f.loosed < 2 && t > (f.loosed + 1) / 3) {
-      f.loosed++;
-      this.volleys.loose(s.figures.map((g) => g.pos.clone().addScaledVector(g.up, 0.75 * this.size)), f.at, this.env.step * 0.12, now, f.loosed * 7 + s.unit.id);
+    const shot = p.shots[f.fired];
+    if (shot && t > shot.t) {
+      f.fired++;
+      this.volleys.loose(s.figures.map((g) => g.pos.clone().addScaledVector(g.up, 0.75 * this.size)), f.at, this.env.step * 0.12, now, f.fired * 7 + s.unit.id, shot.kind);
     }
   }
 
   // How a unit moves now: marching (legs), striking (arms).
   private pose(s: Shown, now: number): { walk: number; strike: number } {
     if (s.fight) {
-      const t = (now - s.fight.t0) / FIGHT, moving = s.fight.charge > 0 && (t < 0.3 || t > 0.75);
-      const strike = s.fight.ranged ? Math.min(1, t * 4) * (t < 0.85 ? 1 : (1 - t) / 0.15) : t > 0.2 && t < 0.8 ? 1 : 0;
+      const { moving, strike } = playAt(s.fight.play, (now - s.fight.t0) / FIGHT);
       return { walk: moving ? 1 : 0, strike };
     }
     return { walk: s.march && now >= s.march.t0 ? 1 : 0, strike: 0 };
@@ -295,7 +342,7 @@ export class UnitView {
     if (heading.lengthSq() > 1e-14) s.forward.copy(heading.normalize());
   }
 
-  private key(s: Shown, f: Figure): string { return `${s.unit.type}|${s.unit.civ}|${f.variant}|${f.female ? 1 : 0}`; }
+  private key(s: Shown, f: Figure): string { return s.unit.embarked ? `transport|${s.unit.civ}|0|0` : `${s.unit.type}|${s.unit.civ}|${f.variant}|${f.female ? 1 : 0}`; }
 
   dispose(): void {
     for (const s of this.shown.values()) s.flag.material.dispose();
@@ -317,7 +364,7 @@ export class UnitView {
     const north = c.clone().cross(east);
     const s: Shown = {
       unit: u, dir: c.clone(), forward: east.multiplyScalar(Math.cos(a)).addScaledVector(north, Math.sin(a)).normalize(),
-      figures: [], spread: 1, march: null, fight: null, gone: false, flag: this.makeFlag(u), k, seen: true,
+      figures: [], spread: 1, alt: 0, march: null, fight: null, gone: false, flag: this.makeFlag(u), k, seen: true,
     };
     this.group.add(s.flag);
     this.shown.set(u.id, s);
@@ -347,34 +394,39 @@ export class UnitView {
   // and (for horses) coat.
   private dress(s: Shown): void {
     const u = s.unit, rand = mulberry32(u.id * 104729 + 3);
+    // (Embarked: its one boat.)
+    if (u.embarked) { s.figures = [{ x: 0, z: 0, variant: 0, female: false, skin: new THREE.Color(), hair: -1, hairColor: new THREE.Color(), phase: 0, pos: new THREE.Vector3(), up: new THREE.Vector3() }]; return; }
     s.figures = formationSlots(u.type, u.hp, rand).map(([x, z], i) => ({
       x, z, variant: variantOf(u.type, i, rand), ...figureLooks(u.type, u.civ, womenShare(u.type, u.suffrage), rand),
       phase: rand() * Math.PI * 2, pos: new THREE.Vector3(), up: new THREE.Vector3(),
     }));
   }
 
-  // Where each figure stands now: around the unit's spot, on the ground.
+  // Where each figure stands now: around the unit's spot, on the ground
+  // (ships and boats on the water; aircraft up as high as they fly).
   private layout(s: Shown): void {
-    const right = new THREE.Vector3().crossVectors(s.forward, s.dir).normalize();
+    const right = new THREE.Vector3().crossVectors(s.forward, s.dir).normalize(), afloat = this.afloat(s.unit);
     for (const f of s.figures) {
       const d = this.figureDir(s.dir, s.forward, right, f.x * s.spread, f.z * s.spread);
       const h = this.env.ground(d);
       f.up.copy(d);
-      f.pos.copy(d).multiplyScalar(1 + Math.max(h.ground, h.water - 0.0004));
+      f.pos.copy(d).multiplyScalar(1 + (afloat ? Math.max(h.ground, h.water) : Math.max(h.ground, h.water - 0.0004)) + s.alt * this.size);
     }
   }
+  private afloat(u: ShownUnit): boolean { return u.embarked === true || domainOf(unitDef(u.type)) === 'sea'; }
 
   private figureDir(c: THREE.Vector3, forward: THREE.Vector3, right: THREE.Vector3, x: number, z: number): THREE.Vector3 {
     return c.clone().addScaledVector(right, -x * this.size).addScaledVector(forward, z * this.size).normalize();
   }
 
-  // A spot on a unit's tile where all its figures stand dry: the middle
+  // A spot on a unit's tile where all its figures stand dry (ships: all
+  // afloat): the middle
   // first (the k-th unit on a tile a little off it), facing its way or
   // turned, then spots further out; failing that, closer ranks; failing
   // that, the spot with the most figures dry.
   private spot(u: ShownUnit, k: number, facing: THREE.Vector3): { dir: THREE.Vector3; forward: THREE.Vector3; spread: number } {
-    const c = this.env.center(u.tile), look = UNIT_LOOK[u.type];
-    const n = look.party === 'formation' ? figuresFor(u.hp, look.count) : look.count;
+    const c = this.env.center(u.tile), look = UNIT_LOOK[u.type], afloat = this.afloat(u);
+    const n = u.embarked ? 1 : look.party === 'formation' ? figuresFor(u.hp, look.count) : look.count;
     const cols = colsOf(u.type, look.count), rows = Math.ceil(n / cols);
     const east = new THREE.Vector3(0, 1, 0).cross(c);
     if (east.lengthSq() < 1e-8) east.set(1, 0, 0);
@@ -400,7 +452,7 @@ export class UnitView {
             const r = Math.floor(i / cols), col = i % cols;
             const x = (col - (cols - 1) / 2) * look.spacing[0] * spread, z = ((rows - 1) / 2 - r) * look.spacing[1] * spread;
             const h = this.env.ground(this.figureDir(at, fwd, right, x, z));
-            if (h.water - h.ground <= DRY) dry++;
+            if ((h.water - h.ground <= DRY) !== afloat) dry++; // (afloat: in the water)
           }
           if (dry > bestDry) { bestDry = dry; best = { dir: at.clone(), forward: fwd, spread }; }
           if (dry === n) return best;
@@ -419,7 +471,7 @@ export class UnitView {
     if (mesh && mesh.instanceMatrix.count >= need) return mesh;
     const cap = Math.max(64, need, mesh ? mesh.instanceMatrix.count * 2 : 0);
     const [a, b, c, d] = key.split('|') as [string, string, string | undefined, string | undefined];
-    const geo = mesh ? mesh.geometry : a === 'hair' ? hairModel(HAIR_STYLES[Number(b)]!) : unitModel(a as UnitKey, b as ArchCiv, Number(c), d === '1');
+    const geo = mesh ? mesh.geometry : a === 'hair' ? hairModel(HAIR_STYLES[Number(b)]!) : a === 'transport' ? transportModel() : unitModel(a as UnitKey, b as ArchCiv, Number(c), d === '1');
     prepareUnitGeometry(geo, cap);
     const next = new THREE.InstancedMesh(geo, this.material, cap);
     next.setColorAt(0, new THREE.Color());
@@ -468,24 +520,36 @@ export function figureLooks(type: UnitKey, civ: ArchCiv, women: number, rand: ()
 // target, arcing high; drawn as short dark strokes. Positions in world
 // units; up: the local vertical at each arrow (the direction from the
 // globe's center, or a fixed up given as `flatUp`).
+// What flies, by kind: how high it arcs (a share of the distance), how
+// long it takes (seconds, and up to so much longer), how long a streak it
+// draws (figure heights), its colour.
+const FLIGHT: Record<Projectile, { arc: number; dur: number; jitter: number; len: number; color: number }> = {
+  arrow: { arc: 0.3, dur: 0.55, jitter: 0.15, len: 0.35, color: 0x2a2018 },
+  stone: { arc: 0.6, dur: 1.0, jitter: 0.2, len: 0.14, color: 0x5a554c },
+  shell: { arc: 0.1, dur: 0.35, jitter: 0.1, len: 0.2, color: 0x16161a },
+  bullet: { arc: 0.01, dur: 0.14, jitter: 0.06, len: 0.55, color: 0xf2d27a },
+};
 export class Volleys {
   readonly lines: THREE.LineSegments;
-  private readonly arrows: { from: THREE.Vector3; to: THREE.Vector3; t0: number; dur: number }[] = [];
+  private readonly arrows: { from: THREE.Vector3; to: THREE.Vector3; t0: number; dur: number; kind: Projectile }[] = [];
   private readonly pos: Float32Array;
+  private readonly col: Float32Array;
   private static readonly CAP = 512;
 
   constructor(private readonly size: number, private readonly flatUp: THREE.Vector3 | null = null) {
     this.pos = new Float32Array(Volleys.CAP * 6);
+    this.col = new Float32Array(Volleys.CAP * 6);
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3));
-    this.lines = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0x2a2018 }));
+    geo.setAttribute('color', new THREE.BufferAttribute(this.col, 3));
+    this.lines = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ vertexColors: true }));
     this.lines.frustumCulled = false;
     this.lines.userData['stat'] = 'units';
   }
 
   // A volley from each of `from` at the spot `at` (scattered `spread` round it).
-  loose(from: readonly THREE.Vector3[], at: THREE.Vector3, spread: number, now: number, seed: number): void {
-    const rand = mulberry32(seed * 9973 + 5);
+  loose(from: readonly THREE.Vector3[], at: THREE.Vector3, spread: number, now: number, seed: number, kind: Projectile = 'arrow'): void {
+    const rand = mulberry32(seed * 9973 + 5), k = FLIGHT[kind];
     const up = this.flatUp ?? at.clone().normalize();
     const e = new THREE.Vector3(1, 0, 0).cross(up);
     if (e.lengthSq() < 1e-8) e.set(0, 0, 1);
@@ -495,30 +559,34 @@ export class Volleys {
     for (const f of from) {
       if (this.arrows.length >= Volleys.CAP) break;
       const to = ground.clone().addScaledVector(e, (rand() - 0.5) * 2 * spread).addScaledVector(n, (rand() - 0.5) * 2 * spread);
-      this.arrows.push({ from: f.clone(), to, t0: now + rand() * 0.15, dur: 0.55 + rand() * 0.15 });
+      this.arrows.push({ from: f.clone(), to, t0: now + rand() * 0.15, dur: k.dur + rand() * k.jitter, kind });
     }
   }
 
   update(now: number): void {
     let n = 0;
     for (let i = this.arrows.length - 1; i >= 0; i--) if (now > this.arrows[i]!.t0 + this.arrows[i]!.dur) this.arrows.splice(i, 1);
-    const p = new THREE.Vector3(), q = new THREE.Vector3(), up = new THREE.Vector3();
+    const p = new THREE.Vector3(), q = new THREE.Vector3(), up = new THREE.Vector3(), c = new THREE.Color();
     for (const a of this.arrows) {
       const t = (now - a.t0) / a.dur;
       if (t < 0) continue;
+      const k = FLIGHT[a.kind];
       const at = (u: number, out: THREE.Vector3) => {
         out.copy(a.from).lerp(a.to, u);
         up.copy(this.flatUp ?? out).normalize();
-        return out.addScaledVector(up, 4 * u * (1 - u) * 0.3 * a.from.distanceTo(a.to));
+        return out.addScaledVector(up, 4 * u * (1 - u) * k.arc * a.from.distanceTo(a.to));
       };
       at(t, p);
       at(Math.min(1, t + 0.06), q);
-      const d = q.sub(p).normalize().multiplyScalar(0.35 * this.size);
+      const d = q.sub(p).normalize().multiplyScalar(k.len * this.size);
       this.pos.set([p.x, p.y, p.z, p.x + d.x, p.y + d.y, p.z + d.z], n * 6);
+      c.setHex(k.color);
+      this.col.set([c.r, c.g, c.b, c.r, c.g, c.b], n * 6);
       n++;
     }
     this.lines.geometry.setDrawRange(0, n * 2);
     (this.lines.geometry.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
+    (this.lines.geometry.getAttribute('color') as THREE.BufferAttribute).needsUpdate = true;
   }
 
   dispose(): void {

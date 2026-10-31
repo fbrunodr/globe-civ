@@ -11,7 +11,7 @@ export type GameEventKind =
   | 'religionFounded' | 'converted'
   | 'cityFounded' | 'cityGrew' | 'cityCaptured' | 'cityDestroyed' | 'tileBought' | 'tileFlipped'
   | 'build' | 'built' | 'bought'
-  | 'unitCreated' | 'move' | 'attack' | 'unitLost' | 'rally' | 'deploy' | 'pillage' | 'raze' | 'upgrade'
+  | 'unitCreated' | 'move' | 'attack' | 'unitLost' | 'rally' | 'deploy' | 'pillage' | 'raze' | 'upgrade' | 'rebase' | 'intercept'
   | 'war' | 'peace' | 'peaceOffered' | 'trade' | 'tradeEnded' | 'shortfall';
 
 export interface GameEvent {

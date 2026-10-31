@@ -2,6 +2,7 @@
 // (in sight, or explored only), with no units, cities or turns. For looking
 // at terrain generation and terrain painting.
 
+import { attackStyle } from './unitClasses.ts';
 import './style.css';
 import { Game } from './game.ts';
 import { GlobeRenderer, type DebugView } from './render.ts';
@@ -116,7 +117,9 @@ const battle = () => {
   for (const u of game.units) {
     if (unitDef(u.type).atk <= 0) continue;
     const foe = game.tiles[u.tile]!.neighbors.find((n) => game.units.some((v) => v.tile === n && v.owner !== u.owner));
-    if (foe !== undefined) view.showBattle(u.id, foe, unitDef(u.type).ranged === true);
+    const d = foe === undefined ? undefined : game.units.find((v) => v.tile === foe && v.owner !== u.owner);
+    const style = d ? attackStyle(u.type, d.type) : null;
+    if (foe !== undefined && style) view.showBattle(u.id, foe, style);
   }
 };
 addEventListener('keydown', (e) => {

@@ -1,3 +1,4 @@
+import { attackBlock, attackStyle, siegeStyle, type AttackStyle } from './unitClasses.ts';
 import { buildFlora, type Flora } from './flora.ts';
 import type { ArchCiv } from './architecture.ts';
 import type { Globe, Tile } from './goldberg.ts';
@@ -6,7 +7,7 @@ import { generateWorld, type World } from './world.ts';
 import { tileYieldOf } from './mapRules.ts';
 import { mulberry32, type Rng } from './rng.ts';
 import {
-  unitDef, buildDef, isUnitKey, isWonder, UNITS, BUILDINGS, CIVS, growthCost, UPGRADES,
+  unitDef, buildDef, isUnitKey, isWonder, UNITS, BUILDINGS, CIVS, growthCost, UPGRADES, domainOf,
   type UnitKey, type BuildingKey, type BuildKey, type MapSizeKey, type MapScriptKey,
 } from './rules.ts';
 import {
@@ -125,6 +126,22 @@ export function combatStrength(type: UnitKey, role: 'atk' | 'def', hp: number, b
   const T = unitDef(type);
   return (role === 'atk' ? T.atk : T.def * (1 + bonus)) * (0.5 + 0.5 * hp / 100);
 }
+// Siege engines are this much weaker against units than their attack
+// (they are built for walls: twice as strong against a city).
+export const SIEGE_VS_UNITS = 0.67;
+// The counters between two units (rules.ts): what `self`'s strength is
+// multiplied by against `other`, `self` attacking or defending. Spears and
+// pikes hold off horse (not armour: only anti-tank guns stop that), a charge
+// rides down archers and engines, engines are weak against units.
+export function matchup(self: UnitKey, other: UnitKey, role: 'atk' | 'def'): number {
+  const S = unitDef(self), O = unitDef(other);
+  let k = 1;
+  if (O.mounted && !O.armored) k += S.vsMounted ?? 0;
+  if (O.armored) k += S.vsArmor ?? 0;
+  if (role === 'atk' && (O.ranged || O.siege)) k += S.vsRanged ?? 0;
+  if (role === 'atk' && S.siege) k *= SIEGE_VS_UNITS;
+  return k;
+}
 // A fight between strengths A and D: exchanges of 18-31 damage, each won by
 // the attacker with odds A / (A + D), until one side has no HP left. A
 // ranged attack is a volley: three exchanges at most, half the damage back.
@@ -143,9 +160,20 @@ export function fightRounds(hpA: number, hpD: number, A: number, D: number, rang
 // units rallied from its tile and the tiles next to it, carried with it
 // (packed: off the map, on its tile) until it deploys them there again. It
 // takes the civilian slot, so a fighting unit may stand with it.
-export type Slot = 'military' | 'civilian';
-export const slotOf = (type: UnitKey): Slot => (unitDef(type).civilian || type === 'commander' ? 'civilian' : 'military');
+// Ships have a slot of their own (a ship in port beside the garrison, a
+// ship escorting a unit embarked on the water), and aircraft theirs: up
+// to AIR_PER_CITY in each of their civ's cities.
+export type Slot = 'military' | 'civilian' | 'naval' | 'air';
+export const slotOf = (type: UnitKey): Slot => {
+  const d = unitDef(type), dom = domainOf(d);
+  return d.civilian || type === 'commander' ? 'civilian' : dom === 'sea' ? 'naval' : dom === 'air' ? 'air' : 'military';
+};
 export const COMMANDER_CAPACITY = 4;
+export const AIR_PER_CITY = 4;
+// A land unit embarked on the water (its civ has Shipbuilding) defends at
+// this share of its strength, and can't attack.
+export const EMBARKED_DEF = 0.5;
+export const EMBARK_TECH = 'shipbuilding';
 
 export interface Unit {
   id: number;
@@ -239,7 +267,7 @@ export class Game {
   private nextId = 1;
   units: Unit[] = [];
   // Told of every attack as it starts (the renderer shows the fight).
-  onBattle: ((u: Unit, tile: number, ranged: boolean) => void) | null = null;
+  onBattle: ((u: Unit, tile: number, style: AttackStyle) => void) | null = null;
   cities: City[] = [];
   readonly cityById = new Map<number, City>();
   readonly cityByTile = new Map<number, City>();
@@ -333,19 +361,40 @@ export class Game {
   // A commander's army: the units packed in it.
   armyOf(c: Unit): Unit[] { return this.units.filter((u) => u.packedIn === c.id); }
 
-  // Whether a unit could stand on a tile: dry, and its slot there free of
-  // its owner's other units (an enemy there is a fight, not a place).
+  // ---- domains ----
+  // Whether a civ's land units may embark on the water.
+  canEmbark(owner: number): boolean { return this.players[owner]!.techs.has(EMBARK_TECH); }
+  // A land unit on the water: embarked.
+  isEmbarked(u: Unit): boolean { return domainOf(unitDef(u.type)) === 'land' && this.isWater(u.tile); }
+  // Whether a unit may go onto a tile at all: land units on land (and the
+  // water, once embarking), ships on the water and their civ's coastal
+  // cities, aircraft only into their civ's cities.
+  canEnter(u: { type: UnitKey; owner: number }, t: number): boolean {
+    const city = this.cityByTile.get(t);
+    switch (domainOf(unitDef(u.type))) {
+      case 'land': return !this.isWater(t) || this.canEmbark(u.owner);
+      case 'sea': return this.isWater(t) || (city !== undefined && city.owner === u.owner && this.cityCoast(city));
+      case 'air': return city !== undefined && city.owner === u.owner;
+    }
+  }
+
+  // Whether a unit could stand on a tile: one it may enter, and its slot
+  // there free of its owner's other units (aircraft: room in the city; an
+  // enemy there is a fight, not a place).
   canStand(u: { type: UnitKey; owner: number; id?: number }, t: number): boolean {
-    if (this.isWater(t)) return false;
+    if (!this.canEnter(u, t)) return false;
     const slot = slotOf(u.type);
-    return !this.units.some((v) => v.tile === t && v.packedIn === null && v.id !== u.id && v.owner === u.owner && slotOf(v.type) === slot);
+    const mine = this.units.filter((v) => v.tile === t && v.packedIn === null && v.id !== u.id && v.owner === u.owner && slotOf(v.type) === slot).length;
+    return mine < (slot === 'air' ? AIR_PER_CITY : 1);
   }
 
   // The nearest tile to t (t itself first) where a new unit of its type can
   // stand, free of enemies; null if none within a few rings.
   freeTileNear(type: UnitKey, owner: number, t: number): number | null {
     const near = [...this.tilesWithinMap(t, 3)].sort((a, b) => a[1] - b[1]);
-    for (const [x] of near) if (this.canStand({ type, owner }, x) && !this.isEnemyOccupied(x, owner) && this.relief[x] !== 'mountains') return x;
+    // (A new land unit on land, never embarked.)
+    const land = domainOf(unitDef(type)) === 'land';
+    for (const [x] of near) if (this.canStand({ type, owner }, x) && !(land && this.isWater(x)) && !this.isEnemyOccupied(x, owner) && this.relief[x] !== 'mountains') return x;
     return null;
   }
 
@@ -364,6 +413,16 @@ export class Game {
   }
 
   canAttack(u: Unit): boolean { return unitDef(u.type).atk > 0; }
+  // Why `u` can't attack `tile` now (its class against the unit that would
+  // defend it: unitClasses.ts), or null if it can.
+  attackBlockAt(u: Unit, tile: number): string | null {
+    if (!this.canAttack(u)) return 'cannot attack';
+    if (domainOf(unitDef(u.type)) === 'air' && !this.inRange(u, tile)) return 'out of range';
+    const d = this.bestDefender(tile, u.owner), where = { atSea: this.isWater(tile), city: this.cityByTile.has(tile), embarked: this.isEmbarked(u) };
+    if (d) return attackBlock(u.type, d.type, where);
+    if (where.embarked) return 'cannot attack while embarked';
+    return null;
+  }
 
   // tile -> graph distance, for all tiles within r steps of t.
   tilesWithinMap(t: number, r: number): Map<number, number> {
@@ -419,9 +478,12 @@ export class Game {
   // the final destination (that step becomes an attack). Tiles where the
   // unit's own side already has a unit of its slot are gone round (one
   // unit per tile), but for the goal next to it: that step is a swap.
+  // (Aircraft never walk: they strike and rebase, goTo. Land units embark
+  // and land at a cost that keeps them on land where they can.)
   findPath(u: Unit, goal: number): number[] | null {
     if (goal === u.tile) return [];
-    if (this.isWater(goal) || this.isForeignBlocked(goal, u.owner)) return null;
+    if (domainOf(unitDef(u.type)) === 'air') return null;
+    if ((!this.canEnter(u, goal) && !this.isEnemyOccupied(goal, u.owner)) || this.isForeignBlocked(goal, u.owner)) return null;
     if (this.isEnemyOccupied(goal, u.owner) && !this.canAttack(u)) return null;
     const swap = this.tiles[u.tile].neighbors.includes(goal) && this.swapPartner(u, goal) !== null;
     if (!swap && !this.canStand(u, goal) && !this.isEnemyOccupied(goal, u.owner)) return null;
@@ -442,10 +504,10 @@ export class Game {
       if (closed.has(cur)) continue;
       closed.add(cur);
       for (const nb of tiles[cur].neighbors) {
-        if (this.isWater(nb) || closed.has(nb)) continue;
+        if (closed.has(nb)) continue;
         if (nb !== goal && (this.isEnemyOccupied(nb, u.owner) || !this.canStand(u, nb))) continue;
         if (this.isForeignBlocked(nb, u.owner)) continue;
-        const ng = g.get(cur)! + this.moveCost(nb);
+        const ng = g.get(cur)! + this.stepCost(u, cur, nb) + (this.isWater(cur) !== this.isWater(nb) && domainOf(unitDef(u.type)) === 'land' ? 3 : 0);
         if (ng < (g.get(nb) ?? Infinity)) {
           g.set(nb, ng);
           came.set(nb, cur);
@@ -461,12 +523,21 @@ export class Game {
 
   // Number of turns to walk a path, counting the current turn as 1.
   pathTurns(u: Unit, path: number[]): number {
-    let moves = u.moves, turns = 1;
+    let moves = u.moves, turns = 1, at = u.tile;
     for (const t of path) {
       if (moves <= 0) { turns++; moves = this.maxMoves(u.type, u.owner); }
-      moves -= this.moveCost(t);
+      moves = this.landing(u, at, t) ? 0 : moves - this.stepCost(u, at, t);
+      at = t;
     }
     return turns;
+  }
+  // The moves a step costs: on the water a move a tile; on land the terrain's.
+  stepCost(u: { type: UnitKey }, _from: number, to: number): number {
+    return this.isWater(to) || domainOf(unitDef(u.type)) === 'sea' ? 1 : this.moveCost(to);
+  }
+  // Whether a step embarks or lands a land unit (it takes its turn).
+  landing(u: { type: UnitKey }, from: number, to: number): boolean {
+    return domainOf(unitDef(u.type)) === 'land' && this.isWater(from) !== this.isWater(to);
   }
 
   // ---------- actions ----------
@@ -493,6 +564,36 @@ export class Game {
     if (i >= 0) this.units.splice(i, 1);
     u.dead = true;
     if (u.type === 'commander') for (const v of this.armyOf(u)) this.removeUnit(v);
+  }
+
+  // ---- aircraft ----
+  // An aircraft's orders: a strike on an enemy within its range, or a
+  // rebase to another of its civ's cities with room, within twice it.
+  fly(u: Unit, goal: number): void {
+    if (u.moves <= 0 || goal === u.tile) return;
+    if (this.isEnemyOccupied(goal, u.owner)) { if (this.attackBlockAt(u, goal) === null) this.attack(u, goal); return; }
+    if (this.canRebase(u, goal)) { this.record('rebase', u.owner, { unit: u.type, from: u.tile, to: goal }); u.tile = goal; u.moves = 0; }
+  }
+  inRange(u: Unit, t: number, k = 1): boolean { return this.tilesWithinMap(u.tile, (unitDef(u.type).range ?? 1) * k).has(t); }
+  canRebase(u: Unit, t: number): boolean { return domainOf(unitDef(u.type)) === 'air' && t !== u.tile && this.inRange(u, t, 2) && this.canStand(u, t); }
+  // Enemy fighters covering a tile intercept an aircraft striking it: the
+  // strongest of them (its base within its range) fights it first. Whether
+  // the striker comes through.
+  private intercept(u: Unit, tile: number): boolean {
+    let best: Unit | null = null;
+    for (const v of this.units) {
+      if (v.type !== 'fighter' || v.owner === u.owner || !this.atWar(u.owner, v.owner) || !this.inRange(v, tile)) continue;
+      if (!best || v.hp > best.hp) best = v;
+    }
+    if (!best) return true;
+    const after = fightRounds(best.hp, u.hp, this.unitStrength(best, 'atk', tile) * matchup(best.type, u.type, 'atk'), this.unitStrength(u, 'def', tile), true, this.rng);
+    best.hp = after.attacker;
+    u.hp = after.defender;
+    this.record('intercept', best.owner, { unit: best.type, target: u.type, hp: Math.max(0, u.hp) });
+    if (u.owner === HUMAN || best.owner === HUMAN) this.log(`${this.players[best.owner].name} fighters intercepted the ${this.players[u.owner].name} ${unitDef(u.type).name}${u.hp <= 0 ? ', shooting it down' : ''}.`);
+    if (best.hp <= 0) this.removeUnit(best);
+    if (u.hp <= 0) { this.removeUnit(u); return false; }
+    return true;
   }
 
   // ---- armies ----
@@ -548,12 +649,13 @@ export class Game {
 
   // Moves a unit one tile (its army with it).
   private step(u: Unit, t: number): void {
-    u.moves = Math.max(0, u.moves - this.moveCost(t));
+    u.moves = this.landing(u, u.tile, t) ? 0 : Math.max(0, u.moves - this.stepCost(u, u.tile, t));
     u.tile = t;
     for (const v of this.armyOf(u)) v.tile = t;
   }
 
   goTo(u: Unit, goal: number): void {
+    if (domainOf(unitDef(u.type)) === 'air') { this.fly(u, goal); return; }
     this.record('move', u.owner, { unit: u.type, id: u.id, from: u.tile, to: goal });
     u.goal = goal;
     u.fortified = false;
@@ -567,7 +669,7 @@ export class Game {
       if (!path || !path.length) { u.goal = null; break; }
       const next = path[0];
       if (this.isEnemyOccupied(next, u.owner)) {
-        if (next === u.goal && this.canAttack(u)) this.attack(u, next);
+        if (next === u.goal && this.attackBlockAt(u, next) === null) this.attack(u, next);
         u.goal = null;
         break;
       }
@@ -594,6 +696,7 @@ export class Game {
     const city = this.cityByTile.get(tile);
     if (city) bonus += 0.5 + (city.buildings.has('walls') ? 1 : 0) + 0.25 * (Number(city.buildings.has('barracks')) + Number(city.buildings.has('stable')));
     if (u.fortified) bonus += FORTIFY_BONUS;
+    if (this.isEmbarked(u)) return combatStrength(u.type, 'def', u.hp, 0) * combat * EMBARKED_DEF;
     return combatStrength(u.type, 'def', u.hp, bonus) * combat;
   }
 
@@ -602,7 +705,9 @@ export class Game {
     // (An army's units defend their commander, on its tile; the commander
     // itself only once none is left.)
     for (const d of this.units) {
-      if (d.tile !== tile || d.owner === attackerOwner || unitDef(d.type).civilian) continue;
+      // (Aircraft never defend a tile, nor ships in port.)
+      const dom = domainOf(unitDef(d.type));
+      if (d.tile !== tile || d.owner === attackerOwner || unitDef(d.type).civilian || dom === 'air' || (dom === 'sea' && !this.isWater(tile))) continue;
       const s = this.unitStrength(d, 'def', tile) + (d.type === 'commander' ? -1000 : 0);
       if (s > bestS) { best = d; bestS = s; }
     }
@@ -613,23 +718,24 @@ export class Game {
   combatPreview(u: Unit, tile: number): CombatPreview | null {
     const d = this.bestDefender(tile, u.owner);
     if (!d) return null;
-    return { atk: this.unitStrength(u, 'atk', tile), def: this.unitStrength(d, 'def', tile), defender: d };
+    return { atk: this.unitStrength(u, 'atk', tile) * matchup(u.type, d.type, 'atk'), def: this.unitStrength(d, 'def', tile) * matchup(d.type, u.type, 'def'), defender: d };
   }
 
   attack(u: Unit, tile: number): void {
+    if (this.attackBlockAt(u, tile) !== null) return;
     u.moves = 0;
+    if (domainOf(unitDef(u.type)) === 'air' && !this.intercept(u, tile)) return;
     u.fortified = false;
     const ranged = unitDef(u.type).ranged === true;
     // (Attacking a civ at peace is a declaration of war.)
     const target = this.cityByTile.get(tile)?.owner ?? this.units.find((v) => v.tile === tile && v.owner !== u.owner)?.owner;
     if (target !== undefined && target !== u.owner && !this.atWar(u.owner, target)) this.declareWar(u.owner, target);
-    this.onBattle?.(u, tile, ranged);
     const d = this.bestDefender(tile, u.owner);
+    this.onBattle?.(u, tile, (d ? attackStyle(u.type, d.type) : siegeStyle(u.type)) ?? 'melee');
     if (d) {
-      // (Pikemen fight mounted units at double strength.)
-      const mounted = (x: Unit) => unitDef(x.type).mounted === true && x.type !== 'tank';
-      const A = this.unitStrength(u, 'atk', tile) * (u.type === 'pikeman' && mounted(d) ? 2 : 1);
-      const D = this.unitStrength(d, 'def', tile) * (d.type === 'pikeman' && mounted(u) ? 2 : 1);
+      // (The counters: pikes against horse, a charge against archers...)
+      const A = this.unitStrength(u, 'atk', tile) * matchup(u.type, d.type, 'atk');
+      const D = this.unitStrength(d, 'def', tile) * matchup(d.type, u.type, 'def');
       const before = { a: u.hp, d: d.hp };
       const after = fightRounds(u.hp, d.hp, A, D, ranged, this.rng);
       u.hp = after.attacker;
@@ -702,7 +808,7 @@ export class Game {
     const near = new Set(this.tilesWithin(city.tile, city.buildings.has('walls') ? 2 : 1));
     let target: Unit | null = null;
     for (const u of this.units) {
-      if (u.owner === city.owner || unitDef(u.type).civilian || !near.has(u.tile) || u.packedIn !== null || !this.atWar(city.owner, u.owner)) continue;
+      if (u.owner === city.owner || unitDef(u.type).civilian || domainOf(unitDef(u.type)) === 'air' || !near.has(u.tile) || u.packedIn !== null || !this.atWar(city.owner, u.owner)) continue;
       if (!target || u.hp < target.hp) target = u;
     }
     if (!target) return;
@@ -718,7 +824,7 @@ export class Game {
   // ---------- pillage and raze ----------
 
   canPillage(u: Unit): boolean {
-    if (unitDef(u.type).civilian || u.moves <= 0) return false;
+    if (unitDef(u.type).civilian || u.moves <= 0 || domainOf(unitDef(u.type)) !== 'land') return false;
     const t = u.tile, o = this.ownerOf(t);
     return o >= 0 && o !== u.owner && this.atWar(u.owner, o) && this.use[t] === USE.rural && this.pillaged[t] === 0;
   }
@@ -1204,7 +1310,11 @@ export class Game {
   canBuild(city: City, key: BuildKey, anyResource = false): boolean {
     const p = this.players[city.owner]!;
     if (!this.unlocked(p).has(key)) return false;
-    if (isUnitKey(key)) { const need = unitDef(key).needs; return !need || anyResource || this.hasResource(p.id, need); }
+    if (isUnitKey(key)) {
+      const need = unitDef(key).needs;
+      if (domainOf(unitDef(key)) === 'sea' && !this.cityCoast(city)) return false;
+      return !need || anyResource || this.hasResource(p.id, need);
+    }
     if (isWonder(key)) return !this.wondersBuilt.has(key) && (this.wonderSpots(city, key).length > 0 || city.wonderTile !== null && city.building === key);
     const need = CITY_BUILDINGS[key].resource;
     return (!need || anyResource || this.hasResource(p.id, need)) && buildingAllowed(key, city.buildings, this.cityRiver(city), this.cityCoast(city));
