@@ -26,7 +26,10 @@ const SHOE = 0x3a2a1e;
 export type PartTag = 'skin' | 'team' | 'plain';
 // (`joint`: a limb's lower piece (shin and shoe, forearm and hand), bent
 // about its middle joint (knee, elbow) at y, z before the limb swings.)
-export interface Part { readonly geo: THREE.BufferGeometry; readonly tag: PartTag; readonly limb?: readonly [number, number, number]; readonly joint?: readonly [number, number] }
+// (`skirt`: a garment below the waist that follows the legs: each side of
+// it its own leg's swing, less towards the middle and the waist (the
+// units' tagging spreads `limb` over it so).)
+export interface Part { readonly geo: THREE.BufferGeometry; readonly tag: PartTag; readonly limb?: readonly [number, number, number]; readonly joint?: readonly [number, number]; readonly skirt?: number }
 // The knee's height and depth (the legs bend there).
 export const KNEE = [0.27, 0.012] as const;
 
@@ -104,7 +107,7 @@ export function person(d: Dress, armL: ArmPose = HANG, armR: ArmPose = HANG, swi
   const f = d.female === true, skirt = d.skirt ?? 'knee', bare = d.legs === undefined || d.legs === 'bare';
   const legPaint: Paint = bare ? SKIN_PAINT : (d.legs as number), legTag: PartTag = bare ? 'skin' : 'plain';
   const out: Part[] = [];
-  const add = (geo: THREE.BufferGeometry, tag: PartTag, limb?: readonly [number, number, number], joint?: readonly [number, number]) => out.push({ geo, tag, ...(limb ? { limb } : {}), ...(joint ? { joint } : {}) });
+  const add = (geo: THREE.BufferGeometry, tag: PartTag, limb?: readonly [number, number, number], joint?: readonly [number, number], skirt?: number) => out.push({ geo, tag, ...(limb ? { limb } : {}), ...(joint ? { joint } : {}), ...(skirt !== undefined ? { skirt } : {}) });
   // Legs: thigh and shin, boxes meeting at the knee (the shin bends
   // there); the shoe a wedge.
   for (const side of [1, -1] as const) {
@@ -125,8 +128,9 @@ export function person(d: Dress, armL: ArmPose = HANG, armR: ArmPose = HANG, swi
   const [wa, wb] = T[1]!;
   if (skirt !== 'none') {
     const hem = skirt === 'ankle' ? 0.07 : f ? 0.27 : 0.3, flare = skirt === 'ankle' ? 1.5 : 1.3;
-    const rings = [R([0, 0.63, 0], wa! + 0.012, wb! + 0.012), ...(skirt === 'ankle' ? [R([0, 0.36, 0.004], (wa! + 0.03) * 1.2, (wb! + 0.03) * 1.2)] : []), R([0, hem, 0.006], (wa! + 0.03) * flare, (wb! + 0.034) * flare)];
-    add(hull(rings, 6, (p) => (p.y < hem + 0.01 ? TRIM : CLOTH_PAINT), { caps: [false, false] }), 'team');
+    // (Out over the hips, wider than the tops of the thighs; its sides swing with the legs.)
+    const rings = [R([0, 0.63, 0], wa! + 0.012, wb! + 0.012), R([0, HIP, 0.002], wa! + 0.05, wb! + 0.045), ...(skirt === 'ankle' ? [R([0, 0.36, 0.004], (wa! + 0.03) * 1.2, (wb! + 0.03) * 1.2)] : []), R([0, hem, 0.006], (wa! + 0.03) * flare, (wb! + 0.034) * flare)];
+    add(hull(rings, 6, (p) => (p.y < hem + 0.01 ? TRIM : CLOTH_PAINT), { caps: [false, false] }), 'team', swing?.legs(1), undefined, hem);
   }
   if (d.belt !== undefined) add(hull([R([0, 0.64, 0], wa! + 0.018, wb! + 0.018), R([0, 0.61, 0], wa! + 0.018, wb! + 0.018)], 6, d.belt, { caps: [false, false] }), 'plain');
   // The head: chin, cheekbones, crown; its front edge the nose.

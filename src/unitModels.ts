@@ -113,7 +113,8 @@ const lp = (g: THREE.BufferGeometry, o: Tf = {}, t?: Tag) => { g.deleteAttribute
 const point = (h: number, r: number, n: number, color: number, o: Tf, t?: Tag) => lp(hull([R([0, 0, 0], r), R([0, h, 0], 0, 0)], n, color, { side: [0, 0, 1] }), o, t);
 
 // The march: legs swing from the hip, arms against them from the shoulder.
-const LEG = (side: number) => [side, HIP, 0.45] as const;
+export const LEG_AMP = 0.45;
+const LEG = (side: number) => [side, HIP, LEG_AMP] as const;
 const ARM = (side: number) => [-side, SHOULDER, 0.35] as const;
 // In a fight: the weapon arm thrusts (and its weapon with it) about the shoulder.
 export const STRIKE = 2;
@@ -137,7 +138,22 @@ const REST_PITCH: Record<Hold, number> = {
   spear: 0, pike: 0, club: 0.23, sword: 0.25, longsword: 0.31, bow: 0, recurve: 0, sling: Math.PI, crossbow: 1.4, musket: 0.4, rifle: 0.4, mg: 1.35, staff: 0, banner: 0, none: 0,
 };
 // A body (people.ts) tagged for the units' shader.
-const tagged = (parts: readonly Part[]): THREE.BufferGeometry[] => parts.map((p) => tag(p.geo, { team: p.tag === 'team', skin: p.tag === 'skin', ...(p.limb ? { limb: p.limb } : {}), ...(p.joint ? { joint: p.joint } : {}) }));
+// (A skirt follows the legs: each vertex its own side's leg, swung by as
+// much as it is out to that side and down from the waist: none at the
+// front and back middle, none at and above the hips, fully at the hem's
+// sides. Its weight is in its amplitude: the shader crouches it as much.)
+const tagged = (parts: readonly Part[]): THREE.BufferGeometry[] => parts.map((p) => {
+  const g = tag(p.geo, { team: p.tag === 'team', skin: p.tag === 'skin', ...(p.limb ? { limb: p.limb } : {}), ...(p.joint ? { joint: p.joint } : {}) });
+  if (p.skirt !== undefined && p.limb && p.limb[2] > 0) {
+    const pos = g.getAttribute('position') as THREE.BufferAttribute, limb = g.getAttribute('aLimb') as THREE.BufferAttribute;
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i), y = pos.getY(i);
+      const w = Math.min(1, Math.abs(x) / 0.075) * Math.max(0, Math.min(1, (HIP - y) / (HIP - p.skirt)));
+      limb.setXYZ(i, x >= 0 ? 1 : -1, HIP, p.limb[2] * w);
+    }
+  }
+  return g;
+});
 const v3 = (p: THREE.Vector3) => V(p.x, p.y, p.z);
 
 // A figure on foot (people.ts), dressed for its civ and armed. `hold`:
