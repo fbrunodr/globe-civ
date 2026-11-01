@@ -141,6 +141,15 @@ const v3 = (p: THREE.Vector3) => V(p.x, p.y, p.z);
 // (The figure faces +z: its right hand is at -x.)
 // `still`: standing (in a chariot), its legs never swinging; `helmetAs`,
 // `shieldAs`: the unit's own headgear or shield whatever its civ's.
+// A point `k` along a gun (or crossbow) held in both hands (model units:
+// back of the grip negative): one straight line through the right hand's
+// grip, a little towards the left hand, pointing as it is carried
+// (REST_PITCH). Straight in the plane the grip turns in (y, z), so it
+// points true however it is aimed.
+const gunAt = (hold: Hold, hR: { x: number; y: number; z: number }, hL: { x: number }) => {
+  const d = V(0, Math.cos(REST_PITCH[hold]), Math.sin(REST_PITCH[hold])), g = V(hR.x * 0.65 + hL.x * 0.35, hR.y, hR.z);
+  return (k: number) => g.clone().addScaledVector(d, k);
+};
 function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boolean; pack?: boolean; quiver?: boolean; female?: boolean; civilian?: boolean; modern?: boolean; still?: boolean; helmetAs?: Helmet; shieldAs?: Shield } = {}): THREE.BufferGeometry[] {
   const gear1: Gear = opts.modern ? { ...gear0, legs: 0x4a4e44, helmet: 'kettle' } : gear0;
   const gear: Gear = { ...gear1, helmet: opts.helmetAs ?? gear1.helmet, shield: opts.shieldAs ?? gear1.shield };
@@ -179,10 +188,11 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
       rod(g.clone().add(V(0, 0.05, 0.01)), g.clone().add(V(0, 0.62, 0.2)), 0.018, 0.004, 4, METAL, w));
   }
   // (A machine gun at the hip: its body, barrel and drum.)
+  // (Like every gun, straight in the plane its grip turns in: gunAt.)
   if (hold === 'mg') {
-    const back = v3(hR).add(V(0, -0.02, -0.08)), front = v3(hL).add(V(0, 0.04, 0.12));
-    out.push(rod(back, front, 0.032, 0.03, 4, GUNMETAL, w), rod(front, front.clone().add(front.clone().sub(back).normalize().multiplyScalar(0.3)), 0.012, 0.012, 3, GUNMETAL, w),
-      box(0.05, 0.08, 0.08, GUNMETAL, { x: (back.x + front.x) / 2, y: (back.y + front.y) / 2 - 0.06, z: (back.z + front.z) / 2 }, w));
+    const at = gunAt(hold, hR, hL), mid = at(0.05);
+    out.push(rod(at(-0.1), at(0.18), 0.032, 0.03, 4, GUNMETAL, w), rod(at(0.18), at(0.48), 0.012, 0.012, 3, GUNMETAL, w),
+      box(0.05, 0.08, 0.08, GUNMETAL, { x: mid.x, y: mid.y - 0.06, z: mid.z }, w));
   }
   // (A sling hanging from the hand: its cords and the stone's pouch.)
   if (hold === 'sling') out.push(rod(v3(hR), v3(hR).add(V(0.01, -0.21, 0.02)), 0.004, 0.004, 3, 0xb8a888, w), ball(0.025, 0x8a7a62, { x: hR.x + 0.01, y: hR.y - 0.23, z: hR.z + 0.02 }, w));
@@ -193,14 +203,13 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
   // bayonet. Straight in the plane it turns in, so it points true however
   // it is aimed.)
   if (hold === 'musket' || hold === 'rifle') {
-    const d = V(0, Math.cos(REST_PITCH[hold]), Math.sin(REST_PITCH[hold])), g = V(hR.x * 0.65 + hL.x * 0.35, hR.y, hR.z);
-    const at = (k: number) => g.clone().addScaledVector(d, k);
+    const at = gunAt(hold, hR, hL);
     out.push(rod(at(-0.2), at(0.1), 0.022, 0.017, 5, WOOD, w), rod(at(0.1), at(0.52), 0.011, 0.011, 5, METAL, w));
     if (hold === 'rifle') out.push(rod(at(0.52), at(0.66), 0.006, 0.0015, 4, METAL, w));
   }
   if (hold === 'crossbow') {
-    const stock0 = v3(hR).add(V(0, 0.02, -0.06)), tip = v3(hL).add(V(0, 0.04, 0.16));
-    out.push(rod(stock0, tip, 0.02, 0.016, 5, WOOD, w), rod(tip.clone().add(V(-0.17, 0, -0.03)), tip.clone().add(V(0.17, 0, -0.03)), 0.01, 0.01, 4, WOOD, w));
+    const at = gunAt(hold, hR, hL), tip = at(0.24);
+    out.push(rod(at(-0.08), tip, 0.02, 0.016, 5, WOOD, w), rod(tip.clone().add(V(-0.17, 0, 0)), tip.clone().add(V(0.17, 0, 0)), 0.01, 0.01, 4, WOOD, w));
   }
   if (hold === 'banner') {
     // A tall pole with the owner's banner hanging from a crossbar, a finial on top.
