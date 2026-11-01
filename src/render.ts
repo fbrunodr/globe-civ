@@ -544,6 +544,7 @@ export class GlobeRenderer {
     }, (u) => this.unitFlag(u));
     this.unitsGroup.add(this.unitView.group);
     g.onBattle = (u, t, style, result) => this.unitView.fight(u.id, t, style, performance.now() / 1000, result);
+    g.onStep = (u, from, to) => this.unitView.step(u.id, from, to);
     this.citiesGroup.userData['stat'] = 'city markers';
     this.resourcesGroup.userData['stat'] = 'resource badges';
     this.scene.add(this.resourcesGroup);

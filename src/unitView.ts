@@ -210,6 +210,7 @@ interface Shown {
   laid: { fwd: THREE.Vector3; spread: number; n: number; order: Order } | null; // the formation as last laid out
   alt: number;                 // how high it flies now (figure heights: aircraft on a sortie)
   march: { from: THREE.Vector3; to: THREE.Vector3; t0: number; dur: number } | null;
+  route: number[];             // tiles it steps through on its way, still to march (game.ts onStep), the last its new tile
   // A fight: the enemy's spot, how it plays (PLAYS), the shots fired so
   // far; the attack being made, its side, whether its side wins. Over: the
   // same, a while longer (its figures cheer or stand easy: unitAnim.ts).
@@ -364,9 +365,11 @@ export class UnitView {
         s.unit = u;
         if (swap) this.dress(s, false);
         s.k = k;
-        const from = (s.fight?.home ?? s.dir).clone(), { dir } = this.spot(u, k, s.forward);
-        const start = s.fight ? s.fight.t0 + durOf(s.fight.attack) : now;
-        s.march = { from, to: dir, t0: start, dur: Math.max(MARCH_MIN, (MARCH * from.angleTo(dir)) / this.env.step) };
+        // (Along the tiles it stepped through, if they lead here; else straight.)
+        if (s.route[s.route.length - 1] !== u.tile) s.route = [u.tile];
+        // (Already marching: it goes on along the route as it gets there.)
+        if (s.fight) this.marchOn(s, s.fight.home.clone(), s.fight.t0 + durOf(s.fight.attack));
+        else if (!s.march) this.marchOn(s, s.dir.clone(), now);
       } else {
         const hurt = s.unit.hp !== u.hp;
         s.unit = u;
@@ -383,6 +386,22 @@ export class UnitView {
       if (s.seen) continue;
       if (s.fight) { s.gone = true; s.flag.visible = false; } else this.drop(s);
     }
+  }
+
+  // A unit steps from one tile to the next (game.ts onStep): it will march
+  // through it on its way (sync, as its new tile shows).
+  step(id: number, from: number, to: number): void {
+    const s = this.shown.get(id);
+    if (!s) return;
+    if (!s.route.length && s.unit.tile !== from) s.route = [];
+    s.route.push(to);
+  }
+  // On to the next tile of its route from `from` (a spot), from `t0`: the
+  // middle of a tile on the way, its own spot on its last.
+  private marchOn(s: Shown, from: THREE.Vector3, t0: number): void {
+    const t = s.route.shift()!;
+    const to = s.route.length ? this.env.center(t).clone() : this.spot(s.unit, s.k, s.forward).dir;
+    s.march = { from, to, t0, dur: Math.max(MARCH_MIN, (MARCH * from.angleTo(to)) / this.env.step) };
   }
 
   // Turns a unit shown to face a tile (and stands it there anew).
@@ -490,7 +509,10 @@ export class UnitView {
         const t = Math.min(1, (now - s.march.t0) / s.march.dur);
         s.dir.copy(s.march.from).lerp(s.march.to, t).normalize();
         this.face(s, s.march.to.clone().sub(s.march.from));
-        if (t >= 1) { s.march = null; this.settle(s, s.k); } else this.layout(s);
+        if (t >= 1) {
+          if (s.route.length) this.marchOn(s, s.march.to.clone(), s.march.t0 + s.march.dur);
+          else { s.march = null; this.settle(s, s.k); }
+        } else this.layout(s);
       }
       if (!this.shown.has(s.unit.id)) continue;
       this.stride(s, now, dt);
@@ -780,7 +802,7 @@ export class UnitView {
     const north = c.clone().cross(east);
     const s: Shown = {
       unit: u, dir: c.clone(), forward: east.multiplyScalar(Math.cos(a)).addScaledVector(north, Math.sin(a)).normalize(),
-      figures: [], spread: LOOSE[0], order: 'block', laid: null, alt: 0, march: null, fight: null, after: null, gone: false, flag: this.makeFlag(u), k, seen: true,
+      figures: [], spread: LOOSE[0], order: 'block', laid: null, alt: 0, march: null, route: [], fight: null, after: null, gone: false, flag: this.makeFlag(u), k, seen: true,
     };
     this.group.add(s.flag);
     this.shown.set(u.id, s);

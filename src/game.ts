@@ -272,6 +272,8 @@ export class Game {
   units: Unit[] = [];
   // Told of every attack as it starts (the renderer shows the fight).
   // A fight shown: the attacker, the tile, how it attacks; what it comes to (the defender, the HP each side is left with), if anyone defends.
+  // Each step a unit takes onto the next tile (the view marches it there, tile by tile).
+  onStep: ((u: Unit, from: number, to: number) => void) | null = null;
   onBattle: ((u: Unit, tile: number, style: AttackStyle, result?: { defender: number; attackerHp: number; defenderHp: number }) => void) | null = null;
   cities: City[] = [];
   readonly cityById = new Map<number, City>();
@@ -741,8 +743,9 @@ export class Game {
     // (A carrier at sea takes its aircraft with it; in port they stay in the city.)
     if (unitDef(u.type).carries && !this.cityByTile.has(u.tile)) for (const v of this.units) if (v.tile === u.tile && v.owner === u.owner && domainOf(unitDef(v.type)) === 'air') v.tile = t;
     u.moves = this.landing(u, u.tile, t) ? 0 : Math.max(0, u.moves - this.stepCost(u, u.tile, t));
+    this.onStep?.(u, u.tile, t);
     u.tile = t;
-    for (const v of this.armyOf(u)) v.tile = t;
+    for (const v of this.armyOf(u)) { this.onStep?.(v, v.tile, t); v.tile = t; }
   }
 
   goTo(u: Unit, goal: number): void {
