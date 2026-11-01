@@ -41,6 +41,8 @@ const MARCH = 0.9, MARCH_MIN = 0.5;
 // heights a second, and per figure height away); how fast it turns
 // (radians a second: a man, a machine).
 const SHUFFLE = 1.4, SHUFFLE_FAR = 0.9, TURN = 7, TURN_MACHINE = 2.2;
+// Running faster than this (figure heights a second), a figure kicks up dust.
+const DUSTY = 3;
 // A figure's legs by how fast it goes over the ground (figure heights a
 // second): how hard they swing (none standing), how quick their beat
 // (radians a second): longer and quicker strides as it speeds up.
@@ -174,7 +176,7 @@ interface Figure {
   variant: number; female: boolean; skin: THREE.Color; hair: number; hairColor: THREE.Color; phase: number; pos: THREE.Vector3; up: THREE.Vector3;
   home: THREE.Vector3 | null; goal: THREE.Vector3 | null; foe: THREE.Vector3 | null; face: THREE.Vector3 | null; delay: number; curve: number; fall: number;
   beat: number | null; // where it is in its round of blows (null: its phase says)
-  shot: number; smoke: number; // when it last fired (its recoil); when it next smokes (a burning wreck)
+  shot: number; smoke: number; dust: number; // when it last fired (its recoil); when it next smokes (a burning wreck), kicks up dust (running)
   // In a melee: the enemy figure it is at (its foe struck down, it turns to
   // another); where it stands to strike it now (`reach`: walking towards
   // `goal`), and how far from its foe that is (world units).
@@ -185,7 +187,7 @@ interface Fight { at: THREE.Vector3; home: THREE.Vector3; t0: number; play: Play
 // A figure struck down, lying where it fell (then sinking away).
 // (A machine's: a wreck burning, on land or at sea.)
 interface Corpse { wreck: Wreck | null; smoke: number; key: string; hair: number; hairColor: THREE.Color; skin: THREE.Color; phase: number; color: THREE.Color; pos: THREE.Vector3; up: THREE.Vector3; face: THREE.Vector3; fall: number; beat: number; horse: boolean; lift: readonly [number, number] }
-const unfought = () => ({ home: null, goal: null, foe: null, face: null, delay: 0, curve: 0, fall: Infinity, beat: null, shot: -Infinity, smoke: 0, foeFig: null, reach: null, gap: 0 });
+const unfought = () => ({ home: null, goal: null, foe: null, face: null, delay: 0, curve: 0, fall: Infinity, beat: null, shot: -Infinity, smoke: 0, dust: 0, foeFig: null, reach: null, gap: 0 });
 // What a machine struck down leaves: a wreck on land, or a ship going down
 // (aircraft and figures leave none).
 type Wreck = 'land' | 'sea';
@@ -854,6 +856,12 @@ export class UnitView {
       f.last.copy(f.pos);
       f.gait = (f.gait + dt * cadenceOf(f.speed)) % (Math.PI * 2);
       if (down) continue;
+      // (Running on dry ground: dust kicked up behind it, more under a horse.)
+      if (f.speed > DUSTY && !afloat && now >= f.dust && s.alt === 0) {
+        const horse = rides(s.unit.type, f.variant) || isMachine(s.unit.type);
+        this.volleys.dust(f.pos.clone().addScaledVector(d.normalize(), -0.3 * this.size), now, horse ? 1.6 : 1);
+        f.dust = now + (horse ? 0.07 : 0.13) * (0.7 + 0.6 * Math.random());
+      }
       // (Turned at its pace, on the ground where it stands.)
       want.copy(f.speed > 0.8 && inst > 0.4 ? d : f.face ?? s.forward);
       want.addScaledVector(f.up, -want.dot(f.up));
@@ -1095,6 +1103,12 @@ export class Volleys {
       } else if (kind === 'stone') this.puff(lifted(0.6), t0 + dur, 1.6, 0.4, 1.5, 0.55, 0xb09a78, 0.3);
     }
     return { fire, land };
+  }
+
+  // Dust kicked up at `at` (a runner's feet), `big` times a man's.
+  dust(at: THREE.Vector3, now: number, big: number): void {
+    const up = (this.flatUp ?? at).clone().normalize();
+    this.puff(at.clone().addScaledVector(up, 0.25 * big * this.size), now, 0.9, 0.2 * big, 0.65 * big, 0.32, 0xb8a888, 0.35);
   }
 
   // A wreck burning at `at`: flames licking up and a column of black smoke
