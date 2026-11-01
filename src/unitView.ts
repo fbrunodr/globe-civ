@@ -250,6 +250,9 @@ const UNIT_LIMB = /* glsl */ `
   float marching = aAnim.y > 1.5 ? 0.0 : aAnim.y;
   float rigFlags = aLimb.w;
   float isTeam = mod(rigFlags, 2.0), isSkin = mod(floor(rigFlags / 2.0), 2.0), isLower = mod(floor(rigFlags / 4.0), 2.0), isGrip = mod(floor(rigFlags / 8.0), 2.0);
+  // (A rotor or a propeller turning about its hub while the machine moves.)
+  float spinY = mod(floor(rigFlags / 16.0), 2.0), spinZ = mod(floor(rigFlags / 32.0), 2.0);
+  float spinA = (aAnim.y > 0.05 && aAnim.y < 1.5) ? uTime * 31.0 : 0.0, spinC = cos(spinA), spinS = sin(spinA);
   float jointA = isLeg ? 2.0 * aPose.z + marching * 0.95 * max(0.0, -cos(beat) * aLimb.x)
                : isStrike ? -aPose.w : isDraw ? -2.3 * aMore.y : -0.35 * marching;
   jointA *= aLimb.z > 0.0 ? isLower : 0.0; // (a limb that never moves keeps its forearm as it is: what it holds stays in hand)
@@ -266,12 +269,17 @@ const UNIT_LIMB = /* glsl */ `
   float twC = cos(upper ? aPose.y : 0.0), twS = sin(upper ? aPose.y : 0.0), bnC = cos(upper ? aPose.x : 0.0), bnS = sin(upper ? aPose.x : 0.0);`;
 const UNIT_NORMAL = /* glsl */ `
   ${UNIT_LIMB}
+  if (spinY > 0.5) objectNormal.xz = vec2(spinC * objectNormal.x - spinS * objectNormal.z, spinS * objectNormal.x + spinC * objectNormal.z);
+  if (spinZ > 0.5) objectNormal.xy = vec2(spinC * objectNormal.x - spinS * objectNormal.y, spinS * objectNormal.x + spinC * objectNormal.y);
   objectNormal.yz = vec2(gripC * objectNormal.y - gripS * objectNormal.z, gripS * objectNormal.y + gripC * objectNormal.z);
   objectNormal.yz = vec2(jointC * objectNormal.y - jointS * objectNormal.z, jointS * objectNormal.y + jointC * objectNormal.z);
   objectNormal.yz = vec2(limbC * objectNormal.y - limbS * objectNormal.z, limbS * objectNormal.y + limbC * objectNormal.z);
   objectNormal = bodyBend(objectNormal, twC, twS, bnC, bnS);`;
 const UNIT_VERTEX = /* glsl */ `
   {
+    vec2 sp = spinY > 0.5 ? transformed.xz - aRig.zw : transformed.xy - aRig.zw;
+    sp = vec2(spinC * sp.x - spinS * sp.y, spinS * sp.x + spinC * sp.y) + aRig.zw;
+    if (spinY > 0.5) transformed.xz = sp; else if (spinZ > 0.5) transformed.xy = sp;
     vec2 gyz = transformed.yz - aRig.zw;
     if (isGrip > 0.5) transformed.yz = aRig.zw + vec2(gripC * gyz.x - gripS * gyz.y, gripS * gyz.x + gripC * gyz.y);
     vec2 jyz = transformed.yz - aRig.xy;

@@ -84,14 +84,17 @@ const HORSE = [0x6a4a32, 0x8a6a4a, 0x4a3a2e, 0xb8a888] as const;
 // (`joint`: a limb's lower piece, bent at its middle joint at y, z;
 // `grip`: a weapon held at y, z, pointing so far forward of upright as it
 // is made (radians), turned there to point as the figure aims.)
-type Tag = { team?: boolean; skin?: boolean; limb?: readonly [number, number, number]; joint?: readonly [number, number]; grip?: readonly [number, number, number] };
-export const RIG = { team: 1, skin: 2, joint: 4, grip: 8 } as const;
+// (`spin`: a rotor turning about the upright through its hub at (x, z), or
+// a propeller about the fore-and-aft line through its hub at (x, y): the
+// hub kept where the grip is (aRig.zw).)
+type Tag = { team?: boolean; skin?: boolean; limb?: readonly [number, number, number]; joint?: readonly [number, number]; grip?: readonly [number, number, number]; spin?: { readonly axis: 'y' | 'z'; readonly at: readonly [number, number] } };
+export const RIG = { team: 1, skin: 2, joint: 4, grip: 8, spinY: 16, spinZ: 32 } as const;
 function tag(g: THREE.BufferGeometry, t: Tag = {}): THREE.BufferGeometry {
   if (g.getAttribute('leafMask')) g.deleteAttribute('leafMask');
   const n = g.getAttribute('position').count;
-  const flags = (t.team ? RIG.team : 0) + (t.skin ? RIG.skin : 0) + (t.joint ? RIG.joint : 0) + (t.grip ? RIG.grip : 0);
+  const flags = (t.team ? RIG.team : 0) + (t.skin ? RIG.skin : 0) + (t.joint ? RIG.joint : 0) + (t.grip ? RIG.grip : 0) + (t.spin ? (t.spin.axis === 'y' ? RIG.spinY : RIG.spinZ) : 0);
   const limb = new Float32Array(n * 4), rig = new Float32Array(n * 4), rest = new Float32Array(n).fill(t.grip?.[2] ?? 0);
-  const [s, pivot, amp] = t.limb ?? [0, 0, 0], [jy, jz] = t.joint ?? [0, 0], [gy, gz] = t.grip ?? [0, 0];
+  const [s, pivot, amp] = t.limb ?? [0, 0, 0], [jy, jz] = t.joint ?? [0, 0], [gy, gz] = t.spin?.at ?? t.grip ?? [0, 0];
   for (let i = 0; i < n; i++) { limb.set([s, pivot, amp, flags], i * 4); rig.set([jy, jz, gy, gz], i * 4); }
   g.setAttribute('aLimb', new THREE.BufferAttribute(limb, 4));
   g.setAttribute('aRig', new THREE.BufferAttribute(rig, 4));
@@ -591,7 +594,7 @@ function aircraft(type: UnitKey): THREE.BufferGeometry[] {
   const body = (len: number, r: number, color: number) => lp(hull([R([0, AIR_Y, -len / 2], 0.02, 0.02), R([0, AIR_Y, -len * 0.1], r, r), R([0, AIR_Y, len * 0.35], r, r), R([0, AIR_Y, len / 2], r * 0.7, r * 0.7)], 4, color, { side: [1, 0, 0] }));
   const wing = (span: number, chord: number, y: number, z: number, color: number, team: boolean) => lp(plate([[-span / 2, -chord / 2], [span / 2, -chord / 2], [span / 2 * 0.95, chord / 2], [-span / 2 * 0.95, chord / 2]], color), { y, z, rx: -Math.PI / 2 }, team ? { team: true } : undefined);
   const tail = (len: number, color: number) => [wing(0.5, 0.18, AIR_Y, -len / 2 + 0.08, color, false), lp(plate([[0, 0], [0.2, 0], [0.05, 0.22]], color), { y: AIR_Y, z: -len / 2 + 0.02, ry: -Math.PI / 2 })];
-  const prop = (x: number, z: number) => lp(plate([[-0.02, -0.18], [0.02, -0.18], [0.02, 0.18], [-0.02, 0.18]], 0x2a2420), { x, y: AIR_Y, z });
+  const prop = (x: number, z: number) => lp(plate([[-0.02, -0.18], [0.02, -0.18], [0.02, 0.18], [-0.02, 0.18]], 0x2a2420), { x, y: AIR_Y, z }, { spin: { axis: 'z', at: [x, AIR_Y] } });
   const gear = [1, -1].map((s) => rod(V(s * 0.1, AIR_Y - 0.05, 0.15), V(s * 0.14, 0.04, 0.18), 0.012, 0.012, 3, GUNMETAL));
   if (type === 'airship') return [lp(hull([R([0, AIR_Y + 0.75, -1.5], 0, 0), R([0, AIR_Y + 0.75, -1.0], 0.34, 0.34), R([0, AIR_Y + 0.75, 0.5], 0.42, 0.42), R([0, AIR_Y + 0.75, 1.25], 0.26, 0.26), R([0, AIR_Y + 0.75, 1.55], 0, 0)], 6, PAINT, { side: [1, 0, 0] }), {}, { team: true }), box(0.2, 0.14, 0.5, 0x5a4a38, { y: AIR_Y + 0.2, z: 0.1 }),
     ...[1, -1].map((s) => rod(V(s * 0.08, AIR_Y + 0.27, 0.1), V(s * 0.2, AIR_Y + 0.45, 0.1), 0.008, 0.008, 3, GUNMETAL)), lp(plate([[0, 0], [0.5, 0], [0.15, 0.4]], 0xd8d0c0), { y: AIR_Y + 0.75, z: -1.3, ry: -Math.PI / 2 })];
@@ -601,7 +604,7 @@ function aircraft(type: UnitKey): THREE.BufferGeometry[] {
     ...tail(2.3, 0x7a7e76), ...gear];
   if (type === 'helicopter') return [lp(hull([R([0, 0.32, -0.25], 0.16, 0.14), R([0, 0.32, 0.25], 0.17, 0.15), R([0, 0.28, 0.45], 0, 0)], 4, OLIVE, { side: [1, 0, 0] })), rod(V(0, 0.36, -0.25), V(0, 0.4, -1.0), 0.04, 0.025, 4, OLIVE),
     box(0.34, 0.03, 0.06, PAINT, { y: 0.16, z: 0 }, { team: true }), ...[1, -1].map((s) => rod(V(s * 0.16, 0.16, -0.2), V(s * 0.16, 0.16, 0.3), 0.012, 0.012, 3, GUNMETAL)),
-    rod(V(0, 0.5, 0), V(0, 0.58, 0), 0.02, 0.02, 3, GUNMETAL), ...[0.5, -1.07].map((a) => lp(plate([[-0.9, -0.04], [0.9, -0.04], [0.9, 0.04], [-0.9, 0.04]], 0x1a1a1a).rotateX(-Math.PI / 2).rotateY(a), { y: 0.59 })),
+    rod(V(0, 0.5, 0), V(0, 0.58, 0), 0.02, 0.02, 3, GUNMETAL), ...[0.5, -1.07].map((a) => lp(plate([[-0.9, -0.04], [0.9, -0.04], [0.9, 0.04], [-0.9, 0.04]], 0x1a1a1a).rotateX(-Math.PI / 2).rotateY(a), { y: 0.59 }, { spin: { axis: 'y', at: [0, 0] } })),
     lp(plate([[0, 0], [0.18, 0], [0.04, 0.2]], OLIVE), { y: 0.4, z: -1.0, ry: -Math.PI / 2 })];
   if (type === 'stealthFighter') return [body(1.3, 0.08, 0x3a3e44), lp(plate([[-0.7, -0.3], [0.7, -0.3], [0.1, 0.4], [-0.1, 0.4]], 0x3a3e44), { y: AIR_Y, z: -0.1, rx: Math.PI / 2 }),
     box(0.3, 0.012, 0.06, PAINT, { y: AIR_Y + 0.01, z: 0.1 }, { team: true }), ...[1, -1].map((s) => lp(plate([[0, 0], [0.25, 0], [0.05, 0.22]], 0x3a3e44), { x: s * 0.12, y: AIR_Y, z: -0.6, ry: -Math.PI / 2, rz: s * 0.4 })), ...gear];
