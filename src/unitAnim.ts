@@ -235,6 +235,10 @@ function inFight(c: Cue, now: number, phase: number, beat: number, whirl: boolea
 
 // ---- struck down ----
 
+// Which way a figure struck down falls (by its beat): mostly back, away
+// from the blow (it faces whoever struck it), else to one side, now and
+// then face down: 0 back, 1 face down, 2 left, 3 right.
+const wayOf = (beat: number): number => { const r = frac(beat * 7.31); return r < 0.45 ? 0 : r < 0.55 ? 1 : r < 0.775 ? 2 : 3; };
 // The turn of a figure struck down `since` seconds ago, about its feet: it
 // staggers back, then goes over (faster as it falls): back, face down, or
 // to either side (a horse on its side), turned a little, each its own way
@@ -247,7 +251,7 @@ export function deathTurn(q: THREE.Quaternion, since: number, beat: number, ride
     const f = Math.max(0, Math.min(1, (since - HORSE_STUMBLE * 0.55) / HORSE_ROLL)), over = (FALLEN + 0.1 * r2) * f * f;
     return q.setFromEuler(new THREE.Euler(pitch, (r2 - 0.5) * 0.8 * f, (r1 < 0.5 ? 1 : -1) * over, 'YXZ'));
   }
-  const way = rides ? 2 + Math.floor(r1 * 2) : Math.floor(r1 * 4); // (0 back, 1 face down, 2 left, 3 right)
+  const way = wayOf(beat);
   const reel = 0.22 * Math.sin(Math.min(1, since / STAGGER) * Math.PI);
   const f = Math.max(0, Math.min(1, (since - STAGGER * 0.6) / FALL)), over = (FALLEN + 0.14 * r2) * f * f;
   const turn = (r2 - 0.5) * 1.4 * f;
@@ -257,7 +261,7 @@ export function deathTurn(q: THREE.Quaternion, since: number, beat: number, ride
 // Its body folding as it falls (back: doubled up; face down: head first,
 // its knees giving way; to a side: a little), its arm flung out.
 export function deathBend(since: number, beat: number): { readonly bend: number; readonly arm: number; readonly crouch: number; readonly aim: number } {
-  const way = Math.floor(frac(beat * 7.31) * 4), f = smooth(since / (STAGGER + FALL)), buckle = smooth(since / STAGGER);
+  const way = wayOf(beat), f = smooth(since / (STAGGER + FALL)), buckle = smooth(since / STAGGER);
   return { bend: (way === 0 ? 0.55 : way === 1 ? 0.35 : 0.2) * f, arm: (way === 1 ? 1.4 : 0.7) * f, crouch: (way === 1 ? 0.8 : 0.3) * buckle, aim: 1.5 * f };
 }
 // The legs of a figure struck down (the shader's legs, as legsOf): a man's
