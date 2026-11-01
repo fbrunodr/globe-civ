@@ -98,6 +98,10 @@ const charging = (now: number, phase: number, walk: number, k: number): Pose => 
 const STANCE = 0.45;
 const ready = (now: number, phase: number): Pose => guarded(
   P(0, 0, 0, 0.18 + 0.02 * Math.sin(now * 2.3 + phase), -0.12 + 0.07 * Math.sin(now * 1.7 + phase), 0.32 + 0.04 * Math.sin(now * 2.9 + phase + 1), 0, STANCE, 0.34, 0.7, 0.75 + 0.06 * Math.sin(now * 2.3 + phase + 1)), 0.3 + 0.05 * Math.sin(now * 1.9 + phase));
+// Fortified: down on bent knees behind its shield, the weapon levelled
+// over it, watchful (a slow look about, a breath).
+const dugIn = (now: number, phase: number): Pose => guarded(
+  P(0, 0, 0, 0.2 + 0.02 * Math.sin(now * 1.3 + phase), 0.2 * Math.sin(now * 0.4 + phase * 2), 0.3, 0, 0.3, 0.42, 0.75, 1.3), 0.7);
 // Pulled up at the end of a run: settling into its stance, the body checked back.
 const pullUp = guarded(P(0, 0, 0, -0.12, 0, 0.4, 0, STANCE + 0.05, 0.42, 0.8, 1.1), 0.45);
 // Cowering under arrows or shells: down low, weapon or shield up.
@@ -176,8 +180,9 @@ export interface Cue {
 // A figure's pose now: in a fight (its cue), on the march (`walk`), or at
 // ease. (Struck down, it is posed by deathTurn and deathBend.)
 // (`whirl`: its weapon whirled before it is loosed, a sling.)
-export function poseOf(c: Cue | null, now: number, phase: number, beat: number, walk: number, rides: boolean, whirl = false): Pose {
-  const acted = c ? inFight(c, now, phase, beat, whirl) : walk > 0 ? march(now, phase, walk) : idle(now, phase);
+// (`dug`: fortified, at rest: crouched behind its shield, its weapon levelled.)
+export function poseOf(c: Cue | null, now: number, phase: number, beat: number, walk: number, rides: boolean, whirl = false, dug = false): Pose {
+  const acted = c ? inFight(c, now, phase, beat, whirl) : walk > 0 ? march(now, phase, walk) : dug ? dugIn(now, phase) : idle(now, phase);
   // (On its feet: whatever lean or turn an act asks of the whole figure is the body's above the hips.)
   const pose = { ...acted, lean: 0, yaw: 0, bend: acted.bend + acted.lean * 1.5, twist: acted.twist + acted.yaw };
   // (A rider strikes from the saddle: the horse hardly moves.)

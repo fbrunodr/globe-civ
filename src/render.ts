@@ -1832,7 +1832,7 @@ export class GlobeRenderer {
     const shown: ShownUnit[] = g.units
       .filter((u) => g.visible[u.tile] && u.packedIn === null)
       .sort((a, b) => Number(unitDef(a.type).civilian ?? false) - Number(unitDef(b.type).civilian ?? false))
-      .map((u) => ({ id: u.id, type: u.type, civ: g.players[u.owner].name, color: g.players[u.owner].color, tile: u.tile, hp: u.hp, suffrage: g.players[u.owner].politics.has('womensSuffrage'), embarked: g.isEmbarked(u) }));
+      .map((u) => ({ id: u.id, type: u.type, civ: g.players[u.owner].name, color: g.players[u.owner].color, tile: u.tile, hp: u.hp, suffrage: g.players[u.owner].politics.has('womensSuffrage'), embarked: g.isEmbarked(u), fortified: u.fortified }));
     this.unitView.sync(shown, performance.now() / 1000);
   }
 

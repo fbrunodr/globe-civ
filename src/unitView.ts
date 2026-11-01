@@ -154,6 +154,7 @@ export interface ShownUnit {
   readonly hp: number;
   readonly suffrage: boolean; // its civ has women's suffrage (half its figures women)
   readonly embarked?: boolean; // a land unit on the water (shown as its boat)
+  readonly fortified?: boolean; // dug in: ranks closed up, crouched behind shields, weapons levelled
 }
 export interface UnitViewEnv {
   readonly center: (t: number) => THREE.Vector3;               // a tile's center (unit vector)
@@ -371,9 +372,10 @@ export class UnitView {
         if (s.fight) this.marchOn(s, s.fight.home.clone(), s.fight.t0 + durOf(s.fight.attack));
         else if (!s.march) this.marchOn(s, s.dir.clone(), now);
       } else {
-        const hurt = s.unit.hp !== u.hp;
+        const hurt = s.unit.hp !== u.hp, dug = (s.unit.fortified ?? false) !== (u.fortified ?? false);
         s.unit = u;
         if (hurt || s.k !== k) { s.k = k; if (!s.march && !s.fight) this.settle(s, k); }
+        else if (dug && !s.march && !s.fight) this.layout(s);
       }
       // (Its flag anew: it shows the unit's health and whether it is selected.)
       this.group.remove(s.flag);
@@ -571,7 +573,7 @@ export class UnitView {
           legs = deathLegs(now - f.fall, horse); arm = 3 + fold.arm; bends = horse ? FLAT : [fold.bend, 0, fold.crouch, 0.6, fold.aim, 1, 0.4, 0];
           if (!horse) at = stepped.copy(f.pos).addScaledVector(f.up, -dropOf(fold.crouch) * this.size);
         } else if (body) {
-          const p = poseOf(this.cue(s, f, now), now, f.phase, beat, walk, horse, whirls(s.unit.type));
+          const p = poseOf(this.cue(s, f, now), now, f.phase, beat, walk, horse, whirls(s.unit.type), s.unit.fortified === true && !s.march);
           turned.multiply(poseTurn(tip, p));
           // (Crouched, lower: the legs fold under it.)
           const [ry, rz] = rearShift(p);
@@ -858,11 +860,13 @@ export class UnitView {
   // it and walks there from where it stands (fresh ones are stood there).
   private layout(s: Shown): void {
     const right = new THREE.Vector3().crossVectors(s.forward, s.dir).normalize();
+    // (Fortified, at rest: its ranks closed up.)
     const order = this.orderOf(s), places = s.unit.embarked ? [[0, 0] as const] : orderSlots(s.unit.type, s.figures.length, order);
-    const dirs = s.figures.map((f, i) => this.figureDir(s.dir, s.forward, right, (places[i]![0] + f.jx) * s.spread, (places[i]![1] + f.jz) * s.spread));
-    const l = s.laid, anew = !l || l.order !== order || l.spread !== s.spread || l.n !== s.figures.length || l.fwd.dot(s.forward) < 0.9999;
+    const spread = s.spread * (s.unit.fortified && order === 'block' && !s.fight ? 0.78 : 1);
+    const dirs = s.figures.map((f, i) => this.figureDir(s.dir, s.forward, right, (places[i]![0] + f.jx) * spread, (places[i]![1] + f.jz) * spread));
+    const l = s.laid, anew = !l || l.order !== order || l.spread !== spread || l.n !== s.figures.length || l.fwd.dot(s.forward) < 0.9999;
     s.order = order;
-    s.laid = { fwd: s.forward.clone(), spread: s.spread, n: s.figures.length, order };
+    s.laid = { fwd: s.forward.clone(), spread, n: s.figures.length, order };
     if (anew) {
       if (s.figures.some((f) => f.fresh)) s.figures.forEach((f, i) => { f.slot = i; });
       else {
@@ -923,7 +927,7 @@ export class UnitView {
       // (Turned at its pace, on the ground where it stands.)
       want.copy(f.speed > 0.8 && inst > 0.4 ? d : f.face ?? s.forward);
       // (At ease, each stands its own way, a little off its file's line.)
-      if (!s.fight && !s.march && f.speed < 0.3) want.applyAxisAngle(f.up, 0.35 * (frac(f.phase * 1.7) - 0.5));
+      if (!s.fight && !s.march && !s.unit.fortified && f.speed < 0.3) want.applyAxisAngle(f.up, 0.35 * (frac(f.phase * 1.7) - 0.5));
       want.addScaledVector(f.up, -want.dot(f.up));
       f.head.addScaledVector(f.up, -f.head.dot(f.up)).normalize();
       if (want.lengthSq() < 1e-14) continue;
