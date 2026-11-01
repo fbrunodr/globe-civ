@@ -4,6 +4,7 @@ import { part, seg, tf, V, type Tf } from './propCatalog.ts';
 import { person, riderBody, handAt, elbowAt, hairShapes, headShell, HAIR_STYLE_KEYS, HIP, SHOULDER, HEAD_Y, HANG, HOLD, RAISE, SHIELD, GRIP2, GUN_R, GUN_L, type ArmPose, type Dress, type Part, type HairStyleKey } from './people.ts';
 import { horseParts } from './creatures.ts';
 import { hull, plate, R } from './lowpoly.ts';
+import { autoSurface, faceSurface, mapSurfaces, type FaceInfo, type Surf } from './surfaces.ts';
 import type { ArchCiv } from './architecture.ts';
 import type { UnitKey } from './rules.ts';
 
@@ -25,7 +26,8 @@ import type { UnitKey } from './rules.ts';
 //          forearm: bent at its middle joint), 8 on a weapon in hand
 //          (turned at the grip to point as the figure aims);
 //   aRig   the middle joint's y, z; the grip's y, z;
-//   aRest  how far forward of upright the weapon points as made (radians).
+//   aTex   its surface texture (surfaces.ts: u, v, layer); its w how far
+//          forward of upright the weapon points as made (radians).
 // Hair is drawn apart (hairModel): each figure gets its own style and colour.
 //
 // Each civ dresses its soldiers its own way (GEAR): the shape of their
@@ -88,19 +90,22 @@ const HORSE = [0x6a4a32, 0x8a6a4a, 0x4a3a2e, 0xb8a888] as const;
 // propeller about the fore-and-aft line through its hub at (x, y), a wheel
 // about the axle through its hub at (y, z): the hub kept where the grip is
 // (aRig.zw).)
-type Tag = { team?: boolean; skin?: boolean; limb?: readonly [number, number, number]; joint?: readonly [number, number]; grip?: readonly [number, number, number]; spin?: { readonly axis: 'x' | 'y' | 'z'; readonly at: readonly [number, number] } };
+type Tag = { surf?: Surf; team?: boolean; skin?: boolean; limb?: readonly [number, number, number]; joint?: readonly [number, number]; grip?: readonly [number, number, number]; spin?: { readonly axis: 'x' | 'y' | 'z'; readonly at: readonly [number, number] } };
 export const RIG = { team: 1, skin: 2, joint: 4, grip: 8, spinY: 16, spinZ: 32, spinX: 64, skirt: 128 } as const;
 const wheelSpin = (y: number, z = 0): Tag => ({ spin: { axis: 'x', at: [y, z] } });
 function tag(g: THREE.BufferGeometry, t: Tag = {}): THREE.BufferGeometry {
   if (g.getAttribute('leafMask')) g.deleteAttribute('leafMask');
   const n = g.getAttribute('position').count;
   const flags = (t.team ? RIG.team : 0) + (t.skin ? RIG.skin : 0) + (t.joint ? RIG.joint : 0) + (t.grip ? RIG.grip : 0) + (t.spin ? RIG[t.spin.axis === 'x' ? 'spinX' : t.spin.axis === 'y' ? 'spinY' : 'spinZ'] : 0);
-  const limb = new Float32Array(n * 4), rig = new Float32Array(n * 4), rest = new Float32Array(n).fill(t.grip?.[2] ?? 0);
+  const limb = new Float32Array(n * 4), rig = new Float32Array(n * 4);
   const [s, pivot, amp] = t.limb ?? [0, 0, 0], [jy, jz] = t.joint ?? [0, 0], [gy, gz] = t.spin?.at ?? t.grip ?? [0, 0];
   for (let i = 0; i < n; i++) { limb.set([s, pivot, amp, flags], i * 4); rig.set([jy, jz, gy, gz], i * 4); }
   g.setAttribute('aLimb', new THREE.BufferAttribute(limb, 4));
   g.setAttribute('aRig', new THREE.BufferAttribute(rig, 4));
-  g.setAttribute('aRest', new THREE.BufferAttribute(rest, 1));
+  // (Its surface: a head's face drawn now, the rest picked once the model is whole (surfaced).)
+  if (!g.getAttribute('aTex')) { if (g.userData['face'] === true) faceSurface(g); else autoSurface(g, 0, t.surf); }
+  const tex = g.getAttribute('aTex') as THREE.BufferAttribute;
+  for (let i = 0; i < n; i++) tex.setW(i, t.grip?.[2] ?? 0);
   return g;
 }
 const shape = (geo: THREE.BufferGeometry, color: number, o: Tf, t?: Tag) => tag(part(geo, color, tf(o)), t);
@@ -325,9 +330,9 @@ function mount(coat: number, cloth: boolean): THREE.BufferGeometry[] {
   const paint = (g: THREE.BufferGeometry) => { coatIt(g, coat); return g.applyMatrix4(m); };
   const LEG_TOP = 1.05 * HORSE_SCALE, HORSE_LEG = (side: number) => [side, LEG_TOP, 0.4] as const;
   return [
-    ...h.body.map((g) => tag(paint(g))),
-    tag(paint(h.legs.fl), { limb: HORSE_LEG(1) }), tag(paint(h.legs.fr), { limb: HORSE_LEG(-1) }),
-    tag(paint(h.legs.hl), { limb: HORSE_LEG(-1) }), tag(paint(h.legs.hr), { limb: HORSE_LEG(1) }),
+    ...h.body.map((g) => tag(paint(g), { surf: 'leather' })),
+    tag(paint(h.legs.fl), { limb: HORSE_LEG(1), surf: 'leather' }), tag(paint(h.legs.fr), { limb: HORSE_LEG(-1), surf: 'leather' }),
+    tag(paint(h.legs.hl), { limb: HORSE_LEG(-1), surf: 'leather' }), tag(paint(h.legs.hr), { limb: HORSE_LEG(1), surf: 'leather' }),
     ...(cloth ? [shape(new THREE.CylinderGeometry(0.2, 0.2, 0.3, 4, 1, true, -1.2, 2.4).rotateZ(Math.PI / 2).rotateY(Math.PI / 2), CLOTH, { y: SEAT - 0.17, z: 0.02 }, { team: true })] : []),
   ];
 }
@@ -611,6 +616,7 @@ function transport(): THREE.BufferGeometry[] {
 export function transportModel(): THREE.BufferGeometry {
   const g = mergeGeometries(transport().map((p) => (p.getAttribute('aLimb') && !p.getAttribute('leafMask') ? p : tag(p))), false);
   if (!g) throw new Error('transportModel: parts don\'t merge');
+  surfaced(g, 'transport');
   return g;
 }
 
@@ -690,8 +696,9 @@ export const HAIR_BY: Record<'man' | 'woman', { bare: readonly HairStyle[]; helm
   woman: { bare: ['long', 'long', 'bun', 'bun', 'tail', 'tail', 'short'], helmet: ['helmLong', 'helmLong', 'bald'] },
 };
 export function hairModel(style: HairStyle): THREE.BufferGeometry {
-  const g = mergeGeometries(hairShapes(style).map((p) => tag(p, { team: true })), false);
+  const g = mergeGeometries(hairShapes(style).map((p) => tag(p, { team: true, surf: 'hair' })), false);
   if (!g) throw new Error(`hairModel: ${style} parts don't merge`);
+  surfaced(g, 'none');
   return g;
 }
 // Whether a type's figures wear helmets (their hair then mostly hidden).
@@ -823,6 +830,39 @@ export function formationSlots(type: UnitKey, hp: number, rand?: () => number): 
   });
 }
 
+
+// ---- surfaces ----
+// What a model's faces are made of (surfaces.ts): the owner's cloth woven,
+// its paint (shield faces, plumes, flags) plain; skin, a face on the head;
+// the palette's metal, wood and leather as such; on a machine its wooden
+// hull planked and its steel plated; else told from the colour: grey
+// metal, brown wood or leather, the rest cloth.
+// (A figure 1 tall is 1.75 m; its patterns drawn larger than life, to show.)
+const UNIT_SCALE = 1 / 1.75, UNIT_ZOOM = 2.2;
+const near = (f: FaceInfo, hex: number) => {
+  const c = new THREE.Color(hex), hsl = { h: 0, s: 0, l: 0 };
+  c.getHSL(hsl);
+  return Math.abs(hsl.l - f.l) < 0.02 && Math.abs(hsl.s - f.s) < 0.04 && (hsl.s < 0.05 || Math.min(Math.abs(hsl.h * 360 - f.h), 360 - Math.abs(hsl.h * 360 - f.h)) < 6);
+};
+function surfaced(g: THREE.BufferGeometry, what: UnitKey | 'transport' | 'none'): void {
+  const flags = g.getAttribute('aLimb'), machine = what === 'transport' || (what !== 'none' && isMachine(what));
+  mapSurfaces(g, UNIT_SCALE, UNIT_ZOOM, (f): Surf => {
+    const w = flags.getW(f.i);
+    if (w % 2 >= 1) return near(f, PAINT) ? 'leather' : 'cloth'; // (the owner's colour: woven, or painted on hide and wood)
+    if (Math.floor(w / 2) % 2 >= 1) return 'skin';
+    if (near(f, METAL) || near(f, IRON) || near(f, GUNMETAL)) return 'metal';
+    if (near(f, WOOD) || near(f, DECK)) return machine ? 'planks' : 'wood';
+    if (near(f, SAIL)) return 'cloth';
+    if (near(f, LEATHER)) return machine ? 'planks' : 'leather';
+    if (f.l < 0.1) return 'none';
+    const grey = f.s < 0.16, brown = f.h >= 14 && f.h < 50 && f.s > 0.18;
+    if (machine) return brown ? 'planks' : grey || (f.h > 50 && f.h < 100) ? (Math.abs(f.n.y) > 0.9 ? 'metal' : 'plates') : 'none';
+    if (grey && f.l > 0.42) return 'metal';
+    if (brown) return f.l > 0.33 ? 'wood' : 'leather';
+    return 'cloth';
+  });
+}
+
 // One figure of a unit type, dressed for a civ (each instance draws its own
 // horse coat from a few: the variant).
 export function unitModel(type: UnitKey, civ: ArchCiv, variant = 0, female = false): THREE.BufferGeometry {
@@ -882,6 +922,7 @@ export function unitModel(type: UnitKey, civ: ArchCiv, variant = 0, female = fal
   // (Every part tagged, none with a leaf mask: their attributes must match.)
   const g = mergeGeometries(parts.map((p) => (p.getAttribute('aLimb') && !p.getAttribute('leafMask') ? p : tag(p))), false);
   if (!g) throw new Error(`unitModel: ${type} parts don't merge`);
+  surfaced(g, type);
   return g;
 }
 // How many variants of a type's model there are (instances pick among them).

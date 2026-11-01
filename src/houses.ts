@@ -16,6 +16,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { cone, cyl } from './propCatalog.ts';
 import { CELL, FOOTPRINT_CELLS, wallHeight, type Floors, type Footprint } from './town/geometry.ts';
 import { mulberry32 } from './rng.ts';
+import { BUILDING_SCALE, BUILDING_ZOOM, buildingPick, mapSurfaces, type BuildingSurfaces } from './surfaces.ts';
 import type { Style } from './architecture.ts';
 import {
   BAND, E, P, box, cypress, fence, frustum, gable, hip, onFace, palm, patch, pick, place, plant, ring, shrub, storeys, tree, windows, yard, faceWidth,
@@ -398,6 +399,28 @@ const STYLE_BUILD: Record<Style, Build> = {
   tulou: (l) => (Math.min(...FOOTPRINT_CELLS[l.fp]) >= 3 ? tulouRing(l) : FIRST_STYLES.eastAsian(l)),
 };
 
+
+// What each style builds with (surfaces.ts buildingPick): its light walls'
+// masonry and, where it has one, its roofing; the rest told from colour.
+const STYLE_SURFACES: Partial<Record<Style, BuildingSurfaces>> = {
+  mediterranean: { masonry: 'plaster', roof: 'clayTile' }, cycladic: { masonry: 'plaster' }, andalusian: { masonry: 'plaster', roof: 'clayTile' },
+  nile: { masonry: 'plaster' }, mesopotamian: { masonry: 'plaster' }, windcatcher: { masonry: 'plaster' }, levantine: { masonry: 'ashlar' },
+  eastAsian: { masonry: 'plaster', roof: 'clayTile' }, machiya: { masonry: 'plaster', roof: 'shingle' }, yurt: { masonry: 'cloth' },
+  mesoamerican: { masonry: 'plaster' }, african: { masonry: 'plaster', roof: 'thatch' }, southAsian: { masonry: 'brick' },
+  northern: { masonry: 'plaster', roof: 'thatch' }, slate: { masonry: 'fieldstone', roof: 'slate' }, fachwerk: { masonry: 'plaster', roof: 'clayTile' },
+  longhouse: { masonry: 'siding' }, izba: { masonry: 'siding', roof: 'planks' },
+  insula: { masonry: 'plaster' }, neoclassical: { masonry: 'marble' }, renaissance: { masonry: 'plaster', roof: 'clayTile' }, colonial: { masonry: 'ashlar' },
+  mamluk: { masonry: 'ashlar' }, islamic: { masonry: 'plaster' }, safavid: { masonry: 'brick' }, tulou: { masonry: 'plaster', roof: 'clayTile' },
+  kura: { masonry: 'plaster', roof: 'shingle' }, monastic: { masonry: 'plaster' }, gondarine: { masonry: 'fieldstone' }, haveli: { masonry: 'ashlar' },
+  georgian: { masonry: 'ashlar', roof: 'slate' }, vosges: { masonry: 'ashlar', roof: 'slate' }, gothic: { masonry: 'plaster', roof: 'clayTile' },
+  bryggen: { masonry: 'siding' }, terem: { masonry: 'siding' },
+  brick: { masonry: 'brick' }, haussmann: { masonry: 'ashlar', roof: 'slate' }, polykatoikia: { masonry: 'concrete' }, modernisme: { masonry: 'ashlar' },
+  bauhaus: { masonry: 'plaster' }, shikumen: { masonry: 'brick' }, zakkyo: { masonry: 'concrete' }, panel: { masonry: 'concrete' }, deco: { masonry: 'plaster' },
+  indoSaracenic: { masonry: 'ashlar' }, brickExpressionist: { masonry: 'brick' }, stalinist: { masonry: 'ashlar' },
+  modern: { masonry: 'concrete' }, screen: { masonry: 'concrete' }, verticalForest: { masonry: 'concrete' }, highTech: { masonry: 'concrete' },
+  miesian: { masonry: 'concrete' }, briseSoleil: { masonry: 'concrete' }, mural: { masonry: 'concrete' }, timber: { masonry: 'wood' }, pagoda: { masonry: 'concrete' }, tokyo: { masonry: 'concrete' },
+};
+
 // ---------- the models ----------
 
 const cache = new Map<string, G>();
@@ -415,6 +438,7 @@ export function houseGeometry(kind: HouseKind): G {
     for (const p of parts) p.dispose();
     g.setAttribute('leafMask', new THREE.BufferAttribute(new Float32Array(g.getAttribute('position').count), 1));
     g.computeVertexNormals();
+    mapSurfaces(g, BUILDING_SCALE, BUILDING_ZOOM, buildingPick(STYLE_SURFACES[style]));
     cache.set(kind, g);
   }
   return g;

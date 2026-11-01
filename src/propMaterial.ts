@@ -3,6 +3,7 @@
 
 import * as THREE from 'three';
 import { GRADE_GLSL } from './terrainMaterial.ts';
+import { SURFACE_FRAGMENT, SURFACE_VERTEX, SURFACE_VERTEX_DECL, surfaceUniform } from './surfaces.ts';
 
 // How far leaves sway in the wind (a share of their height in the model).
 const WIND = 0.04;
@@ -226,9 +227,10 @@ export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Ve
   mat.onBeforeCompile = (shader) => {
     if (day) shader.uniforms['uSunDir'] = { value: sunDir };
     if (flora) Object.assign(shader.uniforms, floraUniforms(flora));
+    else shader.uniforms['uSurfaces'] = surfaceUniform(false);
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
-        ${flora ? FLORA_VERTEX_DECL : 'attribute float leafMask; attribute vec3 cardUv;'}
+        ${flora ? FLORA_VERTEX_DECL : `attribute float leafMask; attribute vec3 cardUv; ${SURFACE_VERTEX_DECL}`}
         attribute float leafShade;
         attribute vec3 leafTint;
         varying vec3 vCard;
@@ -236,7 +238,7 @@ export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Ve
         ${day ? 'uniform vec3 uSunDir;' : ''}`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
         vCard = cardUv;
-        ${flora ? FLORA_VERTEX : ''}`)
+        ${flora ? FLORA_VERTEX : SURFACE_VERTEX}`)
       .replace('#include <color_vertex>', `#include <color_vertex>
         #ifdef USE_INSTANCING_COLOR
           vColor.xyz = mix(color.xyz, leafTint, leafMask) * instanceColor.xyz * (1.0 - leafShade);
@@ -250,7 +252,7 @@ export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Ve
       .replace('#include <common>', `#include <common>
         varying float vDay;
         varying vec3 vCard;
-        ${flora ? CARD_TEXEL : ''}
+        ${flora ? CARD_TEXEL : SURFACE_FRAGMENT}
         ${GRADE_GLSL}`)
       .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
         reflectedLight.directDiffuse *= vDay;
@@ -267,6 +269,9 @@ export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Ve
     // into the clump; a flat leaf's (vCard.z -1) share its normal up.)
     if (flora) frag = frag.replace('#include <normal_fragment_begin>', `#include <normal_fragment_begin>
         if (abs(vCard.z) > 0.5) normal *= faceDirection;`);
+    // (Buildings and people: their surfaces' textures.)
+    if (!flora) frag = frag.replace('#include <color_fragment>', `#include <color_fragment>
+        diffuseColor.rgb *= surfaceDetail();`);
     if (flora) frag = frag.replace('#include <color_fragment>', `#include <color_fragment>
         // A leaf card: its leaves cut out of it; seen edge-on it thins out
         // and goes (no hard edges).
@@ -288,6 +293,8 @@ export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Ve
 export function instanceGeometry(model: THREE.BufferGeometry, capacity: number): THREE.BufferGeometry {
   const g = new THREE.BufferGeometry();
   for (const [name, attr] of Object.entries(model.attributes)) g.setAttribute(name, attr);
+  // (Untextured models: every face bare.)
+  if (!g.getAttribute('aTex')) g.setAttribute('aTex', new THREE.BufferAttribute(new Float32Array(g.getAttribute('position').count * 4), 4));
   g.setAttribute('leafTint', new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3));
   return g;
 }

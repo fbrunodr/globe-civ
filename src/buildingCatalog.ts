@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { CATALOG, buildCatalogGeometry, buildModel, cone, cyl, part, seg, tf, V, type CatalogKind, type Palette, type Tf } from './propCatalog.ts';
+import { BUILDING_SCALE, BUILDING_ZOOM, buildingPick, mapSurfaces } from './surfaces.ts';
 import { houseGeometry, isHouseKind, type HouseKind } from './houses.ts';
 import { isWonderModelKind, wonderGeometry, type WonderModelKind } from './wonderModels.ts';
 import { isRuralModelKind, ruralGeometry, type RuralModelKind } from './rural/models.ts';
@@ -138,8 +139,12 @@ export type BuildingKind = keyof typeof BUILDINGS_CATALOG;
 export const BUILDING_KINDS = Object.keys(BUILDINGS_CATALOG) as BuildingKind[];
 export const buildingEntry = (k: BuildingKind): BuildingEntry => BUILDINGS_CATALOG[k];
 
-export const buildBuildingGeometry = (kind: BuildingKind, palette?: Partial<Palette>): THREE.BufferGeometry =>
-  buildModel(BUILDINGS_CATALOG[kind], kind, palette);
+// (Textured as the towns' houses are, their walls of cut stone.)
+export function buildBuildingGeometry(kind: BuildingKind, palette?: Partial<Palette>): THREE.BufferGeometry {
+  const g = buildModel(BUILDINGS_CATALOG[kind], kind, palette);
+  mapSurfaces(g, BUILDING_SCALE, BUILDING_ZOOM, buildingPick({ masonry: 'ashlar' }));
+  return g;
+}
 
 // Any model a town places: a catalog building, or a lot model (a house,
 // houses.ts, a wonder, wonderModels.ts, or a rural model, rural/models.ts:
