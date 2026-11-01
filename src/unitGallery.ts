@@ -9,9 +9,10 @@
 //              strike, archers loose volleys forward).
 //   Battle     an attacker and a defender of your choosing, facing each
 //              other: Fight resolves an attack by the game's own rules
-//              (game.ts combatStrength, fightRounds), plays it out, and
-//              leaves each side with the HP it has left (the fallen leave
-//              the field). Fight again to go on; Heal both to start over.
+//              (game.ts combatStrength, fightRounds), and the game's own
+//              unit view (unitView.ts, on a patch of globe as flat as the
+//              field) plays it out, leaving each side with the HP it has
+//              left. Fight again to go on; Heal both to start over.
 
 import './style.css';
 import * as THREE from 'three';
@@ -21,10 +22,10 @@ import { CIVS, UNITS, domainOf, type UnitKey } from './rules.ts';
 import { TECHS, TECH_KEYS } from './techs.ts';
 import { POLITICS } from './politics.ts';
 import { FORTIFY_BONUS, combatStrength, fightRounds, matchup } from './game.ts';
-import { HAIR_STYLES, UNIT_LOOK, colsOf, figuresFor, formationSlots, hairModel, headOffset, isMachine, rides, unitModel, variantOf, whirls, womenShare } from './unitModels.ts';
-import { FIGHT, PLAYS, Volleys, bow, durOf, figureOut, defendPlay, fallShare, falls, figureLooks, makeUnitMaterial, playAt, playOf, prepareUnitGeometry, type Play } from './unitView.ts';
-import { pairUp, type P2 } from './duel.ts';
-import { AFTER, armOf, deathBend, deathLegs, deathTurn, dropOf, legsOf, poseOf, poseTurn, rearShift, type Cue } from './unitAnim.ts';
+import { HAIR_STYLES, UNIT_LOOK, colsOf, formationSlots, hairModel, headOffset, isMachine, rides, unitModel, variantOf, whirls, womenShare } from './unitModels.ts';
+import { FIGHT, PLAYS, UnitView, Volleys, durOf, defendPlay, falls, figureLooks, makeUnitMaterial, playAt, playOf, prepareUnitGeometry, type Play, type ShownUnit } from './unitView.ts';
+import type { P2 } from './duel.ts';
+import { AFTER, armOf, dropOf, legsOf, poseOf, poseTurn, rearShift, type Cue } from './unitAnim.ts';
 import { attackBlock, attackStyle, siegeStyle } from './unitClasses.ts';
 import { WorldLabel, disposeLabels } from './worldLabel.ts';
 import { triangles } from './lowpoly.ts';
@@ -72,7 +73,7 @@ const COL_W = TYPES.map((type) => {
 });
 const COL_X = COL_W.reduce<number[]>((xs, w, i) => [...xs, i === 0 ? 0 : xs[i - 1]! + (COL_W[i - 1]! + w) / 2], []);
 const SEA_DEPTH = 0.45; // the ships' basin below the field (figure heights)
-const BATTLE_GAP = 7;             // between the two sides of a battle
+const BATTLE_GAP = 1 / 0.16;      // between the two sides of a battle: a tile step (unitView.ts FIGURE)
 // A fight, as in the game (unitView.ts): as long as its attack lasts (durOf;
 // then a pause of PAUSE seconds, looping on the sheet), and how far a melee unit charges (a share of the way to
 // the enemy; on the sheet it charges SHEET_CHARGE figure heights; in a
@@ -97,12 +98,10 @@ const colorOf = (civ: ArchCiv) => CIVS.find((c) => c.name === civ)?.color ?? '#c
 // shoots at; null: it doesn't fight).
 // (`attack`: the attack being made, `side` its part in it.)
 interface Cell { type: UnitKey; civ: ArchCiv; hp: number; x: number; z: number; half: number; facing: 1 | -1; target: THREE.Vector3 | null; play: Play | null; attack: Play | null; side: 'attacker' | 'defender'; fired: number; seed: number }
-// A figure in a battle (shared by its body and its hair): its place in the
-// formation, whether it rides; in a melee, where it goes and whom it
-// faces (field places), how late it sets out; when it falls (a share of
-// the fight; never: Infinity).
-// (`beat`: where it is in its round of blows: unitAnim.ts.)
-interface Soul { idx: number; rides: boolean; to: P2 | null; foe: P2 | null; delay: number; curve: number; fall: number; beat: number }
+// A figure on the sheet (shared by its body and its hair): its place in
+// the formation, whether it rides, where it is in its round of blows
+// (`beat`: unitAnim.ts).
+interface Soul { idx: number; rides: boolean; beat: number }
 // Every figure drawn: its mesh and slot, its cell and place in it.
 interface Placed { mesh: THREE.InstancedMesh; i: number; cell: Cell; fx: number; fz: number; lift: readonly [number, number]; phase: number; hair: boolean; soul: Soul }
 let cells: Cell[] = [];
@@ -118,7 +117,7 @@ let marching = false;
 let suffrage = false;
 // The fight going on: when it began, whether it loops (the sheet), and (a
 // battle) what it comes to.
-let fight: { t0: number; loop: boolean; outcome: { attacker: number; defender: number } | null } | null = null;
+let fight: { t0: number; loop: boolean; outcome: { attacker: number; defender: number } | null; dur: number } | null = null;
 // The battle's sides.
 const battle = { aCiv: 'Romans' as ArchCiv, aType: 'spearman' as UnitKey, aHp: 100, dCiv: 'Egyptians' as ArchCiv, dType: 'archer' as UnitKey, dHp: 100, ground: 0, fortified: false };
 
@@ -158,15 +157,19 @@ function build(): { w: number; d: number } {
   world = new THREE.Group();
   scene.add(world);
   cells = mode === 'sheet' ? sheetCells() : battleCells();
+  // (A battle: the game's unit view stands its units; the sheet's figures are drawn here.)
+  battleView?.dispose();
+  battleView = mode === 'battle' ? makeBattleView() : null;
+  if (battleView) world.add(battleView.group);
   // Each model's figures (and each hair style's): its colour and skin.
   type Fig = { cell: Cell; fx: number; fz: number; lift: readonly [number, number]; color: THREE.Color; skin: THREE.Color; phase: number; hair: boolean; soul: Soul };
   const figs = new Map<string, Fig[]>();
   const push = (key: string, f: Fig) => { const list = figs.get(key) ?? []; list.push(f); figs.set(key, list); };
-  for (const cell of cells) {
+  for (const cell of mode === 'sheet' ? cells : []) {
     const rand = mulberry32(cell.seed);
     for (const [i, [fx, fz]] of formationSlots(cell.type, cell.hp, rand).entries()) {
       const variant = variantOf(cell.type, i, rand), looks = figureLooks(cell.type, cell.civ, womenShare(cell.type, suffrage), rand), phase = rand() * Math.PI * 2;
-      const soul: Soul = { idx: i, rides: rides(cell.type, variant), to: null, foe: null, delay: 0, curve: 0, fall: Infinity, beat: phase / (Math.PI * 2) };
+      const soul: Soul = { idx: i, rides: rides(cell.type, variant), beat: phase / (Math.PI * 2) };
       const f: Fig = { cell, fx, fz, lift: [0, 0], color: new THREE.Color(colorOf(cell.civ)), skin: looks.skin, phase, hair: false, soul };
       push(`${cell.type}|${cell.civ}|${variant}|${looks.female ? 1 : 0}`, f);
       if (looks.hair >= 0) push(`hair|${looks.hair}`, { ...f, lift: headOffset(cell.type, variant), color: looks.hairColor, hair: true });
@@ -194,8 +197,7 @@ function build(): { w: number; d: number } {
     mesh.castShadow = mesh.receiveShadow = true;
     world.add(mesh);
   }
-  if (mode === 'battle') pairBattle();
-  $('tris').textContent = `${placed.filter((p) => !p.hair).length} figures · ${drawn.toLocaleString()} triangles`;
+  $('tris').textContent = mode === 'sheet' ? `${placed.filter((p) => !p.hair).length} figures · ${drawn.toLocaleString()} triangles` : '';
   let w = 0, d = BATTLE_GAP;
   if (mode === 'sheet') {
     cells.filter((c) => c.x === 0).forEach((c) => label(c.civ, -2.6, c.z, true));
@@ -239,19 +241,28 @@ function build(): { w: number; d: number } {
 
 // Where a figure stands on the field (out of the fight).
 const homeOf = (p: Placed): P2 => ({ x: p.cell.x - p.fx * p.cell.facing, z: p.cell.z + p.fz * p.cell.facing });
-// The battle's figures by side, each once (not its hair).
-const sideOf = (c: Cell | undefined) => placed.filter((p) => p.cell === c && !p.hair).sort((a, b) => a.soul.idx - b.soul.idx);
-// A melee battle: each of the attacker's figures paired with one of the
-// defender's (duel.ts).
-function pairBattle(): void {
-  const [a, d] = cells;
-  if (!a || !d || !a.play?.close) return;
-  const att = sideOf(a), def = sideOf(d);
-  pairUp(att.map(homeOf), def.map(homeOf), a.type, d.type, mulberry32(7)).forEach((duel, i) => {
-    const s = att[i]!.soul, foe = def[duel.foe]!;
-    Object.assign(s, { to: duel.to, foe: homeOf(foe), delay: duel.delay, curve: duel.curve });
-    if (!foe.soul.foe) { foe.soul.foe = duel.to; foe.soul.beat = s.beat + 0.5; }
-  });
+// The battle, played by the game's unit view (unitView.ts) on a patch of
+// globe: the defender's tile at the pole, the attacker's BATTLE_STEP
+// away towards +z; the view scaled and lowered so that a figure is one
+// unit tall and the ground at the pole is the field (the patch so small
+// that it is flat to a hair).
+const BATTLE_STEP = 0.002;
+let battleView: UnitView | null = null;
+const battleCentre = (t: number) => new THREE.Vector3(0, Math.cos(t * BATTLE_STEP), Math.sin(t * BATTLE_STEP));
+// (The units as they stand, or with the HP a fight leaves them.)
+const battleUnits = (aHp = battle.aHp, dHp = battle.dHp): ShownUnit[] => [
+  ...(aHp > 0 ? [{ id: 1, type: battle.aType, civ: battle.aCiv, color: colorOf(battle.aCiv), tile: 1, hp: aHp, suffrage }] : []),
+  ...(dHp > 0 ? [{ id: 2, type: battle.dType, civ: battle.dCiv, color: colorOf(battle.dCiv), tile: 0, hp: dHp, suffrage }] : []),
+];
+function makeBattleView(): UnitView {
+  const view = new UnitView({ center: battleCentre, ground: () => ({ ground: 0, water: -1 }), step: BATTLE_STEP }, () => new THREE.Sprite(new THREE.SpriteMaterial({ visible: false })));
+  view.group.scale.setScalar(1 / view.size);
+  view.group.position.set(0, -1 / view.size, 0);
+  const now = performance.now() / 1000;
+  view.sync(battleUnits(), now);
+  view.turnTo(1, 0);
+  view.turnTo(2, 1);
+  return view;
 }
 
 function frame(d: { w: number; d: number }): void {
@@ -267,52 +278,32 @@ function frame(d: { w: number; d: number }): void {
 
 // ---- posing ----
 
-// Every figure posed for now: standing, marching on the spot, or in the
-// fight as its play says (unitView.ts PLAYS: charging in and falling back,
-// striking; shooters aiming, loosing their arrows, stones, shells or bullets).
+// Every figure on the sheet posed for now: standing, marching on the
+// spot, or attacking over and over as its play says (unitView.ts PLAYS:
+// charging forward and falling back, striking; shooters aiming, loosing
+// their arrows, stones, shells or bullets).
 function pose(now: number): void {
-  // (A battle's fight lingers AFTER it is over: the dead lie there, the winners cheer.)
   // (Each cell's fight as long as its attack: seconds into it, a share of it.)
   const clock = (c: Cell) => {
-    const dur = c.attack ? durOf(c.attack) : FIGHT, sec = !fight ? Infinity : fight.loop ? (now - fight.t0) % (dur + PAUSE) : now - fight.t0;
+    const dur = c.attack ? durOf(c.attack) : FIGHT, sec = !fight ? Infinity : (now - fight.t0) % (dur + PAUSE);
     return { dur, sec, t: sec / dur, fighting: sec < dur };
   };
-  if (fight && !fight.loop && cells[0] && now - fight.t0 >= clock(cells[0]).dur + AFTER) { endFight(); return; }
-  const o = fight?.outcome;
   const m = new THREE.Matrix4(), turn = new THREE.Matrix4(), offset = new THREE.Vector3(), tip = new THREE.Quaternion();
-  const heading = (dx: number, dz: number) => Math.atan2(dx, dz);
   for (const p of placed) {
-    // (The fallen stay where they fell, after the fight too.)
-    const c = p.cell, s = p.soul, { dur, sec, t, fighting } = clock(c), fell = fight !== null && falls(c.type) && t > s.fall, play = (fighting || fell) && c.target !== null ? c.play : null;
-    // (Struck down: as far as it got, then over.)
-    const st = play ? { ...playAt(play, Math.min(t, s.fall)), ...figureOut(play, Math.min(t, s.fall), s.delay) } : null;
-    const home = homeOf(p);
-    let x = home.x, z = home.z, ry = (c.facing === 1 ? 0 : Math.PI) + (st?.back ? Math.PI : 0);
-    if (play && st && s.to) {
-      // (A melee: out to its foe, facing it, then home.)
-      // (Its path bowed to one side.)
-      const dx = s.to.x - home.x, dz = s.to.z - home.z, len = Math.hypot(dx, dz) || 1, b = bow(s.curve, st.out);
-      x += dx * st.out - (dz / len) * b; z += dz * st.out + (dx / len) * b;
-      ry = st.back ? heading(home.x - s.to.x, home.z - s.to.z) : st.out < 0.98 ? heading(s.to.x - home.x, s.to.z - home.z) : heading(s.foe!.x - x, s.foe!.z - z);
-    } else if (play && st) {
+    const c = p.cell, s = p.soul, { dur, sec, t, fighting } = clock(c), play = fighting && c.target !== null ? c.play : null;
+    const st = play ? playAt(play, t) : null, home = homeOf(p);
+    let x = home.x, z = home.z;
+    if (play && st) {
       offset.set(c.target!.x - c.x, 0, c.target!.z - c.z).multiplyScalar(CHARGE_SHARE * play.charge * st.out);
       x += offset.x; z += offset.z;
-      if (s.foe) ry = heading(s.foe.x - x, s.foe.z - z);
     }
     m.makeTranslation(x, (play?.fly ?? 0) * (st?.out ?? 0), z);
-    m.multiply(turn.makeRotationY(ry));
-    // (People and horses posed as they act (unitAnim.ts); struck down, falling.)
-    const body = falls(c.type), down = fell;
-    const moving = (marching && mode === 'sheet') || st?.moving ? (play && play.charge > 1 ? 1.4 : 1) : 0;
+    m.multiply(turn.makeRotationY((c.facing === 1 ? 0 : Math.PI) + (st?.back ? Math.PI : 0)));
+    // (People and horses posed as they act (unitAnim.ts).)
+    const moving = marching || st?.moving ? (play && play.charge > 1 ? 1.4 : 1) : 0;
     let legs = moving, arm = st?.strike ?? 0, bends: readonly [number, number, number, number, number, number, number, number] = [0, 0, 0, 0, 0, 0, 0, 0];
-    if (down) {
-      const since = (t - s.fall) * dur, fold = deathBend(since, s.beat);
-      if (!s.rides) m.multiply(turn.makeTranslation(0, -dropOf(fold.crouch), 0));
-      m.multiply(turn.makeRotationFromQuaternion(deathTurn(tip, since, s.beat, s.rides)));
-      legs = deathLegs(since, s.rides); arm = 3 + fold.arm; bends = s.rides ? [0, 0, 0, 0, 0, 0, 0, 0] : [fold.bend, 0, fold.crouch, 0.6, fold.aim, 1, 0.4, 0];
-    } else if (body) {
-      const won = o ? (c.side === 'attacker' ? o.defender <= 0 && o.attacker > 0 : o.attacker <= 0) : false;
-      const cue: Cue | null = fight && c.play && c.attack ? { sec, dur, play: c.play, attack: c.attack, side: c.side, engaged: s.to !== null || s.foe !== null || (mode === 'sheet' && c.attack.close === true), delay: s.delay, fall: s.fall * dur, won } : null;
+    if (falls(c.type)) {
+      const cue: Cue | null = fight && c.play && c.attack ? { sec, dur, play: c.play, attack: c.attack, side: c.side, engaged: c.attack.close === true, delay: 0, fall: Infinity, won: false } : null;
       const pz = poseOf(cue, now, p.phase, s.beat, moving, s.rides, whirls(c.type));
       // (Crouched, lower: the legs fold under it.)
       const [ry, rz] = rearShift(pz);
@@ -367,23 +358,18 @@ function showBattle(): void {
   $<HTMLButtonElement>('fight').disabled = !alive || fight !== null || block !== null;
 }
 function startFight(): void {
-  if (mode !== 'battle' || fight || battle.aHp <= 0 || battle.dHp <= 0 || attackBlock(battle.aType, battle.dType)) return;
+  if (mode !== 'battle' || fight || !battleView || battle.aHp <= 0 || battle.dHp <= 0 || attackBlock(battle.aType, battle.dType)) return;
   const { A, D } = strengths();
-  const outcome = fightRounds(battle.aHp, battle.dHp, A, D, isRanged(battle.aType), Math.random);
-  fight = { t0: performance.now() / 1000, loop: false, outcome };
-  // (The figures it costs each side fall as it goes on.)
-  const style = attackStyle(battle.aType, battle.dType)!, rand = mulberry32(Math.floor(Math.random() * 1e9));
-  const doom = (c: Cell | undefined, hp: number, side: 'attacker' | 'defender') => {
-    if (!c) return;
-    const look = UNIT_LOOK[c.type], keep = hp <= 0 ? 0 : look.party === 'formation' ? figuresFor(hp, look.count) : look.count;
-    for (const p of sideOf(c)) if (p.soul.idx >= keep) p.soul.fall = fallShare(PLAYS[style], side, rand());
-  };
-  doom(cells[0], outcome.attacker, 'attacker');
-  doom(cells[1], outcome.defender, 'defender');
+  const outcome = fightRounds(battle.aHp, battle.dHp, A, D, isRanged(battle.aType), Math.random), style = attackStyle(battle.aType, battle.dType)!, now = performance.now() / 1000;
+  fight = { t0: now, loop: false, outcome, dur: durOf(PLAYS[style]) };
+  // (As the game: the fight first, then the units as they come out of it.)
+  battleView.fight(1, 0, style, now, { defender: 2, attackerHp: outcome.attacker, defenderHp: outcome.defender });
+  battleView.sync(battleUnits(outcome.attacker, outcome.defender), now);
   $('result').textContent = 'Fighting…';
   showBattle();
 }
-// The fight over: each side keeps the HP it has left; the fallen leave.
+// The fight over (and lingered on: the dead lie there, the winners cheer):
+// what it came to.
 function endFight(): void {
   const o = fight?.outcome;
   fight = null;
@@ -396,7 +382,6 @@ function endFight(): void {
   $('result').innerHTML = `${line}<br>${a}: ${lost(battle.aHp, o.attacker)} · ${d}: ${lost(battle.dHp, o.defender)}`;
   battle.aHp = o.attacker;
   battle.dHp = o.defender;
-  build();
   showBattle();
 }
 
@@ -423,7 +408,7 @@ options<ArchCiv | 'all'>('civSel', ['all', ...ARCH_CIVS], (v) => (v === 'all' ? 
 $<HTMLInputElement>('suffrage').addEventListener('change', (e) => { suffrage = (e.target as HTMLInputElement).checked; build(); (e.target as HTMLElement).blur(); });
 $('hp').addEventListener('input', (e) => { sheetHp = Number((e.target as HTMLInputElement).value); $('hpV').textContent = String(sheetHp); build(); });
 const setMarching = (on: boolean) => { marching = on; $('march').classList.toggle('active', on); };
-const setAttacking = (on: boolean) => { fight = on ? { t0: performance.now() / 1000, loop: true, outcome: null } : null; $('attack').classList.toggle('active', on); };
+const setAttacking = (on: boolean) => { fight = on ? { t0: performance.now() / 1000, loop: true, outcome: null, dur: FIGHT } : null; $('attack').classList.toggle('active', on); };
 $('march').addEventListener('click', (e) => { setMarching(!marching); (e.currentTarget as HTMLElement).blur(); });
 $('attack').addEventListener('click', (e) => { setAttacking(!fight); (e.currentTarget as HTMLElement).blur(); });
 
@@ -480,4 +465,12 @@ resize();
 frame(build());
 showBattle();
 if (import.meta.env.DEV) Object.assign(window, { __units: { volleys, battle, setMode, startFight, camera, controls } });
-renderer.setAnimationLoop(() => { time.value = performance.now() / 1000; pose(time.value); keyboard(); controls.update(); renderer.render(scene, camera); });
+renderer.setAnimationLoop(() => {
+  const now = performance.now() / 1000;
+  time.value = now;
+  if (fight && !fight.loop && now - fight.t0 >= fight.dur + AFTER) endFight();
+  if (battleView) battleView.update(now, camera, Infinity); else pose(now);
+  keyboard();
+  controls.update();
+  renderer.render(scene, camera);
+});

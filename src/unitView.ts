@@ -321,7 +321,7 @@ export class UnitView {
   private readonly shown = new Map<number, Shown>();
   private corpses: Corpse[] = [];
   private readonly volleys: Volleys;
-  private readonly size: number; // a figure's height, world units
+  readonly size: number; // a figure's height, world units
   private now = 0; // the time of the frame drawn last (seconds)
 
   constructor(private readonly env: UnitViewEnv, private readonly makeFlag: (u: ShownUnit) => THREE.Sprite) {
@@ -371,6 +371,15 @@ export class UnitView {
       if (s.seen) continue;
       if (s.fight) { s.gone = true; s.flag.visible = false; } else this.drop(s);
     }
+  }
+
+  // Turns a unit shown to face a tile (and stands it there anew).
+  turnTo(id: number, tile: number): void {
+    const s = this.shown.get(id);
+    if (!s || s.fight) return;
+    this.face(s, this.env.center(tile).clone().sub(s.dir));
+    for (const f of s.figures) f.fresh = true;
+    this.settle(s, s.k);
   }
 
   // A fight: the attacker charges at the tile (or, ranged, looses arrows at
@@ -782,7 +791,7 @@ export class UnitView {
     const u = s.unit, rand = mulberry32(u.id * 104729 + 3), old = keep ? s.figures : [];
     const motion = (i: number, phase: number) => {
       const o = old[i];
-      return o ? { at: o.at, off: o.off, head: o.head, last: o.last, speed: o.speed, gait: o.gait, fresh: false, pos: o.pos, up: o.up }
+      return o ? { at: o.at, off: o.off, head: o.head, last: o.last, speed: o.speed, gait: o.gait, fresh: o.fresh, pos: o.pos, up: o.up }
         : { at: new THREE.Vector3(), off: new THREE.Vector3(), head: s.forward.clone(), last: new THREE.Vector3(), speed: 0, gait: phase, fresh: true, pos: new THREE.Vector3(), up: new THREE.Vector3() };
     };
     // (Embarked: its one boat.)
@@ -1017,7 +1026,7 @@ const PUFF_VERTEX = /* glsl */ `
   void main() {
     vec4 mv = modelViewMatrix * vec4(position, 1.0);
     gl_Position = projectionMatrix * mv;
-    gl_PointSize = aSize * projectionMatrix[1][1] * uHalfHeight / -mv.z;
+    gl_PointSize = aSize * length(modelMatrix[0].xyz) * projectionMatrix[1][1] * uHalfHeight / -mv.z; // (sizes as the model is scaled)
     vTint = aTint;
   }`;
 const PUFF_FRAGMENT = /* glsl */ `
