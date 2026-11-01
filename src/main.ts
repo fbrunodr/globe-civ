@@ -5,7 +5,8 @@ import { GlobeRenderer, type DebugView, type Selection, type TileMark } from './
 import { UI, assertNever, attackInput, modeOf, wonderPicked, type Action, type Placing } from './ui.ts';
 import { Sheets } from './sheets.ts';
 import { gameLogId } from './gameLog.ts';
-import { MAP_SCRIPTS, MAP_SIZES, isMapScript, tileCount, unitDef, isWonder, type MapScriptKey, type MapSizeKey } from './rules.ts';
+import { MAP_SCRIPTS, MAP_SIZES, isMapScript, tileCount, unitDef, domainOf, isWonder, type MapScriptKey, type MapSizeKey } from './rules.ts';
+import { canShoot } from './unitClasses.ts';
 
 const isMapSize = (s: string): s is MapSizeKey => s in MAP_SIZES;
 
@@ -108,6 +109,7 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
   const placingCity = (): City | null =>
     (sel?.kind === 'city' && sel.city.owner === HUMAN && (sel.city.growth > 0 || wonderPicked(placing) || placing === 'buy') ? sel.city : null);
   const PLACE_COLOR: Record<'rural' | 'wonder' | 'buy', number> = { rural: 0x8ce99a, wonder: 0xf5d76e, buy: 0xd4a72c };
+  const REACH_COLOR = 0xe8604a;
   const defaultPlacing = (c: City): Placing =>
     c.owner !== HUMAN ? null : c.growth > 0 ? game.governorPick(c)?.kind ?? null : null;
 
@@ -122,6 +124,10 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
     const out: TileMark[] = [];
     // The mountain of the wonder the selected city is building.
     if (sel?.kind === 'city' && sel.city.wonderTile !== null && sel.city.wonderTile !== sel.city.tile && sel.city.owner === HUMAN) out.push({ tile: sel.city.wonderTile, color: PLACE_COLOR.wonder, opacity: 0.6 });
+    // The tiles the selected shooter can fire on from where it stands (its enemies there brighter).
+    if (sel?.kind === 'unit' && sel.unit.owner === HUMAN && sel.unit.moves > 0 && canShoot(sel.unit.type) && domainOf(unitDef(sel.unit.type)) !== 'air') {
+      for (const t of game.fireReach(sel.unit)) out.push({ tile: t, color: REACH_COLOR, opacity: game.isEnemyOccupied(t, HUMAN) ? 0.7 : 0.22 });
+    }
     const c = placingCity();
     if (!c || !placing) return out;
     // The tiles it could buy (dimmer when it cannot pay).

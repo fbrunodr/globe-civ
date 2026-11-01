@@ -7,7 +7,7 @@ import { TECH_KEYS, techDef, type TechKey } from './techs.ts';
 import { POLITICS_KEYS, politicsDef, policyDef, SLOT_KINDS, fits, type PoliticsKey, type GovernmentKey, type PolicyKey } from './politics.ts';
 import { TRAIT_KEYS, traitDef, PATH_KEYS, PATHS, type PathKey, type TraitKey } from './identity.ts';
 import { mulberry32 } from './rng.ts';
-import { canAttackType } from './unitClasses.ts';
+import { canAttackType, canShoot } from './unitClasses.ts';
 import { MIN_WAR, type Game, type Player, type Unit, type City, type DealSide } from './game.ts';
 
 // Deliberately simple AI: expand with settlers, keep a garrison in every
@@ -197,7 +197,9 @@ function militaryTurn(g: Game, u: Unit, p: Player, cities: City[], garrisoned: (
   if (empty) { g.goTo(u, empty.tile); return; }
 
   if (g.canAttack(u)) {
-    for (const nb of g.tiles[u.tile].neighbors) {
+    // (A shooter looks over all it can reach from where it stands.)
+    const near = canShoot(u.type) ? [...g.fireReach(u)] : g.tiles[u.tile].neighbors;
+    for (const nb of near) {
       // (isEnemyOccupied: civs at war with it only.)
       if (!g.isEnemyOccupied(nb, u.owner) || g.isWater(nb) || g.attackBlockAt(u, nb) !== null) continue;
       // (Fire costs nothing: it shoots whatever it can reach; closing in, it wants the odds.)

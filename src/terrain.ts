@@ -112,6 +112,15 @@ export function terrainMoveCost(t: TileTerrain): number {
   return Math.max(BIOMES[t.biome].move, RELIEFS[t.relief].move, t.feature ? FEATURES[t.feature].move : 1);
 }
 
+// What a shot crossing a tile costs of its reach (rules.ts reach): like
+// movement, but by what blocks the view: hills and woods 2, open ground
+// and water 1; mountains can't be shot over at all.
+export function terrainFireCost(t: TileTerrain): number {
+  if (t.relief === 'mountains' || t.feature === 'volcano') return Infinity;
+  const b = BIOMES[t.biome], wooded = !b.water && b.move >= 2 && b.defense > 0;
+  return t.relief === 'hills' || wooded || t.feature === 'mangrove' ? 2 : 1;
+}
+
 export function terrainDefense(t: TileTerrain): number {
   // Mountains have no vegetation cover, so the biome's bonus does not apply.
   const biome = t.relief === 'mountains' ? 0 : BIOMES[t.biome].defense;

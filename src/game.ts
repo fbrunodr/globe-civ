@@ -11,7 +11,7 @@ import {
   type UnitKey, type BuildingKey, type BuildKey, type MapSizeKey, type MapScriptKey,
 } from './rules.ts';
 import {
-  isWaterBiome, terrainMoveCost, terrainDefense,
+  isWaterBiome, terrainMoveCost, terrainFireCost, terrainDefense,
   type BiomeKey, type ReliefKey, type FeatureKey, type TileTerrain, type Yields,
 } from './terrain.ts';
 import { aiTurn, aiPickTech, aiPickPolitics, aiGovern, aiAcceptsPeace, aiAcceptsDeal, aiPickTraits } from './ai.ts';
@@ -365,6 +365,29 @@ export class Game {
   tileYield(t: number): Yield { return tileYieldOf(this.map, t); }
 
   moveCost(t: number): number { return terrainMoveCost(this.terrainAt(t)); }
+  // What a shot crossing tile `t` costs of its reach (terrain.ts).
+  fireCost(t: number): number { return terrainFireCost(this.terrainAt(t)); }
+  // The tiles `u` can shoot at from where it stands: its reach (rules.ts;
+  // one more from hills) paid out over the tiles its shot crosses, each
+  // costing as fireCost says, the target itself 1. (Aircraft: their range,
+  // whatever the ground.)
+  fireReach(u: Unit): Set<number> {
+    const T = unitDef(u.type);
+    if (domainOf(T) === 'air') return new Set(this.tilesWithinMap(u.tile, T.range ?? 1).keys());
+    const reach = (T.reach ?? 1) + (this.relief[u.tile] === 'hills' && !this.isWater(u.tile) ? 1 : 0);
+    // (The cheapest way out to each tile the shot may cross, then one step on.)
+    const cost = new Map<number, number>([[u.tile, 0]]), open = [u.tile], out = new Set<number>();
+    while (open.length) {
+      open.sort((a, b) => cost.get(b)! - cost.get(a)!);
+      const t = open.pop()!, c = cost.get(t)!;
+      for (const nb of this.tiles[t].neighbors) {
+        if (nb !== u.tile) out.add(nb);
+        const k = c + this.fireCost(nb);
+        if (k <= reach - 1 && k < (cost.get(nb) ?? Infinity)) { cost.set(nb, k); open.push(nb); }
+      }
+    }
+    return out;
+  }
 
   defenseBonus(t: number): number { return terrainDefense(this.terrainAt(t)); }
 
@@ -452,9 +475,10 @@ export class Game {
     if (!this.canAttack(u)) return 'cannot attack';
     if (domainOf(unitDef(u.type)) === 'air' && !this.inRange(u, tile)) return 'out of range';
     const d = this.bestDefender(tile, u.owner, mode), where = { atSea: this.isWater(tile), city: this.cityByTile.has(tile), embarked: this.isEmbarked(u) };
-    if (d) return attackBlock(u.type, d.type, where, mode);
+    if (d) return attackBlock(u.type, d.type, where, mode) ?? (mode === 'ranged' && !this.fireReach(u).has(tile) ? 'out of reach' : null);
     if (mode === 'melee' && !canAssault(u.type)) return 'cannot close in';
     if (mode === 'ranged' && !canShoot(u.type)) return 'cannot shoot';
+    if (mode === 'ranged' && !this.fireReach(u).has(tile)) return 'out of reach';
     if (where.embarked && !unitDef(u.type).amphibious) return 'cannot attack while embarked';
     return null;
   }
@@ -785,6 +809,11 @@ export class Game {
   continueGoto(u: Unit): void {
     while (!u.dead && u.moves > 0 && u.goal != null) {
       if (u.tile === u.goal) break;
+      // (Its goal an enemy within its reach: it shoots from where it stands.)
+      if (this.isEnemyOccupied(u.goal, u.owner)) {
+        const mode = u.goalMode ?? this.attackModeFor(u, u.goal);
+        if (mode === 'ranged' && this.attackBlockAt(u, u.goal, mode) === null) { this.attack(u, u.goal, mode); u.goal = null; break; }
+      }
       const path = this.findPath(u, u.goal);
       if (!path || !path.length) { u.goal = null; break; }
       const next = path[0];

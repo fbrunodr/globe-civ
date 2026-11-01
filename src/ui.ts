@@ -352,7 +352,7 @@ export class UI {
       const path = g.findPath(u, t);
       const blocker = g.isForeignBlocked(t, u.owner) ? (g.cityByTile.get(t)?.owner ?? g.unitsAt(t).find((v) => v.owner !== u.owner)?.owner) : undefined;
       if (blocker !== undefined) lines.push(`<span class="bad">At peace with the ${esc(g.players[blocker]!.name)}: declare war (Diplomacy) to attack</span>`);
-      else if (!path) lines.push('<span class="bad">Unreachable</span>');
+      else if (!path && !(g.isEnemyOccupied(t, u.owner) && modeOf(g, u, t) === 'ranged' && g.fireReach(u).has(t))) lines.push('<span class="bad">Unreachable</span>');
       else if (g.isEnemyOccupied(t, u.owner) && g.attackBlockAt(u, t, modeOf(g, u, t)) !== null) {
         const mode = modeOf(g, u, t), d = g.bestDefender(t, u.owner, mode);
         lines.push(`<span class="bad">${unitDef(u.type).name} ${g.attackBlockAt(u, t, mode)}${d ? ` (${unitDef(d.type).name})` : ''}</span>`);
@@ -361,11 +361,11 @@ export class UI {
         const city = g.cityByTile.get(t), how = mode === 'ranged' ? 'Fire' : 'Assault';
         const other = canShoot(u.type) && canAssault(u.type) ? ` <small>(Shift: ${mode === 'ranged' ? 'close in' : 'shoot'})</small>` : '';
         lines.push(pv
-          ? `<span class="warn">${how}: ${pv.atk.toFixed(1)} against ${pv.def.toFixed(1)} (${unitDef(pv.defender.type).name})${mode === 'ranged' ? ', unanswered' : ''}</span>${other}`
+          ? `<span class="warn">${how}: ${pv.atk.toFixed(1)} against ${pv.def.toFixed(1)} (${unitDef(pv.defender.type).name})${mode === 'ranged' ? (g.fireReach(u).has(t) ? ', unanswered' : ' — out of reach: it moves closer first') : ''}</span>${other}`
           : city && city.hp > 0
             ? `<span class="warn">${how} on the walls: ${g.unitStrength(u, mode, 'atk', t).toFixed(1)} against the city's ${g.cityStrength(city).toFixed(1)} · HP ${city.hp}/${g.cityMaxHp(city)}</span>${other}`
             : '<span class="warn">Undefended — capture!</span>');
-      } else lines.push(`Path: ${g.pathTurns(u, path)} turn(s)`);
+      } else if (path) lines.push(`Path: ${g.pathTurns(u, path)} turn(s)`);
     }
     box.innerHTML = lines.map((l) => `<div>${l}</div>`).join('');
   }
