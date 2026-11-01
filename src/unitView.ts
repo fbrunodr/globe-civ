@@ -557,7 +557,9 @@ export class UnitView {
         put(this.key(s, f), at, color, f, legs, arm, bends, char);
         if (f.hair >= 0) put(`hair|${f.hair}`, head.copy(at).add(lift3.set(0, lift * this.size, back * this.size).applyQuaternion(turned)), f.hairColor, f, legs, 0, bends);
         // Its shadow: a soft disc on the ground under it (longer under a horse).
-        m.compose(f.pos.clone().addScaledVector(f.up, 0.002 * this.size), q, scale.set(this.size * (isMachine(s.unit.type) ? 0.8 : 0.42), 1, this.size * (isMachine(s.unit.type) ? 1.4 : rides(s.unit.type, f.variant) ? 0.95 : 0.42)));
+        // (On the ground under it, however high it flies: smaller the higher.)
+        const high = 1 / (1 + 0.5 * s.alt);
+        m.compose(f.pos.clone().addScaledVector(f.up, (0.002 - s.alt) * this.size), q, scale.set(this.size * high * (isMachine(s.unit.type) ? 0.8 : 0.42), 1, this.size * high * (isMachine(s.unit.type) ? 1.4 : rides(s.unit.type, f.variant) ? 0.95 : 0.42)));
         this.shadows.setMatrixAt(shadowN++, m);
       }
     }
