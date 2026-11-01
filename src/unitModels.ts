@@ -140,10 +140,11 @@ const REST_PITCH: Record<Hold, number> = {
 // A body (people.ts) tagged for the units' shader.
 // (A skirt follows the legs (RIG.skirt; the shader: unitView.ts): each
 // vertex as much as it is down from the waist (aRig.y: none at and above
-// the hips, fully at the hem); its sides (aRig.x: how far out) with their
-// own leg, its front middle with whichever leg is forward, its back middle
-// with whichever is back; all of it crouched with the thighs. So no leg
-// gets ahead of it.)
+// the hips, fully at the hem); its sides (aRig.x: how near the side line
+// it is) with their own leg, its front with whichever leg is forward, its
+// back a little behind whichever is back (the knee kicks the shin further);
+// all of it crouched with the thighs. So it spreads with the stride, and no
+// leg gets past it.)
 const tagged = (parts: readonly Part[]): THREE.BufferGeometry[] => parts.map((p) => {
   const g = tag(p.geo, { team: p.tag === 'team', skin: p.tag === 'skin', ...(p.limb ? { limb: p.limb } : {}), ...(p.joint ? { joint: p.joint } : {}) });
   if (p.skirt !== undefined && p.limb && p.limb[2] > 0) {
@@ -151,7 +152,7 @@ const tagged = (parts: readonly Part[]): THREE.BufferGeometry[] => parts.map((p)
     for (let i = 0; i < pos.count; i++) {
       const x = pos.getX(i), y = pos.getY(i);
       limb.setXYZW(i, x >= 0 ? 1 : -1, HIP, p.limb[2], limb.getW(i) + RIG.skirt);
-      rig.setXY(i, Math.min(1, Math.abs(x) / 0.075), Math.max(0, Math.min(1, (HIP - y) / (HIP - p.skirt))));
+      rig.setXY(i, Math.max(0, 1 - Math.abs(pos.getZ(i)) / 0.05), Math.max(0, Math.min(1, (HIP - y) / (HIP - p.skirt))));
     }
   }
   return g;

@@ -289,7 +289,7 @@ const UNIT_LIMB = /* glsl */ `
   // turns by -|swing|); all crouched with the thighs; nothing at the waist.)
   if (isSkirt) {
     float swing = (aAnim.y > 1.5 ? aAnim.y - 3.0 : sin(beat) * aAnim.y) * aLimb.z;
-    limbA = aRig.y * (aRig.x * swing * aLimb.x + (1.0 - aRig.x) * (position.z >= 0.0 ? -abs(swing) : abs(swing)) - aPose.z);
+    limbA = aRig.y * (aRig.x * swing * aLimb.x + (1.0 - aRig.x) * (position.z >= 0.0 ? -abs(swing) : 1.4 * abs(swing)) - aPose.z);
   }
   float limbC = cos(limbA), limbS = sin(limbA);
   float gripA = isGrip > 0.5 ? aSkinTone.w * (aAnim.w - aRest - limbA - jointA) : 0.0, gripC = cos(gripA), gripS = sin(gripA);
