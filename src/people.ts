@@ -46,6 +46,7 @@ export const HANG: ArmPose = { upper: [0.14, -1, 0.02], fore: [0.06, -1, 0.14] }
 export const HOLD: ArmPose = { upper: [0.1, -1, 0.3], fore: [0.05, -0.15, 1] };      // forearm forward (a spear upright, reins)
 export const RAISE: ArmPose = { upper: [0.2, -0.2, 0.6], fore: [0.1, 0.5, 1] };      // reaching forward and up (a bow held out)
 export const SHIELD: ArmPose = { upper: [0.25, -1, 0.25], fore: [0.1, -0.1, 1] };    // the shield forearm across the front
+export const GRIP2: ArmPose = { upper: [0.04, -1, 0.35], fore: [-0.5, -0.05, 1] }; // the forearm in across the body: both hands on one grip
 export const WORK: ArmPose = { upper: [0.15, -0.8, 0.55], fore: [0.0, -0.6, 1] };    // down and forward (a hoe, a scythe)
 
 const norm = (v: readonly [number, number, number]) => new THREE.Vector3(...v).normalize();
@@ -141,9 +142,10 @@ function shoe(x: number, z0: number, color: number): THREE.BufferGeometry {
 // A seated rider's body, its hips at `seat` high astride a horse: thighs
 // forward and apart, shins down along the flanks; the torso, head and arms
 // as a standing figure's, raised (unitModels.ts).
-export function riderBody(d: Dress, seat: number, armL: ArmPose, armR: ArmPose): Part[] {
+// (`strikeR`, `strikeL`: how each arm moves (unitModels.ts), with what it holds.)
+export function riderBody(d: Dress, seat: number, armL: ArmPose, armR: ArmPose, strikeR?: readonly [number, number, number], strikeL?: readonly [number, number, number]): Part[] {
   const lift = seat - HIP;
-  const top = person({ ...d, skirt: 'none' }, armL, armR).filter((p) => !isLeg(p));
+  const top = person({ ...d, skirt: 'none' }, armL, armR, { legs: () => [0, HIP, 0] as const, arms: (side) => (side === -1 ? strikeR : strikeL) }).filter((p) => !isLeg(p));
   const out: Part[] = top.map((p) => ({ ...p, geo: p.geo.translate(0, lift, 0), ...(p.joint ? { joint: [p.joint[0] + lift, p.joint[1]] as const } : {}) }));
   const bare = d.legs === undefined || d.legs === 'bare';
   const legPaint: Paint = bare ? SKIN_PAINT : (d.legs as number), legTag: PartTag = bare ? 'skin' : 'plain';

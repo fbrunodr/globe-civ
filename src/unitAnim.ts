@@ -11,6 +11,10 @@ import type { Play } from './unitView.ts';
 // staggers and falls (one way or another) and lies there; its side the
 // winner, it raises its weapon. A pose is a pure function of the time
 // (all figures alike, each its own phase and beat).
+// A figure stays on its feet: planted in one stance through an act, it
+// never slides or tips as a whole (only the dead fall); its blows come from
+// the body above the hips (bent, turned), its arm, elbow and grip, and its
+// knees giving under its weight.
 
 // A pose: how far the figure has stepped forward (figure heights); the
 // whole of it leaned forward and turned (radians, about its feet); its body
@@ -54,33 +58,35 @@ export const AFTER = CHEER + 0.6;
 // often a fidget (a look to one side, the weapon shifted).
 function idle(now: number, phase: number): Pose {
   const easy = frac(phase * 3.7) < 0.5, breath = 0.02 * Math.sin(now * 1.3 + phase);
-  const base = easy ? P(0, 0, 0, 0.03 + breath, 0, 0, 0, 0, 0, 0.15) : P(0, 0.02, 0.08, 0.05 + breath, 0.06, 0.05, 0, 0.18, 0.07, 0.2);
+  const base = easy ? P(0, 0, 0, 0.03 + breath, 0, 0, 0, 0, 0, 0.15) : P(0, 0, 0, 0.06 + breath, 0.12, 0.05, 0, 0.18, 0.07, 0.2);
   // (A fidget: 1.6 s in every 7 or so, a look one way or the other.)
   const cycle = 6.5 + 2 * frac(phase * 5.3), u = frac(now / cycle + phase), k = u < 0.23 ? Math.sin((u / 0.23) * Math.PI) : 0;
   const way = Math.floor(now / cycle + phase) % 2 ? 1 : -1;
-  return add(base, { twist: 0.42 * way * k, yaw: 0.1 * way * k, arm: 0.25 * k, bend: -0.03 * k });
+  return add(base, { twist: 0.5 * way * k, arm: 0.25 * k, bend: -0.03 * k });
 }
 // On the march (`walk` 1), or at a run (more): leaning into it.
 const march = (now: number, phase: number, walk: number): Pose =>
-  P(0, 0.02 * walk, 0, 0.1 * walk + 0.03 * Math.sin(now * 18 + phase * 2), 0.06 * Math.sin(now * 9 + phase), 0.1 * walk, walk, 0, 0.1 * walk, 0.35 * walk, walk > 1.2 ? 1.2 : undefined);
-// Ready to fight: crouched a little, feet apart, weapon up, bouncing on its feet.
+  P(0, 0, 0, 0.1 * walk + 0.03 * Math.sin(now * 18 + phase * 2), 0.06 * Math.sin(now * 9 + phase), 0.1 * walk, walk, 0, 0.1 * walk, 0.35 * walk, walk > 1.2 ? 1.2 : undefined);
+// Ready to fight: knees bent, a foot forward and planted, weapon up and
+// aimed, the shoulders turned a little, weaving slowly.
+const STANCE = 0.45;
 const ready = (now: number, phase: number): Pose =>
-  P(0, 0.03, 0, 0.16 + 0.03 * Math.sin(now * 6 + phase), 0.05 * Math.sin(now * 2.1 + phase), 0.32 + 0.05 * Math.sin(now * 6 + phase + 1), 0, 0.35, 0.32 + 0.04 * Math.sin(now * 6 + phase), 0.7, 0.75 + 0.05 * Math.sin(now * 6 + phase + 1));
-// Pulled up at the end of a run: rocking back on its heels.
-const pullUp = P(-0.05, -0.04, 0, -0.08, 0, 0.4, 0, 0.5, 0.45, 0.8, 1.1);
+  P(0, 0, 0, 0.18 + 0.02 * Math.sin(now * 2.3 + phase), -0.12 + 0.07 * Math.sin(now * 1.7 + phase), 0.32 + 0.04 * Math.sin(now * 2.9 + phase + 1), 0, STANCE, 0.34, 0.7, 0.75 + 0.06 * Math.sin(now * 2.3 + phase + 1));
+// Pulled up at the end of a run: settling into its stance, the body checked back.
+const pullUp = P(0, 0, 0, -0.12, 0, 0.4, 0, STANCE + 0.05, 0.42, 0.8, 1.1);
 // Cowering under arrows or shells: down low, weapon or shield up.
-const cower = (now: number, phase: number): Pose => P(-0.03, 0.06, 0, 0.45 + 0.03 * Math.sin(now * 8 + phase), 0, 0.95, 0, 0.3, 0.75, 1.2, 0.25);
+const cower = (now: number, phase: number): Pose => P(0, 0, 0, 0.5 + 0.02 * Math.sin(now * 8 + phase), 0, 0.95, 0, 0.3, 0.75, 1.2, 0.25);
 // Cheering: weapon raised and shaken, head back.
-const cheer = (now: number, phase: number): Pose => P(0, -0.02, 0, -0.12, 0.1 * Math.sin(now * 3 + phase), 1.65 + 0.18 * Math.sin(now * 10 + phase), 0, 0.15, 0.05, 0.25 + 0.2 * Math.sin(now * 10 + phase), -0.15);
+const cheer = (now: number, phase: number): Pose => P(0, 0, 0, -0.12, 0.1 * Math.sin(now * 3 + phase), 1.65 + 0.18 * Math.sin(now * 10 + phase), 0, 0.15, 0.05, 0.25 + 0.2 * Math.sin(now * 10 + phase), -0.15);
 
 // Blows: wound up, struck (the blow lands as it ends), recovered to the
-// ready stance. A thrust: drawn back and low, lunging in. From overhead:
-// raised high, leaning back, then brought down hard.
-// (A thrust drives out from a bent elbow to a straight arm, the weapon
-// levelled; a blow from overhead stabs down with the knees, its point
-// forward.)
-const THRUST = { wind: P(-0.07, -0.03, 0, -0.14, -0.32, -0.3, 0, -0.2, 0.42, 1.5, 1.35), hit: P(0.3, 0.06, 0, 0.34, 0.24, 1.0, 0, 0.8, 0.3, 0.02, 1.6) };
-const OVERHEAD = { wind: P(-0.04, -0.04, 0, -0.24, -0.16, 1.8, 0, 0.1, 0.2, 1.1, 1.7), hit: P(0.2, 0.07, 0, 0.5, 0.1, 0.5, 0, 0.6, 0.45, 0.3, 2.2) };
+// ready stance; the feet stay where they are. A thrust: the shoulders
+// turned away and the elbow drawn back, then the body turned into it and
+// the arm driven out straight, the weapon levelled. From overhead: raised
+// high, the body arched back, then brought down with the body bending and
+// the knees giving, its point forward.
+const THRUST = { wind: P(0, 0, 0, -0.18, -0.55, -0.3, 0, STANCE, 0.38, 1.6, 1.35), hit: P(0.04, 0, 0, 0.42, 0.38, 1.0, 0, STANCE, 0.46, 0.02, 1.6) };
+const OVERHEAD = { wind: P(0, 0, 0, -0.3, -0.28, 1.8, 0, STANCE, 0.3, 1.1, 1.7), hit: P(0.03, 0, 0, 0.58, 0.16, 0.5, 0, STANCE, 0.5, 0.3, 2.2) };
 // The blows of a figure `sec` seconds into its exchange (a round of BOUT
 // seconds; `beat` where it starts in it). Its foe is half a round apart:
 // each of its blows lands as this one is winding up, and it flinches.
@@ -88,9 +94,9 @@ function blows(sec: number, beat: number, now: number, phase: number): Pose {
   const x = sec / BOUT + beat, n = Math.floor(x), u = frac(x);
   const kind = frac(Math.sin(n * 12.9898 + beat * 78.233) * 43758.5453) < 0.5 ? THRUST : OVERHEAD, rest = ready(now, phase);
   let pose = u < 0.4 ? mix(rest, kind.wind, smooth(u / 0.4)) : u < 0.55 ? mix(kind.wind, kind.hit, 1 - (1 - (u - 0.4) / 0.15) ** 2) : mix(kind.hit, rest, smooth((u - 0.55) / 0.45));
-  // (The foe's blow landing: knocked back, turned, for a moment.)
   const f = u < 0.16 ? Math.sin((u / 0.16) * Math.PI) : 0;
-  if (f > 0) pose = add(pose, { bend: -0.3 * f, lunge: -0.09 * f, lean: -0.05 * f, twist: (n % 2 ? 0.25 : -0.25) * f, crouch: 0.15 * f, elbow: 0.4 * f, aim: -0.35 * f });
+  // (The foe's blow landing: the body knocked back and turned at the hips, the knees sagging.)
+  if (f > 0) pose = add(pose, { bend: -0.38 * f, twist: (n % 2 ? 0.32 : -0.32) * f, crouch: 0.07 * f, elbow: 0.4 * f, aim: -0.35 * f });
   return pose;
 }
 // Shooting: drawing (or shouldering) before each shot, loosed (a recoil),
@@ -99,8 +105,8 @@ function shooting(sec: number, shots: readonly number[]): Pose {
   let pose = P(0, 0, 0, 0.06, 0, 0.4, 0, 0.3, 0.15, 0.5, 0.5);
   for (const ts of shots) {
     const d = sec - ts;
-    if (d > -0.4 && d <= 0) pose = mix(pose, P(0, -0.02, 0, -0.05, 0.18, 1.0, 0, 0.35, 0.2, 0.15, 1.5), smooth((d + 0.4) / 0.3));
-    else if (d > 0 && d < 0.55) pose = mix(P(-0.03, -0.03, 0, -0.1, 0.12, 0.85, 0, 0.35, 0.2, 0.3, 1.3), P(0, 0, 0, 0.06, 0, 0.4, 0, 0.3, 0.15, 0.5, 0.5), smooth(d / 0.55));
+    if (d > -0.4 && d <= 0) pose = mix(pose, P(0, 0, 0, -0.06, 0.2, 1.0, 0, 0.35, 0.2, 0.15, 1.5), smooth((d + 0.4) / 0.3));
+    else if (d > 0 && d < 0.55) pose = mix(P(0, 0, 0, -0.14, 0.14, 0.85, 0, 0.35, 0.2, 0.3, 1.3), P(0, 0, 0, 0.06, 0, 0.4, 0, 0.3, 0.15, 0.5, 0.5), smooth(d / 0.55));
   }
   return pose;
 }
@@ -120,7 +126,9 @@ export interface Cue {
 // A figure's pose now: in a fight (its cue), on the march (`walk`), or at
 // ease. (Struck down, it is posed by deathTurn and deathBend.)
 export function poseOf(c: Cue | null, now: number, phase: number, beat: number, walk: number, rides: boolean): Pose {
-  const pose = c ? inFight(c, now, phase, beat) : walk > 0 ? march(now, phase, walk) : idle(now, phase);
+  const acted = c ? inFight(c, now, phase, beat) : walk > 0 ? march(now, phase, walk) : idle(now, phase);
+  // (On its feet: whatever lean or turn an act asks of the whole figure is the body's above the hips.)
+  const pose = { ...acted, lean: 0, yaw: 0, bend: acted.bend + acted.lean * 1.5, twist: acted.twist + acted.yaw };
   // (A rider strikes from the saddle: the horse hardly moves.)
   return rides ? P(pose.lunge * 0.4, 0, pose.yaw * 0.5, 0, pose.twist * 0.5, pose.arm, pose.walk, 0, 0, pose.elbow, pose.aim) : pose;
 }
