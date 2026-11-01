@@ -472,9 +472,11 @@ function antiTank(): THREE.BufferGeometry[] {
 // gun in a sponson on each flank.
 function landship(): THREE.BufferGeometry[] {
   const side = new THREE.Shape([[-0.85, 0.3], [-0.62, 0.0], [0.6, 0.0], [0.9, 0.34], [0.62, 0.64], [-0.62, 0.64]].map(([z, y]) => new THREE.Vector2(z, y)));
-  const track = (x: number) => shape(new THREE.ExtrudeGeometry(side, { depth: 0.18, bevelEnabled: false }).rotateY(-Math.PI / 2), PAINT, { x: x + (x > 0 ? 0.18 : 0) }, { team: true });
+  // (The great rhomboid track frames in the hull's olive, a band of the owner's colour along each.)
+  const track = (x: number) => shape(new THREE.ExtrudeGeometry(side, { depth: 0.18, bevelEnabled: false }).rotateY(-Math.PI / 2), OLIVE, { x: x + (x > 0 ? 0.18 : 0) });
   return [
     track(0.2), track(-0.2),
+    ...[1, -1].map((s) => box(0.012, 0.08, 0.9, PAINT, { x: s * 0.381, y: 0.46, z: 0 }, { team: true })),
     ...[1, -1].map((s) => box(0.2, 0.1, 1.24, GUNMETAL, { x: s * 0.29, z: -0.02 })),
     box(0.42, 0.4, 1.0, OLIVE, { y: 0.14 }),
     box(0.24, 0.14, 0.3, OLIVE, { y: 0.54, z: 0.1 }),
@@ -561,7 +563,8 @@ function ship(type: UnitKey): THREE.BufferGeometry[] {
       ...[-0.35, -0.75].flatMap((z) => [shape(new THREE.CylinderGeometry(0.08, 0.09, 0.4, 6), 0x3a3c40, { y: 0.55, z }), box(0.2, 0.06, 0.2, PAINT, { y: 0.77, z }, { team: true })]), ...turret(1.05, 0.36, 0.9), ...turret(-1.15, 0.36, 0.9)];
     case 'submarine': return [lp(hull([R([0, 0.04, -1.4], 0, 0), R([0, 0.04, -0.9], 0.12, 0.16), R([0, 0.05, 0.6], 0.15, 0.2), R([0, 0.05, 1.2], 0.1, 0.12), R([0, 0.04, 1.45], 0, 0)], 6, DARK_HULL, { side: [1, 0, 0] })),
       box(0.16, 0.26, 0.42, DARK_HULL, { y: 0.15, z: 0.25 }), box(0.19, 0.05, 0.45, PAINT, { y: 0.37, z: 0.25 }, { team: true }), rod(V(0, 0.4, 0.3), V(0, 0.58, 0.3), 0.012, 0.012, 3, GUNMETAL)];
-    case 'carrier': return [...shipHull(3.6, 1.0, 0.6, STEEL_GREY, 0x55595e, 0.4), box(1.15, 0.06, 3.4, 0x4a4e52, { y: 0.42 }), box(1.1, 0.03, 0.08, PAINT, { y: 0.465, z: 1.0 }, { team: true }),
+    // (The flight deck on a hangar sitting on the hull, not floating over it.)
+    case 'carrier': return [...shipHull(3.6, 1.0, 0.6, STEEL_GREY, 0x55595e, 0.4), box(0.92, 0.09, 3.1, STEEL_GREY, { y: 0.395 }), box(1.15, 0.04, 3.4, 0x4a4e52, { y: 0.455 }), box(1.1, 0.02, 0.08, PAINT, { y: 0.48, z: 1.0 }, { team: true }),
       box(0.22, 0.45, 0.6, STEEL_GREY, { x: 0.42, y: 0.68, z: -0.2 }), shape(new THREE.CylinderGeometry(0.07, 0.08, 0.3, 6), STEEL_GREY, { x: 0.42, y: 1.04, z: -0.35 })];
     case 'battleship': return [...shipHull(3.8, 0.95, 0.55, STEEL_GREY, 0x5a6066, 0.4), box(0.5, 0.5, 0.9, STEEL_GREY, { y: 0.45 }), box(0.25, 0.35, 0.3, STEEL_GREY, { y: 0.85, z: 0.1 }),
       shape(new THREE.CylinderGeometry(0.1, 0.12, 0.4, 6), STEEL_GREY, { y: 0.85, z: -0.35 }), box(0.54, 0.06, 0.94, PAINT, { y: 0.72 }, { team: true }), ...turret(1.1, 0.4), ...turret(0.7, 0.55), ...turret(-1.2, 0.4)];

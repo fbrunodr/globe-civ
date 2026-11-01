@@ -61,7 +61,7 @@ const CHARGE = 0.42;
 // Ships that fight with guns along their sides (a broadside), turning beam-on to the enemy.
 const BROADSIDE: ReadonlySet<UnitKey> = new Set<UnitKey>(['galleass', 'frigate', 'privateer', 'shipOfTheLine', 'ironclad', 'cruiser', 'battleship']);
 // A carrier's deck above the water (figure heights: unitModels.ts).
-const CARRIER_DECK = 0.35;
+const CARRIER_DECK = 0.48;
 
 // How a fight plays out, over its FIGHT seconds (shares of it): how far the
 // unit goes in (a share of CHARGE: 0 stays put), when it sets out and has
