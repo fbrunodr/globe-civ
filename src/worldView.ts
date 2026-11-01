@@ -88,7 +88,8 @@ const toggleSight = () => {
 sightBtn.addEventListener('click', toggleSight);
 // Units to look at (dev): U drops one of each kind for a few civs round
 // where the camera looks, on dry land; M marches every unit a tile; B sets
-// them fighting their neighbours.
+// them fighting their neighbours; N stages a melee where the camera looks
+// (a foe set beside a fighting unit, both hurt in it).
 const UNIT_SAMPLE: UnitKey[] = ['warrior', 'spearman', 'archer', 'horseman', 'swordsman', 'pikeman', 'crossbowman', 'knight', 'scout', 'settler', 'commander'];
 const dropUnits = () => {
   const at = view.looking;
@@ -122,11 +123,29 @@ const battle = () => {
     if (foe !== undefined && style) view.showBattle(u.id, foe, style);
   }
 };
+// N: the fighting unit nearest the camera's look attacks a foe set down beside it (made up: it loses 40 HP, the foe 80).
+const stage = () => {
+  const at = view.looking, near = (u: { tile: number }) => -game.tiles[u.tile]!.center.dot(at);
+  const a = game.units.filter((u) => attackStyle(u.type, 'warrior') !== null && unitDef(u.type).ranged !== true).sort((x, y) => near(x) - near(y))[0];
+  if (!a) return;
+  const d = game.units.filter((u) => u.owner !== a.owner && unitDef(u.type).atk > 0).sort((x, y) => near(x) - near(y))[0];
+  const spot = game.tiles[a.tile]!.neighbors.find((n) => !game.isWater(n) && !game.units.some((v) => v.tile === n && v !== d));
+  const style = d ? attackStyle(a.type, d.type) : null;
+  if (!d || spot === undefined || !style) return;
+  d.tile = spot;
+  view.syncWorld(null);
+  setTimeout(() => {
+    view.showBattle(a.id, d.tile, style, { defender: d.id, attackerHp: a.hp - 40, defenderHp: d.hp - 80 });
+    a.hp -= 40; d.hp -= 80;
+    view.syncWorld(null);
+  }, 600);
+};
 addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
   if (e.key === 'u' || e.key === 'U') dropUnits();
   else if (e.key === 'b' || e.key === 'B') battle();
   else if (e.key === 'm' || e.key === 'M') marchUnits();
+  else if (e.key === 'n' || e.key === 'N') stage();
   else if (e.key === 'j' || e.key === 'J') setView(VIEWS[(VIEWS.indexOf(view.view) + 1) % VIEWS.length]!);
   else if (e.key === 'k' || e.key === 'K') toggleClouds();
   else if (e.key === 'f' || e.key === 'F') toggleSight();

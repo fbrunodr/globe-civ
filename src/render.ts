@@ -34,7 +34,7 @@ import { USE, WONDERS, type ImprovementKey } from './cities.ts';
 import { farGeometry, makeFloraDepthMaterial, makePropMaterial, instanceGeometry } from './propMaterial.ts';
 import { GpuTimer } from './gpuTimer.ts';
 import { resourceDef } from './resources.ts';
-import { UnitView, type ShownUnit } from './unitView.ts';
+import { UnitView, type FightResult, type ShownUnit } from './unitView.ts';
 import { loadGroundTextures } from './groundTextures.ts';
 
 const FOG = new THREE.Color(0x0b0e15);
@@ -1817,7 +1817,7 @@ export class GlobeRenderer {
   }
 
   // A fight shown without the game's rules (dev views): a unit attacking a tile.
-  showBattle(unit: number, tile: number, style: AttackStyle): void { this.unitView.fight(unit, tile, style, performance.now() / 1000); }
+  showBattle(unit: number, tile: number, style: AttackStyle, result?: FightResult): void { this.unitView.fight(unit, tile, style, performance.now() / 1000, result); }
 
   // Where the camera looks (a unit vector).
   get looking(): THREE.Vector3 { return (this.walk.active ? this.walk.position : this.cam.target).clone().normalize(); }
