@@ -86,14 +86,14 @@ describe('R3: classes say which attacks can be made, and how', () => {
     expect(attackBlock('fighter', 'bomber')).toBeNull();
     expect(attackBlock('bomber', 'battleship')).toBeNull();
   });
-  it('the class and the way of attacking set the play: swords strike, cavalry charges, archers loose or close in, engines lob, riflemen fire or fix bayonets', () => {
+  it('the class and the way of attacking set the play: swords strike, cavalry charges, archers loose or close in, engines lob, riflemen fire, or advance firing', () => {
     expect(attackStyle('swordsman', 'archer')).toBe('melee');
     expect(attackStyle('knight', 'archer')).toBe('charge');
     expect(attackStyle('archer', 'warrior')).toBe('volley');
     expect(attackStyle('archer', 'warrior', 'melee')).toBe('melee');
     expect(attackStyle('trebuchet', 'warrior')).toBe('lob');
     expect(attackStyle('rifleman', 'warrior')).toBe('fire');
-    expect(attackStyle('rifleman', 'warrior', 'melee')).toBe('melee');
+    expect(attackStyle('rifleman', 'warrior', 'melee')).toBe('advance');
     expect(attackStyle('tank', 'rifleman')).toBe('roll');
   });
   it('the game refuses an attack its pair forbids, and the unit keeps its moves', () => {

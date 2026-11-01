@@ -80,3 +80,19 @@ describe('RG: reach', () => {
     expect(rifle.tile).toBe(b);
   });
 });
+
+describe('RG2: reach is never less than the next tile', () => {
+  it('every unit that shoots has a reach of at least 1', async () => {
+    const { UNITS } = await import('../src/rules.ts');
+    const { canShoot } = await import('../src/unitClasses.ts');
+    for (const k of Object.keys(UNITS) as (keyof typeof UNITS)[]) if (canShoot(k)) expect((UNITS[k] as { reach?: number }).reach ?? 1, k).toBeGreaterThanOrEqual(1);
+  });
+  it('a shooter of reach 1 can fire on every tile next to it, whatever the ground there (up a hill, into woods, onto a mountain)', () => {
+    for (const ground of ['hills', 'forest', 'mountains'] as const) {
+      const g = world(), [a] = line(g);
+      const musket = put(g, 'musketman', 0, a);
+      for (const n of g.tiles[a]!.neighbors) if (ground === 'forest') g.biome[n] = 'temperateForest'; else g.relief[n] = ground;
+      for (const n of g.tiles[a]!.neighbors) expect(g.fireReach(musket).has(n), `${ground} next to it`).toBe(true);
+    }
+  });
+});

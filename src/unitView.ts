@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { ArchCiv } from './architecture.ts';
 import { unitDef, domainOf, type UnitKey } from './rules.ts';
-import { returnFire, type AttackStyle, type Projectile } from './unitClasses.ts';
+import { firesAtClose, returnFire, type AttackStyle, type Projectile } from './unitClasses.ts';
 import { UNIT_LOOK, figuresFor, formationSlots, unitModel, variantOf, rides, headOffset, hairModel, transportModel, wearsHelmet, womenShare, isMachine, colsOf, GEAR, HAIR_BY, HAIR_STYLES, STRIKE, GUARD, DRAW, whirls, bowman } from './unitModels.ts';
 import { mulberry32 } from './rng.ts';
 import { HIP } from './people.ts';
@@ -69,8 +69,9 @@ const CARRIER_DECK = 0.48;
 // weapons raised the whole time); its shots (Volleys); `fly`: how high it
 // climbs on the way (figure heights: aircraft); `close`: its figures go
 // each at one of the enemy's, all the way (duel.ts); `dur`: how long the
-// fight lasts (seconds; FIGHT if not given).
-export interface Play { readonly dur?: number; readonly fly?: number; readonly close?: boolean; readonly charge: number; readonly go: readonly [number, number]; readonly back: number; readonly strike: readonly [number, number]; readonly aim: boolean; readonly shots: readonly { readonly t: number; readonly kind: Projectile }[] }
+// fight lasts (seconds; FIGHT if not given); `answered`: an assault made
+// by fire (the defender fights back, by fire if it can).
+export interface Play { readonly answered?: boolean; readonly dur?: number; readonly fly?: number; readonly close?: boolean; readonly charge: number; readonly go: readonly [number, number]; readonly back: number; readonly strike: readonly [number, number]; readonly aim: boolean; readonly shots: readonly { readonly t: number; readonly kind: Projectile }[] }
 const still = (shots: Play['shots']): Play => ({ charge: 0, go: [0, 0], back: 1, strike: [0, 0], aim: true, shots });
 export const PLAYS: Record<AttackStyle, Play> = {
   // (A melee: a short run in, then a long while at it, as Civ V plays it, before falling back.)
@@ -80,6 +81,8 @@ export const PLAYS: Record<AttackStyle, Play> = {
   lob: still([{ t: 0.3, kind: 'stone' }]),
   shell: still([{ t: 0.28, kind: 'shell' }, { t: 0.6, kind: 'shell' }]),
   fire: still([{ t: 0.25, kind: 'bullet' }, { t: 0.45, kind: 'bullet' }, { t: 0.65, kind: 'bullet' }]),
+  // (Gunmen closing in: walking forward in their line, firing as they come, to short range; still firing there.)
+  advance: { dur: 4.6, answered: true, charge: 0.75, go: [0.06, 0.5], back: 0.86, strike: [0, 0], aim: false, shots: [0.1, 0.24, 0.38, 0.52, 0.64, 0.76].map((t) => ({ t, kind: 'bullet' as const })) },
   roll: { charge: 0.6, go: [0, 0.55], back: 0.8, strike: [0, 0], aim: false, shots: [{ t: 0.25, kind: 'shell' }, { t: 0.6, kind: 'bullet' }] },
   // (Out all the way to the target, high, and back: the shots fall from there.)
   sortie: { fly: 3, charge: 1 / CHARGE, go: [0, 0.4], back: 0.6, strike: [0, 0], aim: false, shots: [{ t: 0.42, kind: 'shell' }, { t: 0.5, kind: 'bullet' }] },
@@ -112,9 +115,22 @@ export const playOf = (style: AttackStyle | null): Play => (style ? PLAYS[style]
 // A defender against `attack`: come at, it strikes back from when the
 // attackers arrive until they fall back (firing once at them as they come,
 // if it has time); shot at, it never fires back: it takes cover (unitAnim.ts).
+// (Gunmen and crewed guns fight at close quarters by fire: shooting at
+// whoever comes at them, as they come and once they are upon them. An
+// assault by fire is answered by fire, by those who can shoot; the rest
+// take cover.)
 export function defendPlay(attack: Play, type: UnitKey): Play {
-  if (!attack.close) return { ...DEFEND, strike: [0, 0] };
-  const met = attack.go[1], kind = returnFire(type);
+  const kind = returnFire(type);
+  if (!attack.close) {
+    if (!attack.answered || !kind) return { ...DEFEND, strike: [0, 0] };
+    return { ...DEFEND, strike: [0, 0], shots: [0.18, 0.34, 0.5, 0.66, 0.8].map((t) => ({ t, kind })) };
+  }
+  const met = attack.go[1];
+  if (firesAtClose(type) && kind) {
+    const shots: { t: number; kind: Projectile }[] = [];
+    for (let t = Math.max(0.05, met - 0.15); t < attack.back; t += 0.11) shots.push({ t, kind });
+    return { charge: 0, go: [0, 0], back: 1, strike: [0, 0], aim: false, shots };
+  }
   return { charge: 0, go: [0, 0], back: 1, strike: [met - 0.04, attack.back], aim: false, shots: kind && met > 0.2 ? [{ t: met - 0.18, kind }] : [] };
 }
 // When a figure struck down in a fight against `attack` falls (a share of
@@ -679,6 +695,8 @@ export class UnitView {
       const shooters = s.figures.map((_, i) => i).filter((i) => s.figures[i]!.fall > now);
       const aims: (THREE.Vector3 | null)[] = s.figures.map(() => null);
       mine.forEach((g, k) => { const i = shooters[k % Math.max(1, shooters.length)]; if (i !== undefined) aims[i] = g.pos.clone().addScaledVector(g.up, 0.45 * this.size); });
+      // (At close quarters (gunmen firing at whoever has come at them): each at its own foe, point-blank.)
+      if (f.attack.close) s.figures.forEach((g, i) => { const e = g.foeFig; if (e && e.fall > now) aims[i] = e.pos.clone().addScaledVector(e.up, 0.45 * this.size); });
       const { fire, land } = this.volleys.loose(s.figures.map((g) => g.pos.clone().addScaledVector(g.up, 0.75 * this.size)), f.at, this.env.step * 0.12, now, f.fired * 7 + s.unit.id, shot.kind, aims);
       s.figures.forEach((g, i) => { if (g.fall > now) g.shot = fire[i] ?? now; });
       mine.forEach((g, k) => { const i = shooters[k % Math.max(1, shooters.length)]; const t = i === undefined ? undefined : land[i]; if (t !== undefined) g.fall = t; });
@@ -920,7 +938,8 @@ export class UnitView {
     if (!reforms(s.unit.type) || s.unit.embarked) return 'block';
     if (s.march && this.now >= s.march.t0) return 'column';
     const p = s.fight?.play;
-    return p && !p.close && p.charge === 0 && p.shots.length ? 'line' : 'block';
+    // (Shooting: in line, standing or walking forward as it fires.)
+    return p && !p.close && p.fly === undefined && p.shots.length ? 'line' : 'block';
   }
   // Every frame: each figure (but those running at a foe, or struck down)
   // walks on towards its place; then how fast each is going sets its legs'

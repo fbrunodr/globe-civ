@@ -49,7 +49,8 @@ export const UNIT_CLASS: Record<UnitKey, UnitClass> = {
 };
 
 // How an attack plays out:
-//   melee       walk in and strike (guns with the bayonet, bows with what they have)
+//   melee       walk in and strike (bows with what they have)
+//   advance     gunmen closing in by fire: a firing line walking forward, shooting as it goes
 //   charge      gallop in and strike
 //   volley      arrows, high and arcing
 //   lob         stones from an engine, slow and high
@@ -57,7 +58,7 @@ export const UNIT_CLASS: Record<UnitKey, UnitClass> = {
 //   fire        gunfire, flat bursts
 //   roll        armour (or a steamship) advancing, its gun firing
 //   sortie      aircraft flying out to strike and back
-export type AttackStyle = 'melee' | 'charge' | 'volley' | 'lob' | 'shell' | 'fire' | 'roll' | 'sortie';
+export type AttackStyle = 'melee' | 'charge' | 'advance' | 'volley' | 'lob' | 'shell' | 'fire' | 'roll' | 'sortie';
 // What flies (Volleys, unitView.ts).
 export type Projectile = 'arrow' | 'stone' | 'shell' | 'bullet';
 // An attack is made at close quarters (an assault: the attacker closes in,
@@ -114,6 +115,7 @@ export function attackStyle(a: UnitKey, _d: UnitKey | null, mode: AttackMode = d
   }
   switch (C) {
     case 'cavalry': case 'mountedArcher': return 'charge';
+    case 'gunline': return 'advance';
     case 'armor': case 'steamship': return 'roll';
     default: return 'melee';
   }
@@ -123,6 +125,9 @@ export function siegeStyle(a: UnitKey, mode: AttackMode = defaultMode(a)): Attac
   return attackStyle(a, null, mode);
 }
 
+// Whether a unit fights at close quarters with its guns, never as with a
+// blade: it fires point-blank at whoever comes at it (gunmen, crewed guns).
+export const firesAtClose = (k: UnitKey): boolean => { const C = UNIT_CLASS[k]; return C === 'gunline' || C === 'gun' || C === 'antiTank' || C === 'antiAir'; };
 // What a defender fires at attackers closing in on it, or null (it strikes where it stands).
 export function returnFire(d: UnitKey): Projectile | null {
   switch (UNIT_CLASS[d]) {

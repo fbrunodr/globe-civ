@@ -225,6 +225,8 @@ function inFight(c: Cue, now: number, phase: number, beat: number, whirl: boolea
   }
   if (c.side === 'defender' && attack.close) {
     const met = s(play.strike[0]), part = s(play.strike[1]);
+    // (Gunmen strike no blows: they fire, again and again, standing (kneeling only in a line's front rank, far off).)
+    if (play.strike[1] === 0) return mix(into, shooting(sec, play.shots.map((x) => s(x.t)), whirl, false, true), smooth(sec / BLEND));
     const shot = play.shots[0];
     let pose = shot ? mix(into, shooting(sec, [s(shot.t)], whirl, shot.kind === 'bullet'), smooth(sec / BLEND)) : into;
     if (c.engaged && sec >= met && sec < part) pose = mix(pose, blows(sec - met, beat, now, phase), (sec - met) / BLEND);
@@ -240,8 +242,10 @@ function inFight(c: Cue, now: number, phase: number, beat: number, whirl: boolea
     const firing = Math.max(0, ...shots.map((t) => (sec > t - 0.6 && sec < t + 0.7 ? Math.min(1, (sec - t + 0.6) / 0.2, (t + 0.7 - sec) / 0.2) : 0)));
     return sec < t0 ? mix(into, base, sec / BLEND) : mix(base, cower(now, phase), smooth((sec - t0 + 0.15) / BLEND) * (sec < t1 ? 1 : 1 - smooth((sec - t1) / 0.3)) * (1 - firing));
   }
-  // An attacker shooting (or rolling in: machines aren't posed).
-  return mix(into, shooting(sec, play.shots.map((x) => s(x.t)), whirl, play.shots[0]?.kind === 'bullet' && !c.rear, play.shots[0]?.kind === 'bullet'), sec / BLEND);
+  // An attacker shooting (or rolling in: machines aren't posed): kneeling
+  // in its line's front rank if it stands; walking forward (an advance), on its feet.
+  const gun = play.shots[0]?.kind === 'bullet';
+  return mix(into, shooting(sec, play.shots.map((x) => s(x.t)), whirl, gun && !c.rear && play.charge === 0, gun), sec / BLEND);
 }
 
 // ---- struck down ----
