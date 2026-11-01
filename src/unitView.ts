@@ -57,7 +57,7 @@ const MIN_PX = 3;
 // A fight: how long (seconds; a melee longer, durOf), and how far a melee
 // unit charges (a share of the way to the enemy's tile).
 export const FIGHT = 3;
-const CHARGE = 0.42;
+const CHARGE = 0.42, UNDEFENDED_CHARGE = 0.62;
 // Ships that fight with guns along their sides (a broadside), turning beam-on to the enemy.
 const BROADSIDE: ReadonlySet<UnitKey> = new Set<UnitKey>(['galleass', 'frigate', 'privateer', 'shipOfTheLine', 'ironclad', 'cruiser', 'battleship']);
 // A carrier's deck above the water (figure heights: unitModels.ts).
@@ -182,7 +182,8 @@ interface Figure {
   held: boolean; // its place set by the fight (stepped up to a foe), not by its formation
 }
 // (`enemy`: the figures of the unit it is at grips with, in a melee.)
-interface Fight { at: THREE.Vector3; home: THREE.Vector3; t0: number; play: Play; fired: number; attack: Play; side: 'attacker' | 'defender'; won: boolean; enemy: Figure[] }
+// (`reach`: how far it goes in, times its play's charge: further at a tile no one defends, into a city's streets.)
+interface Fight { at: THREE.Vector3; home: THREE.Vector3; t0: number; play: Play; fired: number; attack: Play; side: 'attacker' | 'defender'; won: boolean; enemy: Figure[]; reach: number }
 // A figure struck down, lying where it fell (then sinking away).
 // (A machine's: a wreck burning, on land or at sea.)
 interface Corpse { wreck: Wreck | null; smoke: number; key: string; hair: number; hairColor: THREE.Color; skin: THREE.Color; phase: number; color: THREE.Color; pos: THREE.Vector3; up: THREE.Vector3; face: THREE.Vector3; fall: number; beat: number; horse: boolean; lift: readonly [number, number] }
@@ -428,6 +429,7 @@ export class UnitView {
       if (a) { this.faceFoe(d, a.dir.clone().sub(d.dir)); this.layout(d); }
     }
     if (a) this.startFight(a, at, play, now, play, 'attacker', aWins);
+    if (a && !main) a.fight!.reach = UNDEFENDED_CHARGE;
     if (a && main) { a.fight!.enemy = main.figures; main.fight!.enemy = a.figures; }
     const melee = a !== undefined && main !== undefined && play.close === true && !a.unit.embarked && !main.unit.embarked;
     if (melee) this.pairUp(a, main);
@@ -438,7 +440,7 @@ export class UnitView {
 
   private startFight(s: Shown, at: THREE.Vector3, play: Play, now: number, attack: Play, side: 'attacker' | 'defender', won: boolean): void {
     const home = s.fight?.home ?? s.dir.clone();
-    s.fight = { at, home, t0: now, play, fired: 0, attack, side, won, enemy: [] };
+    s.fight = { at, home, t0: now, play, fired: 0, attack, side, won, enemy: [], reach: CHARGE };
     s.after = null;
     s.march = null;
     for (const f of s.figures) Object.assign(f, unfought());
@@ -660,7 +662,7 @@ export class UnitView {
     if (f.side === 'defender' && f.attack.close && t > f.play.strike[0] + 0.03 && t < f.play.strike[1]) this.join(s, now);
     if (s.figures.some((g) => g.goal)) this.duel(s, t, dt);
     else {
-      s.dir.copy(f.home).lerp(f.at, CHARGE * p.charge * out).normalize();
+      s.dir.copy(f.home).lerp(f.at, f.reach * p.charge * out).normalize();
       if (back) this.face(s, f.home.clone().sub(f.at)); else this.faceFoe(s, f.at.clone().sub(f.home));
       this.layout(s);
       // (Each turned to whoever comes at it.)
