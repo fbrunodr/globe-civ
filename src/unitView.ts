@@ -764,9 +764,39 @@ const FLIGHT: Record<Projectile, { arc: number; dur: number; jitter: number; len
   shell: { arc: 0.1, dur: 0.35, jitter: 0.1, len: 0.2, color: 0x16161a },
   bullet: { arc: 0.01, dur: 0.14, jitter: 0.06, len: 0.55, color: 0xf2d27a },
 };
+// Smoke and fire (Volleys): soft round puffs, each growing, rising and
+// fading over its life. A gun fired: a flash at the muzzle and a puff of
+// white smoke left hanging; a shell landing: a burst of fire and a cloud
+// of dark smoke; a stone: a burst of dust.
+interface Puff { at: THREE.Vector3; t0: number; life: number; size0: number; size1: number; alpha: number; color: number; rise: number }
+const PUFF_VERTEX = /* glsl */ `
+  attribute float aSize;
+  attribute vec4 aTint;
+  uniform float uHalfHeight;
+  varying vec4 vTint;
+  void main() {
+    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    gl_Position = projectionMatrix * mv;
+    gl_PointSize = aSize * projectionMatrix[1][1] * uHalfHeight / -mv.z;
+    vTint = aTint;
+  }`;
+const PUFF_FRAGMENT = /* glsl */ `
+  varying vec4 vTint;
+  void main() {
+    vec2 c = gl_PointCoord - 0.5;
+    float d = length(c) * 2.0;
+    if (d > 1.0) discard;
+    // (Lumpy: brighter towards the top, softer at the edge.)
+    float lump = 0.85 + 0.15 * sin(c.x * 17.0 + c.y * 11.0) * sin(c.y * 13.0 - c.x * 7.0);
+    gl_FragColor = vec4(vTint.rgb * (1.05 - 0.25 * c.y) , vTint.a * smoothstep(1.0, 0.35, d) * lump);
+  }`;
+
 export class Volleys {
   readonly lines: THREE.LineSegments;
   private readonly arrows: { from: THREE.Vector3; to: THREE.Vector3; t0: number; dur: number; kind: Projectile }[] = [];
+  private readonly puffs: Puff[] = [];
+  private readonly smoke: THREE.Points;
+  private static readonly PUFFS = 1024;
   private readonly pos: Float32Array;
   private readonly col: Float32Array;
   private static readonly CAP = 512;
@@ -780,6 +810,21 @@ export class Volleys {
     this.lines = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ vertexColors: true }));
     this.lines.frustumCulled = false;
     this.lines.userData['stat'] = 'units';
+    const pg = new THREE.BufferGeometry();
+    pg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(Volleys.PUFFS * 3), 3));
+    pg.setAttribute('aSize', new THREE.BufferAttribute(new Float32Array(Volleys.PUFFS), 1));
+    pg.setAttribute('aTint', new THREE.BufferAttribute(new Float32Array(Volleys.PUFFS * 4), 4));
+    const half = { value: 400 };
+    this.smoke = new THREE.Points(pg, new THREE.ShaderMaterial({ vertexShader: PUFF_VERTEX, fragmentShader: PUFF_FRAGMENT, uniforms: { uHalfHeight: half }, transparent: true, depthWrite: false }));
+    this.smoke.frustumCulled = false;
+    this.smoke.onBeforeRender = (renderer) => { half.value = renderer.getDrawingBufferSize(new THREE.Vector2()).y / 2; };
+    this.lines.add(this.smoke);
+  }
+
+  // Smoke or fire at `at` from `t0` (seconds) for `life`, growing from
+  // size0 to size1 (figure heights), rising `rise` figure heights a second.
+  private puff(at: THREE.Vector3, t0: number, life: number, size0: number, size1: number, alpha: number, color: number, rise: number): void {
+    if (this.puffs.length < Volleys.PUFFS) this.puffs.push({ at: at.clone(), t0, life, size0, size1, alpha, color, rise });
   }
 
   // A volley from each of `from` at the spot `at` (scattered `spread` round it).
@@ -794,7 +839,21 @@ export class Volleys {
     for (const f of from) {
       if (this.arrows.length >= Volleys.CAP) break;
       const to = ground.clone().addScaledVector(e, (rand() - 0.5) * 2 * spread).addScaledVector(n, (rand() - 0.5) * 2 * spread);
-      this.arrows.push({ from: f.clone(), to, t0: now + rand() * 0.15, dur: k.dur + rand() * k.jitter, kind });
+      const t0 = now + rand() * 0.15, dur = k.dur + rand() * k.jitter;
+      this.arrows.push({ from: f.clone(), to, t0, dur, kind });
+      // (A gun: its flash and smoke at the muzzle, a little way towards the mark.)
+      if (kind === 'bullet' || kind === 'shell') {
+        const muzzle = f.clone().lerp(to, (0.35 * this.size) / Math.max(1e-6, f.distanceTo(to)));
+        this.puff(muzzle, t0, 0.12, kind === 'shell' ? 0.7 : 0.4, kind === 'shell' ? 0.9 : 0.5, 1, 0xffc860, 0);
+        this.puff(muzzle, t0 + 0.03, kind === 'shell' ? 2.6 : 1.8, kind === 'shell' ? 0.5 : 0.25, kind === 'shell' ? 1.8 : 1.0, 0.55, 0xe8e6e0, 0.25);
+      }
+      // (Where a shell or a stone lands: fire and smoke, or dust.)
+      // (Raised off the ground by half their size: a puff is drawn at its middle's depth, and the ground before it would hide its lower half.)
+      const lifted = (h: number) => to.clone().addScaledVector(this.flatUp ?? to.clone().normalize(), h * this.size);
+      if (kind === 'shell') {
+        this.puff(lifted(0.7), t0 + dur, 0.3, 0.8, 1.6, 1, 0xff9a30, 0.4);
+        this.puff(lifted(1.0), t0 + dur + 0.05, 2.8, 0.6, 2.4, 0.65, 0x3a3632, 0.5);
+      } else if (kind === 'stone') this.puff(lifted(0.6), t0 + dur, 1.6, 0.4, 1.5, 0.55, 0xb09a78, 0.3);
     }
   }
 
@@ -822,10 +881,29 @@ export class Volleys {
     this.lines.geometry.setDrawRange(0, n * 2);
     (this.lines.geometry.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
     (this.lines.geometry.getAttribute('color') as THREE.BufferAttribute).needsUpdate = true;
+    // The smoke: each puff grown, risen and faded as far as its life has gone.
+    for (let i = this.puffs.length - 1; i >= 0; i--) if (now > this.puffs[i]!.t0 + this.puffs[i]!.life) this.puffs.splice(i, 1);
+    const g = this.smoke.geometry, pp = g.getAttribute('position') as THREE.BufferAttribute, ps = g.getAttribute('aSize') as THREE.BufferAttribute, pt = g.getAttribute('aTint') as THREE.BufferAttribute;
+    let m = 0;
+    for (const f of this.puffs) {
+      const u = (now - f.t0) / f.life;
+      if (u < 0) continue;
+      up.copy(this.flatUp ?? f.at).normalize();
+      p.copy(f.at).addScaledVector(up, f.rise * (now - f.t0) * this.size);
+      pp.setXYZ(m, p.x, p.y, p.z);
+      ps.setX(m, (f.size0 + (f.size1 - f.size0) * Math.sqrt(u)) * this.size);
+      c.setHex(f.color);
+      pt.setXYZW(m, c.r, c.g, c.b, f.alpha * (1 - u) * Math.min(1, u * 12 + 0.3));
+      m++;
+    }
+    g.setDrawRange(0, m);
+    pp.needsUpdate = ps.needsUpdate = pt.needsUpdate = true;
   }
 
   dispose(): void {
     this.lines.geometry.dispose();
     (this.lines.material as THREE.Material).dispose();
+    this.smoke.geometry.dispose();
+    (this.smoke.material as THREE.Material).dispose();
   }
 }
