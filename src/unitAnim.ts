@@ -175,8 +175,10 @@ function inFight(c: Cue, now: number, phase: number, beat: number, whirl: boolea
   const into = mix(idle(now, phase), ready(now, phase), sec / BLEND); // (taking its stance as the fight begins)
   if (c.side === 'attacker' && attack.close) {
     const go0 = s(play.go[0] + c.delay), met = s(play.go[1] + c.delay), back = s(play.back + c.delay * 0.4), run = play.charge > 1 ? 1.4 : 1;
-    if (sec < go0) return into;
-    if (sec < met) return mix(into, march(now, phase, run), (sec - go0) / BLEND);
+    // (A volley first, if it fires before it goes in: guns levelled.)
+    const opening = play.shots.length ? mix(into, shooting(sec, play.shots.map((x) => s(x.t)), whirl), smooth(sec / 0.12)) : into;
+    if (sec < go0) return opening;
+    if (sec < met) return mix(opening, march(now, phase, run), (sec - go0) / BLEND);
     if (sec < back) {
       const fight = c.engaged ? blows(sec - met, beat, now, phase) : ready(now, phase);
       return mix(mix(pullUp, march(now, phase, run), 1 - (sec - met) / 0.12), fight, (sec - met) / 0.3);
