@@ -21,7 +21,7 @@ import { CIVS, UNITS, domainOf, type UnitKey } from './rules.ts';
 import { TECHS, TECH_KEYS } from './techs.ts';
 import { POLITICS } from './politics.ts';
 import { FORTIFY_BONUS, combatStrength, fightRounds, matchup } from './game.ts';
-import { HAIR_STYLES, formationSlots, hairModel, headOffset, isMachine, unitModel, variantOf, womenShare } from './unitModels.ts';
+import { HAIR_STYLES, UNIT_LOOK, colsOf, formationSlots, hairModel, headOffset, isMachine, unitModel, variantOf, womenShare } from './unitModels.ts';
 import { PLAYS, Volleys, figureLooks, makeUnitMaterial, playAt, playOf, prepareUnitGeometry, type Play } from './unitView.ts';
 import { attackBlock, attackStyle, siegeStyle } from './unitClasses.ts';
 import { WorldLabel, disposeLabels } from './worldLabel.ts';
@@ -61,7 +61,14 @@ const TYPES = (Object.keys(UNITS) as UnitKey[]).sort((a, b) => DOMAIN_ORDER[doma
 const FIGHTERS = TYPES.filter((t) => UNITS[t].atk > 0);
 const isRanged = (t: UnitKey): boolean => 'ranged' in UNITS[t] && UNITS[t].ranged === true;
 const DEFENDERS = TYPES.filter((t) => !('civilian' in UNITS[t] && UNITS[t].civilian));
-const CELL_W = 4.2, CELL_D = 4.4; // a cell of the sheet (figure heights)
+const CELL_W = 4.2, CELL_D = 4.4; // a cell of the sheet (figure heights), at least
+// Each column of the sheet as wide as its unit's formation needs (aircraft
+// and ships are wide), and where its middle is.
+const COL_W = TYPES.map((type) => {
+  const look = UNIT_LOOK[type], cols = colsOf(type, look.count), box = new THREE.Box3().setFromBufferAttribute(unitModel(type, 'Romans').getAttribute('position') as THREE.BufferAttribute);
+  return Math.max(CELL_W, (cols - 1) * look.spacing[0] + (box.max.x - box.min.x) + 1.2);
+});
+const COL_X = COL_W.reduce<number[]>((xs, w, i) => [...xs, i === 0 ? 0 : xs[i - 1]! + (COL_W[i - 1]! + w) / 2], []);
 const SEA_DEPTH = 0.45; // the ships' basin below the field (figure heights)
 const BATTLE_GAP = 7;             // between the two sides of a battle
 // A fight, as in the game (unitView.ts): FIGHT seconds (then a pause, looping
@@ -85,7 +92,7 @@ const colorOf = (civ: ArchCiv) => CIVS.find((c) => c.name === civ)?.color ?? '#c
 // A unit on the field: what it is, where it stands and which way it faces
 // (+1: its front toward +z), and whom it fights (the spot it charges or
 // shoots at; null: it doesn't fight).
-interface Cell { type: UnitKey; civ: ArchCiv; hp: number; x: number; z: number; facing: 1 | -1; target: THREE.Vector3 | null; play: Play | null; fired: number; seed: number }
+interface Cell { type: UnitKey; civ: ArchCiv; hp: number; x: number; z: number; half: number; facing: 1 | -1; target: THREE.Vector3 | null; play: Play | null; fired: number; seed: number }
 // Every figure drawn: its mesh and slot, its cell and place in it.
 interface Placed { mesh: THREE.InstancedMesh; i: number; cell: Cell; fx: number; fz: number; lift: readonly [number, number]; phase: number; hair: boolean }
 let cells: Cell[] = [];
@@ -117,8 +124,8 @@ function label(text: string, x: number, z: number, bold = false, sub?: string): 
 function sheetCells(): Cell[] {
   const civs = civFilter === 'all' ? [...ARCH_CIVS] : [civFilter];
   return civs.flatMap((civ, row) => TYPES.map((type, col): Cell => ({
-    type, civ, hp: sheetHp, x: col * CELL_W, z: row * CELL_D, facing: 1,
-    target: FIGHTERS.includes(type) ? new THREE.Vector3(col * CELL_W, 0, row * CELL_D + (PLAYS[siegeStyle(type) ?? 'melee'].charge === 0 ? 7 : SHEET_CHARGE / CHARGE_SHARE)) : null,
+    type, civ, hp: sheetHp, x: COL_X[col]!, z: row * CELL_D, half: COL_W[col]! / 2, facing: 1,
+    target: FIGHTERS.includes(type) ? new THREE.Vector3(COL_X[col]!, 0, row * CELL_D + (PLAYS[siegeStyle(type) ?? 'melee'].charge === 0 ? 7 : SHEET_CHARGE / CHARGE_SHARE)) : null,
     play: FIGHTERS.includes(type) ? playOf(siegeStyle(type), type) : null, fired: 0, seed: row * 31 + col + 1,
   })));
 }
@@ -128,9 +135,9 @@ function battleCells(): Cell[] {
   const out: Cell[] = [];
   // (A pair that can't fight (unitClasses.ts) stands still.)
   const style = attackStyle(battle.aType, battle.dType);
-  if (battle.aHp > 0) out.push({ type: battle.aType, civ: battle.aCiv, hp: battle.aHp, x: a.x, z: a.z, facing: -1, target: style ? d : null, play: style ? PLAYS[style] : null, fired: 0, seed: 11 });
+  if (battle.aHp > 0) out.push({ type: battle.aType, civ: battle.aCiv, hp: battle.aHp, x: a.x, z: a.z, half: 3, facing: -1, target: style ? d : null, play: style ? PLAYS[style] : null, fired: 0, seed: 11 });
   // (A defending archer shoots back; any other defender strikes where it stands.)
-  if (battle.dHp > 0) out.push({ type: battle.dType, civ: battle.dCiv, hp: battle.dHp, x: d.x, z: d.z, facing: 1, target: style ? a : null, play: style ? playOf(null, battle.dType) : null, fired: 0, seed: 23 });
+  if (battle.dHp > 0) out.push({ type: battle.dType, civ: battle.dCiv, hp: battle.dHp, x: d.x, z: d.z, half: 3, facing: 1, target: style ? a : null, play: style ? playOf(null, battle.dType) : null, fired: 0, seed: 23 });
   return out;
 }
 
@@ -181,15 +188,15 @@ function build(): { w: number; d: number } {
   if (mode === 'sheet') {
     cells.filter((c) => c.x === 0).forEach((c) => label(c.civ, -2.6, c.z, true));
     const hairMost = Math.max(0, ...hairTris.values());
-    TYPES.forEach((type, col) => { const n = perFigure.get(type); label(UNITS[type].name, col * CELL_W, -2.4, true, n === undefined ? undefined : `${n + (isMachine(type) ? 0 : hairMost)} tris / figure`); });
-    w = (TYPES.length - 1) * CELL_W;
+    TYPES.forEach((type, col) => { const n = perFigure.get(type); label(UNITS[type].name, COL_X[col]!, -2.4, true, n === undefined ? undefined : `${n + (isMachine(type) ? 0 : hairMost)} tris / figure`); });
+    w = COL_X[COL_X.length - 1]!;
     d = (cells.length / TYPES.length - 1) * CELL_D;
   }
   // The field, and the ships' water: a basin sunk into it (the sea bed
   // SEA_DEPTH down, earth banks round it), the water level with the field.
   const sea = cells.filter((c) => domainOf(UNITS[c.type]) === 'sea');
-  const [hx, hz] = mode === 'sheet' ? [CELL_W / 2, CELL_D / 2] : [3, 4.5];
-  const basin = sea.length ? { x0: Math.min(...sea.map((c) => c.x)) - hx, x1: Math.max(...sea.map((c) => c.x)) + hx, z0: Math.min(...sea.map((c) => c.z)) - hz, z1: Math.max(...sea.map((c) => c.z)) + hz } : null;
+  const hz = mode === 'sheet' ? CELL_D / 2 : 4.5;
+  const basin = sea.length ? { x0: Math.min(...sea.map((c) => c.x - c.half)), x1: Math.max(...sea.map((c) => c.x + c.half)), z0: Math.min(...sea.map((c) => c.z)) - hz, z1: Math.max(...sea.map((c) => c.z)) + hz } : null;
   // (The field's outline in the plane's own coordinates: x, and -z.)
   const field = new THREE.Shape([new THREE.Vector2(-7, 7), new THREE.Vector2(w + 7, 7), new THREE.Vector2(w + 7, -d - 7), new THREE.Vector2(-7, -d - 7)]);
   if (basin) field.holes.push(new THREE.Path([new THREE.Vector2(basin.x0, -basin.z0), new THREE.Vector2(basin.x0, -basin.z1), new THREE.Vector2(basin.x1, -basin.z1), new THREE.Vector2(basin.x1, -basin.z0)]));
