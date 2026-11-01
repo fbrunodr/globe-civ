@@ -29,7 +29,7 @@ export const TECH_KEYS = [
   'economics', 'fertilizer', 'archaeology', 'pedagogy', 'biology', 'dynamite',
   // Modern
   'electricity', 'refining', 'combustion', 'replaceableParts', 'radio', 'motorizedWarfare', 'electronics', 'steel', 'massProduction',
-  'refrigeration', 'medicine', 'atomicTheory', 'telecommunications', 'flight',
+  'refrigeration', 'medicine', 'atomicTheory', 'telecommunications', 'flight', 'radar', 'jetPropulsion',
 ] as const;
 export type TechKey = typeof TECH_KEYS[number];
 
@@ -92,7 +92,7 @@ export const TECHS: Record<TechKey, TechDef> = {
   forestry:        t('Forestry', 2, 45, ['construction', 'animalHusbandry'], { effects: [onImprovement('camp', { gold: 1 })] }),
   drainage:        t('Drainage', 2, 45, ['engineering'], { effects: [onImprovement('wetland', { food: 1 })] }),
   domes:           t('Domes', 2, 55, ['engineering', 'mathematics'], { wonders: ['hagiaSophia'] }),
-  compass:         t('Compass', 2, 50, ['shipbuilding', 'mathematics'], { units: ['galleass'], effects: [onImprovement('boats', { food: 1 })] }),
+  compass:         t('Compass', 2, 50, ['shipbuilding', 'mathematics'], { units: ['galleass', 'cog'], effects: [onImprovement('boats', { food: 1 })] }),
   craftGuilds:     t('Craft Guilds', 2, 55, ['apprenticeship', 'trade'], { buildings: ['guildHall'] }),
   paper:           t('Paper', 2, 50, ['literature', 'currency'], { effects: [perSpecialist('scientist', { science: 1 })] }),
   // ---- Renaissance ----
@@ -116,7 +116,7 @@ export const TECHS: Record<TechKey, TechDef> = {
   sanitation:      t('Sanitation', 4, 140, ['scientificTheory'], { buildings: ['hospital'] }),
   militaryScience: t('Military Science', 4, 140, ['rifling', 'stirrups'], { units: ['cavalry'] }),
   ballistics:      t('Ballistics', 4, 145, ['rifling', 'industrialization'], { units: ['machineGun'] }),
-  steamPower:      t('Steam Power', 4, 140, ['industrialization', 'physics'], { units: ['ironclad'], effects: [onImprovement('mine', { prod: 1 })] }),
+  steamPower:      t('Steam Power', 4, 140, ['industrialization', 'physics'], { units: ['ironclad', 'cruiser'], effects: [onImprovement('mine', { prod: 1 })] }),
   railroad:        t('Railroad', 4, 145, ['steamPower'], { buildings: ['railwayStation'], effects: [onImprovement('camp', { prod: 1 })] }),
   economics:       t('Economics', 4, 135, ['industrialization', 'accounting'], { buildings: ['stockExchange'] }),
   fertilizer:      t('Fertilizer', 4, 130, ['cropRotation', 'chemistry'], { effects: [onImprovement('farm', { food: 1 }), onImprovement('plantation', { gold: 1 })] }),
@@ -126,19 +126,21 @@ export const TECHS: Record<TechKey, TechDef> = {
   dynamite:        t('Dynamite', 4, 130, ['chemistry', 'steamPower'], { units: ['artillery'], effects: [onImprovement('quarry', { prod: 1 }), pct('vsCities', 15)] }),
   // ---- Modern ----
   electricity:     t('Electricity', 5, 200, ['scientificTheory', 'steamPower'], { effects: [yieldPct('science', 5), yieldPct('prod', 5)] }),
-  refining:        t('Refining', 5, 195, ['industrialization', 'chemistry'], {}), // (reveals Oil)
+  refining:        t('Refining', 5, 195, ['industrialization', 'chemistry'], { units: ['airship'] }), // (reveals Oil)
   combustion:      t('Combustion', 5, 210, ['refining', 'steamPower'], { units: ['landship', 'destroyer'], effects: [onImprovement('well', { prod: 1 })] }),
   replaceableParts: t('Replaceable Parts', 5, 215, ['electricity', 'militaryScience'], { units: ['infantry', 'antiTank'] }),
   radio:           t('Radio', 5, 205, ['electricity'], { buildings: ['broadcastTower'] }),
   motorizedWarfare: t('Motorized Warfare', 5, 235, ['combustion', 'replaceableParts'], { units: ['tank'] }),
-  electronics:     t('Electronics', 5, 215, ['electricity', 'refining'], { buildings: ['powerPlant'], effects: [onImprovement('well', { prod: 1 })] }),
+  electronics:     t('Electronics', 5, 215, ['electricity', 'refining'], { units: ['submarine'], buildings: ['powerPlant'], effects: [onImprovement('well', { prod: 1 })] }),
   steel:           t('Steel', 5, 205, ['railroad', 'ballistics'], { units: ['battleship'], wonders: ['empireState'], effects: [prodPct('building', 10)] }),
-  massProduction:  t('Mass Production', 5, 220, ['replaceableParts', 'steel'], { effects: [prodPct('all', 10)] }),
+  massProduction:  t('Mass Production', 5, 220, ['replaceableParts', 'steel'], { units: ['heavyBomber'], effects: [prodPct('all', 10)] }),
   refrigeration:   t('Refrigeration', 5, 205, ['electricity', 'sanitation'], { effects: [onImprovement('farm', { food: 1 }), onImprovement('wetland', { food: 1 }), onImprovement('pasture', { food: 1 })] }),
   medicine:        t('Medicine', 5, 210, ['biology', 'refrigeration'], { effects: [count('heal', 10), pct('growth', -10)] }),
   atomicTheory:    t('Atomic Theory', 5, 225, ['electricity', 'chemistry'], { buildings: ['researchLab'] }),
   telecommunications: t('Telecommunications', 5, 225, ['radio', 'electronics'], { effects: [yieldPct('cohesion', 10), yieldPct('culture', 10)] }),
   flight:          t('Flight', 5, 230, ['combustion', 'radio'], { units: ['fighter', 'bomber'] }),
+  radar:           t('Radar', 5, 240, ['flight', 'electronics'], { units: ['antiAircraft', 'carrier'] }),
+  jetPropulsion:   t('Jet Propulsion', 5, 260, ['radar', 'massProduction'], { units: ['jetFighter', 'helicopter'] }),
 };
 export const techDef = (k: TechKey): TechDef => TECHS[k];
 export const isTechKey = (s: string): s is TechKey => (TECH_KEYS as readonly string[]).includes(s);

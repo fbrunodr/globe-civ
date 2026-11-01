@@ -25,6 +25,10 @@ export interface UnitDef {
   vsMounted?: number; // horse and chariot (not armour), attacking or defending
   vsArmor?: number;   // armour, attacking or defending
   vsRanged?: number;  // archers, guns and siege engines, attacking them (a charge rides them down)
+  vsShips?: number;   // ships, attacking or defending
+  vsAir?: number;     // aircraft (anti-aircraft fire, fighters)
+  carries?: number;   // aircraft it carries (a carrier: they base on it and go with it)
+  aaRange?: number;   // anti-aircraft: enemy aircraft flying within this many tiles of it are fired on
   domain?: Domain;    // where it goes (default land)
   range?: number;     // an aircraft's reach: tiles it strikes out to from its base (and rebases twice as far)
 }
@@ -41,7 +45,9 @@ export const domainOf = (d: UnitDef): Domain => d.domain ?? 'land';
 // siege engines against walls (catapult, trebuchet, cannon, artillery).
 // At sea: ships that ram and board (galley, trireme, caravel, then ironclad
 // and destroyer) and ships that bombard (galleass, frigate, battleship).
-// In the air: fighters (which also intercept bombers) and bombers.
+// In the air: fighters (which also intercept bombers), bombers, the
+// helicopter; anti-aircraft guns guard the sky round them; a carrier takes
+// aircraft to sea.
 export const UNITS = {
   settler:  { name: 'Settler',  icon: 'S', atk: 0, def: 1, mv: 1, cost: 30, civilian: true, desc: 'Founds a city. Costs 1 population.' },
   scout:    { name: 'Scout',    icon: 'R', atk: 0, def: 1, mv: 2, cost: 10, sight: 3, desc: 'Fast explorer. Cannot attack.' },
@@ -80,14 +86,23 @@ export const UNITS = {
   galley: { name: 'Galley', icon: 'N', atk: 2, def: 2, mv: 3, cost: 30, domain: 'sea', desc: 'An oared warship: rams and boards ships at sea. Sails the water and its own coastal cities.' },
   trireme: { name: 'Trireme', icon: 'N', atk: 4, def: 3, mv: 3, cost: 45, domain: 'sea', desc: 'A ramming warship.' },
   galleass: { name: 'Galleass', icon: 'N', atk: 6, def: 4, mv: 3, cost: 60, domain: 'sea', ranged: true, desc: 'Ranged: its guns bombard ships and the coast.' },
+  cog: { name: 'Cog', icon: 'N', atk: 5, def: 5, mv: 3, cost: 60, domain: 'sea', desc: 'A sturdy sailing warship with fighting castles.' },
   caravel: { name: 'Caravel', icon: 'N', atk: 7, def: 6, mv: 4, cost: 80, domain: 'sea', sight: 3, desc: 'A fast ocean-going ship; sees far.' },
   frigate: { name: 'Frigate', icon: 'N', atk: 10, def: 7, mv: 4, cost: 100, domain: 'sea', ranged: true, needs: 'iron', desc: 'Ranged: broadsides against ships and the coast. Needs Iron.' },
   ironclad: { name: 'Ironclad', icon: 'N', atk: 14, def: 12, mv: 4, cost: 140, domain: 'sea', needs: 'coal', desc: 'A steam warship in armour. Needs Coal.' },
   destroyer: { name: 'Destroyer', icon: 'N', atk: 18, def: 15, mv: 5, cost: 190, domain: 'sea', needs: 'oil', desc: 'A fast steel warship. Needs Oil.' },
+  cruiser: { name: 'Cruiser', icon: 'N', atk: 16, def: 12, mv: 5, cost: 160, domain: 'sea', ranged: true, needs: 'coal', desc: 'Ranged: steam and steel, its guns against ships and the coast. Needs Coal.' },
+  submarine: { name: 'Submarine', icon: 'N', atk: 20, def: 8, mv: 4, cost: 170, domain: 'sea', vsShips: 0.5, desc: 'Attacks only ships, +50% against them.' },
+  carrier: { name: 'Carrier', icon: 'N', atk: 0, def: 14, mv: 4, cost: 200, domain: 'sea', carries: 3, needs: 'oil', desc: 'Carries up to 3 aircraft: they base on it and go where it goes. Cannot attack. Needs Oil.' },
   battleship: { name: 'Battleship', icon: 'N', atk: 22, def: 18, mv: 4, cost: 240, domain: 'sea', ranged: true, needs: 'oil', desc: 'Ranged: great guns against ships and the coast. Needs Oil.' },
   // ---- in the air ----
+  airship: { name: 'Airship', icon: 'B', atk: 10, def: 4, mv: 1, cost: 140, domain: 'air', ranged: true, siege: true, range: 5, desc: 'An early bomber: strikes from its city out to 5 tiles; twice as strong against a city.' },
   fighter: { name: 'Fighter', icon: 'F', atk: 12, def: 10, mv: 1, cost: 180, domain: 'air', ranged: true, range: 5, needs: 'oil', desc: 'Strikes from its city out to 5 tiles; intercepts enemy bombers striking near it. Only fighters can reach aircraft. Needs Oil.' },
   bomber: { name: 'Bomber', icon: 'B', atk: 22, def: 6, mv: 1, cost: 220, domain: 'air', ranged: true, siege: true, range: 7, needs: 'oil', desc: 'Strikes from its city out to 7 tiles; twice as strong against a city. Needs Oil.' },
+  heavyBomber: { name: 'Heavy Bomber', icon: 'B', atk: 30, def: 8, mv: 1, cost: 280, domain: 'air', ranged: true, siege: true, range: 9, needs: 'oil', desc: 'Strikes from its city out to 9 tiles; twice as strong against a city. Needs Oil.' },
+  jetFighter: { name: 'Jet Fighter', icon: 'F', atk: 20, def: 16, mv: 1, cost: 260, domain: 'air', ranged: true, range: 7, vsAir: 0.5, needs: 'oil', desc: 'Strikes out to 7 tiles; intercepts enemy aircraft striking near it, +50% against aircraft. Needs Oil.' },
+  helicopter: { name: 'Helicopter', icon: 'F', atk: 18, def: 10, mv: 1, cost: 220, domain: 'air', ranged: true, range: 3, vsArmor: 0.5, needs: 'oil', desc: 'Strikes out to 3 tiles; +50% against armour. Needs Oil.' },
+  antiAircraft: { name: 'Anti-Aircraft Gun', icon: 'P', atk: 6, def: 12, mv: 2, cost: 150, ranged: true, vsAir: 1, aaRange: 2, desc: 'Guards the sky: fires on enemy aircraft flying within 2 tiles of it (+100% against aircraft). Cannot take cities.' },
   commander: { name: 'Commander', icon: 'C', atk: 0, def: 2, mv: 2, cost: 40, desc: 'Leads an army: rallies up to 4 units from its tile and the tiles next to it, which then march with it as one; deploys them again there. A fighting unit may share its tile. Its army defends it; if it falls, its army is lost.' },
 } satisfies Record<string, UnitDef>;
 export type UnitKey = keyof typeof UNITS;
@@ -98,8 +113,9 @@ export const UPGRADES: Partial<Record<UnitKey, UnitKey>> = {
   archer: 'compositeBowman', compositeBowman: 'crossbowman', crossbowman: 'gatlingGun', gatlingGun: 'machineGun',
   horseman: 'knight', chariotArcher: 'knight', knight: 'lancer', lancer: 'cavalry', cavalry: 'landship', landship: 'tank',
   catapult: 'trebuchet', trebuchet: 'cannon', cannon: 'artillery',
-  galley: 'trireme', trireme: 'caravel', caravel: 'ironclad', ironclad: 'destroyer',
-  galleass: 'frigate', frigate: 'battleship',
+  galley: 'trireme', trireme: 'cog', cog: 'caravel', caravel: 'ironclad', ironclad: 'destroyer',
+  galleass: 'frigate', frigate: 'cruiser', cruiser: 'battleship',
+  airship: 'bomber', bomber: 'heavyBomber', fighter: 'jetFighter',
 };
 export const unitDef = (k: UnitKey): UnitDef => UNITS[k];
 

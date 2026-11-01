@@ -9,7 +9,8 @@ import { unitDef, domainOf, type UnitKey } from './rules.ts';
 // matchup: a spearman may attack a tank, and lose): a unit on land can't
 // close with a ship at sea (only shoot at it), a ship can't fight on land
 // (but may assault a city on the coast, or bombard), a unit embarked on
-// the water can't attack, and only fighters can reach aircraft.
+// the water can't attack, only fighters (and anti-aircraft fire) can reach
+// aircraft, and a submarine attacks only ships.
 
 export type UnitClass =
   | 'civilian' | 'recon' | 'leader'         // never attack
@@ -18,7 +19,8 @@ export type UnitClass =
   | 'engine' | 'artillery'                  // siege: catapult and trebuchet; cannon and artillery
   | 'cavalry' | 'antiTank' | 'armor'
   | 'warship' | 'steamship' | 'gunship'     // at sea: rams and boards; steam and steel; bombards
-  | 'fighter' | 'bomber';
+  | 'submarine' | 'carrier'
+  | 'fighter' | 'bomber' | 'helicopter' | 'antiAir';
 
 export const UNIT_CLASS: Record<UnitKey, UnitClass> = {
   settler: 'civilian', scout: 'recon', commander: 'leader',
@@ -36,7 +38,9 @@ export const UNIT_CLASS: Record<UnitKey, UnitClass> = {
   galley: 'warship', trireme: 'warship', caravel: 'warship',
   ironclad: 'steamship', destroyer: 'steamship',
   galleass: 'gunship', frigate: 'gunship', battleship: 'gunship',
-  fighter: 'fighter', bomber: 'bomber',
+  cog: 'warship', cruiser: 'gunship', submarine: 'submarine', carrier: 'carrier',
+  fighter: 'fighter', jetFighter: 'fighter', bomber: 'bomber', airship: 'bomber', heavyBomber: 'bomber', helicopter: 'helicopter',
+  antiAircraft: 'antiAir',
 };
 
 // How an attack plays out:
@@ -53,9 +57,9 @@ export type AttackStyle = 'melee' | 'charge' | 'volley' | 'lob' | 'shell' | 'fir
 // What flies (Volleys, unitView.ts).
 export type Projectile = 'arrow' | 'stone' | 'shell' | 'bullet';
 
-const NEVER: ReadonlySet<UnitClass> = new Set(['civilian', 'recon', 'leader']);
+const NEVER: ReadonlySet<UnitClass> = new Set(['civilian', 'recon', 'leader', 'carrier']);
 // What closes in to fight (the rest shoot, or fly).
-const CLOSES: ReadonlySet<UnitClass> = new Set(['melee', 'antiCav', 'gunline', 'cavalry', 'armor', 'warship', 'steamship']);
+const CLOSES: ReadonlySet<UnitClass> = new Set(['melee', 'antiCav', 'gunline', 'cavalry', 'armor', 'warship', 'steamship', 'submarine']);
 
 // Where a fight would be: the defender at sea (a ship, or a unit embarked
 // on the water), on a city's tile, the attacker embarked.
@@ -70,7 +74,8 @@ export function attackBlock(a: UnitKey, d: UnitKey, where: Where = { atSea: isSe
   const A = UNIT_CLASS[a];
   if (NEVER.has(A)) return 'cannot attack';
   if (where.embarked) return 'cannot attack while embarked';
-  if (isAir(d) && A !== 'fighter') return 'cannot reach aircraft';
+  if (isAir(d) && A !== 'fighter' && A !== 'antiAir') return 'cannot reach aircraft';
+  if (A === 'submarine' && !where.atSea) return 'attacks only ships';
   if (!isSea(a) && !isAir(a) && where.atSea && CLOSES.has(A)) return 'cannot reach ships at sea';
   if (isSea(a) && !where.atSea && !where.city && CLOSES.has(A)) return 'cannot fight on land';
   return null;
@@ -79,16 +84,16 @@ export function attackBlock(a: UnitKey, d: UnitKey, where: Where = { atSea: isSe
 // How `a` attacks (as its class does), or null if it never attacks.
 export function attackStyle(a: UnitKey, d: UnitKey): AttackStyle | null {
   switch (UNIT_CLASS[a]) {
-    case 'melee': case 'antiCav': case 'warship': return 'melee';
+    case 'melee': case 'antiCav': case 'warship': case 'submarine': return 'melee';
     case 'cavalry': return 'charge';
     case 'archer': case 'mountedArcher': return 'volley';
     case 'engine': return 'lob';
     case 'artillery': case 'antiTank': case 'gunship': return 'shell';
-    case 'gun': return 'fire';
+    case 'gun': case 'antiAir': return 'fire';
     case 'gunline': return UNIT_CLASS[d] === 'armor' ? 'fire' : 'fireCharge';
     case 'armor': case 'steamship': return 'roll';
-    case 'fighter': case 'bomber': return 'sortie';
-    case 'civilian': case 'recon': case 'leader': return null;
+    case 'fighter': case 'bomber': case 'helicopter': return 'sortie';
+    case 'civilian': case 'recon': case 'leader': case 'carrier': return null;
   }
 }
 // How a unit attacks a city with no defender left (its walls).
@@ -100,7 +105,7 @@ export function siegeStyle(a: UnitKey): AttackStyle | null {
 export function returnFire(d: UnitKey): Projectile | null {
   switch (UNIT_CLASS[d]) {
     case 'archer': case 'mountedArcher': return 'arrow';
-    case 'gun': case 'gunline': return 'bullet';
+    case 'gun': case 'gunline': case 'antiAir': return 'bullet';
     case 'artillery': case 'antiTank': case 'armor': case 'gunship': case 'steamship': return 'shell';
     default: return null;
   }

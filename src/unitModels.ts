@@ -427,7 +427,7 @@ function shipHull(len: number, beam: number, h: number, color: number, deck: num
   const sec = (z: number, k: number, lift = 0) => R([0, y + lift, z], (h / 2) * k, (beam / 2) * k);
   return [
     lp(hull([sec(-Z, 0.85, 0.04), sec(-Z * 0.4, 1), sec(Z * 0.35, 1), sec(Z * 0.8, 0.6, 0.06), R([0, y + h * 0.35, Z], 0, 0)], 4, color, { side: [1, 0, 0], caps: [true, false] })),
-    box(beam * 0.86, 0.02, len * 0.7, deck, { y: y + h / 2 - 0.005, z: -len * 0.05 }),
+    box(beam * 0.86, 0.03, len * 0.7, deck, { y: y + h / 2 + 0.01, z: -len * 0.05 }),
   ];
 }
 // A mast at z, its square sail (`team`: painted) and yard.
@@ -446,16 +446,23 @@ function ship(type: UnitKey): THREE.BufferGeometry[] {
   switch (type) {
     case 'galley': return [...shipHull(2.0, 0.5, 0.32, HULL_WOOD, DECK), ...mast(0.05, 0.9, 0.7, 0.18), ...oars(4, 2.0, 0.5, 0.12), point(0.25, 0.05, 3, METAL, { y: 0.02, z: 1.05, rx: Math.PI / 2 })];
     case 'trireme': return [...shipHull(2.7, 0.55, 0.36, HULL_WOOD, DECK), ...mast(0.1, 1.0, 0.8, 0.2), ...oars(5, 2.7, 0.55, 0.14), point(0.32, 0.06, 3, METAL, { y: 0.02, z: 1.4, rx: Math.PI / 2 })];
+    case 'cog': return [...shipHull(2.2, 0.8, 0.6, HULL_WOOD, DECK, 0.3), box(0.7, 0.24, 0.45, HULL_WOOD, { y: 0.5, z: -0.8 }), box(0.6, 0.2, 0.35, HULL_WOOD, { y: 0.48, z: 0.85 }), ...mast(0, 1.3, 0.95, 0.38)];
     case 'caravel': return [...shipHull(2.3, 0.7, 0.55, HULL_WOOD, DECK, 0.3), box(0.6, 0.22, 0.5, HULL_WOOD, { y: 0.48, z: -0.85 }), ...mast(0.35, 1.3, 0.85, 0.4), ...mast(-0.45, 1.0, 0.6, 0.4, false)];
     case 'galleass': return [...shipHull(2.8, 0.8, 0.5, HULL_WOOD, DECK, 0.3), box(0.7, 0.2, 0.5, HULL_WOOD, { y: 0.45, z: -1.0 }), ...mast(0.4, 1.2, 0.8, 0.36), ...mast(-0.5, 1.0, 0.65, 0.36, false), ...oars(4, 2.8, 0.8, 0.18), gun(0.12, 0.36, 1.3, 0.3), gun(-0.12, 0.36, 1.3, 0.3)];
-    case 'frigate': return [...shipHull(3.0, 0.8, 0.6, 0x3a2a20, DECK, 0.3), box(0.81, 0.06, 2.0, 0xd8b440, { y: 0.27 }),
+    case 'frigate': return [...shipHull(3.0, 0.8, 0.6, 0x3a2a20, DECK, 0.3), box(0.86, 0.06, 2.0, 0xd8b440, { y: 0.27 }),
       ...[1, -1].flatMap((s) => [-0.6, 0, 0.6].map((z) => gun(s * 0.42, 0.27, z, 0.16, s * Math.PI / 2))), ...mast(0.8, 1.5, 0.8, 0.42, false), ...mast(0, 1.8, 1.0, 0.42), ...mast(-0.8, 1.4, 0.75, 0.42, false)];
-    case 'ironclad': return [...shipHull(2.6, 0.75, 0.38, DARK_HULL, 0x4a4a4e, 0.45), box(0.6, 0.22, 1.0, DARK_HULL, { y: 0.29 }), box(0.62, 0.05, 1.02, PAINT, { y: 0.4 }, { team: true }),
+    case 'ironclad': return [...shipHull(2.6, 0.75, 0.38, DARK_HULL, 0x4a4a4e, 0.45), box(0.6, 0.22, 1.0, DARK_HULL, { y: 0.29 }), box(0.65, 0.05, 1.05, PAINT, { y: 0.4 }, { team: true }),
       shape(new THREE.CylinderGeometry(0.09, 0.1, 0.45, 6), 0x1a1a1a, { y: 0.62, z: 0.05 }), gun(0, 0.3, 0.62, 0.3)];
     case 'destroyer': return [...shipHull(3.2, 0.6, 0.42, STEEL_GREY, 0x5a6066, 0.4), box(0.36, 0.3, 0.6, STEEL_GREY, { y: 0.36, z: 0.35 }),
-      ...[-0.1, -0.5].flatMap((z) => [shape(new THREE.CylinderGeometry(0.07, 0.08, 0.36, 6), STEEL_GREY, { y: 0.48, z }), box(0.165, 0.06, 0.165, PAINT, { y: 0.6, z }, { team: true })]), ...turret(1.0, 0.3, 0.8), ...turret(-1.1, 0.3, 0.8)];
+      ...[-0.1, -0.5].flatMap((z) => [shape(new THREE.CylinderGeometry(0.07, 0.08, 0.36, 6), STEEL_GREY, { y: 0.48, z }), box(0.18, 0.06, 0.18, PAINT, { y: 0.69, z }, { team: true })]), ...turret(1.0, 0.3, 0.8), ...turret(-1.1, 0.3, 0.8)];
+    case 'cruiser': return [...shipHull(3.3, 0.75, 0.5, STEEL_GREY, 0x5a6066, 0.4), box(0.42, 0.34, 0.8, STEEL_GREY, { y: 0.4, z: 0.15 }),
+      ...[-0.35, -0.75].flatMap((z) => [shape(new THREE.CylinderGeometry(0.08, 0.09, 0.4, 6), 0x3a3c40, { y: 0.55, z }), box(0.2, 0.06, 0.2, PAINT, { y: 0.77, z }, { team: true })]), ...turret(1.05, 0.36, 0.9), ...turret(-1.15, 0.36, 0.9)];
+    case 'submarine': return [lp(hull([R([0, 0.04, -1.4], 0, 0), R([0, 0.04, -0.9], 0.12, 0.16), R([0, 0.05, 0.6], 0.15, 0.2), R([0, 0.05, 1.2], 0.1, 0.12), R([0, 0.04, 1.45], 0, 0)], 6, DARK_HULL, { side: [1, 0, 0] })),
+      box(0.16, 0.26, 0.42, DARK_HULL, { y: 0.15, z: 0.25 }), box(0.19, 0.05, 0.45, PAINT, { y: 0.37, z: 0.25 }, { team: true }), rod(V(0, 0.4, 0.3), V(0, 0.58, 0.3), 0.012, 0.012, 3, GUNMETAL)];
+    case 'carrier': return [...shipHull(3.6, 1.0, 0.6, STEEL_GREY, 0x55595e, 0.4), box(1.15, 0.06, 3.4, 0x4a4e52, { y: 0.42 }), box(1.1, 0.03, 0.08, PAINT, { y: 0.465, z: 1.0 }, { team: true }),
+      box(0.22, 0.45, 0.6, STEEL_GREY, { x: 0.42, y: 0.68, z: -0.2 }), shape(new THREE.CylinderGeometry(0.07, 0.08, 0.3, 6), STEEL_GREY, { x: 0.42, y: 1.04, z: -0.35 })];
     case 'battleship': return [...shipHull(3.8, 0.95, 0.55, STEEL_GREY, 0x5a6066, 0.4), box(0.5, 0.5, 0.9, STEEL_GREY, { y: 0.45 }), box(0.25, 0.35, 0.3, STEEL_GREY, { y: 0.85, z: 0.1 }),
-      shape(new THREE.CylinderGeometry(0.1, 0.12, 0.4, 6), STEEL_GREY, { y: 0.85, z: -0.35 }), box(0.505, 0.06, 0.905, PAINT, { y: 0.72 }, { team: true }), ...turret(1.1, 0.4), ...turret(0.7, 0.55), ...turret(-1.2, 0.4)];
+      shape(new THREE.CylinderGeometry(0.1, 0.12, 0.4, 6), STEEL_GREY, { y: 0.85, z: -0.35 }), box(0.54, 0.06, 0.94, PAINT, { y: 0.72 }, { team: true }), ...turret(1.1, 0.4), ...turret(0.7, 0.55), ...turret(-1.2, 0.4)];
     default: return [];
   }
 }
@@ -481,14 +488,36 @@ function aircraft(type: UnitKey): THREE.BufferGeometry[] {
   const tail = (len: number, color: number) => [wing(0.5, 0.18, AIR_Y, -len / 2 + 0.08, color, false), lp(plate([[0, 0], [0.2, 0], [0.05, 0.22]], color), { y: AIR_Y, z: -len / 2 + 0.02, ry: -Math.PI / 2 })];
   const prop = (x: number, z: number) => lp(plate([[-0.02, -0.18], [0.02, -0.18], [0.02, 0.18], [-0.02, 0.18]], 0x2a2420), { x, y: AIR_Y, z });
   const gear = [1, -1].map((s) => rod(V(s * 0.1, AIR_Y - 0.05, 0.15), V(s * 0.14, 0.04, 0.18), 0.012, 0.012, 3, GUNMETAL));
+  if (type === 'airship') return [lp(hull([R([0, AIR_Y + 0.75, -1.5], 0, 0), R([0, AIR_Y + 0.75, -1.0], 0.34, 0.34), R([0, AIR_Y + 0.75, 0.5], 0.42, 0.42), R([0, AIR_Y + 0.75, 1.25], 0.26, 0.26), R([0, AIR_Y + 0.75, 1.55], 0, 0)], 6, PAINT, { side: [1, 0, 0] }), {}, { team: true }), box(0.2, 0.14, 0.5, 0x5a4a38, { y: AIR_Y + 0.2, z: 0.1 }),
+    ...[1, -1].map((s) => rod(V(s * 0.08, AIR_Y + 0.27, 0.1), V(s * 0.2, AIR_Y + 0.45, 0.1), 0.008, 0.008, 3, GUNMETAL)), lp(plate([[0, 0], [0.5, 0], [0.15, 0.4]], 0xd8d0c0), { y: AIR_Y + 0.75, z: -1.3, ry: -Math.PI / 2 })];
+  if (type === 'jetFighter') return [body(1.3, 0.08, 0x8a9096), lp(plate([[-0.75, -0.25], [0.75, -0.25], [0.08, 0.35], [-0.08, 0.35]], PAINT), { y: AIR_Y, z: -0.1, rx: -Math.PI / 2 }, { team: true }),
+    ...tail(1.3, 0x8a9096), ...gear];
+  if (type === 'heavyBomber') return [body(2.3, 0.15, 0x7a7e76), wing(3.4, 0.5, AIR_Y + 0.03, 0.15, PAINT, true), ...[0.55, 1.1, -0.55, -1.1].flatMap((x) => [lp(hull([R([x, AIR_Y - 0.02, -0.15], 0.055, 0.055), R([x, AIR_Y - 0.02, 0.42], 0.065, 0.065)], 4, 0x4a4e48, { side: [1, 0, 0] })), prop(x, 0.44)]),
+    ...tail(2.3, 0x7a7e76), ...gear];
+  if (type === 'helicopter') return [lp(hull([R([0, 0.32, -0.25], 0.16, 0.14), R([0, 0.32, 0.25], 0.17, 0.15), R([0, 0.28, 0.45], 0, 0)], 4, OLIVE, { side: [1, 0, 0] })), rod(V(0, 0.36, -0.25), V(0, 0.4, -1.0), 0.04, 0.025, 4, OLIVE),
+    box(0.34, 0.03, 0.06, PAINT, { y: 0.16, z: 0 }, { team: true }), ...[1, -1].map((s) => rod(V(s * 0.16, 0.16, -0.2), V(s * 0.16, 0.16, 0.3), 0.012, 0.012, 3, GUNMETAL)),
+    rod(V(0, 0.5, 0), V(0, 0.58, 0), 0.02, 0.02, 3, GUNMETAL), ...[0.5, -1.07].map((a) => lp(plate([[-0.9, -0.04], [0.9, -0.04], [0.9, 0.04], [-0.9, 0.04]], 0x1a1a1a).rotateX(-Math.PI / 2).rotateY(a), { y: 0.59 })),
+    lp(plate([[0, 0], [0.18, 0], [0.04, 0.2]], OLIVE), { y: 0.4, z: -1.0, ry: -Math.PI / 2 })];
   if (type === 'fighter') return [body(1.0, 0.09, OLIVE), wing(1.4, 0.3, AIR_Y + 0.22, 0.12, PAINT, true), wing(1.3, 0.28, AIR_Y - 0.06, 0.12, OLIVE, false),
     ...[1, -1].map((s) => rod(V(s * 0.5, AIR_Y - 0.06, 0.12), V(s * 0.5, AIR_Y + 0.22, 0.12), 0.01, 0.01, 3, WOOD)), ...tail(1.0, OLIVE), prop(0, 0.51), ...gear];
   return [body(1.8, 0.13, 0x6a6e66), wing(2.6, 0.45, AIR_Y + 0.02, 0.15, PAINT, true), ...[1, -1].flatMap((s) => [lp(hull([R([s * 0.55, AIR_Y - 0.02, -0.2], 0.06, 0.06), R([s * 0.55, AIR_Y - 0.02, 0.4], 0.07, 0.07)], 4, 0x4a4e48, { side: [1, 0, 0] })), prop(s * 0.55, 0.42)]),
     ...tail(1.8, 0x6a6e66), ...gear];
 }
 
-const MACHINES: ReadonlySet<UnitKey> = new Set<UnitKey>(['catapult', 'trebuchet', 'cannon', 'gatlingGun', 'artillery', 'antiTank', 'landship', 'tank',
-  'galley', 'trireme', 'galleass', 'caravel', 'frigate', 'ironclad', 'destroyer', 'battleship', 'fighter', 'bomber']);
+// An anti-aircraft gun: twin barrels raised to the sky on a cross-footed
+// mount (a band of the owner's colour), its shield.
+function antiAircraft(): THREE.BufferGeometry[] {
+  return [
+    ...[0, Math.PI / 2].map((r) => box(1.0, 0.06, 0.1, OLIVE, { y: 0.03, ry: r })), shape(new THREE.CylinderGeometry(0.14, 0.18, 0.24, 6), OLIVE, { y: 0.12 }),
+    box(0.3, 0.2, 0.26, OLIVE, { y: 0.32 }), box(0.34, 0.05, 0.3, PAINT, { y: 0.44 }, { team: true }),
+    ...[1, -1].map((s) => rod(V(s * 0.06, 0.38, 0.05), V(s * 0.06, 0.95, 0.55), 0.022, 0.018, 4, GUNMETAL)),
+    box(0.4, 0.22, 0.02, OLIVE, { y: 0.42, z: 0.2, rx: -0.4 }),
+  ];
+}
+
+const MACHINES: ReadonlySet<UnitKey> = new Set<UnitKey>(['catapult', 'trebuchet', 'cannon', 'gatlingGun', 'artillery', 'antiTank', 'landship', 'tank', 'antiAircraft',
+  'galley', 'trireme', 'galleass', 'cog', 'caravel', 'frigate', 'ironclad', 'cruiser', 'destroyer', 'battleship', 'submarine', 'carrier',
+  'airship', 'fighter', 'jetFighter', 'bomber', 'heavyBomber', 'helicopter']);
 export const isMachine = (type: UnitKey): boolean => MACHINES.has(type);
 
 // ---- hair ----
@@ -581,6 +610,15 @@ export const UNIT_LOOK: Record<UnitKey, UnitLook> = {
   battleship: { party: 'formation', count: 2, cols: 2, spacing: [1.7, 4.2] },
   fighter:    { party: 'formation', count: 3, cols: 3, spacing: [1.6, 1.4] },
   bomber:     { party: 'formation', count: 2, cols: 2, spacing: [2.8, 2.0] },
+  cog:        { party: 'formation', count: 2, cols: 2, spacing: [1.4, 3.0] },
+  cruiser:    { party: 'formation', count: 2, cols: 2, spacing: [1.5, 3.8] },
+  submarine:  { party: 'formation', count: 3, cols: 3, spacing: [1.0, 3.4] },
+  carrier:    { party: 'formation', count: 1, cols: 1, spacing: [1.5, 4.5] },
+  airship:    { party: 'formation', count: 2, cols: 2, spacing: [1.4, 3.4] },
+  heavyBomber: { party: 'formation', count: 2, cols: 2, spacing: [3.6, 2.6] },
+  jetFighter: { party: 'formation', count: 3, cols: 3, spacing: [1.7, 1.6] },
+  helicopter: { party: 'formation', count: 3, cols: 3, spacing: [2.0, 1.6] },
+  antiAircraft: { party: 'formation', count: 4, cols: 2, spacing: [1.1, 1.2] },
 };
 // A unit's figures at full strength, and its formation's width.
 export const fullCount = (type: UnitKey): number => UNIT_LOOK[type].count;
@@ -626,8 +664,10 @@ export function unitModel(type: UnitKey, civ: ArchCiv, variant = 0, female = fal
       case 'machineGun': return figure(gear, 'mg', false, { helmet: true, female, modern: true });
       case 'antiTank': return antiTank();
       case 'landship': return landship();
-      case 'galley': case 'trireme': case 'galleass': case 'caravel': case 'frigate': case 'ironclad': case 'destroyer': case 'battleship': return ship(type);
-      case 'fighter': case 'bomber': return aircraft(type);
+      case 'galley': case 'trireme': case 'galleass': case 'cog': case 'caravel': case 'frigate': case 'ironclad': case 'cruiser': case 'destroyer': case 'battleship':
+      case 'submarine': case 'carrier': return ship(type);
+      case 'fighter': case 'jetFighter': case 'bomber': case 'heavyBomber': case 'airship': case 'helicopter': return aircraft(type);
+      case 'antiAircraft': return antiAircraft();
       case 'scout': return figure(gear, 'staff', false, { helmet: false, pack: true, female, civilian: true });
       case 'settler': return figure(gear, variant % 2 ? 'staff' : 'none', false, { pack: variant % 2 === 0, female, civilian: true });
       // (Its two figures: the commander mounted, and the standard-bearer.)

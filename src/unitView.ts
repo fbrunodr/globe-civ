@@ -35,6 +35,8 @@ const MIN_PX = 3;
 // A fight: how long (seconds), and how far a melee unit charges (a share of
 // the way to the enemy's tile).
 const FIGHT = 1.8, CHARGE = 0.42;
+// A carrier's deck above the water (figure heights: unitModels.ts).
+const CARRIER_DECK = 0.35;
 
 // How a fight plays out, over its FIGHT seconds (shares of it): how far the
 // unit goes in (a share of CHARGE: 0 stays put), when it sets out and has
@@ -410,10 +412,17 @@ export class UnitView {
       const d = this.figureDir(s.dir, s.forward, right, f.x * s.spread, f.z * s.spread);
       const h = this.env.ground(d);
       f.up.copy(d);
-      f.pos.copy(d).multiplyScalar(1 + (afloat ? Math.max(h.ground, h.water) : Math.max(h.ground, h.water - 0.0004)) + s.alt * this.size);
+      // (Aircraft at sea stand on their carrier's deck.)
+      const deck = afloat && domainOf(unitDef(s.unit.type)) === 'air' ? CARRIER_DECK * this.size : 0;
+      f.pos.copy(d).multiplyScalar(1 + (afloat ? Math.max(h.ground, h.water) : Math.max(h.ground, h.water - 0.0004)) + deck + s.alt * this.size);
     }
   }
-  private afloat(u: ShownUnit): boolean { return u.embarked === true || domainOf(unitDef(u.type)) === 'sea'; }
+  // Afloat: ships, boats, and aircraft on a carrier (their tile water).
+  private afloat(u: ShownUnit): boolean {
+    const dom = domainOf(unitDef(u.type));
+    if (dom === 'air') { const h = this.env.ground(this.env.center(u.tile)); return h.water > h.ground; }
+    return u.embarked === true || dom === 'sea';
+  }
 
   private figureDir(c: THREE.Vector3, forward: THREE.Vector3, right: THREE.Vector3, x: number, z: number): THREE.Vector3 {
     return c.clone().addScaledVector(right, -x * this.size).addScaledVector(forward, z * this.size).normalize();

@@ -186,3 +186,38 @@ describe('R4: at sea and in the air', () => {
     for (const k of ['horseman', 'knight', 'lancer', 'cavalry', 'chariotArcher'] as const) expect(fullCount(k), k).toBeLessThanOrEqual(6);
   });
 });
+
+describe('R5: carriers, submarines, anti-aircraft', () => {
+  it('a submarine attacks only ships; a carrier never attacks', () => {
+    expect(attackBlock('submarine', 'warrior', { city: true })).not.toBeNull();
+    expect(attackBlock('submarine', 'destroyer')).toBeNull();
+    expect(matchup('submarine', 'destroyer', 'atk')).toBe(1.5);
+    expect(attackStyle('carrier', 'galley')).toBeNull();
+  });
+  it('a carrier takes its aircraft to sea, and they go where it goes', () => {
+    const { g, sea } = waterWorld();
+    const carrier = g.createUnit('carrier', 0, sea);
+    const plane = g.createUnit('fighter', 0, sea);
+    expect(plane.tile).toBe(sea);
+    const next = g.tiles[sea].neighbors.find((n) => g.isWater(n) && g.canStand(carrier, n))!;
+    g.goTo(carrier, next);
+    expect(carrier.tile).toBe(next);
+    expect(plane.tile).toBe(next);
+    g.removeUnit(carrier);
+    expect(plane.dead).toBe(true);
+  });
+  it('anti-aircraft guns fire on aircraft flying near them', () => {
+    const { g, coast, inland } = waterWorld();
+    const city = g.foundCity(g.createUnit('settler', 0, coast))!;
+    const target = g.tiles.findIndex((t) => !g.isWater(t.id) && g.approxDist(t.id, city.tile) > 3 && g.approxDist(t.id, city.tile) < 5);
+    const plane = g.createUnit('bomber', 0, city.tile);
+    g.createUnit('warrior', 1, target);
+    const way = g.flightPath(city.tile, target);
+    expect(way[way.length - 1]).toBe(target);
+    const aa = g.createUnit('antiAircraft', 1, way[0] === inland ? way[0] : way[0]!);
+    g.declareWar(0, 1);
+    g.goTo(plane, target);
+    expect(plane.hp < 100 || plane.dead).toBe(true);
+    expect(aa.hp).toBe(100);
+  });
+});

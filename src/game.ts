@@ -1,4 +1,4 @@
-import { attackBlock, attackStyle, siegeStyle, type AttackStyle } from './unitClasses.ts';
+import { attackBlock, attackStyle, siegeStyle, UNIT_CLASS, type AttackStyle } from './unitClasses.ts';
 import { buildFlora, type Flora } from './flora.ts';
 import type { ArchCiv } from './architecture.ts';
 import type { Globe, Tile } from './goldberg.ts';
@@ -139,6 +139,8 @@ export function matchup(self: UnitKey, other: UnitKey, role: 'atk' | 'def'): num
   if (O.mounted && !O.armored) k += S.vsMounted ?? 0;
   if (O.armored) k += S.vsArmor ?? 0;
   if (role === 'atk' && (O.ranged || O.siege)) k += S.vsRanged ?? 0;
+  if (domainOf(O) === 'sea') k += S.vsShips ?? 0;
+  if (domainOf(O) === 'air') k += S.vsAir ?? 0;
   if (role === 'atk' && S.siege) k *= SIEGE_VS_UNITS;
   return k;
 }
@@ -374,8 +376,12 @@ export class Game {
     switch (domainOf(unitDef(u.type))) {
       case 'land': return !this.isWater(t) || this.canEmbark(u.owner);
       case 'sea': return this.isWater(t) || (city !== undefined && city.owner === u.owner && this.cityCoast(city));
-      case 'air': return city !== undefined && city.owner === u.owner;
+      case 'air': return (city !== undefined && city.owner === u.owner) || this.carrierRoom(t, u.owner) > 0;
     }
+  }
+  // The aircraft a civ's carriers on a tile can take.
+  carrierRoom(t: number, owner: number): number {
+    return this.units.reduce((n, v) => n + (v.tile === t && v.owner === owner && v.packedIn === null ? unitDef(v.type).carries ?? 0 : 0), 0);
   }
 
   // Whether a unit could stand on a tile: one it may enter, and its slot
@@ -385,7 +391,8 @@ export class Game {
     if (!this.canEnter(u, t)) return false;
     const slot = slotOf(u.type);
     const mine = this.units.filter((v) => v.tile === t && v.packedIn === null && v.id !== u.id && v.owner === u.owner && slotOf(v.type) === slot).length;
-    return mine < (slot === 'air' ? AIR_PER_CITY : 1);
+    const city = this.cityByTile.get(t);
+    return mine < (slot === 'air' ? (city?.owner === u.owner ? AIR_PER_CITY : 0) + this.carrierRoom(t, u.owner) : 1);
   }
 
   // The nearest tile to t (t itself first) where a new unit of its type can
@@ -563,6 +570,8 @@ export class Game {
     const i = this.units.indexOf(u);
     if (i >= 0) this.units.splice(i, 1);
     u.dead = true;
+    // (A carrier lost at sea takes down the aircraft it had no more room for.)
+    if (unitDef(u.type).carries && !this.cityByTile.has(u.tile)) for (const v of [...this.units]) if (v.tile === u.tile && v.owner === u.owner && domainOf(unitDef(v.type)) === 'air' && !this.canStand(v, v.tile)) this.removeUnit(v);
     if (u.type === 'commander') for (const v of this.armyOf(u)) this.removeUnit(v);
   }
 
@@ -576,13 +585,41 @@ export class Game {
   }
   inRange(u: Unit, t: number, k = 1): boolean { return this.tilesWithinMap(u.tile, (unitDef(u.type).range ?? 1) * k).has(t); }
   canRebase(u: Unit, t: number): boolean { return domainOf(unitDef(u.type)) === 'air' && t !== u.tile && this.inRange(u, t, 2) && this.canStand(u, t); }
+  // The tiles an aircraft flies over from its base to a target (stepping
+  // each time to the neighbour nearest the target), the target last.
+  flightPath(from: number, to: number): number[] {
+    const out: number[] = [], goal = this.tiles[to].center;
+    for (let t = from, n = 0; t !== to && n < 64; n++) {
+      t = this.tiles[t].neighbors.reduce((a, b) => (this.tiles[b].center.angleTo(goal) < this.tiles[a].center.angleTo(goal) ? b : a));
+      out.push(t);
+    }
+    return out;
+  }
+  // Anti-aircraft guns guard the sky round them: each enemy one within its
+  // reach of the aircraft's way to its target fires on it (a volley; the
+  // gun takes nothing back). Whether the aircraft comes through.
+  private flak(u: Unit, tile: number): boolean {
+    const way = this.flightPath(u.tile, tile);
+    for (const v of [...this.units]) {
+      const reach = unitDef(v.type).aaRange;
+      if (!reach || v.owner === u.owner || !this.atWar(u.owner, v.owner) || v.packedIn !== null) continue;
+      const near = this.tilesWithinMap(v.tile, reach);
+      if (!way.some((t) => near.has(t))) continue;
+      const after = fightRounds(v.hp, u.hp, this.unitStrength(v, 'atk', tile) * matchup(v.type, u.type, 'atk'), this.unitStrength(u, 'def', tile), true, this.rng);
+      u.hp = after.defender;
+      this.record('intercept', v.owner, { unit: v.type, target: u.type, hp: Math.max(0, u.hp) });
+      if (u.owner === HUMAN || v.owner === HUMAN) this.log(`${this.players[v.owner].name} anti-aircraft fire hit the ${this.players[u.owner].name} ${unitDef(u.type).name}${u.hp <= 0 ? ', shooting it down' : ''}.`);
+      if (u.hp <= 0) { this.removeUnit(u); return false; }
+    }
+    return true;
+  }
   // Enemy fighters covering a tile intercept an aircraft striking it: the
   // strongest of them (its base within its range) fights it first. Whether
   // the striker comes through.
   private intercept(u: Unit, tile: number): boolean {
     let best: Unit | null = null;
     for (const v of this.units) {
-      if (v.type !== 'fighter' || v.owner === u.owner || !this.atWar(u.owner, v.owner) || !this.inRange(v, tile)) continue;
+      if (UNIT_CLASS[v.type] !== 'fighter' || v.owner === u.owner || !this.atWar(u.owner, v.owner) || !this.inRange(v, tile)) continue;
       if (!best || v.hp > best.hp) best = v;
     }
     if (!best) return true;
@@ -649,6 +686,8 @@ export class Game {
 
   // Moves a unit one tile (its army with it).
   private step(u: Unit, t: number): void {
+    // (A carrier at sea takes its aircraft with it; in port they stay in the city.)
+    if (unitDef(u.type).carries && !this.cityByTile.has(u.tile)) for (const v of this.units) if (v.tile === u.tile && v.owner === u.owner && domainOf(unitDef(v.type)) === 'air') v.tile = t;
     u.moves = this.landing(u, u.tile, t) ? 0 : Math.max(0, u.moves - this.stepCost(u, u.tile, t));
     u.tile = t;
     for (const v of this.armyOf(u)) v.tile = t;
@@ -724,7 +763,7 @@ export class Game {
   attack(u: Unit, tile: number): void {
     if (this.attackBlockAt(u, tile) !== null) return;
     u.moves = 0;
-    if (domainOf(unitDef(u.type)) === 'air' && !this.intercept(u, tile)) return;
+    if (domainOf(unitDef(u.type)) === 'air' && (!this.flak(u, tile) || !this.intercept(u, tile))) return;
     u.fortified = false;
     const ranged = unitDef(u.type).ranged === true;
     // (Attacking a civ at peace is a declaration of war.)
