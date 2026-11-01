@@ -27,7 +27,7 @@ import type { UnitKey } from './rules.ts';
 // shields and helmets, their legs bare or trousered.
 
 export type Shield = 'round' | 'big round' | 'scutum' | 'kite' | 'oval' | 'pavise' | 'small';
-export type Helmet = 'crest' | 'cone' | 'kettle' | 'hat' | 'feather' | 'turban' | 'cap' | 'none';
+export type Helmet = 'crest' | 'cone' | 'kettle' | 'hat' | 'feather' | 'turban' | 'cap' | 'beret' | 'none';
 export interface Gear {
   shield: Shield;
   helmet: Helmet;
@@ -103,7 +103,7 @@ const ARM = (side: number) => [-side, SHOULDER, 0.35] as const;
 export const STRIKE = 2;
 const HIT = (pivot: number, amp: number) => [STRIKE, pivot, amp] as const;
 
-type Hold = 'spear' | 'pike' | 'club' | 'sword' | 'longsword' | 'bow' | 'recurve' | 'crossbow' | 'musket' | 'rifle' | 'mg' | 'staff' | 'banner' | 'none';
+type Hold = 'spear' | 'pike' | 'club' | 'sword' | 'longsword' | 'bow' | 'recurve' | 'sling' | 'crossbow' | 'musket' | 'rifle' | 'mg' | 'staff' | 'banner' | 'none';
 
 // A body (people.ts) tagged for the units' shader.
 const tagged = (parts: readonly Part[]): THREE.BufferGeometry[] => parts.map((p) => tag(p.geo, { team: p.tag === 'team', skin: p.tag === 'skin', ...(p.limb ? { limb: p.limb } : {}) }));
@@ -115,9 +115,11 @@ const v3 = (p: THREE.Vector3) => V(p.x, p.y, p.z);
 // build (a civilian's skirt to the ankles). `modern`: a modern soldier
 // (trousers, a steel helmet whatever the civ wore).
 // (The figure faces +z: its right hand is at -x.)
-// `still`: standing (in a chariot), its legs never swinging.
-function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boolean; pack?: boolean; quiver?: boolean; female?: boolean; civilian?: boolean; modern?: boolean; still?: boolean } = {}): THREE.BufferGeometry[] {
-  const gear: Gear = opts.modern ? { ...gear0, legs: 0x4a4e44, helmet: 'kettle' } : gear0;
+// `still`: standing (in a chariot), its legs never swinging; `helmetAs`,
+// `shieldAs`: the unit's own headgear or shield whatever its civ's.
+function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boolean; pack?: boolean; quiver?: boolean; female?: boolean; civilian?: boolean; modern?: boolean; still?: boolean; helmetAs?: Helmet; shieldAs?: Shield } = {}): THREE.BufferGeometry[] {
+  const gear1: Gear = opts.modern ? { ...gear0, legs: 0x4a4e44, helmet: 'kettle' } : gear0;
+  const gear: Gear = { ...gear1, helmet: opts.helmetAs ?? gear1.helmet, shield: opts.shieldAs ?? gear1.shield };
   const f = opts.female === true;
   const dress: Dress = {
     female: f, skirt: opts.modern ? 'none' : opts.civilian && f ? 'ankle' : 'knee', legs: gear.legs,
@@ -125,9 +127,9 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
   };
   // The arms: the right one carries the weapon, the left the shield (or the bow).
   const bow = hold === 'bow' || hold === 'recurve', twoHands = hold === 'crossbow' || hold === 'musket' || hold === 'rifle' || hold === 'mg' || hold === 'longsword';
-  const armR: ArmPose = hold === 'none' || bow ? HANG : HOLD;
+  const armR: ArmPose = hold === 'none' || bow ? HANG : hold === 'sling' ? RAISE : HOLD;
   const armL: ArmPose = shield ? SHIELD : bow ? RAISE : twoHands ? HOLD : HANG;
-  const strike = hold === 'spear' || hold === 'pike' ? HIT(SHOULDER, 1.1) : hold === 'club' || hold === 'sword' || hold === 'longsword' ? HIT(SHOULDER, 1.5)
+  const strike = hold === 'sling' ? HIT(SHOULDER, 1.4) : hold === 'spear' || hold === 'pike' ? HIT(SHOULDER, 1.1) : hold === 'club' || hold === 'sword' || hold === 'longsword' ? HIT(SHOULDER, 1.5)
     : hold === 'mg' ? HIT(SHOULDER, 0.4) : twoHands ? HIT(SHOULDER, 0.9) : null;
   const bowUp = HIT(SHOULDER, 1.3); // (an archer raises his bow to loose)
   const freeL = !shield && !bow && !twoHands;
@@ -154,6 +156,8 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
     out.push(rod(back, front, 0.032, 0.03, 4, GUNMETAL, w), rod(front, front.clone().add(front.clone().sub(back).normalize().multiplyScalar(0.3)), 0.012, 0.012, 3, GUNMETAL, w),
       box(0.05, 0.08, 0.08, GUNMETAL, { x: (back.x + front.x) / 2, y: (back.y + front.y) / 2 - 0.06, z: (back.z + front.z) / 2 }, w));
   }
+  // (A sling whirled from the raised hand: its cords and the stone's pouch.)
+  if (hold === 'sling') out.push(rod(v3(hR), v3(hR).add(V(0.02, 0.2, -0.1)), 0.004, 0.004, 3, 0xb8a888, w), ball(0.025, 0x8a7a62, { x: hR.x + 0.02, y: hR.y + 0.22, z: hR.z - 0.11 }, w));
   if (hold === 'staff') out.push(rod(up(-0.42), up(0.6), 0.013, 0.011, 5, WOOD));
   // (A long gun held across the body, its muzzle up; a rifle's with a bayonet.)
   if (hold === 'musket' || hold === 'rifle') {
@@ -224,6 +228,7 @@ function helmetOf(h: Helmet): THREE.BufferGeometry[] {
       ...[-0.05, -0.025, 0, 0.025, 0.05].map((x) => lp(plate([[-0.01, 0], [0.01, 0], [0, 0.16]], x === 0 ? 0xd8b440 : 0x3a8a6a), { x, y: Y + 0.04, z: -0.05, rz: -x * 3 }))];
     case 'turban': return [shell([[-0.004, 1.2], [0.03, 1.32], [0.075, 1.38], [0.105, 0]], 0xece6d6)];
     case 'cap': return [shell([[-0.004, 1.14], [0.07, 1.22], [0.09, 0]], 0xe6dcc4)];
+    case 'beret': return [shell([[0.02, 1.16], [0.065, 1.3], [0.085, 0]], PAINT, { team: true })];
     case 'none': return [];
   }
 }
@@ -284,6 +289,17 @@ function rider(gear: Gear, coat: number, female: boolean, style: RiderStyle): TH
   }
   const helmet = heavy || style === 'lancer' ? HEAVY_HELMET(gear.helmet) : gear.helmet;
   out.push(...helmetOf(helmet).map((g) => g.translate(0, RIDER_HEAD, 0)));
+  return out;
+}
+// A horse archer: a rider (no lance) with a short bow raised, a quiver.
+function horseArcher(gear: Gear, coat: number, female: boolean): THREE.BufferGeometry[] {
+  const out: THREE.BufferGeometry[] = [...mount(coat, true), box(0.16, 0.05, 0.22, LEATHER, { y: SEAT - 0.03, z: 0.02 })];
+  const armR: ArmPose = HOLD, armL: ArmPose = RAISE;
+  out.push(...tagged(riderBody({ female, legs: gear.legs, sleeves: 'long' }, SEAT, armL, armR)));
+  const g = handAt(1, armL, female).add(V(0, SEAT - HIP, 0)), up: Tag = { limb: HIT(SEAT + 0.3, 0.8) };
+  out.push(rod(g, g.clone().add(V(0, 0.26, -0.05)), 0.01, 0.007, 3, 0x5a3a22, up), rod(g, g.clone().add(V(0, -0.26, -0.05)), 0.01, 0.007, 3, 0x5a3a22, up), rod(g.clone().add(V(0, 0.26, -0.05)), g.clone().add(V(0, -0.26, -0.05)), 0.003, 0.003, 3, 0xd8d0c0, up),
+    lp(hull([R([0, 0, 0], 0.03), R([0, 0.26, 0], 0.034)], 4, LEATHER, { caps: [true, false] }), { x: 0.12, y: SEAT - 0.1, z: -0.12, rz: -0.3 }));
+  out.push(...helmetOf(gear.helmet).map((h) => h.translate(0, RIDER_HEAD, 0)));
   return out;
 }
 // A chariot archer: the horse in the shafts, the two-wheeled car behind it
@@ -416,6 +432,35 @@ function landship(): THREE.BufferGeometry[] {
     ...[1, -1].flatMap((s) => [box(0.12, 0.18, 0.3, OLIVE, { x: s * 0.44, y: 0.3, z: 0.05 }), shape(new THREE.CylinderGeometry(0.022, 0.025, 0.36, 5), GUNMETAL, { x: s * 0.47, y: 0.39, z: 0.3, rx: Math.PI / 2 })]),
   ];
 }
+// ---- later machines ----
+// A field cannon: the cannon, smaller and lighter.
+const fieldCannon = () => cannon(false).map((g) => g.applyMatrix4(new THREE.Matrix4().makeScale(0.78, 0.78, 0.78)));
+// Wheels down a vehicle's sides (low six-sided drums, dark).
+const wheels = (xs: readonly number[], zs: readonly number[], r: number) => xs.flatMap((x) => zs.map((z) => shape(new THREE.CylinderGeometry(r, r, 0.08, 6), 0x1e1e1e, { x, y: r, z, rz: Math.PI / 2 })));
+// Modern armour: a low hull (painted), a flat turret, a long gun.
+function modernArmor(): THREE.BufferGeometry[] {
+  return [box(0.2, 0.22, 1.5, GUNMETAL, { x: 0.36, y: 0.11 }), box(0.2, 0.22, 1.5, GUNMETAL, { x: -0.36, y: 0.11 }),
+    box(0.66, 0.22, 1.2, PAINT, { y: 0.34, z: -0.05 }, { team: true }),
+    box(0.5, 0.16, 0.6, OLIVE, { y: 0.53, z: -0.12 }), shape(new THREE.CylinderGeometry(0.03, 0.035, 1.0, 6), GUNMETAL, { y: 0.55, z: 0.65, rx: Math.PI / 2 })];
+}
+// An armoured carrier (mechanized infantry): a boxy hull on wheels, its sides painted, a small turret.
+function apc(): THREE.BufferGeometry[] {
+  return [...wheels([0.33, -0.33], [-0.45, 0, 0.45], 0.14), box(0.62, 0.36, 1.3, PAINT, { y: 0.32 }, { team: true }), box(0.6, 0.04, 0.3, OLIVE, { y: 0.48, z: 0.58, rx: 0.6 }),
+    box(0.22, 0.12, 0.24, OLIVE, { y: 0.56, z: -0.1 }), rod(V(0, 0.58, 0), V(0, 0.58, 0.4), 0.015, 0.015, 3, GUNMETAL)];
+}
+// Rocket artillery: a tracked chassis (painted) under a box of rockets tilted to the sky.
+function rocketArtillery(): THREE.BufferGeometry[] {
+  return [box(0.18, 0.2, 1.3, GUNMETAL, { x: 0.3, y: 0.1 }), box(0.18, 0.2, 1.3, GUNMETAL, { x: -0.3, y: 0.1 }), box(0.56, 0.2, 1.2, PAINT, { y: 0.3 }, { team: true }),
+    box(0.4, 0.2, 0.3, OLIVE, { y: 0.48, z: 0.4 }), box(0.46, 0.26, 0.8, OLIVE, { y: 0.62, z: -0.2, rx: -0.45 }),
+    ...[-0.12, 0, 0.12].map((x) => box(0.06, 0.06, 0.02, 0x1a1a1a, { x, y: 0.82, z: 0.17, rx: -0.45 }))];
+}
+// A mobile SAM: a truck, its cab painted, two missiles on rails raised on the bed.
+function mobileSAM(): THREE.BufferGeometry[] {
+  const missile = (x: number) => lp(hull([R([x, 0, -0.35], 0.04), R([x, 0, 0.3], 0.04), R([x, 0, 0.42], 0, 0)], 4, 0xe8e6e0, { side: [1, 0, 0] }), { y: 0.72, z: -0.15, rx: -0.6 });
+  return [...wheels([0.28, -0.28], [-0.45, 0.45], 0.13), box(0.56, 0.08, 1.3, OLIVE, { y: 0.26 }), box(0.56, 0.3, 0.36, PAINT, { y: 0.45, z: 0.45 }, { team: true }),
+    box(0.3, 0.12, 0.5, OLIVE, { y: 0.38, z: -0.2 }), missile(0.1), missile(-0.1)];
+}
+
 // ---- ships ----
 // Ships sit on the water (y = 0 the waterline), bow to +z: a low-poly hull
 // (boxy sections tapering to the bow, a flat transom), masts and sails (a
@@ -455,6 +500,14 @@ function ship(type: UnitKey): THREE.BufferGeometry[] {
       shape(new THREE.CylinderGeometry(0.09, 0.1, 0.45, 6), 0x1a1a1a, { y: 0.62, z: 0.05 }), gun(0, 0.3, 0.62, 0.3)];
     case 'destroyer': return [...shipHull(3.2, 0.6, 0.42, STEEL_GREY, 0x5a6066, 0.4), box(0.36, 0.3, 0.6, STEEL_GREY, { y: 0.36, z: 0.35 }),
       ...[-0.1, -0.5].flatMap((z) => [shape(new THREE.CylinderGeometry(0.07, 0.08, 0.36, 6), STEEL_GREY, { y: 0.48, z }), box(0.18, 0.06, 0.18, PAINT, { y: 0.69, z }, { team: true })]), ...turret(1.0, 0.3, 0.8), ...turret(-1.1, 0.3, 0.8)];
+    case 'privateer': return [...shipHull(2.4, 0.66, 0.5, 0x2e241c, DECK, 0.3), box(0.55, 0.2, 0.45, 0x2e241c, { y: 0.45, z: -0.85 }), ...mast(0.3, 1.3, 0.85, 0.36, false, 0x2a2a2a), ...mast(-0.45, 1.05, 0.65, 0.36, false, 0x2a2a2a),
+      lp(plate([[0, 0], [0.22, -0.06], [0, -0.12]], PAINT), { y: 1.66, z: 0.33, ry: -Math.PI / 2 }, { team: true })];
+    case 'shipOfTheLine': return [...shipHull(3.3, 0.95, 0.75, 0x3a2a20, DECK, 0.28), box(1.0, 0.06, 2.4, 0xd8b440, { y: 0.32 }), box(1.0, 0.06, 2.4, 0xd8b440, { y: 0.5 }),
+      ...[1, -1].flatMap((s) => [-0.8, -0.2, 0.4, 1.0].map((z) => gun(s * 0.5, 0.41, z, 0.16, s * Math.PI / 2))), box(0.8, 0.25, 0.6, 0x3a2a20, { y: 0.7, z: -1.2 }),
+      ...mast(0.95, 1.6, 0.9, 0.56, false), ...mast(0.05, 2.0, 1.1, 0.56), ...mast(-0.85, 1.5, 0.8, 0.56, false)];
+    case 'missileCruiser': return [...shipHull(3.4, 0.75, 0.5, 0x8a9096, 0x5a6066, 0.4), box(0.42, 0.42, 0.9, 0x8a9096, { y: 0.45, z: 0.1 }), box(0.43, 0.06, 0.91, PAINT, { y: 0.69, z: 0.1 }, { team: true }),
+      rod(V(0, 0.68, -0.1), V(0, 1.15, -0.1), 0.02, 0.015, 3, GUNMETAL), box(0.4, 0.06, 0.5, 0x4a4e52, { y: 0.31, z: 1.0 }), box(0.4, 0.06, 0.5, 0x4a4e52, { y: 0.31, z: -1.0 }), gun(0, 0.36, 1.45, 0.3)];
+    case 'nuclearSubmarine': return ship('submarine').map((g) => g.applyMatrix4(new THREE.Matrix4().makeScale(1.15, 1.2, 1.35)));
     case 'cruiser': return [...shipHull(3.3, 0.75, 0.5, STEEL_GREY, 0x5a6066, 0.4), box(0.42, 0.34, 0.8, STEEL_GREY, { y: 0.4, z: 0.15 }),
       ...[-0.35, -0.75].flatMap((z) => [shape(new THREE.CylinderGeometry(0.08, 0.09, 0.4, 6), 0x3a3c40, { y: 0.55, z }), box(0.2, 0.06, 0.2, PAINT, { y: 0.77, z }, { team: true })]), ...turret(1.05, 0.36, 0.9), ...turret(-1.15, 0.36, 0.9)];
     case 'submarine': return [lp(hull([R([0, 0.04, -1.4], 0, 0), R([0, 0.04, -0.9], 0.12, 0.16), R([0, 0.05, 0.6], 0.15, 0.2), R([0, 0.05, 1.2], 0.1, 0.12), R([0, 0.04, 1.45], 0, 0)], 6, DARK_HULL, { side: [1, 0, 0] })),
@@ -490,7 +543,7 @@ function aircraft(type: UnitKey): THREE.BufferGeometry[] {
   const gear = [1, -1].map((s) => rod(V(s * 0.1, AIR_Y - 0.05, 0.15), V(s * 0.14, 0.04, 0.18), 0.012, 0.012, 3, GUNMETAL));
   if (type === 'airship') return [lp(hull([R([0, AIR_Y + 0.75, -1.5], 0, 0), R([0, AIR_Y + 0.75, -1.0], 0.34, 0.34), R([0, AIR_Y + 0.75, 0.5], 0.42, 0.42), R([0, AIR_Y + 0.75, 1.25], 0.26, 0.26), R([0, AIR_Y + 0.75, 1.55], 0, 0)], 6, PAINT, { side: [1, 0, 0] }), {}, { team: true }), box(0.2, 0.14, 0.5, 0x5a4a38, { y: AIR_Y + 0.2, z: 0.1 }),
     ...[1, -1].map((s) => rod(V(s * 0.08, AIR_Y + 0.27, 0.1), V(s * 0.2, AIR_Y + 0.45, 0.1), 0.008, 0.008, 3, GUNMETAL)), lp(plate([[0, 0], [0.5, 0], [0.15, 0.4]], 0xd8d0c0), { y: AIR_Y + 0.75, z: -1.3, ry: -Math.PI / 2 })];
-  if (type === 'jetFighter') return [body(1.3, 0.08, 0x8a9096), lp(plate([[-0.75, -0.25], [0.75, -0.25], [0.08, 0.35], [-0.08, 0.35]], PAINT), { y: AIR_Y, z: -0.1, rx: -Math.PI / 2 }, { team: true }),
+  if (type === 'jetFighter') return [body(1.3, 0.08, 0x8a9096), lp(plate([[-0.75, -0.25], [0.75, -0.25], [0.08, 0.35], [-0.08, 0.35]], PAINT), { y: AIR_Y, z: -0.1, rx: Math.PI / 2 }, { team: true }),
     ...tail(1.3, 0x8a9096), ...gear];
   if (type === 'heavyBomber') return [body(2.3, 0.15, 0x7a7e76), wing(3.4, 0.5, AIR_Y + 0.03, 0.15, PAINT, true), ...[0.55, 1.1, -0.55, -1.1].flatMap((x) => [lp(hull([R([x, AIR_Y - 0.02, -0.15], 0.055, 0.055), R([x, AIR_Y - 0.02, 0.42], 0.065, 0.065)], 4, 0x4a4e48, { side: [1, 0, 0] })), prop(x, 0.44)]),
     ...tail(2.3, 0x7a7e76), ...gear];
@@ -498,6 +551,22 @@ function aircraft(type: UnitKey): THREE.BufferGeometry[] {
     box(0.34, 0.03, 0.06, PAINT, { y: 0.16, z: 0 }, { team: true }), ...[1, -1].map((s) => rod(V(s * 0.16, 0.16, -0.2), V(s * 0.16, 0.16, 0.3), 0.012, 0.012, 3, GUNMETAL)),
     rod(V(0, 0.5, 0), V(0, 0.58, 0), 0.02, 0.02, 3, GUNMETAL), ...[0.5, -1.07].map((a) => lp(plate([[-0.9, -0.04], [0.9, -0.04], [0.9, 0.04], [-0.9, 0.04]], 0x1a1a1a).rotateX(-Math.PI / 2).rotateY(a), { y: 0.59 })),
     lp(plate([[0, 0], [0.18, 0], [0.04, 0.2]], OLIVE), { y: 0.4, z: -1.0, ry: -Math.PI / 2 })];
+  if (type === 'stealthFighter') return [body(1.3, 0.08, 0x3a3e44), lp(plate([[-0.7, -0.3], [0.7, -0.3], [0.1, 0.4], [-0.1, 0.4]], 0x3a3e44), { y: AIR_Y, z: -0.1, rx: Math.PI / 2 }),
+    box(0.3, 0.012, 0.06, PAINT, { y: AIR_Y + 0.01, z: 0.1 }, { team: true }), ...[1, -1].map((s) => lp(plate([[0, 0], [0.25, 0], [0.05, 0.22]], 0x3a3e44), { x: s * 0.12, y: AIR_Y, z: -0.6, ry: -Math.PI / 2, rz: s * 0.4 })), ...gear];
+  if (type === 'stealthBomber') return [lp(plate([[0, 0.8], [1.6, -0.3], [1.1, -0.45], [0.55, -0.2], [0, -0.45], [-0.55, -0.2], [-1.1, -0.45], [-1.6, -0.3]], 0x2e3036), { y: AIR_Y, rx: Math.PI / 2 }),
+    lp(hull([R([0, AIR_Y, -0.4], 0.02, 0.12), R([0, AIR_Y + 0.05, 0.2], 0.08, 0.2), R([0, AIR_Y, 0.75], 0, 0)], 4, 0x2e3036, { side: [1, 0, 0] })), box(0.5, 0.012, 0.05, PAINT, { y: AIR_Y + 0.02, z: 0.3 }, { team: true }), ...gear];
+  if (type === 'drone') return [body(0.8, 0.05, 0xb8bcc0), wing(1.6, 0.14, AIR_Y + 0.02, 0.05, 0xb8bcc0, false), ...[1, -1].map((s) => box(0.08, 0.01, 0.15, PAINT, { x: s * 0.76, y: AIR_Y + 0.03, z: 0.05 }, { team: true })),
+    ...[1, -1].map((s) => lp(plate([[0, 0], [0.18, 0], [0.04, 0.14]], 0xb8bcc0), { x: s * 0.05, y: AIR_Y, z: -0.38, ry: -Math.PI / 2, rz: s * 0.7 })), prop(0, -0.42), ...gear];
+  if (type === 'guidedMissile') return [box(0.3, 0.12, 0.8, OLIVE, { y: 0.06 }), box(0.25, 0.04, 0.9, PAINT, { y: 0.14 }, { team: true }), lp(hull([R([0, 0, -0.5], 0.05), R([0, 0, 0.35], 0.05), R([0, 0, 0.55], 0, 0)], 4, 0xe8e6e0, { side: [1, 0, 0] }), { y: 0.35, rx: -0.35 }),
+    ...[1, -1].map((s) => lp(plate([[0, 0], [0.12, 0], [0, 0.12]], 0xc04030), { x: s * 0.04, y: 0.2, z: -0.42, rx: -0.35, ry: s > 0 ? 0 : Math.PI }))];
+  // (The bomb on its cradle, fat, finned, a band of the owner's colour; the missile upright on its pad.)
+  if (type === 'atomicBomb') return [box(0.5, 0.1, 0.9, OLIVE, { y: 0.05 }), ...[1, -1].map((s) => box(0.04, 0.2, 0.7, OLIVE, { x: s * 0.18, y: 0.18 })),
+    lp(hull([R([0, 0, -0.55], 0.06), R([0, 0, -0.3], 0.2), R([0, 0, 0.25], 0.22), R([0, 0, 0.45], 0, 0)], 6, 0x6a7066, { side: [1, 0, 0] }), { y: 0.36 }),
+    box(0.46, 0.04, 0.06, PAINT, { y: 0.36, z: 0.05 }, { team: true }), ...[0, Math.PI / 2].map((r) => box(0.36, 0.02, 0.14, 0x4a4e48, { y: 0.36, z: -0.55, rz: r }))];
+  if (type === 'nuclearMissile') return [box(0.7, 0.08, 0.7, 0x7a7c78, { y: 0.04 }), ...[0, 1, 2, 3].map((i) => rod(V(Math.cos(i * Math.PI / 2) * 0.28, 0.08, Math.sin(i * Math.PI / 2) * 0.28), V(Math.cos(i * Math.PI / 2) * 0.1, 0.9, Math.sin(i * Math.PI / 2) * 0.1), 0.015, 0.012, 3, GUNMETAL)),
+    lp(hull([R([0, 0.12, 0], 0.11), R([0, 1.5, 0], 0.11), R([0, 1.85, 0], 0, 0)], 6, 0xecebe6, { side: [0, 0, 1] })), lp(hull([R([0, 1.0, 0], 0.115), R([0, 1.14, 0], 0.115)], 6, PAINT, { side: [0, 0, 1], caps: [false, false] }), {}, { team: true }),
+    ...[0, Math.PI / 2].map((r) => box(0.36, 0.2, 0.02, 0xc04030, { y: 0.24, ry: r }))];
+  if (type === 'attackHelicopter') return [...aircraft('helicopter'), ...[1, -1].flatMap((s) => [box(0.3, 0.02, 0.1, OLIVE, { x: s * 0.25, y: 0.3, z: 0.05 }), shape(new THREE.CylinderGeometry(0.035, 0.035, 0.2, 5), GUNMETAL, { x: s * 0.36, y: 0.27, z: 0.08, rx: Math.PI / 2 })])];
   if (type === 'fighter') return [body(1.0, 0.09, OLIVE), wing(1.4, 0.3, AIR_Y + 0.22, 0.12, PAINT, true), wing(1.3, 0.28, AIR_Y - 0.06, 0.12, OLIVE, false),
     ...[1, -1].map((s) => rod(V(s * 0.5, AIR_Y - 0.06, 0.12), V(s * 0.5, AIR_Y + 0.22, 0.12), 0.01, 0.01, 3, WOOD)), ...tail(1.0, OLIVE), prop(0, 0.51), ...gear];
   return [body(1.8, 0.13, 0x6a6e66), wing(2.6, 0.45, AIR_Y + 0.02, 0.15, PAINT, true), ...[1, -1].flatMap((s) => [lp(hull([R([s * 0.55, AIR_Y - 0.02, -0.2], 0.06, 0.06), R([s * 0.55, AIR_Y - 0.02, 0.4], 0.07, 0.07)], 4, 0x4a4e48, { side: [1, 0, 0] })), prop(s * 0.55, 0.42)]),
@@ -516,6 +585,8 @@ function antiAircraft(): THREE.BufferGeometry[] {
 }
 
 const MACHINES: ReadonlySet<UnitKey> = new Set<UnitKey>(['catapult', 'trebuchet', 'cannon', 'gatlingGun', 'artillery', 'antiTank', 'landship', 'tank', 'antiAircraft',
+  'fieldCannon', 'modernArmor', 'mechanizedInfantry', 'rocketArtillery', 'mobileSAM', 'privateer', 'shipOfTheLine', 'missileCruiser', 'nuclearSubmarine',
+  'stealthFighter', 'stealthBomber', 'attackHelicopter', 'drone', 'guidedMissile', 'atomicBomb', 'nuclearMissile',
   'galley', 'trireme', 'galleass', 'cog', 'caravel', 'frigate', 'ironclad', 'cruiser', 'destroyer', 'battleship', 'submarine', 'carrier',
   'airship', 'fighter', 'jetFighter', 'bomber', 'heavyBomber', 'helicopter']);
 export const isMachine = (type: UnitKey): boolean => MACHINES.has(type);
@@ -541,9 +612,9 @@ export function hairModel(style: HairStyle): THREE.BufferGeometry {
 }
 // Whether a type's figures wear helmets (their hair then mostly hidden).
 // (Always: knights, lancers and modern soldiers; others as their civ goes.)
-const HELMETED: ReadonlySet<UnitKey> = new Set<UnitKey>(['spearman', 'horseman', 'commander', 'swordsman', 'compositeBowman', 'longswordsman', 'pikeman', 'crossbowman', 'musketman', 'rifleman', 'cavalry']);
+const HELMETED: ReadonlySet<UnitKey> = new Set<UnitKey>(['horseArcher', 'spearman', 'horseman', 'commander', 'swordsman', 'compositeBowman', 'longswordsman', 'pikeman', 'crossbowman', 'musketman', 'rifleman', 'cavalry']);
 export const wearsHelmet = (type: UnitKey, civ: ArchCiv): boolean =>
-  type === 'knight' || type === 'lancer' || type === 'infantry' || type === 'machineGun' || (HELMETED.has(type) && GEAR[civ].helmet !== 'none');
+  type === 'knight' || type === 'lancer' || type === 'infantry' || type === 'machineGun' || type === 'manAtArms' || type === 'explorer' || type === 'greatWarInfantry' || type === 'marine' || type === 'specialForces' || type === 'paratrooper' || (HELMETED.has(type) && GEAR[civ].helmet !== 'none');
 
 // ---- who serves ----
 // The share of women among a unit's figures: about half of the civilians
@@ -619,6 +690,30 @@ export const UNIT_LOOK: Record<UnitKey, UnitLook> = {
   jetFighter: { party: 'formation', count: 3, cols: 3, spacing: [1.7, 1.6] },
   helicopter: { party: 'formation', count: 3, cols: 3, spacing: [2.0, 1.6] },
   antiAircraft: { party: 'formation', count: 4, cols: 2, spacing: [1.1, 1.2] },
+  slinger:          { party: 'formation', count: FULL_FORMATION, spacing: [0.55, 0.6] },
+  horseArcher:      { party: 'formation', count: HORSE_COUNT, cols: 3, spacing: [0.6, 1.05] },
+  manAtArms:        { party: 'formation', count: FULL_FORMATION, spacing: [0.55, 0.6] },
+  explorer:         { party: 'group', count: 2, spacing: [0.5, 0.5] },
+  fieldCannon:      { party: 'formation', count: 4, cols: 2, spacing: [0.85, 1.2] },
+  greatWarInfantry: { party: 'formation', count: FULL_FORMATION, spacing: [0.55, 0.6] },
+  marine:           { party: 'formation', count: FULL_FORMATION, spacing: [0.6, 0.62] },
+  mechanizedInfantry: { party: 'formation', count: 4, cols: 2, spacing: [1.0, 1.7] },
+  specialForces:    { party: 'formation', count: 8, cols: 4, spacing: [0.6, 0.62] },
+  paratrooper:      { party: 'formation', count: FULL_FORMATION, spacing: [0.6, 0.62] },
+  modernArmor:      { party: 'formation', count: 4, cols: 2, spacing: [1.1, 1.9] },
+  rocketArtillery:  { party: 'formation', count: 4, cols: 2, spacing: [1.0, 1.6] },
+  mobileSAM:        { party: 'formation', count: 4, cols: 2, spacing: [1.0, 1.6] },
+  privateer:        { party: 'formation', count: 2, cols: 2, spacing: [1.4, 3.0] },
+  shipOfTheLine:    { party: 'formation', count: 2, cols: 2, spacing: [1.7, 3.6] },
+  missileCruiser:   { party: 'formation', count: 2, cols: 2, spacing: [1.5, 3.8] },
+  nuclearSubmarine: { party: 'formation', count: 2, cols: 2, spacing: [1.2, 4.0] },
+  stealthFighter:   { party: 'formation', count: 3, cols: 3, spacing: [1.6, 1.6] },
+  stealthBomber:    { party: 'formation', count: 2, cols: 2, spacing: [3.4, 1.8] },
+  attackHelicopter: { party: 'formation', count: 3, cols: 3, spacing: [2.0, 1.6] },
+  drone:            { party: 'formation', count: 3, cols: 3, spacing: [1.8, 1.1] },
+  guidedMissile:    { party: 'formation', count: 2, cols: 2, spacing: [0.6, 1.2] },
+  atomicBomb:       { party: 'formation', count: 1, cols: 1, spacing: [1, 1] },
+  nuclearMissile:   { party: 'formation', count: 1, cols: 1, spacing: [1, 1] },
 };
 // A unit's figures at full strength, and its formation's width.
 export const fullCount = (type: UnitKey): number => UNIT_LOOK[type].count;
@@ -668,6 +763,21 @@ export function unitModel(type: UnitKey, civ: ArchCiv, variant = 0, female = fal
       case 'submarine': case 'carrier': return ship(type);
       case 'fighter': case 'jetFighter': case 'bomber': case 'heavyBomber': case 'airship': case 'helicopter': return aircraft(type);
       case 'antiAircraft': return antiAircraft();
+      case 'slinger': return figure(gear, 'sling', false, { helmet: false, female });
+      case 'horseArcher': return horseArcher(gear, HORSE[variant % HORSE.length]!, female);
+      case 'manAtArms': return figure(gear, 'sword', true, { helmet: true, helmetAs: HEAVY_HELMET(gear.helmet), shieldAs: 'kite', female });
+      case 'explorer': return figure(gear, 'staff', false, { helmet: true, helmetAs: 'hat', pack: true, female, civilian: true });
+      case 'fieldCannon': return fieldCannon();
+      case 'greatWarInfantry': return figure(gear, 'rifle', false, { helmet: true, female, modern: true });
+      case 'marine': return figure(gear, 'rifle', false, { helmet: true, helmetAs: 'cap', female, modern: true, pack: true });
+      case 'mechanizedInfantry': return apc();
+      case 'specialForces': return figure(gear, 'mg', false, { helmet: true, helmetAs: 'beret', female, modern: true });
+      case 'paratrooper': return figure(gear, 'rifle', false, { helmet: true, helmetAs: 'kettle', female, modern: true, pack: true, quiver: false });
+      case 'modernArmor': return modernArmor();
+      case 'rocketArtillery': return rocketArtillery();
+      case 'mobileSAM': return mobileSAM();
+      case 'privateer': case 'shipOfTheLine': case 'missileCruiser': case 'nuclearSubmarine': return ship(type);
+      case 'stealthFighter': case 'stealthBomber': case 'attackHelicopter': case 'drone': case 'guidedMissile': case 'atomicBomb': case 'nuclearMissile': return aircraft(type);
       case 'scout': return figure(gear, 'staff', false, { helmet: false, pack: true, female, civilian: true });
       case 'settler': return figure(gear, variant % 2 ? 'staff' : 'none', false, { pack: variant % 2 === 0, female, civilian: true });
       // (Its two figures: the commander mounted, and the standard-bearer.)
@@ -691,7 +801,7 @@ export function unitModel(type: UnitKey, civ: ArchCiv, variant = 0, female = fal
   return g;
 }
 // How many variants of a type's model there are (instances pick among them).
-const HORSED: ReadonlySet<UnitKey> = new Set<UnitKey>(['horseman', 'chariotArcher', 'knight', 'lancer', 'cavalry']);
+const HORSED: ReadonlySet<UnitKey> = new Set<UnitKey>(['horseman', 'chariotArcher', 'horseArcher', 'knight', 'lancer', 'cavalry']);
 export const unitVariants = (type: UnitKey): number => (HORSED.has(type) ? HORSE.length : type === 'settler' || type === 'commander' ? 2 : 1);
 // The model variant of a unit's i-th figure (a commander's are set: first
 // the commander, then the standard-bearer; others drawn).

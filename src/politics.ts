@@ -190,7 +190,7 @@ export interface PoliticsDef {
 // All costs are scaled by this (the game's pace: tune here).
 export const POLITICS_COST_SCALE = 2.5;
 // And by era (a civ's cohesion grows faster than the costs above).
-const ERA_COST: Record<EraIndex, number> = { 0: 0.5, 1: 0.8, 2: 1.1, 3: 1.6, 4: 2.1, 5: 2.7 };
+const ERA_COST: Record<EraIndex, number> = { 0: 0.5, 1: 0.8, 2: 1.1, 3: 1.6, 4: 2.1, 5: 2.7, 6: 3.4 };
 const c = (name: string, era: EraIndex, cost: number, needs: readonly PoliticsKey[], unlocks: Omit<PoliticsDef, 'name' | 'era' | 'cost' | 'needs'> = {}): PoliticsDef =>
   ({ name, era, cost: Math.round(cost * POLITICS_COST_SCALE * ERA_COST[era]), needs, ...unlocks });
 

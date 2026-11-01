@@ -70,7 +70,8 @@ function bestUnit(g: Game, city: City, role: 'def' | 'atk' | 'siege' | 'sea' | '
   const domain = role === 'sea' || role === 'air' ? role : 'land';
   for (const k of Object.keys(UNITS) as UnitKey[]) {
     const d: UnitDef = unitDef(k);
-    if (d.civilian || k === 'commander' || k === 'scout' || !g.canBuild(city, k) || domainOf(d) !== domain) continue;
+    // (The AI builds no nuclear weapons.)
+    if (d.civilian || d.nuke || k === 'commander' || k === 'scout' || !g.canBuild(city, k) || domainOf(d) !== domain) continue;
     if (domain === 'land' && (role === 'siege') !== (d.siege === true)) continue;
     const s = (role === 'def' ? d.def * 1.5 + d.atk : d.atk * 1.5 + d.def + (d.mv > 1 ? 1 : 0)) / Math.sqrt(d.cost);
     if (s > bestS) { best = k; bestS = s; }

@@ -323,9 +323,9 @@ export interface EraDef {
 }
 
 export const ERAS = [
-  { name: 'Ancient' }, { name: 'Classical' }, { name: 'Medieval' }, { name: 'Renaissance' }, { name: 'Industrial' }, { name: 'Modern' },
+  { name: 'Ancient' }, { name: 'Classical' }, { name: 'Medieval' }, { name: 'Renaissance' }, { name: 'Industrial' }, { name: 'Modern' }, { name: 'Information' },
 ] as const satisfies readonly EraDef[];
-export type EraIndex = 0 | 1 | 2 | 3 | 4 | 5;
+export type EraIndex = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 export const ERA_COUNT = ERAS.length;
 
 // ---------- growth placements ----------

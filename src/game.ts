@@ -115,7 +115,7 @@ export const GOLD_PER_PROD = 3;
 export const FAITH_PER_PROD = 2;
 const FAITH_BUYS: readonly BuildKey[] = ['shrine', 'temple'];
 // What anyone can build from the start (the rest: techs.ts, politics.ts).
-const STARTING: readonly BuildKey[] = ['warrior', 'scout', 'settler', 'monument'];
+const STARTING: readonly BuildKey[] = ['warrior', 'slinger', 'scout', 'settler', 'monument'];
 
 // ---- combat (shared with the Units page's battle sandbox) ----
 // Fortified, a unit defends this much better.
@@ -176,6 +176,8 @@ export const AIR_PER_CITY = 4;
 // this share of its strength, and can't attack.
 export const EMBARKED_DEF = 0.5;
 export const EMBARK_TECH = 'shipbuilding';
+// Turns a nuclear strike's burnt land takes to recover (as a pillaged tile's).
+export const FALLOUT = 12;
 
 export interface Unit {
   id: number;
@@ -427,7 +429,7 @@ export class Game {
     if (domainOf(unitDef(u.type)) === 'air' && !this.inRange(u, tile)) return 'out of range';
     const d = this.bestDefender(tile, u.owner), where = { atSea: this.isWater(tile), city: this.cityByTile.has(tile), embarked: this.isEmbarked(u) };
     if (d) return attackBlock(u.type, d.type, where);
-    if (where.embarked) return 'cannot attack while embarked';
+    if (where.embarked && !unitDef(u.type).amphibious) return 'cannot attack while embarked';
     return null;
   }
 
@@ -575,12 +577,29 @@ export class Game {
     if (u.type === 'commander') for (const v of this.armyOf(u)) this.removeUnit(v);
   }
 
+  // A paratrooper's drop: from its own city, with its moves whole, onto free
+  // land within its reach, not next door (walk there).
+  canParadrop(u: Unit, t: number): boolean {
+    const reach = unitDef(u.type).paradrop;
+    const city = this.cityByTile.get(u.tile);
+    return reach !== undefined && city !== undefined && city.owner === u.owner && u.moves >= this.maxMoves(u.type, u.owner)
+      && !this.isWater(t) && this.relief[t] !== 'mountains' && !this.tiles[u.tile].neighbors.includes(t)
+      && this.tilesWithinMap(u.tile, reach).has(t) && this.canStand(u, t) && !this.isEnemyOccupied(t, u.owner) && !this.isForeignBlocked(t, u.owner);
+  }
+
   // ---- aircraft ----
   // An aircraft's orders: a strike on an enemy within its range, or a
   // rebase to another of its civ's cities with room, within twice it.
+  // (A missile is spent in its strike.)
   fly(u: Unit, goal: number): void {
     if (u.moves <= 0 || goal === u.tile) return;
-    if (this.isEnemyOccupied(goal, u.owner)) { if (this.attackBlockAt(u, goal) === null) this.attack(u, goal); return; }
+    if (this.isEnemyOccupied(goal, u.owner)) {
+      if (this.attackBlockAt(u, goal) !== null) return;
+      if (unitDef(u.type).nuke) { this.detonate(u, goal); return; }
+      this.attack(u, goal);
+      if (unitDef(u.type).missile && !u.dead) this.removeUnit(u);
+      return;
+    }
     if (this.canRebase(u, goal)) { this.record('rebase', u.owner, { unit: u.type, from: u.tile, to: goal }); u.tile = goal; u.moves = 0; }
   }
   inRange(u: Unit, t: number, k = 1): boolean { return this.tilesWithinMap(u.tile, (unitDef(u.type).range ?? 1) * k).has(t); }
@@ -616,7 +635,9 @@ export class Game {
   // Enemy fighters covering a tile intercept an aircraft striking it: the
   // strongest of them (its base within its range) fights it first. Whether
   // the striker comes through.
+  // (Stealth aircraft and missiles get past fighters.)
   private intercept(u: Unit, tile: number): boolean {
+    if (unitDef(u.type).stealth || unitDef(u.type).missile) return true;
     let best: Unit | null = null;
     for (const v of this.units) {
       if (UNIT_CLASS[v.type] !== 'fighter' || v.owner === u.owner || !this.atWar(u.owner, v.owner) || !this.inRange(v, tile)) continue;
@@ -631,6 +652,36 @@ export class Game {
     if (best.hp <= 0) this.removeUnit(best);
     if (u.hp <= 0) { this.removeUnit(u); return false; }
     return true;
+  }
+
+  // A nuclear strike: the weapon flies in (fighters may catch a bomb,
+  // anti-aircraft fire either), and is spent. Its blast, NUKE_RADIUS round
+  // the target: every unit there (anyone's) wrecked, hardest at the centre;
+  // every city's defences down and half its people dead; its land burnt
+  // (FALLOUT turns to recover). An act of war on everyone it strikes.
+  detonate(u: Unit, tile: number): void {
+    const R = unitDef(u.type).nuke ?? 1;
+    u.moves = 0;
+    const hit = new Set<number>([...this.units.filter((v) => v.owner !== u.owner && this.tilesWithinMap(tile, R).has(v.tile)).map((v) => v.owner), ...[...this.cities].filter((c) => this.tilesWithinMap(tile, R).has(c.tile) && c.owner !== u.owner).map((c) => c.owner)]);
+    for (const o of hit) if (!this.atWar(u.owner, o)) this.declareWar(u.owner, o);
+    this.onBattle?.(u, tile, 'sortie');
+    if (!this.flak(u, tile) || !this.intercept(u, tile)) return;
+    const zone = this.tilesWithinMap(tile, R);
+    this.record('nuke', u.owner, { unit: u.type, tile });
+    for (const v of [...this.units]) {
+      const d = zone.get(v.tile);
+      if (d === undefined && v.tile !== tile || v === u || v.dead) continue;
+      v.hp -= v.tile === tile ? 100 : 70 - 15 * (d ?? 0);
+      if (v.hp <= 0) this.removeUnit(v);
+    }
+    for (const c of [...this.cities]) {
+      if (c.tile !== tile && !zone.has(c.tile)) continue;
+      c.hp = 0;
+      for (let k = Math.floor(c.pop / 2); k > 0 && c.pop > 1; k--) this.removeCitizen(c);
+    }
+    for (const t of [tile, ...zone.keys()]) if (this.use[t] === USE.rural) this.pillaged[t] = FALLOUT;
+    this.log(`The ${this.players[u.owner].name} dropped a nuclear weapon (${unitDef(u.type).name}).`);
+    this.removeUnit(u);
   }
 
   // ---- armies ----
@@ -695,6 +746,7 @@ export class Game {
 
   goTo(u: Unit, goal: number): void {
     if (domainOf(unitDef(u.type)) === 'air') { this.fly(u, goal); return; }
+    if (this.canParadrop(u, goal)) { this.record('rebase', u.owner, { unit: u.type, from: u.tile, to: goal }); u.tile = goal; u.moves = 0; u.fortified = false; return; }
     this.record('move', u.owner, { unit: u.type, id: u.id, from: u.tile, to: goal });
     u.goal = goal;
     u.fortified = false;

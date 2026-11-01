@@ -106,7 +106,7 @@ export const PRESETS: readonly Preset[] = [
 ];
 
 // Owners by era, so cities of one era share a civ (eras are per civ).
-const ERA_OWNERS: Record<EraIndex, readonly number[]> = { 0: [0, 3], 1: [1, 4, 7], 2: [2, 5, 6], 3: [8, 9], 4: [10, 11], 5: [12, 13] };
+const ERA_OWNERS: Record<EraIndex, readonly number[]> = { 0: [0, 3], 1: [1, 4, 7], 2: [2, 5, 6], 3: [8, 9], 4: [10, 11], 5: [12, 13], 6: [14, 15] };
 
 export interface BuiltPreset {
   preset: Preset;
@@ -117,7 +117,7 @@ export interface BuiltPreset {
 // Builds every preset on the world, far apart, on sites that fit.
 export function buildPresets(g: Game, presets: readonly Preset[] = PRESETS): BuiltPreset[] {
   const used: number[] = [];
-  const turn: Record<EraIndex, number> = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  const turn: Record<EraIndex, number> = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
   const order = g.tiles.map((t) => t.id).sort((a, b) => ((a * 2654435761) >>> 0) - ((b * 2654435761) >>> 0));
   const out: BuiltPreset[] = [];
   for (const p of presets) {

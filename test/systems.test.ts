@@ -38,7 +38,7 @@ describe('S1: the trees hold together', () => {
     expect(TRAIT_KEYS.length).toBeGreaterThanOrEqual(80);
   });
   it('everything buildable is unlocked by exactly one tech or politics item, or from the start', () => {
-    const start = new Set<BuildKey>(['warrior', 'scout', 'settler', 'monument']);
+    const start = new Set<BuildKey>(['warrior', 'slinger', 'scout', 'settler', 'monument']);
     const count = new Map<string, number>();
     const add = (ks: readonly string[] | undefined) => { for (const k of ks ?? []) count.set(k, (count.get(k) ?? 0) + 1); };
     for (const k of TECH_KEYS) { const d = techDef(k); add(d.units); add(d.buildings); add(d.wonders); }

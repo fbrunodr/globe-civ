@@ -18,6 +18,8 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { ARCH_CIVS, type ArchCiv } from './architecture.ts';
 import { CIVS, UNITS, domainOf, type UnitKey } from './rules.ts';
+import { TECHS, TECH_KEYS } from './techs.ts';
+import { POLITICS } from './politics.ts';
 import { FORTIFY_BONUS, combatStrength, fightRounds, matchup } from './game.ts';
 import { HAIR_STYLES, formationSlots, hairModel, headOffset, isMachine, unitModel, variantOf, womenShare } from './unitModels.ts';
 import { PLAYS, Volleys, figureLooks, makeUnitMaterial, playAt, playOf, prepareUnitGeometry, type Play } from './unitView.ts';
@@ -48,7 +50,14 @@ sun.shadow.mapSize.set(4096, 4096);
 sun.shadow.bias = -0.0005;
 scene.add(sun, sun.target);
 
-const TYPES = Object.keys(UNITS) as UnitKey[];
+// By domain (land, then sea, then air, so the ships share one basin), then
+// by the era a unit comes in (the tech or civic unlocking it), then by cost.
+const DOMAIN_ORDER = { land: 0, sea: 1, air: 2 } as const;
+const unlockEra = (k: UnitKey): number => {
+  const e = Math.min(...TECH_KEYS.filter((t) => TECHS[t].units?.includes(k)).map((t) => TECHS[t].era as number), ...Object.values(POLITICS).filter((c) => c.units?.includes(k)).map((c) => c.era as number));
+  return Number.isFinite(e) ? e : 0; // (none: there from the start)
+};
+const TYPES = (Object.keys(UNITS) as UnitKey[]).sort((a, b) => DOMAIN_ORDER[domainOf(UNITS[a])] - DOMAIN_ORDER[domainOf(UNITS[b])] || unlockEra(a) - unlockEra(b) || UNITS[a].cost - UNITS[b].cost);
 const FIGHTERS = TYPES.filter((t) => UNITS[t].atk > 0);
 const isRanged = (t: UnitKey): boolean => 'ranged' in UNITS[t] && UNITS[t].ranged === true;
 const DEFENDERS = TYPES.filter((t) => !('civilian' in UNITS[t] && UNITS[t].civilian));

@@ -41,6 +41,11 @@ export const UNIT_CLASS: Record<UnitKey, UnitClass> = {
   cog: 'warship', cruiser: 'gunship', submarine: 'submarine', carrier: 'carrier',
   fighter: 'fighter', jetFighter: 'fighter', bomber: 'bomber', airship: 'bomber', heavyBomber: 'bomber', helicopter: 'helicopter',
   antiAircraft: 'antiAir',
+  slinger: 'archer', horseArcher: 'mountedArcher', manAtArms: 'melee', explorer: 'recon', fieldCannon: 'gun', privateer: 'warship', shipOfTheLine: 'gunship',
+  greatWarInfantry: 'gunline', marine: 'gunline', mechanizedInfantry: 'gunline', specialForces: 'gunline', paratrooper: 'gunline',
+  modernArmor: 'armor', rocketArtillery: 'artillery', mobileSAM: 'antiAir', missileCruiser: 'gunship', nuclearSubmarine: 'submarine',
+  atomicBomb: 'bomber', nuclearMissile: 'bomber',
+  stealthFighter: 'fighter', stealthBomber: 'bomber', attackHelicopter: 'helicopter', drone: 'bomber', guidedMissile: 'bomber',
 };
 
 // How an attack plays out:
@@ -73,7 +78,7 @@ export const isSea = (k: UnitKey): boolean => domainOf(unitDef(k)) === 'sea';
 export function attackBlock(a: UnitKey, d: UnitKey, where: Where = { atSea: isSea(d) }): string | null {
   const A = UNIT_CLASS[a];
   if (NEVER.has(A)) return 'cannot attack';
-  if (where.embarked) return 'cannot attack while embarked';
+  if (where.embarked && !unitDef(a).amphibious) return 'cannot attack while embarked';
   if (isAir(d) && A !== 'fighter' && A !== 'antiAir') return 'cannot reach aircraft';
   if (A === 'submarine' && !where.atSea) return 'attacks only ships';
   if (!isSea(a) && !isAir(a) && where.atSea && CLOSES.has(A)) return 'cannot reach ships at sea';

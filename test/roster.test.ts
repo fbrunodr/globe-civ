@@ -4,6 +4,7 @@ import { UNITS, UPGRADES, type UnitKey } from '../src/rules.ts';
 import { TECHS, TECH_KEYS } from '../src/techs.ts';
 import { POLITICS } from '../src/politics.ts';
 import { UNIT_CLASS, attackBlock, attackStyle } from '../src/unitClasses.ts';
+import { SPECIALIST_KINDS } from '../src/cities.ts';
 import { unitModel, unitVariants, fullCount } from '../src/unitModels.ts';
 
 // The unit roster (rules.ts): lines that upgrade era to era, counters
@@ -11,7 +12,7 @@ import { unitModel, unitVariants, fullCount } from '../src/unitModels.ts';
 // how they play (unitClasses.ts).
 
 const KEYS = Object.keys(UNITS) as UnitKey[];
-const STARTING: readonly UnitKey[] = ['warrior', 'scout', 'settler'];
+const STARTING: readonly UnitKey[] = ['warrior', 'slinger', 'scout', 'settler'];
 // The era a unit comes in (the tech or civic unlocking it; 0 at the start).
 const unlockers = (k: UnitKey) => [
   ...TECH_KEYS.filter((t) => TECHS[t].units?.includes(k)).map((t) => TECHS[t].era as number),
@@ -24,7 +25,7 @@ describe('R1: the roster', () => {
     for (const k of KEYS) expect(unlockers(k).length + (STARTING.includes(k) ? 1 : 0), k).toBe(1);
   });
   it('every era brings new fighting units, at least three', () => {
-    for (let era = 0; era <= 5; era++) expect(KEYS.filter((k) => UNITS[k].atk > 0 && eraOf(k) === era).length, `era ${era}`).toBeGreaterThanOrEqual(3);
+    for (let era = 0; era <= 6; era++) expect(KEYS.filter((k) => UNITS[k].atk > 0 && eraOf(k) === era).length, `era ${era}`).toBeGreaterThanOrEqual(3);
   });
   it('siege engines in every era from the Classical on: catapult, trebuchet, cannon, artillery', () => {
     expect(['catapult', 'trebuchet', 'cannon', 'artillery'].map((k) => eraOf(k as UnitKey))).toEqual([1, 2, 3, 4]);
@@ -219,5 +220,53 @@ describe('R5: carriers, submarines, anti-aircraft', () => {
     g.goTo(plane, target);
     expect(plane.hp < 100 || plane.dead).toBe(true);
     expect(aa.hp).toBe(100);
+  });
+});
+
+describe('R6: the Information era and its mechanics', () => {
+  it('a missile is spent in its strike; stealth gets past fighters', () => {
+    const { g, coast, inland } = waterWorld();
+    const city = g.foundCity(g.createUnit('settler', 0, coast))!;
+    const m = g.createUnit('guidedMissile', 0, city.tile);
+    const foe = g.createUnit('warrior', 1, inland);
+    g.declareWar(0, 1);
+    g.goTo(m, inland);
+    expect(m.dead).toBe(true);
+    expect(foe.hp < 100 || foe.dead).toBe(true);
+  });
+  it('a paratrooper drops from its city onto free land within reach, not next door', () => {
+    const { g, coast } = waterWorld();
+    const city = g.foundCity(g.createUnit('settler', 0, coast))!;
+    const p = g.createUnit('paratrooper', 0, city.tile);
+    const far = g.tiles.findIndex((t) => !g.isWater(t.id) && g.relief[t.id] !== 'mountains' && g.approxDist(t.id, city.tile) > 2.5 && g.approxDist(t.id, city.tile) < 4.5 && g.canStand(p, t.id));
+    expect(g.canParadrop(p, far)).toBe(true);
+    expect(g.canParadrop(p, g.tiles[city.tile].neighbors.find((n) => !g.isWater(n))!)).toBe(false);
+    g.goTo(p, far);
+    expect(p.tile).toBe(far);
+    expect(p.moves).toBe(0);
+  });
+  it('a marine attacks from the water; other units cannot', () => {
+    expect(attackBlock('marine', 'warrior', { embarked: true })).toBeNull();
+    expect(attackBlock('rifleman', 'warrior', { embarked: true })).not.toBeNull();
+  });
+});
+
+describe('R7: nuclear weapons', () => {
+  it('a nuclear strike wrecks the units round its target, halves a city, burns its land, and is spent', () => {
+    const { g, coast } = waterWorld();
+    const home = g.foundCity(g.createUnit('settler', 0, coast))!;
+    const site = g.tiles.findIndex((t) => g.canFoundCity(t.id, 1) && g.approxDist(t.id, home.tile) > 3 && g.approxDist(t.id, home.tile) < 7.5);
+    expect(site).toBeGreaterThanOrEqual(0);
+    const target = g.foundCity(g.createUnit('settler', 1, site))!;
+    target.pop = 6;
+    target.specialists[SPECIALIST_KINDS[0]!] = 5; // (its people: one working the centre, five specialists)
+    const guard = g.createUnit('infantry', 1, target.tile);
+    const bomb = g.createUnit('atomicBomb', 0, home.tile);
+    g.declareWar(0, 1);
+    g.goTo(bomb, target.tile);
+    expect(bomb.dead).toBe(true);
+    expect(guard.dead).toBe(true);
+    expect(target.hp).toBe(0);
+    expect(target.pop).toBeLessThanOrEqual(3);
   });
 });
