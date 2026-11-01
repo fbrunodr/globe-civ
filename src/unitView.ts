@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { ArchCiv } from './architecture.ts';
 import { unitDef, domainOf, type UnitKey } from './rules.ts';
 import { firesAtClose, returnFire, type AttackStyle, type Projectile } from './unitClasses.ts';
-import { UNIT_LOOK, figuresFor, formationSlots, unitModel, variantOf, rides, headOffset, hairModel, transportModel, wearsHelmet, womenShare, isMachine, colsOf, GEAR, HAIR_BY, HAIR_STYLES, STRIKE, GUARD, DRAW, LEG_AMP, whirls, bowman } from './unitModels.ts';
+import { UNIT_LOOK, figuresFor, formationSlots, unitModel, variantOf, rides, headOffset, hairModel, transportModel, wearsHelmet, womenShare, isMachine, colsOf, GEAR, HAIR_BY, HAIR_STYLES, STRIKE, GUARD, DRAW, whirls, bowman } from './unitModels.ts';
 import { mulberry32 } from './rng.ts';
 import { HIP } from './people.ts';
 import { pairUp, type P2 } from './duel.ts';
@@ -258,7 +258,8 @@ const UNIT_VERTEX_DECL = /* glsl */ `
 // arm's a little on the march.
 const UNIT_LIMB = /* glsl */ `
   float beat = aAnim.x; // (its legs' beat: the caller keeps it going)
-  bool isLeg = aLimb.z > 0.0 && abs(aLimb.x) < 1.5 && aLimb.y < ${(HIP + 0.01).toFixed(2)};
+  bool isSkirt = mod(floor(aLimb.w / 128.0), 2.0) > 0.5;
+  bool isLeg = aLimb.z > 0.0 && abs(aLimb.x) < 1.5 && aLimb.y < ${(HIP + 0.01).toFixed(2)} && !isSkirt;
   bool isStrike = aLimb.x > ${(STRIKE - 0.5).toFixed(1)} && aLimb.x < ${(GUARD - 0.5).toFixed(1)};
   bool isGuard = aLimb.x > ${(GUARD - 0.5).toFixed(1)} && aLimb.x < ${(DRAW - 0.5).toFixed(1)};
   bool isDraw = aLimb.x > ${(DRAW - 0.5).toFixed(1)};
@@ -277,7 +278,14 @@ const UNIT_LIMB = /* glsl */ `
   float hit = aAnim.z > 1.5 ? aAnim.z - 3.0 : aAnim.z * (0.6 + 0.4 * sin(uTime * 13.0 + aAnim.x)); // (past 1.5: a stance's arm, exactly)
   float limbA = aLimb.z <= 0.0 ? 0.0 : isGuard ? -aMore.x * aLimb.z : isDraw ? -aMore.y * aLimb.z : isStrike ? -hit * aLimb.z
                                      : (aAnim.y > 1.5 ? aAnim.y - 3.0 : sin(beat) * aAnim.y) * aLimb.x * aLimb.z // (past 1.5: a stance's stride, exactly)
-                                       - (isLeg ? aPose.z * aLimb.z / ${LEG_AMP.toFixed(2)} : 0.0); // (a skirt, crouched as much as it is the leg's)
+                                       - (isLeg ? aPose.z : 0.0);
+  // (A skirt: its sides with their own leg, its front middle with the leg
+  // further forward, its back with the one further back (a leg forward
+  // turns by -|swing|); all crouched with the thighs; nothing at the waist.)
+  if (isSkirt) {
+    float swing = (aAnim.y > 1.5 ? aAnim.y - 3.0 : sin(beat) * aAnim.y) * aLimb.z;
+    limbA = aRig.y * (aRig.x * swing * aLimb.x + (1.0 - aRig.x) * (position.z >= 0.0 ? -abs(swing) : abs(swing)) - aPose.z);
+  }
   float limbC = cos(limbA), limbS = sin(limbA);
   float gripA = isGrip > 0.5 ? aSkinTone.w * (aAnim.w - aRest - limbA - jointA) : 0.0, gripC = cos(gripA), gripS = sin(gripA);
   // (Above the hips, not a leg: the body, its arms, head and hair.)

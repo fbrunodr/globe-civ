@@ -89,7 +89,7 @@ const HORSE = [0x6a4a32, 0x8a6a4a, 0x4a3a2e, 0xb8a888] as const;
 // about the axle through its hub at (y, z): the hub kept where the grip is
 // (aRig.zw).)
 type Tag = { team?: boolean; skin?: boolean; limb?: readonly [number, number, number]; joint?: readonly [number, number]; grip?: readonly [number, number, number]; spin?: { readonly axis: 'x' | 'y' | 'z'; readonly at: readonly [number, number] } };
-export const RIG = { team: 1, skin: 2, joint: 4, grip: 8, spinY: 16, spinZ: 32, spinX: 64 } as const;
+export const RIG = { team: 1, skin: 2, joint: 4, grip: 8, spinY: 16, spinZ: 32, spinX: 64, skirt: 128 } as const;
 const wheelSpin = (y: number, z = 0): Tag => ({ spin: { axis: 'x', at: [y, z] } });
 function tag(g: THREE.BufferGeometry, t: Tag = {}): THREE.BufferGeometry {
   if (g.getAttribute('leafMask')) g.deleteAttribute('leafMask');
@@ -138,18 +138,20 @@ const REST_PITCH: Record<Hold, number> = {
   spear: 0, pike: 0, club: 0.23, sword: 0.25, longsword: 0.31, bow: 0, recurve: 0, sling: Math.PI, crossbow: 1.4, musket: 0.4, rifle: 0.4, mg: 1.35, staff: 0, banner: 0, none: 0,
 };
 // A body (people.ts) tagged for the units' shader.
-// (A skirt follows the legs: each vertex its own side's leg, swung by as
-// much as it is out to that side and down from the waist: none at the
-// front and back middle, none at and above the hips, fully at the hem's
-// sides. Its weight is in its amplitude: the shader crouches it as much.)
+// (A skirt follows the legs (RIG.skirt; the shader: unitView.ts): each
+// vertex as much as it is down from the waist (aRig.y: none at and above
+// the hips, fully at the hem); its sides (aRig.x: how far out) with their
+// own leg, its front middle with whichever leg is forward, its back middle
+// with whichever is back; all of it crouched with the thighs. So no leg
+// gets ahead of it.)
 const tagged = (parts: readonly Part[]): THREE.BufferGeometry[] => parts.map((p) => {
   const g = tag(p.geo, { team: p.tag === 'team', skin: p.tag === 'skin', ...(p.limb ? { limb: p.limb } : {}), ...(p.joint ? { joint: p.joint } : {}) });
   if (p.skirt !== undefined && p.limb && p.limb[2] > 0) {
-    const pos = g.getAttribute('position') as THREE.BufferAttribute, limb = g.getAttribute('aLimb') as THREE.BufferAttribute;
+    const pos = g.getAttribute('position') as THREE.BufferAttribute, limb = g.getAttribute('aLimb') as THREE.BufferAttribute, rig = g.getAttribute('aRig') as THREE.BufferAttribute;
     for (let i = 0; i < pos.count; i++) {
       const x = pos.getX(i), y = pos.getY(i);
-      const w = Math.min(1, Math.abs(x) / 0.075) * Math.max(0, Math.min(1, (HIP - y) / (HIP - p.skirt)));
-      limb.setXYZ(i, x >= 0 ? 1 : -1, HIP, p.limb[2] * w);
+      limb.setXYZW(i, x >= 0 ? 1 : -1, HIP, p.limb[2], limb.getW(i) + RIG.skirt);
+      rig.setXY(i, Math.min(1, Math.abs(x) / 0.075), Math.max(0, Math.min(1, (HIP - y) / (HIP - p.skirt))));
     }
   }
   return g;
