@@ -52,8 +52,8 @@ const FLAG_LIFT = 1.7;
 const DRY = 0.00005;
 // The figures are drawn while at least this many pixels tall.
 const MIN_PX = 3;
-// A fight: how long (seconds), and how far a melee unit charges (a share of
-// the way to the enemy's tile).
+// A fight: how long (seconds; a melee longer, durOf), and how far a melee
+// unit charges (a share of the way to the enemy's tile).
 export const FIGHT = 3;
 const CHARGE = 0.42;
 // A carrier's deck above the water (figure heights: unitModels.ts).
@@ -64,21 +64,25 @@ const CARRIER_DECK = 0.35;
 // arrived, when it falls back; when its arms strike (or, aiming, `aim`:
 // weapons raised the whole time); its shots (Volleys); `fly`: how high it
 // climbs on the way (figure heights: aircraft); `close`: its figures go
-// each at one of the enemy's, all the way (duel.ts).
-export interface Play { readonly fly?: number; readonly close?: boolean; readonly charge: number; readonly go: readonly [number, number]; readonly back: number; readonly strike: readonly [number, number]; readonly aim: boolean; readonly shots: readonly { readonly t: number; readonly kind: Projectile }[] }
+// each at one of the enemy's, all the way (duel.ts); `dur`: how long the
+// fight lasts (seconds; FIGHT if not given).
+export interface Play { readonly dur?: number; readonly fly?: number; readonly close?: boolean; readonly charge: number; readonly go: readonly [number, number]; readonly back: number; readonly strike: readonly [number, number]; readonly aim: boolean; readonly shots: readonly { readonly t: number; readonly kind: Projectile }[] }
 const still = (shots: Play['shots']): Play => ({ charge: 0, go: [0, 0], back: 1, strike: [0, 0], aim: true, shots });
 export const PLAYS: Record<AttackStyle, Play> = {
-  melee: { close: true, charge: 1, go: [0.06, 0.3], back: 0.8, strike: [0.26, 0.8], aim: false, shots: [] },
-  charge: { close: true, charge: 1.25, go: [0.04, 0.22], back: 0.8, strike: [0.18, 0.8], aim: false, shots: [] },
+  // (A melee: a short run in, then a long while at it, as Civ V plays it, before falling back.)
+  melee: { dur: 4.6, close: true, charge: 1, go: [0.04, 0.2], back: 0.84, strike: [0.18, 0.84], aim: false, shots: [] },
+  charge: { dur: 4.4, close: true, charge: 1.25, go: [0.03, 0.15], back: 0.84, strike: [0.13, 0.84], aim: false, shots: [] },
   volley: still([{ t: 1 / 3, kind: 'arrow' }, { t: 2 / 3, kind: 'arrow' }]),
   lob: still([{ t: 0.3, kind: 'stone' }]),
   shell: still([{ t: 0.28, kind: 'shell' }, { t: 0.6, kind: 'shell' }]),
   fire: still([{ t: 0.25, kind: 'bullet' }, { t: 0.45, kind: 'bullet' }, { t: 0.65, kind: 'bullet' }]),
-  fireCharge: { close: true, charge: 1, go: [0.2, 0.42], back: 0.82, strike: [0.4, 0.82], aim: false, shots: [{ t: 0.08, kind: 'bullet' }] },
+  fireCharge: { dur: 5.2, close: true, charge: 1, go: [0.17, 0.33], back: 0.86, strike: [0.31, 0.86], aim: false, shots: [{ t: 0.06, kind: 'bullet' }] },
   roll: { charge: 0.6, go: [0, 0.55], back: 0.8, strike: [0, 0], aim: false, shots: [{ t: 0.25, kind: 'shell' }, { t: 0.6, kind: 'bullet' }] },
   // (Out all the way to the target, high, and back: the shots fall from there.)
   sortie: { fly: 3, charge: 1 / CHARGE, go: [0, 0.4], back: 0.6, strike: [0, 0], aim: false, shots: [{ t: 0.42, kind: 'shell' }, { t: 0.5, kind: 'bullet' }] },
 };
+// How long a fight against `attack` lasts (seconds: both sides).
+export const durOf = (attack: Play): number => attack.dur ?? FIGHT;
 // Where a play is at `t` (a share of the fight): how far out (0..1, of its
 // charge), whether it is moving (legs) and striking (arms), whether it has
 // turned to fall back.
@@ -171,12 +175,17 @@ interface Figure {
   home: THREE.Vector3 | null; goal: THREE.Vector3 | null; foe: THREE.Vector3 | null; face: THREE.Vector3 | null; delay: number; curve: number; fall: number;
   beat: number | null; // where it is in its round of blows (null: its phase says)
   shot: number; smoke: number; // when it last fired (its recoil); when it next smokes (a burning wreck)
+  // In a melee: the enemy figure it is at (its foe struck down, it turns to
+  // another); where it stands to strike it now (`reach`: walking towards
+  // `goal`), and how far from its foe that is (world units).
+  foeFig: Figure | null; reach: THREE.Vector3 | null; gap: number;
 }
-interface Fight { at: THREE.Vector3; home: THREE.Vector3; t0: number; play: Play; fired: number; attack: Play; side: 'attacker' | 'defender'; won: boolean }
+// (`enemy`: the figures of the unit it is at grips with, in a melee.)
+interface Fight { at: THREE.Vector3; home: THREE.Vector3; t0: number; play: Play; fired: number; attack: Play; side: 'attacker' | 'defender'; won: boolean; enemy: Figure[] }
 // A figure struck down, lying where it fell (then sinking away).
 // (A machine's: a wreck burning, on land or at sea.)
 interface Corpse { wreck: Wreck | null; smoke: number; key: string; hair: number; hairColor: THREE.Color; skin: THREE.Color; phase: number; color: THREE.Color; pos: THREE.Vector3; up: THREE.Vector3; face: THREE.Vector3; fall: number; beat: number; horse: boolean; lift: readonly [number, number] }
-const unfought = () => ({ home: null, goal: null, foe: null, face: null, delay: 0, curve: 0, fall: Infinity, beat: null, shot: -Infinity, smoke: 0 });
+const unfought = () => ({ home: null, goal: null, foe: null, face: null, delay: 0, curve: 0, fall: Infinity, beat: null, shot: -Infinity, smoke: 0, foeFig: null, reach: null, gap: 0 });
 // What a machine struck down leaves: a wreck on land, or a ship going down
 // (aircraft and figures leave none).
 type Wreck = 'land' | 'sea';
@@ -342,7 +351,7 @@ export class UnitView {
         if (swap) this.dress(s, false);
         s.k = k;
         const from = (s.fight?.home ?? s.dir).clone(), { dir } = this.spot(u, k, s.forward);
-        const start = s.fight ? s.fight.t0 + FIGHT : now;
+        const start = s.fight ? s.fight.t0 + durOf(s.fight.attack) : now;
         s.march = { from, to: dir, t0: start, dur: Math.max(MARCH_MIN, (MARCH * from.angleTo(dir)) / this.env.step) };
       } else {
         const hurt = s.unit.hp !== u.hp;
@@ -367,7 +376,7 @@ export class UnitView {
   // the sync that follows it: the fallen are still shown.)
   fight(attacker: number, tile: number, style: AttackStyle, now: number, result?: FightResult): void {
     const a = this.shown.get(attacker), play = PLAYS[style];
-    const defenders = [...this.shown.values()].filter((s) => s.unit.tile === tile && s !== a);
+    const defenders = [...this.shown.values()].filter((s) => s.unit.tile === tile && s !== a && !s.gone); // (not one already gone, shown till its fight is over)
     const main = (result && this.shown.get(result.defender)) || defenders[0];
     const at = main?.dir.clone() ?? this.env.center(tile).clone();
     // (The defenders turned to the attacker first: the attackers' figures go where theirs then stand.)
@@ -378,14 +387,18 @@ export class UnitView {
       if (a) { this.face(d, a.dir.clone().sub(d.dir)); this.layout(d); }
     }
     if (a) this.startFight(a, at, play, now, play, 'attacker', aWins);
-    if (a && main && play.close && !a.unit.embarked && !main.unit.embarked) this.pairUp(a, main);
+    if (a && main && play.close && !a.unit.embarked && !main.unit.embarked) {
+      this.pairUp(a, main);
+      a.fight!.enemy = main.figures;
+      main.fight!.enemy = a.figures;
+    }
     if (result && a) this.doom(a, result.attackerHp, play, 'attacker', now);
     if (result && main) this.doom(main, result.defenderHp, play, 'defender', now);
   }
 
   private startFight(s: Shown, at: THREE.Vector3, play: Play, now: number, attack: Play, side: 'attacker' | 'defender', won: boolean): void {
     const home = s.fight?.home ?? s.dir.clone();
-    s.fight = { at, home, t0: now, play, fired: 0, attack, side, won };
+    s.fight = { at, home, t0: now, play, fired: 0, attack, side, won, enemy: [] };
     s.after = null;
     s.march = null;
     for (const f of s.figures) Object.assign(f, unfought());
@@ -405,8 +418,12 @@ export class UnitView {
       f.home = f.up.clone();
       f.goal = c.clone().addScaledVector(right, duel.to.x * size).addScaledVector(fwd, duel.to.z * size).normalize();
       f.foe = foe.at.clone();
+      f.foeFig = foe;
+      f.reach = f.goal.clone();
+      f.gap = f.goal.distanceTo(foe.at);
       f.delay = duel.delay;
       f.curve = duel.curve;
+      if (!foe.foeFig) foe.foeFig = f;
       if (!foe.foe) { foe.foe = f.goal.clone(); foe.beat = f.phase / (Math.PI * 2) + 0.5; }
     });
   }
@@ -416,7 +433,7 @@ export class UnitView {
   private doom(s: Shown, hp: number, attack: Play, side: 'attacker' | 'defender', now: number): void {
     const look = UNIT_LOOK[s.unit.type], rand = mulberry32(s.unit.id * 13 + Math.floor(now * 10));
     const keep = hp <= 0 ? 0 : look.party === 'formation' && !s.unit.embarked ? figuresFor(hp, look.count) : s.figures.length;
-    s.figures.forEach((f, i) => { if (i >= keep) f.fall = now + fallShare(attack, side, rand()) * FIGHT; });
+    s.figures.forEach((f, i) => { if (i >= keep) f.fall = now + fallShare(attack, side, rand()) * durOf(attack); });
   }
 
   // Every frame: marching and fighting units move on, and every figure is
@@ -429,7 +446,7 @@ export class UnitView {
     const drawn: Shown[] = [], need = new Map<string, number>();
     let figures = 0;
     for (const s of [...this.shown.values()]) {
-      if (s.fight) this.fighting(s, now);
+      if (s.fight) this.fighting(s, now, dt);
       else if (s.march && now >= s.march.t0) {
         const t = Math.min(1, (now - s.march.t0) / s.march.dur);
         s.dir.copy(s.march.from).lerp(s.march.to, t).normalize();
@@ -550,8 +567,8 @@ export class UnitView {
 
   // A fight going on, as its play says: out, striking, back home; its
   // shots loosed on time. Over, the fallen leave.
-  private fighting(s: Shown, now: number): void {
-    const f = s.fight!, t = (now - f.t0) / FIGHT;
+  private fighting(s: Shown, now: number, dt: number): void {
+    const f = s.fight!, t = (now - f.t0) / durOf(f.attack);
     if (t >= 1) {
       s.fight = null;
       s.after = f;
@@ -574,13 +591,14 @@ export class UnitView {
     }
     const p = f.play, { out, back } = playAt(p, t);
     s.alt = (p.fly ?? 0) * out;
-    if (s.figures.some((g) => g.goal)) this.duel(s, t);
+    this.retarget(s, now);
+    if (s.figures.some((g) => g.goal)) this.duel(s, t, dt);
     else {
       s.dir.copy(f.home).lerp(f.at, CHARGE * p.charge * out).normalize();
       this.face(s, !back ? f.at.clone().sub(f.home) : f.home.clone().sub(f.at));
       this.layout(s);
       // (Each turned to whoever comes at it.)
-      for (const g of s.figures) g.face = g.foe ? this.tangent(g.up, g.foe.clone().sub(g.up)) : null;
+      for (const g of s.figures) g.face = g.foeFig ? this.tangent(g.up, g.foeFig.up.clone().sub(g.up)) : g.foe ? this.tangent(g.up, g.foe.clone().sub(g.up)) : null;
     }
     const shot = p.shots[f.fired];
     if (shot && t > shot.t) {
@@ -593,15 +611,52 @@ export class UnitView {
   // A melee's attacking figures, `t` into the fight: each out to its goal
   // (or as far as it got before it fell), facing it, then its foe, then
   // turned about to go home.
-  private duel(s: Shown, t: number): void {
-    const p = s.fight!.play, afloat = this.afloat(s.unit), d = new THREE.Vector3(), side = new THREE.Vector3();
+  // (Turned to a new foe, it walks over to it.)
+  private duel(s: Shown, t: number, dt: number): void {
+    const p = s.fight!.play, afloat = this.afloat(s.unit), d = new THREE.Vector3(), side = new THREE.Vector3(), now = this.now;
     for (const f of s.figures) {
       if (!f.goal || !f.home) continue;
-      const { out, back } = figureOut(p, Math.min(t, (f.fall - s.fight!.t0) / FIGHT), f.delay);
+      const reach = f.reach ?? f.goal;
+      if (now < f.fall) {
+        d.copy(f.goal).sub(reach);
+        const len = d.length(), step = SHUFFLE * this.size * dt;
+        if (len > step) reach.addScaledVector(d, step / len); else reach.copy(f.goal);
+      }
+      const { out, back } = figureOut(p, Math.min(t, (f.fall - s.fight!.t0) / durOf(s.fight!.attack)), f.delay);
       side.crossVectors(f.goal.clone().sub(f.home), f.home).normalize();
-      this.place(s, f, d.copy(f.home).lerp(f.goal, out).addScaledVector(side, bow(f.curve, out) * this.size).normalize(), afloat);
+      this.place(s, f, d.copy(f.home).lerp(reach, out).addScaledVector(side, bow(f.curve, out) * this.size).normalize(), afloat);
       f.off.copy(f.up).sub(f.at); // (from here it walks to its place once the fight is over)
-      f.face = this.tangent(f.up, back ? f.home.clone().sub(f.goal) : out < 0.98 ? f.goal.clone().sub(f.home) : f.foe!.clone().sub(f.up));
+      const foe = f.foeFig?.up ?? f.foe ?? f.goal;
+      f.face = this.tangent(f.up, back ? f.home.clone().sub(reach) : out < 0.98 ? f.goal.clone().sub(f.home) : foe.clone().sub(f.up));
+    }
+  }
+  // In a melee, a figure whose foe is struck down (and has had a moment to
+  // fall) turns to another: an attacker to the nearest enemy still on his
+  // feet, going to stand at striking distance from it (whose own foe, if
+  // down, it becomes); a defender to whoever else has come at it. With no
+  // one left, it stands ready (its cue: unengaged).
+  private retarget(s: Shown, now: number): void {
+    const enemy = s.fight!.enemy;
+    if (!enemy.length) return;
+    for (const f of s.figures) {
+      const foe = f.foeFig;
+      if (!foe || now > f.fall || foe.fall + 0.35 > now) continue;
+      let best: Figure | null = null, bd = (5 * this.size) ** 2;
+      for (const g of enemy) {
+        if (g.fall <= now || (!f.goal && g.foeFig !== f)) continue;
+        const dd = f.up.distanceToSquared(g.up);
+        if (dd < bd) { bd = dd; best = g; }
+      }
+      if (!best) continue;
+      f.foeFig = best;
+      f.beat = (best.beat ?? best.phase / (Math.PI * 2)) + 0.5;
+      if (f.goal) {
+        const away = f.up.clone().sub(best.up);
+        away.addScaledVector(best.up, -away.dot(best.up));
+        if (away.lengthSq() < 1e-14) continue;
+        f.goal = best.up.clone().addScaledVector(away.normalize(), f.gap).normalize();
+        if (!best.foeFig || best.foeFig.fall + 0.35 <= now) best.foeFig = f;
+      }
     }
   }
   // A figure's cue in its fight now (unitAnim.ts), or null if it isn't in
@@ -610,8 +665,11 @@ export class UnitView {
     const c = s.fight ?? s.after;
     if (!c) return null;
     const sec = now - c.t0;
-    if (!s.fight && (sec > FIGHT + AFTER || (s.march && now >= s.march.t0))) { s.after = null; return null; }
-    return { sec, dur: FIGHT, play: c.play, attack: c.attack, side: c.side, engaged: f.goal !== null || f.foe !== null, delay: f.delay, fall: f.fall - c.t0, won: c.won };
+    const dur = durOf(c.attack);
+    if (!s.fight && (sec > dur + AFTER || (s.march && now >= s.march.t0))) { s.after = null; return null; }
+    // (Its foe struck down and no other to turn to: it stands ready.)
+    const engaged = f.foeFig ? f.foeFig.fall + 0.35 > now : f.goal !== null || f.foe !== null;
+    return { sec, dur, play: c.play, attack: c.attack, side: c.side, engaged, delay: f.delay, fall: f.fall - c.t0, won: c.won };
   }
   // How far a corpse has sunk away (0..1): the dead after a while, wrecks
   // when they have burnt out.
@@ -628,7 +686,7 @@ export class UnitView {
   // How a unit moves now: marching (legs), striking (arms).
   private pose(s: Shown, now: number): { walk: number; strike: number } {
     if (s.fight) {
-      const { moving, strike } = playAt(s.fight.play, (now - s.fight.t0) / FIGHT);
+      const { moving, strike } = playAt(s.fight.play, (now - s.fight.t0) / durOf(s.fight.attack));
       return { walk: moving ? (s.fight.play.charge > 1 ? 1.4 : 1) : 0, strike };
     }
     return { walk: s.march && now >= s.march.t0 ? 1 : 0, strike: 0 };

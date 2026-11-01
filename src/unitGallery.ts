@@ -22,7 +22,7 @@ import { TECHS, TECH_KEYS } from './techs.ts';
 import { POLITICS } from './politics.ts';
 import { FORTIFY_BONUS, combatStrength, fightRounds, matchup } from './game.ts';
 import { HAIR_STYLES, UNIT_LOOK, colsOf, figuresFor, formationSlots, hairModel, headOffset, isMachine, rides, unitModel, variantOf, whirls, womenShare } from './unitModels.ts';
-import { FIGHT, PLAYS, Volleys, bow, figureOut, defendPlay, fallShare, falls, figureLooks, makeUnitMaterial, playAt, playOf, prepareUnitGeometry, type Play } from './unitView.ts';
+import { FIGHT, PLAYS, Volleys, bow, durOf, figureOut, defendPlay, fallShare, falls, figureLooks, makeUnitMaterial, playAt, playOf, prepareUnitGeometry, type Play } from './unitView.ts';
 import { pairUp, type P2 } from './duel.ts';
 import { AFTER, armOf, deathBend, deathLegs, deathTurn, dropOf, legsOf, poseOf, poseTurn, type Cue } from './unitAnim.ts';
 import { attackBlock, attackStyle, siegeStyle } from './unitClasses.ts';
@@ -73,11 +73,11 @@ const COL_W = TYPES.map((type) => {
 const COL_X = COL_W.reduce<number[]>((xs, w, i) => [...xs, i === 0 ? 0 : xs[i - 1]! + (COL_W[i - 1]! + w) / 2], []);
 const SEA_DEPTH = 0.45; // the ships' basin below the field (figure heights)
 const BATTLE_GAP = 7;             // between the two sides of a battle
-// A fight, as in the game (unitView.ts): FIGHT seconds (then a pause, looping
-// on the sheet), and how far a melee unit charges (a share of the way to
+// A fight, as in the game (unitView.ts): as long as its attack lasts (durOf;
+// then a pause of PAUSE seconds, looping on the sheet), and how far a melee unit charges (a share of the way to
 // the enemy; on the sheet it charges SHEET_CHARGE figure heights; in a
 // battle each of its figures goes at one of the enemy's: duel.ts).
-const CYCLE = FIGHT + 0.8, CHARGE_SHARE = 0.42, SHEET_CHARGE = 1.6;
+const PAUSE = 0.8, CHARGE_SHARE = 0.42, SHEET_CHARGE = 1.6;
 // The ground a defender can stand on (game: terrain.ts defence bonuses).
 const GROUNDS = [
   { name: 'Open ground', bonus: 0 }, { name: 'Forest (+25%)', bonus: 0.25 }, { name: 'Hills (+50%)', bonus: 0.5 },
@@ -272,17 +272,18 @@ function frame(d: { w: number; d: number }): void {
 // striking; shooters aiming, loosing their arrows, stones, shells or bullets).
 function pose(now: number): void {
   // (A battle's fight lingers AFTER it is over: the dead lie there, the winners cheer.)
-  let sec = Infinity;
-  if (fight) {
-    sec = fight.loop ? (now - fight.t0) % CYCLE : now - fight.t0;
-    if (!fight.loop && sec >= FIGHT + AFTER) { endFight(); return; }
-  }
-  const t = sec / FIGHT, fighting = t < 1, o = fight?.outcome;
+  // (Each cell's fight as long as its attack: seconds into it, a share of it.)
+  const clock = (c: Cell) => {
+    const dur = c.attack ? durOf(c.attack) : FIGHT, sec = !fight ? Infinity : fight.loop ? (now - fight.t0) % (dur + PAUSE) : now - fight.t0;
+    return { dur, sec, t: sec / dur, fighting: sec < dur };
+  };
+  if (fight && !fight.loop && cells[0] && now - fight.t0 >= clock(cells[0]).dur + AFTER) { endFight(); return; }
+  const o = fight?.outcome;
   const m = new THREE.Matrix4(), turn = new THREE.Matrix4(), offset = new THREE.Vector3(), tip = new THREE.Quaternion();
   const heading = (dx: number, dz: number) => Math.atan2(dx, dz);
   for (const p of placed) {
     // (The fallen stay where they fell, after the fight too.)
-    const c = p.cell, s = p.soul, fell = fight !== null && falls(c.type) && t > s.fall, play = (fighting || fell) && c.target !== null ? c.play : null;
+    const c = p.cell, s = p.soul, { dur, sec, t, fighting } = clock(c), fell = fight !== null && falls(c.type) && t > s.fall, play = (fighting || fell) && c.target !== null ? c.play : null;
     // (Struck down: as far as it got, then over.)
     const st = play ? { ...playAt(play, Math.min(t, s.fall)), ...figureOut(play, Math.min(t, s.fall), s.delay) } : null;
     const home = homeOf(p);
@@ -305,13 +306,13 @@ function pose(now: number): void {
     const moving = (marching && mode === 'sheet') || st?.moving ? (play && play.charge > 1 ? 1.4 : 1) : 0;
     let legs = moving, arm = st?.strike ?? 0, bends: readonly [number, number, number, number, number, number, number, number] = [0, 0, 0, 0, 0, 0, 0, 0];
     if (down) {
-      const since = (t - s.fall) * FIGHT, fold = deathBend(since, s.beat);
+      const since = (t - s.fall) * dur, fold = deathBend(since, s.beat);
       if (!s.rides) m.multiply(turn.makeTranslation(0, -dropOf(fold.crouch), 0));
       m.multiply(turn.makeRotationFromQuaternion(deathTurn(tip, since, s.beat, s.rides)));
       legs = deathLegs(since, s.rides); arm = 3 + fold.arm; bends = s.rides ? [0, 0, 0, 0, 0, 0, 0, 0] : [fold.bend, 0, fold.crouch, 0.6, fold.aim, 1, 0.4, 0];
     } else if (body) {
       const won = o ? (c.side === 'attacker' ? o.defender <= 0 && o.attacker > 0 : o.attacker <= 0) : false;
-      const cue: Cue | null = fight && c.play && c.attack ? { sec, dur: FIGHT, play: c.play, attack: c.attack, side: c.side, engaged: s.to !== null || s.foe !== null || (mode === 'sheet' && c.attack.close === true), delay: s.delay, fall: s.fall * FIGHT, won } : null;
+      const cue: Cue | null = fight && c.play && c.attack ? { sec, dur, play: c.play, attack: c.attack, side: c.side, engaged: s.to !== null || s.foe !== null || (mode === 'sheet' && c.attack.close === true), delay: s.delay, fall: s.fall * dur, won } : null;
       const pz = poseOf(cue, now, p.phase, s.beat, moving, s.rides, whirls(c.type));
       // (Crouched, lower: the legs fold under it.)
       m.multiply(turn.makeTranslation(0, pz.rise - (s.rides ? 0 : dropOf(pz.crouch)), pz.lunge)).multiply(turn.makeRotationFromQuaternion(poseTurn(tip, pz)));
@@ -327,6 +328,7 @@ function pose(now: number): void {
   for (const mesh of new Set(placed.map((p) => p.mesh))) { mesh.instanceMatrix.needsUpdate = true; mesh.geometry.getAttribute('aAnim').needsUpdate = true; mesh.geometry.getAttribute('aPose').needsUpdate = true; mesh.geometry.getAttribute('aMore').needsUpdate = true; mesh.geometry.getAttribute('aSkinTone').needsUpdate = true; }
   // The shots, each on time (from where the unit stands now).
   for (const c of cells) {
+    const { t, fighting } = clock(c);
     if (!fighting) { c.fired = 0; continue; }
     if (!c.play || !c.target) continue;
     if (t < (c.play.shots[0]?.t ?? 1) && c.fired > 0) c.fired = 0; // (the loop began again)
