@@ -22,11 +22,11 @@ import { CIVS, UNITS, domainOf, type UnitKey } from './rules.ts';
 import { TECHS, TECH_KEYS } from './techs.ts';
 import { POLITICS } from './politics.ts';
 import { FORTIFY_BONUS, combatStrength, fightRounds, matchup, statOf } from './game.ts';
-import { HAIR_STYLES, UNIT_LOOK, colsOf, formationSlots, hairModel, headOffset, isMachine, rides, unitModel, variantOf, whirls, womenShare } from './unitModels.ts';
+import { HAIR_STYLES, UNIT_LOOK, colsOf, formationSlots, hairModel, headOffset, isMachine, rides, unitModel, variantOf, whirls, bowman, womenShare } from './unitModels.ts';
 import { FIGHT, PLAYS, UnitView, Volleys, durOf, defendPlay, falls, figureLooks, makeUnitMaterial, playAt, playOf, prepareUnitGeometry, type Play, type ShownUnit } from './unitView.ts';
 import type { P2 } from './duel.ts';
 import { AFTER, armOf, dropOf, legsOf, poseOf, poseTurn, rearShift, type Cue } from './unitAnim.ts';
-import { attackBlock, attackStyle, canAssault, canAttackType, canShoot, defaultMode, siegeStyle, type AttackMode } from './unitClasses.ts';
+import { UNIT_CLASS, attackBlock, attackStyle, canAssault, canAttackType, canShoot, defaultMode, siegeStyle, type AttackMode } from './unitClasses.ts';
 import { WorldLabel, disposeLabels } from './worldLabel.ts';
 import { triangles } from './lowpoly.ts';
 import { mulberry32 } from './rng.ts';
@@ -391,6 +391,7 @@ function endFight(): void {
 // ---- controls ----
 
 function setMode(m: Mode): void {
+  if (m === 'sheet') stopMovie();
   mode = m;
   fight = null;
   document.body.dataset['mode'] = m;
@@ -417,6 +418,53 @@ $('attack').addEventListener('click', (e) => { setAttacking(!fight); (e.currentT
 
 // (Changing either side brings both back whole.)
 const reset = () => { fight = null; battle.aHp = battle.dHp = 100; $('result').textContent = ''; build(); showBattle(); };
+
+// ---- the movies ----
+// Every attacker against every defender, both ways of attacking, one fight
+// after another, each shown to its end (what can't be fought is said, and
+// why, for as long as a fight lasts). By class: only one type for each way
+// of being animated (its class, its weapon's way, mounted or a machine, its
+// element), the first in the roster; or every type.
+const animKey = (k: UnitKey): string => `${UNIT_CLASS[k]}|${whirls(k)}|${bowman(k)}|${rides(k, 0)}|${isMachine(k)}|${domainOf(UNITS[k])}`;
+const firstOfKind = (ks: readonly UnitKey[]): UnitKey[] => ks.filter((k, i) => ks.findIndex((j) => animKey(j) === animKey(k)) === i);
+type Take = { a: UnitKey; d: UnitKey; how: AttackMode };
+let movie: { name: string; takes: Take[]; i: number; until: number } | null = null;
+function playMovie(name: string, attackers: readonly UnitKey[], defenders: readonly UnitKey[]): void {
+  const takes = attackers.flatMap((a) => defenders.flatMap((d) => (['ranged', 'melee'] as const).map((how) => ({ a, d, how }))));
+  movie = { name, takes, i: -1, until: 0 };
+  $('movieStop').classList.remove('hidden');
+  nextTake();
+}
+function stopMovie(): void {
+  movie = null;
+  $('movieStop').classList.add('hidden');
+  $('movie').textContent = '';
+}
+// The next take: its sides set and whole; fought, or (if it can't be) said why.
+function nextTake(): void {
+  if (!movie) return;
+  if (++movie.i >= movie.takes.length) { stopMovie(); return; }
+  const { a, d, how } = movie.takes[movie.i]!, now = performance.now() / 1000;
+  Object.assign(battle, { aType: a, dType: d, how });
+  $<HTMLSelectElement>('aType').value = a;
+  $<HTMLSelectElement>('dType').value = d;
+  reset();
+  const block = attackBlock(a, d, undefined, how);
+  const way = how === 'ranged' ? 'by fire' : 'at close quarters';
+  $('movie').innerHTML = `${movie.name} · ${movie.i + 1} of ${movie.takes.length}<br>${UNITS[a].name} attacks ${UNITS[d].name} ${way}${block ? `: <b class="loss">it can't (${UNITS[a].name.toLowerCase()} ${block})</b>` : ''}`;
+  if (block) { $('odds').innerHTML = `<b class="loss">The ${UNITS[a].name.toLowerCase()} ${block}</b> (${way}).`; movie.until = now + FIGHT; return; }
+  startFight();
+  movie.until = Infinity; // (until the fight is over: movieTick)
+}
+// Every frame: on to the next take once this one is over (a moment after its fight ends).
+function movieTick(now: number): void {
+  if (!movie) return;
+  if (movie.until === Infinity && !fight) movie.until = now + 0.6;
+  if (now >= movie.until) nextTake();
+}
+$('movieClasses').addEventListener('click', (e) => { setMode('battle'); playMovie('Every class', firstOfKind(FIGHTERS), firstOfKind(DEFENDERS)); (e.currentTarget as HTMLElement).blur(); });
+$('movieUnits').addEventListener('click', (e) => { setMode('battle'); playMovie('Every unit', FIGHTERS, DEFENDERS); (e.currentTarget as HTMLElement).blur(); });
+$('movieStop').addEventListener('click', (e) => { stopMovie(); (e.currentTarget as HTMLElement).blur(); });
 options<ArchCiv>('aCiv', ARCH_CIVS, (v) => v, battle.aCiv, (v) => { battle.aCiv = v; reset(); });
 options<UnitKey>('aType', FIGHTERS, (v) => UNITS[v].name, battle.aType, (v) => { battle.aType = v; reset(); });
 options<ArchCiv>('dCiv', ARCH_CIVS, (v) => v, battle.dCiv, (v) => { battle.dCiv = v; reset(); });
@@ -473,6 +521,7 @@ renderer.setAnimationLoop(() => {
   const now = performance.now() / 1000;
   time.value = now;
   if (fight && !fight.loop && now - fight.t0 >= fight.dur + AFTER) endFight();
+  movieTick(now);
   if (battleView) battleView.update(now, camera, Infinity); else pose(now);
   keyboard();
   controls.update();

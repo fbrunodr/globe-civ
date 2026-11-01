@@ -16,6 +16,8 @@
       #battle .hp { width: 64px; text-align: right; font-variant-numeric: tabular-nums; }
       #battle button.primary { margin-top: 2px; }
       #result { min-height: 3.6em; line-height: 1.4; color: #e6ebf2; }
+      #movie { color: #c8d0dc; font-size: 0.9em; line-height: 1.4; }
+      #movie b.loss { color: #ffa8a8; }
       #result b.win { color: #8ce99a; } #result b.loss { color: #ffa8a8; }
     </style>
   </head>
@@ -47,6 +49,8 @@
       <div id="odds"></div>
       <div class="row"><button id="fight" class="primary">Fight <kbd>Space</kbd></button><button id="heal">Heal both</button></div>
       <div id="result"></div>
+      <div class="row"><button id="movieClasses" title="Every pair of animation classes, both ways of attacking">▶ Every class</button><button id="movieUnits" title="Every pair of unit types, both ways of attacking">▶ Every unit</button><button id="movieStop" class="hidden">■ Stop</button></div>
+      <div id="movie"></div>
     </div>
     <script type="module" src="/src/unitGallery.ts"></script>
   </body>
