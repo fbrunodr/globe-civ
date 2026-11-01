@@ -113,6 +113,9 @@ const ARM = (side: number) => [-side, SHOULDER, 0.35] as const;
 // In a fight: the weapon arm thrusts (and its weapon with it) about the shoulder.
 export const STRIKE = 2;
 const HIT = (pivot: number, amp: number) => [STRIKE, pivot, amp] as const;
+// In a fight: the shield arm raises its shield to ward off a blow (or arrows) about the shoulder.
+export const GUARD = 3;
+const GUARD_ARM = [GUARD, SHOULDER, 1.25] as const;
 
 type Hold = 'spear' | 'pike' | 'club' | 'sword' | 'longsword' | 'bow' | 'recurve' | 'sling' | 'crossbow' | 'musket' | 'rifle' | 'mg' | 'staff' | 'banner' | 'none';
 
@@ -152,7 +155,7 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
   const freeL = !shield && !bow && !twoHands;
   const out = tagged(person(dress, armL, armR, {
     legs: (side) => (opts.still ? [0, HIP, 0] as const : LEG(side)),
-    arms: (side) => (side === -1 ? (hold === 'none' ? ARM(-1) : strike ?? undefined) : freeL ? ARM(1) : bow ? bowUp : hold === 'longsword' || hold === 'mg' ? strike ?? undefined : undefined),
+    arms: (side) => (side === -1 ? (hold === 'none' ? ARM(-1) : strike ?? undefined) : shield ? GUARD_ARM : freeL ? ARM(1) : bow ? bowUp : hold === 'longsword' || hold === 'mg' ? strike ?? undefined : undefined),
   }));
   const hR = handAt(-1, armR, f), hL = handAt(1, armL, f), eR = elbowAt(-1, armR, f), eL = elbowAt(1, armL, f);
   // (What the right hand holds goes with its forearm: bent at the elbow.)
@@ -208,25 +211,27 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
   if (opts.quiver) out.push(lp(hull([R([0, 0, 0], 0.032), R([0, 0.3, 0], 0.036)], 4, LEATHER, { caps: [true, false] }), { x: 0.06, y: 0.5, z: -0.09, rz: -0.35 }),
     ...[0].map((dx) => rod(V(0.06 + dx - 0.1, 0.78, -0.09), V(0.06 + dx - 0.12, 0.84, -0.095), 0.006, 0.006, 3, 0xd8d0c0)));
   if (opts.pack) out.push(box(0.2, 0.22, 0.1, 0x9a8462, { y: 0.62, z: -0.11 }), rod(V(-0.11, 0.77, -0.1), V(0.11, 0.77, -0.1), 0.022, 0.022, 4, 0x6a5440));
-  if (shield) out.push(...shieldOf(gear.shield, hL));
+  // (The shield goes with its forearm.)
+  if (shield) out.push(...shieldOf(gear.shield, hL, { limb: GUARD_ARM, joint: [eL.y, eL.z] }));
   if (opts.helmet) out.push(...helmetOf(gear.helmet));
   return out;
 }
 
 // The shield on the left forearm, its face painted (team), standing
 // forward: a flat polygon (both faces drawn) and its boss.
-function shieldOf(s: Shield, hand: THREE.Vector3): THREE.BufferGeometry[] {
-  const at: Tf = { x: hand.x - 0.02, y: hand.y + 0.02, z: hand.z + 0.035 };
-  const boss = point(0.025, 0.026, 3, METAL, { ...at, z: (at.z ?? 0) + 0.004, rx: Math.PI / 2 });
-  const ngon = (r: number, sy = 1, n = 8) => lp(plate(Array.from({ length: n }, (_, i) => [Math.cos((i + 0.5) * 2 * Math.PI / n) * r, Math.sin((i + 0.5) * 2 * Math.PI / n) * r * sy] as const), PAINT), at, { team: true });
+// (`t`: how it moves, with the arm.)
+function shieldOf(s: Shield, hand: THREE.Vector3, t: Tag = {}): THREE.BufferGeometry[] {
+  const at: Tf = { x: hand.x - 0.02, y: hand.y + 0.02, z: hand.z + 0.035 }, face: Tag = { ...t, team: true };
+  const boss = point(0.025, 0.026, 3, METAL, { ...at, z: (at.z ?? 0) + 0.004, rx: Math.PI / 2 }, t);
+  const ngon = (r: number, sy = 1, n = 8) => lp(plate(Array.from({ length: n }, (_, i) => [Math.cos((i + 0.5) * 2 * Math.PI / n) * r, Math.sin((i + 0.5) * 2 * Math.PI / n) * r * sy] as const), PAINT), at, face);
   switch (s) {
     case 'round': return [ngon(0.16), boss];
     case 'big round': return [ngon(0.2), boss];
     case 'small': return [ngon(0.11), boss];
     case 'oval': return [ngon(0.12, 1.6), boss];
-    case 'scutum': return [shape(new THREE.CylinderGeometry(0.2, 0.2, 0.42, 3, 1, true, -0.62, 1.24).rotateY(Math.PI), PAINT, { ...at, z: (at.z ?? 0) + 0.18, y: (at.y ?? 0) - 0.02 }, { team: true }), boss];
-    case 'pavise': return [box(0.26, 0.46, 0.025, PAINT, { ...at, y: (at.y ?? 0) - 0.03 }, { team: true })];
-    case 'kite': return [lp(plate([[-0.12, 0.14], [0.12, 0.14], [0.11, -0.03], [0, -0.29], [-0.11, -0.03]], PAINT), at, { team: true }), boss];
+    case 'scutum': return [shape(new THREE.CylinderGeometry(0.2, 0.2, 0.42, 3, 1, true, -0.62, 1.24).rotateY(Math.PI), PAINT, { ...at, z: (at.z ?? 0) + 0.18, y: (at.y ?? 0) - 0.02 }, face), boss];
+    case 'pavise': return [box(0.26, 0.46, 0.025, PAINT, { ...at, y: (at.y ?? 0) - 0.03 }, face)];
+    case 'kite': return [lp(plate([[-0.12, 0.14], [0.12, 0.14], [0.11, -0.03], [0, -0.29], [-0.11, -0.03]], PAINT), at, face), boss];
   }
 }
 

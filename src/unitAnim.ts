@@ -25,21 +25,24 @@ import type { Play } from './unitView.ts';
 // forward, knees bent twice as far: radians), its striking arm's `elbow`
 // bent (radians); where its weapon points (`aim`: radians from upright,
 // forward: levelled at 1.5; turned in the hand whatever the arm does), and
-// how far it is so aimed (`aimed`: 0, as it is made and carried, at ease).
+// how far it is so aimed (`aimed`: 0, as it is made and carried, at ease);
+// its shield raised (`guard`: 0 carried, 1 up before its face).
 export interface Pose {
   readonly lunge: number; readonly lean: number; readonly yaw: number;
   readonly bend: number; readonly twist: number; readonly arm: number;
   readonly walk: number; readonly stride: number;
   readonly crouch: number; readonly elbow: number; readonly aim: number; readonly aimed: number;
+  readonly guard: number;
 }
 // (Aimed: what holds an aim, in a fight.)
 const P = (lunge: number, lean: number, yaw: number, bend: number, twist: number, arm: number, walk: number, stride: number, crouch = 0, elbow = 0, aim?: number): Pose =>
-  ({ lunge, lean, yaw, bend, twist, arm, walk, stride, crouch, elbow, aim: aim ?? 0, aimed: aim === undefined ? 0 : 1 });
+  ({ lunge, lean, yaw, bend, twist, arm, walk, stride, crouch, elbow, aim: aim ?? 0, aimed: aim === undefined ? 0 : 1, guard: 0 });
+const guarded = (p: Pose, guard: number): Pose => ({ ...p, guard });
 const mix = (a: Pose, b: Pose, k: number): Pose => {
   const t = Math.max(0, Math.min(1, k)), m = (x: number, y: number) => x + (y - x) * t;
-  return { ...P(m(a.lunge, b.lunge), m(a.lean, b.lean), m(a.yaw, b.yaw), m(a.bend, b.bend), m(a.twist, b.twist), m(a.arm, b.arm), m(a.walk, b.walk), m(a.stride, b.stride), m(a.crouch, b.crouch), m(a.elbow, b.elbow), m(a.aim, b.aim)), aimed: m(a.aimed, b.aimed) };
+  return { ...P(m(a.lunge, b.lunge), m(a.lean, b.lean), m(a.yaw, b.yaw), m(a.bend, b.bend), m(a.twist, b.twist), m(a.arm, b.arm), m(a.walk, b.walk), m(a.stride, b.stride), m(a.crouch, b.crouch), m(a.elbow, b.elbow), m(a.aim, b.aim)), aimed: m(a.aimed, b.aimed), guard: m(a.guard, b.guard) };
 };
-const add = (a: Pose, d: Partial<Pose>): Pose => ({ ...P(a.lunge + (d.lunge ?? 0), a.lean + (d.lean ?? 0), a.yaw + (d.yaw ?? 0), a.bend + (d.bend ?? 0), a.twist + (d.twist ?? 0), a.arm + (d.arm ?? 0), a.walk, a.stride + (d.stride ?? 0), a.crouch + (d.crouch ?? 0), a.elbow + (d.elbow ?? 0), a.aim + (d.aim ?? 0)), aimed: a.aimed });
+const add = (a: Pose, d: Partial<Pose>): Pose => ({ ...P(a.lunge + (d.lunge ?? 0), a.lean + (d.lean ?? 0), a.yaw + (d.yaw ?? 0), a.bend + (d.bend ?? 0), a.twist + (d.twist ?? 0), a.arm + (d.arm ?? 0), a.walk, a.stride + (d.stride ?? 0), a.crouch + (d.crouch ?? 0), a.elbow + (d.elbow ?? 0), a.aim + (d.aim ?? 0)), aimed: a.aimed, guard: a.guard + (d.guard ?? 0) });
 const smooth = (t: number) => { const x = Math.max(0, Math.min(1, t)); return x * x * (3 - 2 * x); };
 const frac = (x: number) => x - Math.floor(x);
 
@@ -70,14 +73,14 @@ const march = (now: number, phase: number, walk: number): Pose =>
 // Ready to fight: knees bent, a foot forward and planted, weapon up and
 // aimed, the shoulders turned a little, weaving slowly.
 const STANCE = 0.45;
-const ready = (now: number, phase: number): Pose =>
-  P(0, 0, 0, 0.18 + 0.02 * Math.sin(now * 2.3 + phase), -0.12 + 0.07 * Math.sin(now * 1.7 + phase), 0.32 + 0.04 * Math.sin(now * 2.9 + phase + 1), 0, STANCE, 0.34, 0.7, 0.75 + 0.06 * Math.sin(now * 2.3 + phase + 1));
+const ready = (now: number, phase: number): Pose => guarded(
+  P(0, 0, 0, 0.18 + 0.02 * Math.sin(now * 2.3 + phase), -0.12 + 0.07 * Math.sin(now * 1.7 + phase), 0.32 + 0.04 * Math.sin(now * 2.9 + phase + 1), 0, STANCE, 0.34, 0.7, 0.75 + 0.06 * Math.sin(now * 2.3 + phase + 1)), 0.3 + 0.05 * Math.sin(now * 1.9 + phase));
 // Pulled up at the end of a run: settling into its stance, the body checked back.
-const pullUp = P(0, 0, 0, -0.12, 0, 0.4, 0, STANCE + 0.05, 0.42, 0.8, 1.1);
+const pullUp = guarded(P(0, 0, 0, -0.12, 0, 0.4, 0, STANCE + 0.05, 0.42, 0.8, 1.1), 0.45);
 // Cowering under arrows or shells: down low, weapon or shield up.
-const cower = (now: number, phase: number): Pose => P(0, 0, 0, 0.5 + 0.02 * Math.sin(now * 8 + phase), 0, 0.95, 0, 0.3, 0.75, 1.2, 0.25);
+const cower = (now: number, phase: number): Pose => guarded(P(0, 0, 0, 0.5 + 0.02 * Math.sin(now * 8 + phase), 0, 0.95, 0, 0.3, 0.75, 1.2, 0.25), 1.05);
 // Cheering: weapon raised and shaken, head back.
-const cheer = (now: number, phase: number): Pose => P(0, 0, 0, -0.12, 0.1 * Math.sin(now * 3 + phase), 1.65 + 0.18 * Math.sin(now * 10 + phase), 0, 0.15, 0.05, 0.25 + 0.2 * Math.sin(now * 10 + phase), -0.15);
+const cheer = (now: number, phase: number): Pose => guarded(P(0, 0, 0, -0.12, 0.1 * Math.sin(now * 3 + phase), 1.65 + 0.18 * Math.sin(now * 10 + phase), 0, 0.15, 0.05, 0.25 + 0.2 * Math.sin(now * 10 + phase), -0.15), 0.25);
 
 // Blows: wound up, struck (the blow lands as it ends), recovered to the
 // ready stance; the feet stay where they are. A thrust: the shoulders
@@ -85,8 +88,9 @@ const cheer = (now: number, phase: number): Pose => P(0, 0, 0, -0.12, 0.1 * Math
 // the arm driven out straight, the weapon levelled. From overhead: raised
 // high, the body arched back, then brought down with the body bending and
 // the knees giving, its point forward.
-const THRUST = { wind: P(0, 0, 0, -0.18, -0.55, -0.3, 0, STANCE, 0.38, 1.6, 1.35), hit: P(0.04, 0, 0, 0.42, 0.38, 1.0, 0, STANCE, 0.46, 0.02, 1.6) };
-const OVERHEAD = { wind: P(0, 0, 0, -0.3, -0.28, 1.8, 0, STANCE, 0.3, 1.1, 1.7), hit: P(0.03, 0, 0, 0.58, 0.16, 0.5, 0, STANCE, 0.5, 0.3, 2.2) };
+// (The shield held up as it winds up, swung aside as it strikes.)
+const THRUST = { wind: guarded(P(0, 0, 0, -0.18, -0.55, -0.3, 0, STANCE, 0.38, 1.6, 1.35), 0.55), hit: guarded(P(0.04, 0, 0, 0.42, 0.38, 1.0, 0, STANCE, 0.46, 0.02, 1.6), 0.1) };
+const OVERHEAD = { wind: guarded(P(0, 0, 0, -0.3, -0.28, 1.8, 0, STANCE, 0.3, 1.1, 1.7), 0.4), hit: guarded(P(0.03, 0, 0, 0.58, 0.16, 0.5, 0, STANCE, 0.5, 0.3, 2.2), 0.05) };
 // The blows of a figure `sec` seconds into its exchange (a round of BOUT
 // seconds; `beat` where it starts in it). Its foe is half a round apart:
 // each of its blows lands as this one is winding up, and it flinches.
@@ -96,7 +100,8 @@ function blows(sec: number, beat: number, now: number, phase: number): Pose {
   let pose = u < 0.4 ? mix(rest, kind.wind, smooth(u / 0.4)) : u < 0.55 ? mix(kind.wind, kind.hit, 1 - (1 - (u - 0.4) / 0.15) ** 2) : mix(kind.hit, rest, smooth((u - 0.55) / 0.45));
   const f = u < 0.16 ? Math.sin((u / 0.16) * Math.PI) : 0;
   // (The foe's blow landing: the body knocked back and turned at the hips, the knees sagging.)
-  if (f > 0) pose = add(pose, { bend: -0.38 * f, twist: (n % 2 ? 0.32 : -0.32) * f, crouch: 0.07 * f, elbow: 0.4 * f, aim: -0.35 * f });
+  // (Shield raised against it, if it has one: the knock taken on the shield.)
+  if (f > 0) pose = add(pose, { bend: -0.38 * f, twist: (n % 2 ? 0.32 : -0.32) * f, crouch: 0.07 * f, elbow: 0.4 * f, aim: -0.35 * f, guard: 0.6 * f });
   return pose;
 }
 // Shooting: drawing (or shouldering) before each shot, loosed (a recoil),
