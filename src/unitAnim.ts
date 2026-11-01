@@ -127,13 +127,14 @@ function blows(sec: number, beat: number, now: number, phase: number): Pose {
 // from down low.
 // (Between shots: the weapon lowered, a bow's arrow down at the ground before it, a sling hanging.)
 const AT_EASE = (whirl: boolean) => ({ ...P(0, 0, 0, 0.06, 0, whirl ? 0.2 : 0.4, 0, 0.3, 0.15, 0.5, whirl ? Math.PI : 0.9) });
-function shooting(sec: number, shots: readonly number[], whirl = false, kneel = false): Pose {
+function shooting(sec: number, shots: readonly number[], whirl = false, kneel = false, gun = kneel): Pose {
   const low = (p: Pose): Pose => (kneel ? { ...p, crouch: p.crouch + 0.6, bend: p.bend + 0.08, stride: p.stride + 0.2 } : p);
   let pose = low(AT_EASE(whirl));
   for (const ts of shots) {
     const d = sec - ts;
-    const drawn = whirl ? P(0, 0, 0, -0.08, -0.2, 1.75, 0, 0.35, 0.2, 0.6, sec * 26) : { ...P(0, 0, 0, -0.06, 0.2, 1.0, 0, 0.35, 0.2, 0.15, 1.35), draw: 1 };
-    const loosed = whirl ? P(0, 0, 0, 0.3, 0.3, 0.9, 0, 0.45, 0.3, 0.1, 1.6) : P(0, 0, 0, -0.14, 0.14, 0.85, 0, 0.35, 0.2, 0.3, 1.3);
+    // (A bow drawn a little above level, for its arrow to arc; a gun levelled, kicking up as it fires.)
+    const drawn = whirl ? P(0, 0, 0, -0.08, -0.2, 1.75, 0, 0.35, 0.2, 0.6, sec * 26) : { ...P(0, 0, 0, -0.06, 0.2, 1.0, 0, 0.35, 0.2, 0.15, gun ? 1.55 : 1.35), draw: gun ? 0 : 1 };
+    const loosed = whirl ? P(0, 0, 0, 0.3, 0.3, 0.9, 0, 0.45, 0.3, 0.1, 1.6) : P(0, 0, 0, -0.14, 0.14, 0.85, 0, 0.35, 0.2, 0.3, gun ? 1.4 : 1.3);
     if (d > -0.45 && d <= 0) pose = mix(pose, low(drawn), smooth((d + 0.45) / 0.3));
     else if (d > 0 && d < 0.55) pose = mix(low(loosed), low(AT_EASE(whirl)), smooth(d / 0.55));
   }
@@ -191,7 +192,7 @@ function inFight(c: Cue, now: number, phase: number, beat: number, whirl: boolea
   if (c.side === 'attacker' && attack.close) {
     const go0 = s(play.go[0] + c.delay), met = s(play.go[1] + c.delay), back = s(play.back + c.delay * 0.4), run = play.charge > 1 ? 1.4 : 1;
     // (A volley first, if it fires before it goes in: guns levelled.)
-    const opening = play.shots.length ? mix(into, shooting(sec, play.shots.map((x) => s(x.t)), whirl), smooth(sec / 0.12)) : into;
+    const opening = play.shots.length ? mix(into, shooting(sec, play.shots.map((x) => s(x.t)), whirl, false, play.shots[0]?.kind === 'bullet'), smooth(sec / 0.12)) : into;
     if (sec < go0) return opening;
     if (sec < met) return mix(opening, charging(now, phase, run, ((sec - go0) / (met - go0)) * 1.8 - 0.6), (sec - go0) / BLEND);
     if (sec < back) {

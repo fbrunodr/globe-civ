@@ -187,11 +187,16 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
   // (A sling hanging from the hand: its cords and the stone's pouch.)
   if (hold === 'sling') out.push(rod(v3(hR), v3(hR).add(V(0.01, -0.21, 0.02)), 0.004, 0.004, 3, 0xb8a888, w), ball(0.025, 0x8a7a62, { x: hR.x + 0.01, y: hR.y - 0.23, z: hR.z + 0.02 }, w));
   if (hold === 'staff') out.push(rod(up(-0.42), up(0.6), 0.013, 0.011, 5, WOOD));
-  // (A long gun held across the body, its muzzle up; a rifle's with a bayonet.)
+  // (A long gun, one straight piece, carried muzzle up and a little
+  // forward (REST_PITCH) in front of the body, between the hands: the
+  // stock gripped by the right hand, the barrel on up; a rifle's with a
+  // bayonet. Straight in the plane it turns in, so it points true however
+  // it is aimed.)
   if (hold === 'musket' || hold === 'rifle') {
-    const butt = v3(hR).add(V(0, -0.08, -0.03)), muzzle = v3(hL).add(V(0, 0.36, 0.06));
-    out.push(rod(butt, v3(hL), 0.02, 0.016, 5, WOOD, w), rod(v3(hL), muzzle, 0.011, 0.011, 5, METAL, w));
-    if (hold === 'rifle') out.push(rod(muzzle, muzzle.clone().add(muzzle.clone().sub(v3(hL)).normalize().multiplyScalar(0.14)), 0.006, 0.0015, 4, METAL, w));
+    const d = V(0, Math.cos(REST_PITCH[hold]), Math.sin(REST_PITCH[hold])), g = V(hR.x * 0.65 + hL.x * 0.35, hR.y, hR.z);
+    const at = (k: number) => g.clone().addScaledVector(d, k);
+    out.push(rod(at(-0.2), at(0.1), 0.022, 0.017, 5, WOOD, w), rod(at(0.1), at(0.52), 0.011, 0.011, 5, METAL, w));
+    if (hold === 'rifle') out.push(rod(at(0.52), at(0.66), 0.006, 0.0015, 4, METAL, w));
   }
   if (hold === 'crossbow') {
     const stock0 = v3(hR).add(V(0, 0.02, -0.06)), tip = v3(hL).add(V(0, 0.04, 0.16));
