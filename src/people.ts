@@ -24,7 +24,11 @@ const TRIM = 0x6e6e6e; // (the cloth's darker hem: the owner's colour, deeper)
 const SHOE = 0x3a2a1e;
 
 export type PartTag = 'skin' | 'team' | 'plain';
-export interface Part { readonly geo: THREE.BufferGeometry; readonly tag: PartTag; readonly limb?: readonly [number, number, number] }
+// (`joint`: a limb's lower piece (shin and shoe, forearm and hand), bent
+// about its middle joint (knee, elbow) at y, z before the limb swings.)
+export interface Part { readonly geo: THREE.BufferGeometry; readonly tag: PartTag; readonly limb?: readonly [number, number, number]; readonly joint?: readonly [number, number] }
+// The knee's height and depth (the legs bend there).
+export const KNEE = [0.27, 0.012] as const;
 
 // How a figure is dressed.
 export interface Dress {
@@ -65,6 +69,12 @@ export function headShell(levels: readonly (readonly [number, number])[], paint:
   return hull(rings, 5, paint, { ...FIVE, caps });
 }
 
+// Where an arm's elbow comes to (side as handAt's).
+export function elbowAt(side: 1 | -1, pose: ArmPose, female = false): THREE.Vector3 {
+  const u = norm(pose.upper);
+  u.x *= side;
+  return new THREE.Vector3(side * (female ? 0.115 : 0.128), SHOULDER - 0.01, 0).addScaledVector(u, UPPER);
+}
 // Where an arm's hand comes to (side: +1 the figure's left, at +x... the
 // figure faces +z, so its right hand is at -x: side -1).
 export function handAt(side: 1 | -1, pose: ArmPose, female = false): THREE.Vector3 {
@@ -81,13 +91,17 @@ export function person(d: Dress, armL: ArmPose = HANG, armR: ArmPose = HANG, swi
   const f = d.female === true, skirt = d.skirt ?? 'knee', bare = d.legs === undefined || d.legs === 'bare';
   const legPaint: Paint = bare ? SKIN_PAINT : (d.legs as number), legTag: PartTag = bare ? 'skin' : 'plain';
   const out: Part[] = [];
-  const add = (geo: THREE.BufferGeometry, tag: PartTag, limb?: readonly [number, number, number]) => out.push(limb ? { geo, tag, limb } : { geo, tag });
-  // Legs: thigh, knee, shin, as one box; the shoe a wedge.
+  const add = (geo: THREE.BufferGeometry, tag: PartTag, limb?: readonly [number, number, number], joint?: readonly [number, number]) => out.push({ geo, tag, ...(limb ? { limb } : {}), ...(joint ? { joint } : {}) });
+  // Legs: thigh and shin, boxes meeting at the knee (the shin bends
+  // there); the shoe a wedge.
   for (const side of [1, -1] as const) {
-    const x = side * (f ? 0.056 : 0.062), lm = swing?.legs(side);
+    const x = side * (f ? 0.056 : 0.062), lm = swing?.legs(side), r = f ? 0.056 : 0.054;
     // (Under a skirt to the ankle only the shoes show.)
-    if (skirt !== 'ankle') add(limb([[x, HIP + 0.03, 0], [x * 0.97, 0.27, 0.012], [x * 0.95, 0.03, -0.004]], [f ? 0.056 : 0.054, 0.038, 0.027], legPaint, 4, { caps: [false, false] }), legTag, lm);
-    add(shoe(x * 0.95, 0, d.shoes ?? SHOE), 'plain', lm);
+    if (skirt !== 'ankle') {
+      add(limb([[x, HIP + 0.03, 0], [x * 0.97, KNEE[0], KNEE[1]]], [r, 0.038], legPaint, 4, { caps: [false, false] }), legTag, lm);
+      add(limb([[x * 0.97, KNEE[0], KNEE[1]], [x * 0.95, 0.03, -0.004]], [0.038, 0.027], legPaint, 4, { caps: [false, false] }), legTag, lm, KNEE);
+    }
+    add(shoe(x * 0.95, 0, d.shoes ?? SHOE), 'plain', lm, KNEE);
   }
   // The torso (the tunic's body: pointed at the sides, flat before and
   // behind), its skirt and belt.
@@ -113,8 +127,9 @@ export function person(d: Dress, armL: ArmPose = HANG, armR: ArmPose = HANG, swi
     const el = sh.clone().addScaledVector(u, UPPER), wr = el.clone().addScaledVector(fo, FORE);
     const long = d.sleeves === 'long', X: V3 = [1, 0, 0];
     add(limb([v3(sh.clone().addScaledVector(u, -0.02)), v3(el.clone().addScaledVector(u, 0.012))], [0.036, 0.028], CLOTH_PAINT, 4, { caps: [false, false], side: X }), 'team', lm);
-    add(limb([v3(el), v3(wr)], [0.027, 0.02], long ? CLOTH_PAINT : SKIN_PAINT, 4, { caps: [false, false], side: X }), long ? 'team' : 'skin', lm);
-    add(hull([R(v3(wr), 0.021, 0.015), R(v3(wr.clone().addScaledVector(fo, 0.065)), 0, 0)], 4, SKIN_PAINT, { side: X, caps: [false, false] }), 'skin', lm);
+    const elbow = [el.y, el.z] as const;
+    add(limb([v3(el), v3(wr)], [0.027, 0.02], long ? CLOTH_PAINT : SKIN_PAINT, 4, { caps: [false, false], side: X }), long ? 'team' : 'skin', lm, elbow);
+    add(hull([R(v3(wr), 0.021, 0.015), R(v3(wr.clone().addScaledVector(fo, 0.065)), 0, 0)], 4, SKIN_PAINT, { side: X, caps: [false, false] }), 'skin', lm, elbow);
   }
   return out;
 }
@@ -129,7 +144,7 @@ function shoe(x: number, z0: number, color: number): THREE.BufferGeometry {
 export function riderBody(d: Dress, seat: number, armL: ArmPose, armR: ArmPose): Part[] {
   const lift = seat - HIP;
   const top = person({ ...d, skirt: 'none' }, armL, armR).filter((p) => !isLeg(p));
-  const out: Part[] = top.map((p) => ({ ...p, geo: p.geo.translate(0, lift, 0) }));
+  const out: Part[] = top.map((p) => ({ ...p, geo: p.geo.translate(0, lift, 0), ...(p.joint ? { joint: [p.joint[0] + lift, p.joint[1]] as const } : {}) }));
   const bare = d.legs === undefined || d.legs === 'bare';
   const legPaint: Paint = bare ? SKIN_PAINT : (d.legs as number), legTag: PartTag = bare ? 'skin' : 'plain';
   for (const side of [1, -1] as const) {

@@ -543,7 +543,7 @@ export class GlobeRenderer {
       step: g.globe.avgEdgeAngle,
     }, (u) => this.unitFlag(u));
     this.unitsGroup.add(this.unitView.group);
-    g.onBattle = (u, t, style) => this.unitView.fight(u.id, t, style, performance.now() / 1000);
+    g.onBattle = (u, t, style, result) => this.unitView.fight(u.id, t, style, performance.now() / 1000, result);
     this.citiesGroup.userData['stat'] = 'city markers';
     this.resourcesGroup.userData['stat'] = 'resource badges';
     this.scene.add(this.resourcesGroup);

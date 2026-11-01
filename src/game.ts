@@ -271,7 +271,8 @@ export class Game {
   private nextId = 1;
   units: Unit[] = [];
   // Told of every attack as it starts (the renderer shows the fight).
-  onBattle: ((u: Unit, tile: number, style: AttackStyle) => void) | null = null;
+  // A fight shown: the attacker, the tile, how it attacks; what it comes to (the defender, the HP each side is left with), if anyone defends.
+  onBattle: ((u: Unit, tile: number, style: AttackStyle, result?: { defender: number; attackerHp: number; defenderHp: number }) => void) | null = null;
   cities: City[] = [];
   readonly cityById = new Map<number, City>();
   readonly cityByTile = new Map<number, City>();
@@ -822,13 +823,15 @@ export class Game {
     const target = this.cityByTile.get(tile)?.owner ?? this.units.find((v) => v.tile === tile && v.owner !== u.owner)?.owner;
     if (target !== undefined && target !== u.owner && !this.atWar(u.owner, target)) this.declareWar(u.owner, target);
     const d = this.bestDefender(tile, u.owner);
-    this.onBattle?.(u, tile, (d ? attackStyle(u.type, d.type) : siegeStyle(u.type)) ?? 'melee');
+    const style = (d ? attackStyle(u.type, d.type) : siegeStyle(u.type)) ?? 'melee';
+    if (!d) this.onBattle?.(u, tile, style);
     if (d) {
       // (The counters: pikes against horse, a charge against archers...)
       const A = this.unitStrength(u, 'atk', tile) * matchup(u.type, d.type, 'atk');
       const D = this.unitStrength(d, 'def', tile) * matchup(d.type, u.type, 'def');
       const before = { a: u.hp, d: d.hp };
       const after = fightRounds(u.hp, d.hp, A, D, ranged, this.rng);
+      this.onBattle?.(u, tile, style, { defender: d.id, attackerHp: after.attacker, defenderHp: after.defender });
       u.hp = after.attacker;
       d.hp = after.defender;
       this.record('attack', u.owner, { unit: u.type, defender: d.type, defenderOwner: d.owner, tile, A: +A.toFixed(2), D: +D.toFixed(2), hp: [before.a, Math.max(0, u.hp)], defenderHp: [before.d, Math.max(0, d.hp)] });

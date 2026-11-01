@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { part, seg, tf, V, type Tf } from './propCatalog.ts';
-import { person, riderBody, handAt, hairShapes, headShell, HAIR_STYLE_KEYS, HIP, SHOULDER, HEAD_Y, HANG, HOLD, RAISE, SHIELD, type ArmPose, type Dress, type Part, type HairStyleKey } from './people.ts';
+import { person, riderBody, handAt, elbowAt, hairShapes, headShell, HAIR_STYLE_KEYS, HIP, SHOULDER, HEAD_Y, HANG, HOLD, RAISE, SHIELD, type ArmPose, type Dress, type Part, type HairStyleKey } from './people.ts';
 import { horseParts } from './creatures.ts';
 import { hull, plate, R } from './lowpoly.ts';
 import type { ArchCiv } from './architecture.ts';
@@ -12,15 +12,20 @@ import type { UnitKey } from './rules.ts';
 // horse, a settler) about 1 tall, standing on y = 0 and facing +z; the unit
 // view (unitView.ts) shows it a dozen times over in formation.
 //
-// Besides its colours (a `color` attribute, as the props), each vertex says:
-//   aTeam  1 on what is painted in the owner's colour (tunic, shield face,
-//          plume, horse cloth): the instance colour, shaded by `color`;
-//   aSkin  1 on skin: each figure's own skin tone (an instance attribute);
+// Besides its colours (a `color` attribute, as the props), each vertex says
+// (packed: the GPU takes only so many attributes):
 //   aLimb  how it moves: (side, pivot height, amplitude), turning about the
 //          pivot. A side of +1 or -1 swings that way round on the march
 //          (left and right legs, a horse's diagonal pairs, arms against the
 //          legs); STRIKE thrusts forward in a fight (the weapon arm and its
-//          weapon, the bow raised); 0 never moves.
+//          weapon, the bow raised); 0 never moves. Its w: flags (RIG), 1 on
+//          what is painted in the owner's colour (tunic, shield face, plume,
+//          horse cloth: the instance colour, shaded by `color`), 2 on skin
+//          (each figure's own skin tone), 4 on a limb's lower piece (shin,
+//          forearm: bent at its middle joint), 8 on a weapon in hand
+//          (turned at the grip to point as the figure aims);
+//   aRig   the middle joint's y, z; the grip's y, z;
+//   aRest  how far forward of upright the weapon points as made (radians).
 // Hair is drawn apart (hairModel): each figure gets its own style and colour.
 //
 // Each civ dresses its soldiers its own way (GEAR): the shape of their
@@ -76,15 +81,21 @@ const CLOTH = 0xa4a4a4, PAINT = 0xffffff;
 const METAL = 0x9a9ca2, WOOD = 0x7a5a3a, LEATHER = 0x6a4a30;
 const HORSE = [0x6a4a32, 0x8a6a4a, 0x4a3a2e, 0xb8a888] as const;
 
-type Tag = { team?: boolean; skin?: boolean; limb?: readonly [number, number, number] };
+// (`joint`: a limb's lower piece, bent at its middle joint at y, z;
+// `grip`: a weapon held at y, z, pointing so far forward of upright as it
+// is made (radians), turned there to point as the figure aims.)
+type Tag = { team?: boolean; skin?: boolean; limb?: readonly [number, number, number]; joint?: readonly [number, number]; grip?: readonly [number, number, number] };
+export const RIG = { team: 1, skin: 2, joint: 4, grip: 8 } as const;
 function tag(g: THREE.BufferGeometry, t: Tag = {}): THREE.BufferGeometry {
   if (g.getAttribute('leafMask')) g.deleteAttribute('leafMask');
   const n = g.getAttribute('position').count;
-  const team = new Float32Array(n).fill(t.team ? 1 : 0), skin = new Float32Array(n).fill(t.skin ? 1 : 0), limb = new Float32Array(n * 3);
-  if (t.limb) for (let i = 0; i < n; i++) limb.set(t.limb, i * 3);
-  g.setAttribute('aTeam', new THREE.BufferAttribute(team, 1));
-  g.setAttribute('aSkin', new THREE.BufferAttribute(skin, 1));
-  g.setAttribute('aLimb', new THREE.BufferAttribute(limb, 3));
+  const flags = (t.team ? RIG.team : 0) + (t.skin ? RIG.skin : 0) + (t.joint ? RIG.joint : 0) + (t.grip ? RIG.grip : 0);
+  const limb = new Float32Array(n * 4), rig = new Float32Array(n * 4), rest = new Float32Array(n).fill(t.grip?.[2] ?? 0);
+  const [s, pivot, amp] = t.limb ?? [0, 0, 0], [jy, jz] = t.joint ?? [0, 0], [gy, gz] = t.grip ?? [0, 0];
+  for (let i = 0; i < n; i++) { limb.set([s, pivot, amp, flags], i * 4); rig.set([jy, jz, gy, gz], i * 4); }
+  g.setAttribute('aLimb', new THREE.BufferAttribute(limb, 4));
+  g.setAttribute('aRig', new THREE.BufferAttribute(rig, 4));
+  g.setAttribute('aRest', new THREE.BufferAttribute(rest, 1));
   return g;
 }
 const shape = (geo: THREE.BufferGeometry, color: number, o: Tf, t?: Tag) => tag(part(geo, color, tf(o)), t);
@@ -105,8 +116,13 @@ const HIT = (pivot: number, amp: number) => [STRIKE, pivot, amp] as const;
 
 type Hold = 'spear' | 'pike' | 'club' | 'sword' | 'longsword' | 'bow' | 'recurve' | 'sling' | 'crossbow' | 'musket' | 'rifle' | 'mg' | 'staff' | 'banner' | 'none';
 
+// How far forward of upright each weapon is made to point (radians): a
+// spear upright, a sword a little forward, a crossbow or a machine gun level.
+const REST_PITCH: Record<Hold, number> = {
+  spear: 0, pike: 0, club: 0.23, sword: 0.25, longsword: 0.31, bow: 0, recurve: 0, sling: 0, crossbow: 1.4, musket: 0.4, rifle: 0.4, mg: 1.35, staff: 0, banner: 0, none: 0,
+};
 // A body (people.ts) tagged for the units' shader.
-const tagged = (parts: readonly Part[]): THREE.BufferGeometry[] => parts.map((p) => tag(p.geo, { team: p.tag === 'team', skin: p.tag === 'skin', ...(p.limb ? { limb: p.limb } : {}) }));
+const tagged = (parts: readonly Part[]): THREE.BufferGeometry[] => parts.map((p) => tag(p.geo, { team: p.tag === 'team', skin: p.tag === 'skin', ...(p.limb ? { limb: p.limb } : {}), ...(p.joint ? { joint: p.joint } : {}) }));
 const v3 = (p: THREE.Vector3) => V(p.x, p.y, p.z);
 
 // A figure on foot (people.ts), dressed for its civ and armed. `hold`:
@@ -129,7 +145,7 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
   const bow = hold === 'bow' || hold === 'recurve', twoHands = hold === 'crossbow' || hold === 'musket' || hold === 'rifle' || hold === 'mg' || hold === 'longsword';
   const armR: ArmPose = hold === 'none' || bow ? HANG : hold === 'sling' ? RAISE : HOLD;
   const armL: ArmPose = shield ? SHIELD : bow ? RAISE : twoHands ? HOLD : HANG;
-  const strike = hold === 'sling' ? HIT(SHOULDER, 1.4) : hold === 'spear' || hold === 'pike' ? HIT(SHOULDER, 1.1) : hold === 'club' || hold === 'sword' || hold === 'longsword' ? HIT(SHOULDER, 1.5)
+  const strike = hold === 'sling' ? HIT(SHOULDER, 1.4) : hold === 'spear' || hold === 'pike' ? HIT(SHOULDER, 1.5) : hold === 'club' || hold === 'sword' || hold === 'longsword' ? HIT(SHOULDER, 1.5)
     : hold === 'mg' ? HIT(SHOULDER, 0.4) : twoHands ? HIT(SHOULDER, 0.9) : null;
   const bowUp = HIT(SHOULDER, 1.3); // (an archer raises his bow to loose)
   const freeL = !shield && !bow && !twoHands;
@@ -137,8 +153,10 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
     legs: (side) => (opts.still ? [0, HIP, 0] as const : LEG(side)),
     arms: (side) => (side === -1 ? (hold === 'none' ? ARM(-1) : strike ?? undefined) : freeL ? ARM(1) : bow ? bowUp : hold === 'longsword' || hold === 'mg' ? strike ?? undefined : undefined),
   }));
-  const hR = handAt(-1, armR, f), hL = handAt(1, armL, f);
-  const w: Tag = strike ? { limb: strike } : {};
+  const hR = handAt(-1, armR, f), hL = handAt(1, armL, f), eR = elbowAt(-1, armR, f), eL = elbowAt(1, armL, f);
+  // (What the right hand holds goes with its forearm: bent at the elbow.)
+  const w: Tag = strike ? { limb: strike, joint: [eR.y, eR.z], grip: [hR.y, hR.z, REST_PITCH[hold]] } : {};
+  const bowTag: Tag = { limb: bowUp, joint: [eL.y, eL.z] };
   const up = (d: number) => v3(hR).add(V(0, d, 0));
   if (hold === 'spear') out.push(rod(up(-0.42), up(0.86), 0.012, 0.011, 5, WOOD, w), point(0.11, 0.026, 3, METAL, { x: hR.x, y: hR.y + 0.86, z: hR.z }, w));
   if (hold === 'pike') out.push(rod(up(-0.4), up(1.25), 0.012, 0.011, 5, WOOD, w), point(0.13, 0.024, 3, METAL, { x: hR.x, y: hR.y + 1.25, z: hR.z }, w));
@@ -177,14 +195,14 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
   if (hold === 'bow') {
     // A bow in the left hand: two limbs bent forward from the grip, and the string.
     const g = v3(hL);
-    out.push(rod(g, g.clone().add(V(0, 0.36, -0.06)), 0.011, 0.007, 4, WOOD, { limb: bowUp }), rod(g, g.clone().add(V(0, -0.36, -0.06)), 0.011, 0.007, 4, WOOD, { limb: bowUp }),
-      rod(g.clone().add(V(0, 0.36, -0.06)), g.clone().add(V(0, -0.36, -0.06)), 0.003, 0.003, 3, 0xd8d0c0, { limb: bowUp }));
+    out.push(rod(g, g.clone().add(V(0, 0.36, -0.06)), 0.011, 0.007, 4, WOOD, bowTag), rod(g, g.clone().add(V(0, -0.36, -0.06)), 0.011, 0.007, 4, WOOD, bowTag),
+      rod(g.clone().add(V(0, 0.36, -0.06)), g.clone().add(V(0, -0.36, -0.06)), 0.003, 0.003, 3, 0xd8d0c0, bowTag));
   }
   if (hold === 'recurve') {
     // A short composite bow: the limbs out from the grip, their tips curled forward, and the string.
     const g = v3(hL), tip = (s: number) => g.clone().add(V(0, 0.28 * s, 0.03));
-    out.push(...[1, -1].flatMap((s) => [rod(g, g.clone().add(V(0, 0.15 * s, -0.05)), 0.011, 0.009, 4, 0x5a3a22, { limb: bowUp }), rod(g.clone().add(V(0, 0.15 * s, -0.05)), tip(s), 0.009, 0.005, 3, 0x5a3a22, { limb: bowUp })]),
-      rod(tip(1), tip(-1), 0.003, 0.003, 3, 0xd8d0c0, { limb: bowUp }));
+    out.push(...[1, -1].flatMap((s) => [rod(g, g.clone().add(V(0, 0.15 * s, -0.05)), 0.011, 0.009, 4, 0x5a3a22, bowTag), rod(g.clone().add(V(0, 0.15 * s, -0.05)), tip(s), 0.009, 0.005, 3, 0x5a3a22, bowTag)]),
+      rod(tip(1), tip(-1), 0.003, 0.003, 3, 0xd8d0c0, bowTag));
   }
   if (opts.quiver) out.push(lp(hull([R([0, 0, 0], 0.032), R([0, 0.3, 0], 0.036)], 4, LEATHER, { caps: [true, false] }), { x: 0.06, y: 0.5, z: -0.09, rz: -0.35 }),
     ...[0].map((dx) => rod(V(0.06 + dx - 0.1, 0.78, -0.09), V(0.06 + dx - 0.12, 0.84, -0.095), 0.006, 0.006, 3, 0xd8d0c0)));
@@ -314,7 +332,8 @@ function chariot(gear: Gear, coat: number, female: boolean): THREE.BufferGeometr
       rod(V(s * 0.16, CAR_FLOOR + 0.1, CAR_Z + 0.18), V(s * 0.17, 0.62, 0.25), 0.014, 0.014, 3, WOOD)]),
   ];
   const archer = figure(gear, 'bow', false, { female, still: true, quiver: true });
-  for (const g of archer) { (g.getAttribute('aLimb') as THREE.BufferAttribute).array.fill(0); g.translate(0, CAR_FLOOR, CAR_Z); }
+  // (Still in the car: nothing swings; its flags kept.)
+  for (const g of archer) { const a = (g.getAttribute('aLimb') as THREE.BufferAttribute).array; for (let i = 0; i < a.length; i += 4) a.fill(0, i, i + 3); g.translate(0, CAR_FLOOR, CAR_Z); }
   return [...out, ...archer];
 }
 // The knight's horse in its caparison: a cloth laid over its back,
@@ -525,7 +544,7 @@ function transport(): THREE.BufferGeometry[] {
   return [...shipHull(1.7, 0.6, 0.36, HULL_WOOD, DECK), lp(hull([R([0, 0.22, -0.5], 0.001, 0.26), R([0, 0.4, -0.15], 0.14, 0.26), R([0, 0.4, 0.3], 0.14, 0.26), R([0, 0.22, 0.6], 0.001, 0.26)], 4, PAINT, { side: [1, 0, 0], caps: [false, false] }), {}, { team: true })];
 }
 export function transportModel(): THREE.BufferGeometry {
-  const g = mergeGeometries(transport().map((p) => (p.getAttribute('aTeam') && !p.getAttribute('leafMask') ? p : tag(p))), false);
+  const g = mergeGeometries(transport().map((p) => (p.getAttribute('aLimb') && !p.getAttribute('leafMask') ? p : tag(p))), false);
   if (!g) throw new Error('transportModel: parts don\'t merge');
   return g;
 }
@@ -796,7 +815,7 @@ export function unitModel(type: UnitKey, civ: ArchCiv, variant = 0, female = fal
     }
   })();
   // (Every part tagged, none with a leaf mask: their attributes must match.)
-  const g = mergeGeometries(parts.map((p) => (p.getAttribute('aTeam') && !p.getAttribute('leafMask') ? p : tag(p))), false);
+  const g = mergeGeometries(parts.map((p) => (p.getAttribute('aLimb') && !p.getAttribute('leafMask') ? p : tag(p))), false);
   if (!g) throw new Error(`unitModel: ${type} parts don't merge`);
   return g;
 }
