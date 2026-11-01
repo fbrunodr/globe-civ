@@ -7,7 +7,7 @@ import { mulberry32 } from './rng.ts';
 import { HIP } from './people.ts';
 import { pairUp, type P2 } from './duel.ts';
 import { orderSlots, reforms, type Order } from './formation.ts';
-import { AFTER, SINK, WRECK, armOf, deathBend, deathLegs, deathTurn, dropOf, legsOf, machinePose, poseOf, poseTurn, sunk, type Cue } from './unitAnim.ts';
+import { AFTER, SINK, WRECK, armOf, deathBend, deathLegs, deathTurn, dropOf, legsOf, machinePose, nextBlow, poseOf, poseTurn, sunk, type Cue } from './unitAnim.ts';
 
 // The units on the globe, as figurines (unitModels.ts): a fighting unit is a
 // formation of up to a dozen figures (FORMATION), one fewer for every 8 HP
@@ -387,13 +387,12 @@ export class UnitView {
       if (a) { this.face(d, a.dir.clone().sub(d.dir)); this.layout(d); }
     }
     if (a) this.startFight(a, at, play, now, play, 'attacker', aWins);
-    if (a && main && play.close && !a.unit.embarked && !main.unit.embarked) {
-      this.pairUp(a, main);
-      a.fight!.enemy = main.figures;
-      main.fight!.enemy = a.figures;
-    }
+    if (a && main) { a.fight!.enemy = main.figures; main.fight!.enemy = a.figures; }
+    const melee = a !== undefined && main !== undefined && play.close === true && !a.unit.embarked && !main.unit.embarked;
+    if (melee) this.pairUp(a, main);
     if (result && a) this.doom(a, result.attackerHp, play, 'attacker', now);
     if (result && main) this.doom(main, result.defenderHp, play, 'defender', now);
+    if (melee) { this.struck(a, main); this.struck(main, a); }
   }
 
   private startFight(s: Shown, at: THREE.Vector3, play: Play, now: number, attack: Play, side: 'attacker' | 'defender', won: boolean): void {
@@ -428,12 +427,29 @@ export class UnitView {
     });
   }
 
+  // In a melee, each of a unit's figures doomed to fall falls as the blow
+  // of the enemy figure at grips with it lands (if that one is still on
+  // its feet then): its own foe, or for a defender whoever came at it.
+  private struck(s: Shown, enemy: Shown): void {
+    const f = s.fight!, e = enemy.fight!, dur = durOf(f.attack);
+    for (const g of s.figures) {
+      if (!Number.isFinite(g.fall)) continue;
+      const k = f.side === 'attacker' ? g.foeFig : enemy.figures.find((h) => h.foeFig === g) ?? null;
+      if (!k) continue;
+      const from = e.t0 + (e.side === 'attacker' ? e.play.go[1] + k.delay : e.play.strike[0]) * dur, until = e.t0 + (e.side === 'attacker' ? e.play.back : e.play.strike[1]) * dur;
+      const land = nextBlow(Math.max(g.fall - 0.25, from + 0.3), from, k.beat ?? k.phase / (Math.PI * 2));
+      if (land < k.fall && land < until) g.fall = land;
+    }
+  }
+
   // The figures a fight costs a unit, left with `hp` (all, if none), fall
   // as it goes on (the last of the formation: those it loses).
   private doom(s: Shown, hp: number, attack: Play, side: 'attacker' | 'defender', now: number): void {
     const look = UNIT_LOOK[s.unit.type], rand = mulberry32(s.unit.id * 13 + Math.floor(now * 10));
     const keep = hp <= 0 ? 0 : look.party === 'formation' && !s.unit.embarked ? figuresFor(hp, look.count) : s.figures.length;
-    s.figures.forEach((f, i) => { if (i >= keep) f.fall = now + fallShare(attack, side, rand()) * durOf(attack); });
+    // (Shot at, a figure falls as the shot aimed at it lands (fighting());
+    // failing that, as the fight ends.)
+    s.figures.forEach((f, i) => { if (i >= keep) f.fall = now + (attack.close ? fallShare(attack, side, rand()) : 0.97) * durOf(attack); });
   }
 
   // Every frame: marching and fighting units move on, and every figure is
@@ -603,8 +619,17 @@ export class UnitView {
     const shot = p.shots[f.fired];
     if (shot && t > shot.t) {
       f.fired++;
-      const at = this.volleys.loose(s.figures.map((g) => g.pos.clone().addScaledVector(g.up, 0.75 * this.size)), f.at, this.env.step * 0.12, now, f.fired * 7 + s.unit.id, shot.kind);
-      s.figures.forEach((g, i) => { if (g.fall > now) g.shot = at[i] ?? now; });
+      // (Shooting, not coming on: the enemy's figures doomed to fall by this
+      // shot (theirs shared out among the shots) are each aimed at, and
+      // fall as it lands.)
+      const marks = !f.attack.close ? f.enemy.filter((g) => Number.isFinite(g.fall)).sort((x, y) => x.fall - y.fall) : [];
+      const n = p.shots.length, mine = marks.filter((_, k) => Math.floor((k * n) / marks.length) === f.fired - 1);
+      const shooters = s.figures.map((_, i) => i).filter((i) => s.figures[i]!.fall > now);
+      const aims: (THREE.Vector3 | null)[] = s.figures.map(() => null);
+      mine.forEach((g, k) => { const i = shooters[k % Math.max(1, shooters.length)]; if (i !== undefined) aims[i] = g.pos.clone().addScaledVector(g.up, 0.45 * this.size); });
+      const { fire, land } = this.volleys.loose(s.figures.map((g) => g.pos.clone().addScaledVector(g.up, 0.75 * this.size)), f.at, this.env.step * 0.12, now, f.fired * 7 + s.unit.id, shot.kind, aims);
+      s.figures.forEach((g, i) => { if (g.fall > now) g.shot = fire[i] ?? now; });
+      mine.forEach((g, k) => { const i = shooters[k % Math.max(1, shooters.length)]; const t = i === undefined ? undefined : land[i]; if (t !== undefined) g.fall = t; });
     }
   }
 
@@ -1034,8 +1059,9 @@ export class Volleys {
   }
 
   // A volley from each of `from` at the spot `at` (scattered `spread` round it).
-  // (Returns when each shot goes off.)
-  loose(from: readonly THREE.Vector3[], at: THREE.Vector3, spread: number, now: number, seed: number, kind: Projectile = 'arrow'): number[] {
+  // (Some may be aimed, each at its own mark: `aims`, by shooter. Returns
+  // when each shot goes off, and when it lands.)
+  loose(from: readonly THREE.Vector3[], at: THREE.Vector3, spread: number, now: number, seed: number, kind: Projectile = 'arrow', aims: readonly (THREE.Vector3 | null)[] = []): { fire: number[]; land: number[] } {
     const rand = mulberry32(seed * 9973 + 5), k = FLIGHT[kind];
     const up = this.flatUp ?? at.clone().normalize();
     const e = new THREE.Vector3(1, 0, 0).cross(up);
@@ -1043,12 +1069,15 @@ export class Volleys {
     e.normalize();
     const n = up.clone().cross(e);
     const ground = this.flatUp ? at : at.clone().multiplyScalar(from[0] ? from[0].length() / at.length() : 1);
-    const times: number[] = [];
-    for (const f of from) {
+    const fire: number[] = [], land: number[] = [];
+    for (const [i, f] of from.entries()) {
       if (this.arrows.length >= Volleys.CAP) break;
-      const to = ground.clone().addScaledVector(e, (rand() - 0.5) * 2 * spread).addScaledVector(n, (rand() - 0.5) * 2 * spread);
+      const aim = aims[i];
+      const scattered = ground.clone().addScaledVector(e, (rand() - 0.5) * 2 * spread).addScaledVector(n, (rand() - 0.5) * 2 * spread);
+      const to = aim ? aim.clone() : scattered;
       const t0 = now + rand() * 0.15, dur = k.dur + rand() * k.jitter;
-      times.push(t0);
+      fire.push(t0);
+      land.push(t0 + dur);
       this.arrows.push({ from: f.clone(), to, t0, dur, kind });
       // (A gun: its flash and smoke at the muzzle, a little way towards the mark.)
       if (kind === 'bullet' || kind === 'shell') {
@@ -1064,7 +1093,7 @@ export class Volleys {
         this.puff(lifted(1.0), t0 + dur + 0.05, 2.8, 0.6, 2.4, 0.65, 0x3a3632, 0.5);
       } else if (kind === 'stone') this.puff(lifted(0.6), t0 + dur, 1.6, 0.4, 1.5, 0.55, 0xb09a78, 0.3);
     }
-    return times;
+    return { fire, land };
   }
 
   // A wreck burning at `at`: flames licking up and a column of black smoke

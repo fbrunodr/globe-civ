@@ -95,6 +95,13 @@ const cheer = (now: number, phase: number): Pose => guarded(P(0, 0, 0, -0.12, 0.
 // (The shield held up as it winds up, swung aside as it strikes.)
 const THRUST = { wind: guarded(P(0, 0, 0, -0.18, -0.55, -0.3, 0, STANCE, 0.38, 1.6, 1.35), 0.55), hit: guarded(P(0.04, 0, 0, 0.42, 0.38, 1.0, 0, STANCE, 0.46, 0.02, 1.6), 0.1) };
 const OVERHEAD = { wind: guarded(P(0, 0, 0, -0.3, -0.28, 1.8, 0, STANCE, 0.3, 1.1, 1.7), 0.4), hit: guarded(P(0.03, 0, 0, 0.58, 0.16, 0.5, 0, STANCE, 0.5, 0.3, 2.2), 0.05) };
+// When a figure's next blow lands at or after `t` (seconds), its exchange
+// begun at `from` (where it starts in its round: `beat`): each lands as
+// its round is 0.55 through (blows).
+export const nextBlow = (t: number, from: number, beat: number): number => {
+  const n = Math.ceil((t - from) / BOUT + beat - 0.55);
+  return from + (n + 0.55 - beat) * BOUT;
+};
 // The blows of a figure `sec` seconds into its exchange (a round of BOUT
 // seconds; `beat` where it starts in it). Its foe is half a round apart:
 // each of its blows lands as this one is winding up, and it flinches.
