@@ -127,9 +127,9 @@ export function person(d: Dress, armL: ArmPose = HANG, armR: ArmPose = HANG, swi
   add(hull([0.46, 0.6, 0.76, 0.855].slice(from).map((y, i) => R([0, y, 0], T[i + from]![0]!, T[i + from]![1]!)), 6, CLOTH_PAINT, { caps: [false, true] }), 'team');
   const [wa, wb] = T[1]!;
   if (skirt !== 'none') {
-    const hem = skirt === 'ankle' ? 0.07 : f ? 0.27 : 0.3, flare = skirt === 'ankle' ? 1.5 : 1.3;
-    // (Out over the hips, wider than the tops of the thighs; its sides swing with the legs.)
-    const rings = [R([0, 0.63, 0], wa! + 0.012, wb! + 0.012), R([0, HIP, 0.002], wa! + 0.05, wb! + 0.045), ...(skirt === 'ankle' ? [R([0, 0.36, 0.004], (wa! + 0.03) * 1.2, (wb! + 0.03) * 1.2)] : []), R([0, hem, 0.006], (wa! + 0.03) * flare, (wb! + 0.034) * flare)];
+    // (An A-line, out past the tops of the thighs at the hips; its sides swing with the legs.)
+    const hem = skirt === 'ankle' ? 0.07 : f ? 0.27 : 0.3, flare = skirt === 'ankle' ? 1.5 : 1.5;
+    const rings = [R([0, 0.63, 0], wa! + 0.02, wb! + 0.016), ...(skirt === 'ankle' ? [R([0, 0.36, 0.004], (wa! + 0.03) * 1.2, (wb! + 0.03) * 1.2)] : []), R([0, hem, 0.006], (wa! + 0.03) * flare, (wb! + 0.034) * flare)];
     add(hull(rings, 6, (p) => (p.y < hem + 0.01 ? TRIM : CLOTH_PAINT), { caps: [false, false] }), 'team', swing?.legs(1), undefined, hem);
   }
   if (d.belt !== undefined) add(hull([R([0, 0.64, 0], wa! + 0.018, wb! + 0.018), R([0, 0.61, 0], wa! + 0.018, wb! + 0.018)], 6, d.belt, { caps: [false, false] }), 'plain');
