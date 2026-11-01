@@ -110,17 +110,19 @@ function blows(sec: number, beat: number, now: number, phase: number): Pose {
 }
 // Shooting: drawing (or shouldering) before each shot, loosed (a recoil),
 // lowered to reload. A bow is drawn, the string hand back to the cheek; a
-// sling (`whirl`) is whirled overhead, then slung.
+// sling (`whirl`) is whirled overhead, then slung; a gun (`kneel`) is fired
+// from down low.
 // (Between shots: the weapon lowered, a bow's arrow down at the ground before it, a sling hanging.)
 const AT_EASE = (whirl: boolean) => ({ ...P(0, 0, 0, 0.06, 0, whirl ? 0.2 : 0.4, 0, 0.3, 0.15, 0.5, whirl ? Math.PI : 0.9) });
-function shooting(sec: number, shots: readonly number[], whirl = false): Pose {
-  let pose = AT_EASE(whirl);
+function shooting(sec: number, shots: readonly number[], whirl = false, kneel = false): Pose {
+  const low = (p: Pose): Pose => (kneel ? { ...p, crouch: p.crouch + 0.6, bend: p.bend + 0.08, stride: p.stride + 0.2 } : p);
+  let pose = low(AT_EASE(whirl));
   for (const ts of shots) {
     const d = sec - ts;
     const drawn = whirl ? P(0, 0, 0, -0.08, -0.2, 1.75, 0, 0.35, 0.2, 0.6, sec * 26) : { ...P(0, 0, 0, -0.06, 0.2, 1.0, 0, 0.35, 0.2, 0.15, 1.35), draw: 1 };
     const loosed = whirl ? P(0, 0, 0, 0.3, 0.3, 0.9, 0, 0.45, 0.3, 0.1, 1.6) : P(0, 0, 0, -0.14, 0.14, 0.85, 0, 0.35, 0.2, 0.3, 1.3);
-    if (d > -0.45 && d <= 0) pose = mix(pose, drawn, smooth((d + 0.45) / 0.3));
-    else if (d > 0 && d < 0.55) pose = mix(loosed, AT_EASE(whirl), smooth(d / 0.55));
+    if (d > -0.45 && d <= 0) pose = mix(pose, low(drawn), smooth((d + 0.45) / 0.3));
+    else if (d > 0 && d < 0.55) pose = mix(low(loosed), low(AT_EASE(whirl)), smooth(d / 0.55));
   }
   return pose;
 }
@@ -188,7 +190,7 @@ function inFight(c: Cue, now: number, phase: number, beat: number, whirl: boolea
   if (c.side === 'defender' && attack.close) {
     const met = s(play.strike[0]), part = s(play.strike[1]);
     const shot = play.shots[0];
-    let pose = shot ? mix(into, shooting(sec, [s(shot.t)], whirl), smooth(sec / BLEND)) : into;
+    let pose = shot ? mix(into, shooting(sec, [s(shot.t)], whirl, shot.kind === 'bullet'), smooth(sec / BLEND)) : into;
     if (c.engaged && sec >= met && sec < part) pose = mix(pose, blows(sec - met, beat, now, phase), (sec - met) / BLEND);
     else if (c.engaged && sec >= part) pose = mix(blows(part - met, beat, now, phase), ready(now, phase), (sec - part) / BLEND);
     return pose;
@@ -197,11 +199,11 @@ function inFight(c: Cue, now: number, phase: number, beat: number, whirl: boolea
     // Shot at: cowering from the first shot until a little after the last.
     const t0 = s(attack.shots[0]?.t ?? 0.3), t1 = s(attack.shots[attack.shots.length - 1]?.t ?? 0.6) + 0.5;
     const shots = play.shots.map((x) => s(x.t));
-    const base = shots.length ? shooting(sec, shots, whirl) : into;
+    const base = shots.length ? shooting(sec, shots, whirl, play.shots[0]?.kind === 'bullet') : into;
     return sec < t0 ? mix(into, base, sec / BLEND) : mix(base, cower(now, phase), smooth((sec - t0 + 0.15) / BLEND) * (sec < t1 ? 1 : 1 - smooth((sec - t1) / 0.3)));
   }
   // An attacker shooting (or rolling in: machines aren't posed).
-  return mix(into, shooting(sec, play.shots.map((x) => s(x.t)), whirl), sec / BLEND);
+  return mix(into, shooting(sec, play.shots.map((x) => s(x.t)), whirl, play.shots[0]?.kind === 'bullet'), sec / BLEND);
 }
 
 // ---- struck down ----
