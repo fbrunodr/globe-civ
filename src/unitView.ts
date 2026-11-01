@@ -58,6 +58,8 @@ const MIN_PX = 3;
 // unit charges (a share of the way to the enemy's tile).
 export const FIGHT = 3;
 const CHARGE = 0.42;
+// Ships that fight with guns along their sides (a broadside), turning beam-on to the enemy.
+const BROADSIDE: ReadonlySet<UnitKey> = new Set<UnitKey>(['galleass', 'frigate', 'privateer', 'shipOfTheLine', 'ironclad', 'cruiser', 'battleship']);
 // A carrier's deck above the water (figure heights: unitModels.ts).
 const CARRIER_DECK = 0.35;
 
@@ -395,7 +397,7 @@ export class UnitView {
     const aWins = result !== undefined && result.defenderHp <= 0 && result.attackerHp > 0, dWins = result !== undefined && result.attackerHp <= 0;
     for (const d of defenders) {
       this.startFight(d, a?.dir.clone() ?? at, defendPlay(play, d.unit.type), now, play, 'defender', dWins);
-      if (a) { this.face(d, a.dir.clone().sub(d.dir)); this.layout(d); }
+      if (a) { this.faceFoe(d, a.dir.clone().sub(d.dir)); this.layout(d); }
     }
     if (a) this.startFight(a, at, play, now, play, 'attacker', aWins);
     if (a && main) { a.fight!.enemy = main.figures; main.fight!.enemy = a.figures; }
@@ -623,7 +625,7 @@ export class UnitView {
     if (s.figures.some((g) => g.goal)) this.duel(s, t, dt);
     else {
       s.dir.copy(f.home).lerp(f.at, CHARGE * p.charge * out).normalize();
-      this.face(s, !back ? f.at.clone().sub(f.home) : f.home.clone().sub(f.at));
+      if (back) this.face(s, f.home.clone().sub(f.at)); else this.faceFoe(s, f.at.clone().sub(f.home));
       this.layout(s);
       // (Each turned to whoever comes at it.)
       for (const g of s.figures) g.face = g.foeFig ? this.tangent(g.up, g.foeFig.up.clone().sub(g.up)) : g.foe ? this.tangent(g.up, g.foe.clone().sub(g.up)) : null;
@@ -729,6 +731,14 @@ export class UnitView {
     return { walk: s.march && now >= s.march.t0 ? 1 : 0, strike: 0 };
   }
 
+  // Turned to fight an enemy that way: a ship with guns along its sides
+  // turns its side to it (whichever is the nearer turn), the others face it.
+  private faceFoe(s: Shown, toward: THREE.Vector3): void {
+    if (BROADSIDE.has(s.unit.type) && !s.unit.embarked) {
+      const beam = toward.clone().cross(s.dir);
+      this.face(s, beam.dot(s.forward) >= 0 ? beam : beam.negate());
+    } else this.face(s, toward);
+  }
   // Turned along `heading` (made tangent at the unit's spot).
   private face(s: Shown, heading: THREE.Vector3): void {
     heading.addScaledVector(s.dir, -heading.dot(s.dir));
