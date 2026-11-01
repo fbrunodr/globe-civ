@@ -137,7 +137,7 @@ function shooting(sec: number, shots: readonly number[], whirl = false, kneel = 
 // its rider striking down from up there).
 function prance(pose: Pose, sec: number, beat: number): Pose {
   const rear = Math.max(0, Math.sin(sec * 2.4 + beat * 6.3)) ** 6;
-  return { ...pose, lean: -0.42 * rear, rise: 0.3 * rear, walk: 0, stride: 0.3 * Math.sin(sec * 9 + beat * 5) * (1 - rear) + 0.5 * rear };
+  return { ...pose, lean: -0.42 * rear, rise: 0, walk: 0, stride: 0.3 * Math.sin(sec * 9 + beat * 5) * (1 - rear) + 0.5 * rear };
 }
 
 // ---- a figure's part in a fight ----
@@ -249,6 +249,10 @@ export function deathLegs(since: number, rides: boolean): number {
   if (since < down) return 3 + 0.45 * Math.sin((since / down) * Math.PI);
   return 3 + 0.55 * Math.sin((since - down) * 15) * Math.exp(-(since - down) * 1.6);
 }
+// A horse leaned back (rearing) turns on its hind hooves, HIND behind its
+// middle (figure heights): how far that lifts it and moves it back.
+const HIND = 0.42;
+export const rearShift = (p: Pose): readonly [number, number] => [-HIND * Math.sin(p.lean), -HIND * (1 - Math.cos(p.lean))];
 // How far a crouch lowers the figure (figure heights: its legs fold under it).
 export const dropOf = (crouch: number): number => 0.5 * (1 - Math.cos(crouch));
 // The pose's turn of the whole figure about its feet.

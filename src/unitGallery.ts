@@ -24,7 +24,7 @@ import { FORTIFY_BONUS, combatStrength, fightRounds, matchup } from './game.ts';
 import { HAIR_STYLES, UNIT_LOOK, colsOf, figuresFor, formationSlots, hairModel, headOffset, isMachine, rides, unitModel, variantOf, whirls, womenShare } from './unitModels.ts';
 import { FIGHT, PLAYS, Volleys, bow, durOf, figureOut, defendPlay, fallShare, falls, figureLooks, makeUnitMaterial, playAt, playOf, prepareUnitGeometry, type Play } from './unitView.ts';
 import { pairUp, type P2 } from './duel.ts';
-import { AFTER, armOf, deathBend, deathLegs, deathTurn, dropOf, legsOf, poseOf, poseTurn, type Cue } from './unitAnim.ts';
+import { AFTER, armOf, deathBend, deathLegs, deathTurn, dropOf, legsOf, poseOf, poseTurn, rearShift, type Cue } from './unitAnim.ts';
 import { attackBlock, attackStyle, siegeStyle } from './unitClasses.ts';
 import { WorldLabel, disposeLabels } from './worldLabel.ts';
 import { triangles } from './lowpoly.ts';
@@ -315,7 +315,8 @@ function pose(now: number): void {
       const cue: Cue | null = fight && c.play && c.attack ? { sec, dur, play: c.play, attack: c.attack, side: c.side, engaged: s.to !== null || s.foe !== null || (mode === 'sheet' && c.attack.close === true), delay: s.delay, fall: s.fall * dur, won } : null;
       const pz = poseOf(cue, now, p.phase, s.beat, moving, s.rides, whirls(c.type));
       // (Crouched, lower: the legs fold under it.)
-      m.multiply(turn.makeTranslation(0, pz.rise - (s.rides ? 0 : dropOf(pz.crouch)), pz.lunge)).multiply(turn.makeRotationFromQuaternion(poseTurn(tip, pz)));
+      const [ry, rz] = rearShift(pz);
+      m.multiply(turn.makeTranslation(0, pz.rise + ry - (s.rides ? 0 : dropOf(pz.crouch)), pz.lunge + rz)).multiply(turn.makeRotationFromQuaternion(poseTurn(tip, pz)));
       legs = legsOf(pz); arm = armOf(pz); bends = s.rides ? [0, 0, 0, pz.elbow, pz.aim, pz.aimed, pz.guard, pz.draw] : [pz.bend, pz.twist, pz.crouch, pz.elbow, pz.aim, pz.aimed, pz.guard, pz.draw];
     }
     if (p.lift[0] || p.lift[1]) m.multiply(turn.makeTranslation(0, p.lift[0], p.lift[1]));

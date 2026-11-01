@@ -7,7 +7,7 @@ import { mulberry32 } from './rng.ts';
 import { HIP } from './people.ts';
 import { pairUp, type P2 } from './duel.ts';
 import { orderSlots, reforms, type Order } from './formation.ts';
-import { AFTER, SINK, WRECK, armOf, deathBend, deathLegs, deathTurn, dropOf, legsOf, machinePose, nextBlow, poseOf, poseTurn, sunk, type Cue } from './unitAnim.ts';
+import { AFTER, SINK, WRECK, armOf, deathBend, deathLegs, deathTurn, dropOf, legsOf, machinePose, nextBlow, poseOf, poseTurn, rearShift, sunk, type Cue } from './unitAnim.ts';
 
 // The units on the globe, as figurines (unitModels.ts): a fighting unit is a
 // formation of up to a dozen figures (FORMATION), one fewer for every 8 HP
@@ -528,7 +528,8 @@ export class UnitView {
           const p = poseOf(this.cue(s, f, now), now, f.phase, beat, walk, horse, whirls(s.unit.type));
           turned.multiply(poseTurn(tip, p));
           // (Crouched, lower: the legs fold under it.)
-          at = stepped.copy(f.pos).addScaledVector(z, p.lunge * this.size).addScaledVector(f.up, (p.rise - dropOf(p.crouch)) * this.size);
+          const [ry, rz] = rearShift(p);
+          at = stepped.copy(f.pos).addScaledVector(z, (p.lunge + rz) * this.size).addScaledVector(f.up, (p.rise + ry - dropOf(p.crouch)) * this.size);
           // (Walking to its place while it acts: its legs walk.)
           legs = p.walk === 0 && walk > 0.3 ? walk : legsOf(p); arm = armOf(p); bends = horse ? [0, 0, 0, p.elbow, p.aim, p.aimed, p.guard, p.draw] : [p.bend, p.twist, p.crouch, p.elbow, p.aim, p.aimed, p.guard, p.draw];
         } else if (wreck) {
