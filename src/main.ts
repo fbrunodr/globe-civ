@@ -57,6 +57,8 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
   const game = new Game({ size: sizeKey, seed, script });
   const view = new GlobeRenderer(document.getElementById('c') as HTMLCanvasElement, game);
   const ui = new UI(game, act);
+  // (Dev: the game to look at from the console: select a unit, redraw.)
+  if (import.meta.env.DEV) Object.assign(window, { __game: { game, view, refresh: () => refresh(), select: (u: Unit) => { sel = { kind: 'unit', unit: u }; refresh(); } } });
   // The record of the game (gameLog.ts): sent to the dev server each turn
   // (logs/<id>.jsonl), downloadable from the Log sheet.
   const logId = gameLogId(sizeKey, seed);
