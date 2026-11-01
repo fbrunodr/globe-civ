@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { part, seg, tf, V, type Tf } from './propCatalog.ts';
-import { person, riderBody, handAt, elbowAt, hairShapes, headShell, HAIR_STYLE_KEYS, HIP, SHOULDER, HEAD_Y, HANG, HOLD, RAISE, SHIELD, GRIP2, type ArmPose, type Dress, type Part, type HairStyleKey } from './people.ts';
+import { person, riderBody, handAt, elbowAt, hairShapes, headShell, HAIR_STYLE_KEYS, HIP, SHOULDER, HEAD_Y, HANG, HOLD, RAISE, SHIELD, GRIP2, GUN_R, GUN_L, type ArmPose, type Dress, type Part, type HairStyleKey } from './people.ts';
 import { horseParts } from './creatures.ts';
 import { hull, plate, R } from './lowpoly.ts';
 import type { ArchCiv } from './architecture.ts';
@@ -166,19 +166,22 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
   // The arms: the right one carries the weapon, the left the shield (or the bow).
   const bow = hold === 'bow' || hold === 'recurve', twoHands = hold === 'crossbow' || hold === 'musket' || hold === 'rifle' || hold === 'mg' || hold === 'longsword';
   // (A sling hangs from the lowered hand until it is whirled; a two-handed sword's grip in both hands.)
-  const armR: ArmPose = hold === 'none' || bow || hold === 'sling' ? HANG : hold === 'longsword' ? GRIP2 : HOLD;
-  const armL: ArmPose = shield ? SHIELD : bow ? RAISE : hold === 'longsword' ? GRIP2 : twoHands ? HOLD : HANG;
+  const longGun = hold === 'musket' || hold === 'rifle';
+  const armR: ArmPose = hold === 'none' || bow || hold === 'sling' ? HANG : hold === 'longsword' ? GRIP2 : longGun ? GUN_R : HOLD;
+  const armL: ArmPose = shield ? SHIELD : bow ? RAISE : hold === 'longsword' ? GRIP2 : longGun ? GUN_L : twoHands ? HOLD : HANG;
   const strike = hold === 'sling' ? HIT(SHOULDER, 1.4) : hold === 'spear' || hold === 'pike' ? HIT(SHOULDER, 1.5) : hold === 'club' || hold === 'sword' || hold === 'longsword' ? HIT(SHOULDER, 1.5)
     : hold === 'mg' ? HIT(SHOULDER, 0.4) : twoHands ? HIT(SHOULDER, 0.9) : null;
   const bowUp = HIT(SHOULDER, 0.4); // (an archer raises his bow to loose: from where he holds it forward)
   const freeL = !shield && !bow && !twoHands;
   const out = tagged(person(dress, armL, armR, {
     legs: (side) => (opts.still ? [0, HIP, 0] as const : LEG(side)),
-    arms: (side) => (side === -1 ? (hold === 'none' ? ARM(-1) : bow ? DRAW_ARM : strike ?? undefined) : shield ? GUARD_ARM : freeL ? ARM(1) : bow ? bowUp : hold === 'longsword' || hold === 'mg' ? strike ?? undefined : undefined),
+    arms: (side) => (side === -1 ? (hold === 'none' ? ARM(-1) : bow ? DRAW_ARM : strike ?? undefined) : shield ? GUARD_ARM : freeL ? ARM(1) : bow ? bowUp : hold === 'longsword' || hold === 'mg' || longGun ? strike ?? undefined : undefined),
   }));
   const hR = handAt(-1, armR, f), hL = handAt(1, armL, f), eR = elbowAt(-1, armR, f), eL = elbowAt(1, armL, f);
   // (What the right hand holds goes with its forearm: bent at the elbow.)
-  const w: Tag = strike ? { limb: strike, joint: [eR.y, eR.z], grip: [hR.y, hR.z, REST_PITCH[hold]] } : {};
+  // (A long gun's rest: as it lies through both hands.)
+  const rest = longGun ? Math.atan2(hL.z - hR.z, hL.y - hR.y) : REST_PITCH[hold];
+  const w: Tag = strike ? { limb: strike, joint: [eR.y, eR.z], grip: [hR.y, hR.z, rest] } : {};
   // (A bow points where its arrow would fly: square to its limbs, level as it is made.)
   const bowTag: Tag = { limb: bowUp, joint: [eL.y, eL.z], grip: [hL.y, hL.z, Math.PI / 2] };
   const up = (d: number) => v3(hR).add(V(0, d, 0));
@@ -207,8 +210,9 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
   // stock gripped by the right hand, the barrel on up; a rifle's with a
   // bayonet. Straight in the plane it turns in, so it points true however
   // it is aimed.)
-  if (hold === 'musket' || hold === 'rifle') {
-    const at = gunAt(hold, hR, hL);
+  if (longGun) {
+    // (Through both hands: the right on the stock, the left up the barrel.)
+    const d = v3(hL).sub(v3(hR)).normalize(), at = (k: number) => v3(hR).addScaledVector(d, k);
     out.push(rod(at(-0.2), at(0.1), 0.022, 0.017, 5, WOOD, w), rod(at(0.1), at(0.52), 0.011, 0.011, 5, METAL, w));
     if (hold === 'rifle') out.push(rod(at(0.52), at(0.66), 0.006, 0.0015, 4, METAL, w));
   }

@@ -51,6 +51,18 @@ export const WORK: ArmPose = { upper: [0.15, -0.8, 0.55], fore: [0.0, -0.6, 1] }
 
 const norm = (v: readonly [number, number, number]) => new THREE.Vector3(...v).normalize();
 const UPPER = 0.17, FORE = 0.155;
+// Both hands on a long gun carried muzzle up before the body: the right
+// low on the stock, the left higher up on the barrel, both near the
+// middle; their upper arms alike (so that, swung and bent together, the
+// gun stays in both hands).
+const GUN_UPPER = [0.1, -1, 0.3] as const;
+const reachTo = (target: readonly [number, number, number]): ArmPose => {
+  const u = norm(GUN_UPPER), el = new THREE.Vector3(-0.128, SHOULDER - 0.01, 0).addScaledVector(new THREE.Vector3(-u.x, u.y, u.z), UPPER);
+  const d = new THREE.Vector3(...target).sub(el);
+  return { upper: GUN_UPPER, fore: [-d.x, d.y, d.z] };
+};
+export const GUN_R: ArmPose = reachTo([-0.035, 0.565, 0.175]);
+export const GUN_L: ArmPose = reachTo([-0.03, 0.665, 0.215]); // (a pose mirrors to the left arm: its hand at x +0.03)
 const v3 = (p: THREE.Vector3): V3 => [p.x, p.y, p.z];
 // (The head's and hair's rings: five points, one forward.)
 const FIVE = { turn: Math.PI / 2 } as const;
