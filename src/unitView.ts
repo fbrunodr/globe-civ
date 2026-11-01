@@ -898,6 +898,8 @@ export class UnitView {
       }
       // (Turned at its pace, on the ground where it stands.)
       want.copy(f.speed > 0.8 && inst > 0.4 ? d : f.face ?? s.forward);
+      // (At ease, each stands its own way, a little off its file's line.)
+      if (!s.fight && !s.march && f.speed < 0.3) want.applyAxisAngle(f.up, 0.35 * (frac(f.phase * 1.7) - 0.5));
       want.addScaledVector(f.up, -want.dot(f.up));
       f.head.addScaledVector(f.up, -f.head.dot(f.up)).normalize();
       if (want.lengthSq() < 1e-14) continue;

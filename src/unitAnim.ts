@@ -61,15 +61,28 @@ export const AFTER = CHEER + 0.6;
 
 // ---- the acts ----
 
-// Standing at ease: weight on both feet or on one, a breath; every so
-// often a fidget (a look to one side, the weapon shifted).
+// Standing at ease: weight on both feet or on one (shifting from one to
+// the other now and then), a breath; every so often a fidget, one of a
+// few: a look to one side, a glance back over the shoulder, the weapon
+// shifted on the shoulder, a lean on it, a stretch. Each figure its own
+// way of standing (its phase): turned a little off its file's line, bent
+// a little more or less.
 function idle(now: number, phase: number): Pose {
-  const easy = frac(phase * 3.7) < 0.5, breath = 0.02 * Math.sin(now * 1.3 + phase);
-  const base = easy ? P(0, 0, 0, 0.03 + breath, 0, 0, 0, 0, 0, 0.15) : P(0, 0, 0, 0.06 + breath, 0.12, 0.05, 0, 0.18, 0.07, 0.2);
-  // (A fidget: 1.6 s in every 7 or so, a look one way or the other.)
+  const own = frac(phase * 2.31), breath = 0.02 * Math.sin(now * 1.3 + phase);
+  // (Weight shifted, slowly, every 9 to 15 s.)
+  const shift = smooth(0.5 + 0.5 * Math.sin(now / (1.5 + frac(phase * 7.7)) + phase * 3) * 1.6);
+  const easy = P(0, 0, 0, 0.03 + breath + 0.04 * own, 0.12 * (own - 0.5), 0, 0, 0, 0, 0.15);
+  const hip = P(0, 0, 0, 0.06 + breath, 0.12 + 0.12 * (own - 0.5), 0.05, 0, 0.18, 0.07, 0.2);
+  const base = mix(easy, hip, frac(phase * 3.7) < 0.5 ? shift : 1 - shift);
+  // (A fidget: 1.6 s in every 7 or so, which one by its turn.)
   const cycle = 6.5 + 2 * frac(phase * 5.3), u = frac(now / cycle + phase), k = u < 0.23 ? Math.sin((u / 0.23) * Math.PI) : 0;
-  const way = Math.floor(now / cycle + phase) % 2 ? 1 : -1;
-  return add(base, { twist: 0.5 * way * k, arm: 0.25 * k, bend: -0.03 * k });
+  const n = Math.floor(now / cycle + phase), way = n % 2 ? 1 : -1, kind = Math.floor(frac(Math.sin(n * 78.233 + phase * 12.9898) * 43758.5453) * 5);
+  const fidget: Partial<Pose> = kind === 0 ? { twist: 0.5 * way, arm: 0.25, bend: -0.03 }           // a look aside
+    : kind === 1 ? { twist: 0.95 * way, bend: -0.06 }                                                  // a glance back
+    : kind === 2 ? { arm: 0.55, elbow: 0.6, twist: 0.15 * way }                                        // the weapon shifted
+    : kind === 3 ? { bend: 0.16, arm: 0.35, crouch: 0.06 }                                             // a lean on it
+    : { bend: -0.14, arm: 0.2, twist: -0.1 * way };                                                     // a stretch
+  return add(base, Object.fromEntries(Object.entries(fidget).map(([key, v]) => [key, (v as number) * k])));
 }
 // On the march (`walk` 1), or at a run (more): leaning into it.
 const march = (now: number, phase: number, walk: number): Pose =>
