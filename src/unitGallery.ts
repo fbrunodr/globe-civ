@@ -319,7 +319,7 @@ function pose(now: number): void {
     }
     if (p.lift[0] || p.lift[1]) m.multiply(turn.makeTranslation(0, p.lift[0], p.lift[1]));
     p.mesh.setMatrixAt(p.i, m);
-    (p.mesh.geometry.getAttribute('aAnim') as THREE.InstancedBufferAttribute).setXYZW(p.i, p.phase, legs, arm, bends[4]);
+    (p.mesh.geometry.getAttribute('aAnim') as THREE.InstancedBufferAttribute).setXYZW(p.i, (p.phase + now * 9) % (Math.PI * 2), legs, arm, bends[4]); // (the legs' beat: unitView.ts)
     (p.mesh.geometry.getAttribute('aSkinTone') as THREE.InstancedBufferAttribute).setW(p.i, bends[5]);
     (p.mesh.geometry.getAttribute('aPose') as THREE.InstancedBufferAttribute).setXYZW(p.i, bends[0], bends[1], bends[2], bends[3]);
     (p.mesh.geometry.getAttribute('aMore') as THREE.InstancedBufferAttribute).setXY(p.i, bends[6], bends[7]);

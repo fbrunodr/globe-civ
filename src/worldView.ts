@@ -89,7 +89,7 @@ sightBtn.addEventListener('click', toggleSight);
 // Units to look at (dev): U drops one of each kind for a few civs round
 // where the camera looks, on dry land; M marches every unit a tile; B sets
 // them fighting their neighbours; N stages a melee where the camera looks
-// (a foe set beside a fighting unit, both hurt in it).
+// (a foe set beside a fighting unit, both hurt in it), R likewise a volley.
 const UNIT_SAMPLE: UnitKey[] = ['warrior', 'spearman', 'archer', 'horseman', 'swordsman', 'pikeman', 'crossbowman', 'knight', 'scout', 'settler', 'commander'];
 const dropUnits = () => {
   const at = view.looking;
@@ -123,10 +123,10 @@ const battle = () => {
     if (foe !== undefined && style) view.showBattle(u.id, foe, style);
   }
 };
-// N: the fighting unit nearest the camera's look attacks a foe set down beside it (made up: it loses 40 HP, the foe 80).
-const stage = () => {
+// N (R): the melee (ranged) unit nearest the camera's look attacks a foe set down beside it (made up: it loses 40 HP, the foe 80; shooting, none and 30).
+const stage = (ranged = false) => {
   const at = view.looking, near = (u: { tile: number }) => -game.tiles[u.tile]!.center.dot(at);
-  const a = game.units.filter((u) => attackStyle(u.type, 'warrior') !== null && unitDef(u.type).ranged !== true).sort((x, y) => near(x) - near(y))[0];
+  const a = game.units.filter((u) => attackStyle(u.type, 'warrior') !== null && (unitDef(u.type).ranged === true) === ranged).sort((x, y) => near(x) - near(y))[0];
   if (!a) return;
   const d = game.units.filter((u) => u.owner !== a.owner && unitDef(u.type).atk > 0).sort((x, y) => near(x) - near(y))[0];
   const spot = game.tiles[a.tile]!.neighbors.find((n) => !game.isWater(n) && !game.units.some((v) => v.tile === n && v !== d));
@@ -135,8 +135,9 @@ const stage = () => {
   d.tile = spot;
   view.syncWorld(null);
   setTimeout(() => {
-    view.showBattle(a.id, d.tile, style, { defender: d.id, attackerHp: a.hp - 40, defenderHp: d.hp - 80 });
-    a.hp -= 40; d.hp -= 80;
+    const lost = ranged ? [0, 30] : [40, 80];
+    view.showBattle(a.id, d.tile, style, { defender: d.id, attackerHp: a.hp - lost[0]!, defenderHp: d.hp - lost[1]! });
+    a.hp -= lost[0]!; d.hp -= lost[1]!;
     view.syncWorld(null);
   }, 600);
 };
@@ -146,6 +147,7 @@ addEventListener('keydown', (e) => {
   else if (e.key === 'b' || e.key === 'B') battle();
   else if (e.key === 'm' || e.key === 'M') marchUnits();
   else if (e.key === 'n' || e.key === 'N') stage();
+  else if (e.key === 'r' || e.key === 'R') stage(true);
   else if (e.key === 'j' || e.key === 'J') setView(VIEWS[(VIEWS.indexOf(view.view) + 1) % VIEWS.length]!);
   else if (e.key === 'k' || e.key === 'K') toggleClouds();
   else if (e.key === 'f' || e.key === 'F') toggleSight();

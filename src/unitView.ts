@@ -6,6 +6,7 @@ import { UNIT_LOOK, figuresFor, formationSlots, unitModel, variantOf, rides, hea
 import { mulberry32 } from './rng.ts';
 import { HIP } from './people.ts';
 import { pairUp, type P2 } from './duel.ts';
+import { orderSlots, reforms, type Order } from './formation.ts';
 import { AFTER, armOf, deathBend, deathLegs, deathTurn, dropOf, legsOf, poseOf, poseTurn, sunk, type Cue } from './unitAnim.ts';
 
 // The units on the globe, as figurines (unitModels.ts): a fighting unit is a
@@ -34,7 +35,17 @@ const FIGURE = 0.16;
 // close it may close up to keep its feet dry.
 const LOOSE = [1.4, 1.15, 0.9, 0.65] as const;
 // How long a march takes (seconds per tile step, and at least).
-const MARCH = 0.5, MARCH_MIN = 0.35;
+const MARCH = 0.9, MARCH_MIN = 0.5;
+// A figure finding its place in its formation (reforming): how fast it
+// walks there, and how much faster the further it has to go (figure
+// heights a second, and per figure height away); how fast it turns
+// (radians a second: a man, a machine).
+const SHUFFLE = 1.4, SHUFFLE_FAR = 0.9, TURN = 7, TURN_MACHINE = 2.2;
+// A figure's legs by how fast it goes over the ground (figure heights a
+// second): how hard they swing (none standing), how quick their beat
+// (radians a second): longer and quicker strides as it speeds up.
+const walkOf = (speed: number): number => (speed < 0.35 ? 0 : Math.min(1.4, 0.5 + 0.13 * speed));
+const cadenceOf = (speed: number): number => 8 + 1.2 * Math.min(speed, 7);
 // The flag's height over the ground (figure heights).
 const FLAG_LIFT = 1.7;
 // A figure stands on dry ground: the water there no deeper than this (world units).
@@ -60,9 +71,9 @@ export const PLAYS: Record<AttackStyle, Play> = {
   melee: { close: true, charge: 1, go: [0.06, 0.3], back: 0.8, strike: [0.26, 0.8], aim: false, shots: [] },
   charge: { close: true, charge: 1.25, go: [0.04, 0.22], back: 0.8, strike: [0.18, 0.8], aim: false, shots: [] },
   volley: still([{ t: 1 / 3, kind: 'arrow' }, { t: 2 / 3, kind: 'arrow' }]),
-  lob: still([{ t: 0.2, kind: 'stone' }]),
-  shell: still([{ t: 0.2, kind: 'shell' }, { t: 0.55, kind: 'shell' }]),
-  fire: still([{ t: 0.15, kind: 'bullet' }, { t: 0.35, kind: 'bullet' }, { t: 0.55, kind: 'bullet' }]),
+  lob: still([{ t: 0.3, kind: 'stone' }]),
+  shell: still([{ t: 0.28, kind: 'shell' }, { t: 0.6, kind: 'shell' }]),
+  fire: still([{ t: 0.25, kind: 'bullet' }, { t: 0.45, kind: 'bullet' }, { t: 0.65, kind: 'bullet' }]),
   fireCharge: { close: true, charge: 1, go: [0.2, 0.42], back: 0.82, strike: [0.4, 0.82], aim: false, shots: [{ t: 0.08, kind: 'bullet' }] },
   roll: { charge: 0.6, go: [0, 0.55], back: 0.8, strike: [0, 0], aim: false, shots: [{ t: 0.25, kind: 'shell' }, { t: 0.6, kind: 'bullet' }] },
   // (Out all the way to the target, high, and back: the shots fall from there.)
@@ -115,6 +126,13 @@ export function fallShare(attack: Play, side: 'attacker' | 'defender', r: number
 export const falls = (type: UnitKey): boolean => !isMachine(type) && domainOf(unitDef(type)) === 'land';
 
 
+// How many figures a unit shows (unitModels.ts): its formation thinned as
+// it is hurt, its party, or (embarked) its boat.
+const figuresOf = (u: ShownUnit): number => {
+  const look = UNIT_LOOK[u.type];
+  return u.embarked ? 1 : look.party === 'formation' ? figuresFor(u.hp, look.count) : look.count;
+};
+
 const FLAT = [0, 0, 0, 0, 0, 0, 0, 0] as const;
 // (The shader's aPose, then the aim and how far aimed (aAnim.w, aSkinTone.w), the guard and draw (aMore.xy): bend, twist, crouch, elbow; aim, aimed; guard, draw.)
 type Bends = readonly [number, number, number, number, number, number, number, number];
@@ -140,8 +158,16 @@ export interface UnitViewEnv {
 // it faces (`foe`), which way it faces now (null: its unit's way), how
 // late it sets out (a share of the fight); when it falls (seconds; never:
 // Infinity).
+// Its place in each order (formation.ts) is its slot's (`slot`, an index
+// into the order's places), jittered (`jx`, `jz`); where that is now
+// (`at`, a unit vector) and how far off it the figure still is (`off`:
+// it walks there); which way it faces now (`head`, a tangent: it turns
+// that way at its pace), how fast it is going (figure heights a second)
+// and where its legs are in their beat (`gait`, radians). `fresh`: not yet
+// stood anywhere.
 interface Figure {
-  x: number; z: number; variant: number; female: boolean; skin: THREE.Color; hair: number; hairColor: THREE.Color; phase: number; pos: THREE.Vector3; up: THREE.Vector3;
+  jx: number; jz: number; slot: number; at: THREE.Vector3; off: THREE.Vector3; head: THREE.Vector3; last: THREE.Vector3; speed: number; gait: number; fresh: boolean;
+  variant: number; female: boolean; skin: THREE.Color; hair: number; hairColor: THREE.Color; phase: number; pos: THREE.Vector3; up: THREE.Vector3;
   home: THREE.Vector3 | null; goal: THREE.Vector3 | null; foe: THREE.Vector3 | null; face: THREE.Vector3 | null; delay: number; curve: number; fall: number;
   beat: number | null; // where it is in its round of blows (null: its phase says)
 }
@@ -157,6 +183,8 @@ interface Shown {
   forward: THREE.Vector3;      // the way it faces (tangent)
   figures: Figure[];
   spread: number;              // ranks closed up to fit (1: full spacing)
+  order: Order;                // how its figures stand (formation.ts)
+  laid: { fwd: THREE.Vector3; spread: number; n: number; order: Order } | null; // the formation as last laid out
   alt: number;                 // how high it flies now (figure heights: aircraft on a sortie)
   march: { from: THREE.Vector3; to: THREE.Vector3; t0: number; dur: number } | null;
   // A fight: the enemy's spot, how it plays (PLAYS), the shots fired so
@@ -174,7 +202,7 @@ const UNIT_VERTEX_DECL = /* glsl */ `
   attribute vec4 aLimb;     // (side, pivot, amplitude; flags: unitModels.ts RIG)
   attribute vec4 aRig;      // a lower piece's middle joint (knee, elbow) at y, z; a weapon's grip at y, z
   attribute float aRest;    // how far forward of upright a weapon points as made (radians)
-  attribute vec4 aAnim;     // per figure: phase, its legs, its striking arm (unitAnim.ts legsOf, armOf); how its weapon points (radians from upright, forward)
+  attribute vec4 aAnim;     // per figure: its legs' beat (radians), its legs, its striking arm (unitAnim.ts legsOf, armOf); how its weapon points (radians from upright, forward)
   attribute vec4 aSkinTone; // per figure: its skin; how far its weapon is aimed (0: as it is made and carried)
   attribute vec4 aPose;     // per figure: its body above the hips bent forward, turned; its crouch; its striking elbow bent (radians)
   attribute vec4 aMore;     // per figure: its shield raised, its bowstring drawn (0..1); (spare)
@@ -191,7 +219,7 @@ const UNIT_VERTEX_DECL = /* glsl */ `
 // thighs forward), the striking arm's elbow as its pose says, a free
 // arm's a little on the march.
 const UNIT_LIMB = /* glsl */ `
-  float beat = uTime * 9.0 + aAnim.x;
+  float beat = aAnim.x; // (its legs' beat: the caller keeps it going)
   bool isLeg = aLimb.z > 0.0 && abs(aLimb.x) < 1.5 && aLimb.y < ${(HIP + 0.01).toFixed(2)};
   bool isStrike = aLimb.x > ${(STRIKE - 0.5).toFixed(1)} && aLimb.x < ${(GUARD - 0.5).toFixed(1)};
   bool isGuard = aLimb.x > ${(GUARD - 0.5).toFixed(1)} && aLimb.x < ${(DRAW - 0.5).toFixed(1)};
@@ -272,6 +300,7 @@ export class UnitView {
   private corpses: Corpse[] = [];
   private readonly volleys: Volleys;
   private readonly size: number; // a figure's height, world units
+  private now = 0; // the time of the frame drawn last (seconds)
 
   constructor(private readonly env: UnitViewEnv, private readonly makeFlag: (u: ShownUnit) => THREE.Sprite) {
     this.size = FIGURE * env.step;
@@ -299,7 +328,7 @@ export class UnitView {
         // (Embarking or landing: its figures become its boat, or come back out.)
         const swap = (s.unit.embarked ?? false) !== (u.embarked ?? false);
         s.unit = u;
-        if (swap) this.dress(s);
+        if (swap) this.dress(s, false);
         s.k = k;
         const from = (s.fight?.home ?? s.dir).clone(), { dir } = this.spot(u, k, s.forward);
         const start = s.fight ? s.fight.t0 + FIGHT : now;
@@ -358,12 +387,13 @@ export class UnitView {
     fwd.addScaledVector(c, -fwd.dot(c)).normalize();
     const right = new THREE.Vector3().crossVectors(fwd, c).normalize();
     const flat = (v: THREE.Vector3): P2 => { const w = v.clone().sub(c); return { x: w.dot(right) / size, z: w.dot(fwd) / size }; };
-    const duels = pairUp(a.figures.map((f) => flat(f.up)), d.figures.map((f) => flat(f.up)), a.unit.type, d.unit.type, mulberry32(a.unit.id * 31 + d.unit.id));
+    // (The defenders where they are going to stand, turned to the attacker.)
+    const duels = pairUp(a.figures.map((f) => flat(f.up)), d.figures.map((f) => flat(f.at)), a.unit.type, d.unit.type, mulberry32(a.unit.id * 31 + d.unit.id));
     duels.forEach((duel, i) => {
       const f = a.figures[i]!, foe = d.figures[duel.foe]!;
       f.home = f.up.clone();
       f.goal = c.clone().addScaledVector(right, duel.to.x * size).addScaledVector(fwd, duel.to.z * size).normalize();
-      f.foe = foe.up.clone();
+      f.foe = foe.at.clone();
       f.delay = duel.delay;
       f.curve = duel.curve;
       if (!foe.foe) { foe.foe = f.goal.clone(); foe.beat = f.phase / (Math.PI * 2) + 0.5; }
@@ -382,7 +412,9 @@ export class UnitView {
   // drawn where it stands. `pxPerUnit`: screen pixels per world unit at
   // distance 1 (figures too small to see are not drawn).
   update(now: number, camera: THREE.Camera, pxPerUnit: number): void {
+    const dt = Math.max(0, Math.min(0.1, now - this.now));
     this.time.value = now;
+    this.now = now;
     const drawn: Shown[] = [], need = new Map<string, number>();
     let figures = 0;
     for (const s of [...this.shown.values()]) {
@@ -394,6 +426,7 @@ export class UnitView {
         if (t >= 1) { s.march = null; this.settle(s, s.k); } else this.layout(s);
       }
       if (!this.shown.has(s.unit.id)) continue;
+      this.stride(s, now, dt);
       const ground = this.env.ground(s.dir);
       s.flag.position.copy(s.dir).multiplyScalar(1 + Math.max(ground.ground, ground.water) + FLAG_LIFT * this.size);
       if ((this.size * pxPerUnit) / camera.position.distanceTo(s.flag.position) < MIN_PX) continue;
@@ -418,23 +451,23 @@ export class UnitView {
     const x = new THREE.Vector3(), z = new THREE.Vector3(), color = new THREE.Color(), head = new THREE.Vector3();
     let shadowN = 0;
     const tip = new THREE.Quaternion(), turned = new THREE.Quaternion(), lift3 = new THREE.Vector3(), stepped = new THREE.Vector3();
-    const put = (key: string, pos: THREE.Vector3, c: THREE.Color, f: { phase: number; skin: THREE.Color }, walk: number, strike: number, body: Bends) => {
+    const put = (key: string, pos: THREE.Vector3, c: THREE.Color, f: { gait: number; skin: THREE.Color }, walk: number, strike: number, body: Bends) => {
       const mesh = this.meshes.get(key)!, i = counts.get(key) ?? 0;
       counts.set(key, i + 1);
       mesh.setMatrixAt(i, m.compose(pos, turned, scale.setScalar(this.size)));
       mesh.setColorAt(i, c);
-      (mesh.geometry.getAttribute('aAnim') as THREE.InstancedBufferAttribute).setXYZW(i, f.phase, walk, strike, body[4]);
+      (mesh.geometry.getAttribute('aAnim') as THREE.InstancedBufferAttribute).setXYZW(i, f.gait, walk, strike, body[4]);
       (mesh.geometry.getAttribute('aSkinTone') as THREE.InstancedBufferAttribute).setXYZW(i, f.skin.r, f.skin.g, f.skin.b, body[5]);
       (mesh.geometry.getAttribute('aPose') as THREE.InstancedBufferAttribute).setXYZW(i, body[0], body[1], body[2], body[3]);
       (mesh.geometry.getAttribute('aMore') as THREE.InstancedBufferAttribute).setXY(i, body[6], body[7]);
     };
     for (const s of drawn) {
-      const { walk, strike } = this.pose(s, now);
+      const { strike } = this.pose(s, now);
       color.set(s.unit.color);
       for (const f of s.figures) {
-        const [lift, back] = headOffset(s.unit.type, f.variant);
+        const [lift, back] = headOffset(s.unit.type, f.variant), walk = walkOf(f.speed);
         // (Model axes: x = up × forward, y up, z forward; struck down, tipped over.)
-        x.crossVectors(f.up, f.face ?? s.forward).normalize();
+        x.crossVectors(f.up, f.head).normalize();
         z.crossVectors(x, f.up).normalize();
         q.setFromRotationMatrix(basis.makeBasis(x, f.up, z));
         // (People and horses posed as they act (unitAnim.ts); struck down,
@@ -452,7 +485,8 @@ export class UnitView {
           turned.multiply(poseTurn(tip, p));
           // (Crouched, lower: the legs fold under it.)
           at = stepped.copy(f.pos).addScaledVector(z, p.lunge * this.size).addScaledVector(f.up, (p.rise - dropOf(p.crouch)) * this.size);
-          legs = legsOf(p); arm = armOf(p); bends = horse ? [0, 0, 0, p.elbow, p.aim, p.aimed, p.guard, p.draw] : [p.bend, p.twist, p.crouch, p.elbow, p.aim, p.aimed, p.guard, p.draw];
+          // (Walking to its place while it acts: its legs walk.)
+          legs = p.walk === 0 && walk > 0.3 ? walk : legsOf(p); arm = armOf(p); bends = horse ? [0, 0, 0, p.elbow, p.aim, p.aimed, p.guard, p.draw] : [p.bend, p.twist, p.crouch, p.elbow, p.aim, p.aimed, p.guard, p.draw];
         }
         put(this.key(s, f), at, color, f, legs, arm, bends);
         if (f.hair >= 0) put(`hair|${f.hair}`, head.copy(at).add(lift3.set(0, lift * this.size, back * this.size).applyQuaternion(turned)), f.hairColor, f, legs, 0, bends);
@@ -468,8 +502,9 @@ export class UnitView {
       q.setFromRotationMatrix(basis.makeBasis(x, c.up, z));
       turned.copy(q).multiply(deathTurn(tip, since, c.beat, c.horse));
       const at = stepped.copy(c.pos).addScaledVector(c.up, -0.5 * this.size * sunk(since)), bends: Bends = c.horse ? FLAT : [fold.bend, 0, fold.crouch, 0.6, fold.aim, 1, 0.4, 0];
-      put(c.key, at, c.color, c, deathLegs(since, c.horse), 3 + fold.arm, bends);
-      if (c.hair >= 0) put(`hair|${c.hair}`, head.copy(at).add(lift3.set(0, c.lift[0] * this.size, c.lift[1] * this.size).applyQuaternion(turned)), c.hairColor, c, 3, 0, bends);
+      const g = { gait: c.phase, skin: c.skin };
+      put(c.key, at, c.color, g, deathLegs(since, c.horse), 3 + fold.arm, bends);
+      if (c.hair >= 0) put(`hair|${c.hair}`, head.copy(at).add(lift3.set(0, c.lift[0] * this.size, c.lift[1] * this.size).applyQuaternion(turned)), c.hairColor, g, 3, 0, bends);
     }
     for (const [key, mesh] of this.meshes) {
       mesh.count = counts.get(key) ?? 0;
@@ -499,7 +534,7 @@ export class UnitView {
           if (g.fall > now) continue;
           const [lift, back] = headOffset(s.unit.type, g.variant);
           this.corpses.push({ key: this.key(s, g), hair: g.hair, hairColor: g.hairColor, skin: g.skin, phase: g.phase, color: new THREE.Color(s.unit.color), pos: g.pos.clone(), up: g.up.clone(),
-            face: (g.face ?? s.forward).clone(), fall: g.fall, beat: g.beat ?? g.phase / (Math.PI * 2), horse: rides(s.unit.type, g.variant), lift: [lift, back] });
+            face: g.head.clone(), fall: g.fall, beat: g.beat ?? g.phase / (Math.PI * 2), horse: rides(s.unit.type, g.variant), lift: [lift, back] });
         }
       }
       for (const g of s.figures) Object.assign(g, unfought());
@@ -535,6 +570,7 @@ export class UnitView {
       const { out, back } = figureOut(p, Math.min(t, (f.fall - s.fight!.t0) / FIGHT), f.delay);
       side.crossVectors(f.goal.clone().sub(f.home), f.home).normalize();
       this.place(s, f, d.copy(f.home).lerp(f.goal, out).addScaledVector(side, bow(f.curve, out) * this.size).normalize(), afloat);
+      f.off.copy(f.up).sub(f.at); // (from here it walks to its place once the fight is over)
       f.face = this.tangent(f.up, back ? f.home.clone().sub(f.goal) : out < 0.98 ? f.goal.clone().sub(f.home) : f.foe!.clone().sub(f.up));
     }
   }
@@ -590,7 +626,7 @@ export class UnitView {
     const north = c.clone().cross(east);
     const s: Shown = {
       unit: u, dir: c.clone(), forward: east.multiplyScalar(Math.cos(a)).addScaledVector(north, Math.sin(a)).normalize(),
-      figures: [], spread: LOOSE[0], alt: 0, march: null, fight: null, after: null, gone: false, flag: this.makeFlag(u), k, seen: true,
+      figures: [], spread: LOOSE[0], order: 'block', laid: null, alt: 0, march: null, fight: null, after: null, gone: false, flag: this.makeFlag(u), k, seen: true,
     };
     this.group.add(s.flag);
     this.shown.set(u.id, s);
@@ -618,22 +654,97 @@ export class UnitView {
   // The figures of a unit, in ranks (the front rank full first; a hurt
   // formation loses men from the back), each with its own skin, hair, gait
   // and (for horses) coat.
-  private dress(s: Shown): void {
-    const u = s.unit, rand = mulberry32(u.id * 104729 + 3);
+  // (Dressed anew, as its strength changes, the figures it keeps go on
+  // from where they stand, as they were moving.)
+  private dress(s: Shown, keep = true): void {
+    const u = s.unit, rand = mulberry32(u.id * 104729 + 3), old = keep ? s.figures : [];
+    const motion = (i: number, phase: number) => {
+      const o = old[i];
+      return o ? { at: o.at, off: o.off, head: o.head, last: o.last, speed: o.speed, gait: o.gait, fresh: false, pos: o.pos, up: o.up }
+        : { at: new THREE.Vector3(), off: new THREE.Vector3(), head: s.forward.clone(), last: new THREE.Vector3(), speed: 0, gait: phase, fresh: true, pos: new THREE.Vector3(), up: new THREE.Vector3() };
+    };
     // (Embarked: its one boat.)
-    if (u.embarked) { s.figures = [{ x: 0, z: 0, variant: 0, female: false, skin: new THREE.Color(), hair: -1, hairColor: new THREE.Color(), phase: 0, pos: new THREE.Vector3(), up: new THREE.Vector3(), ...unfought() }]; return; }
+    if (u.embarked) { s.figures = [{ jx: 0, jz: 0, slot: 0, variant: 0, female: false, skin: new THREE.Color(), hair: -1, hairColor: new THREE.Color(), phase: 0, ...motion(0, 0), ...unfought() }]; return; }
     // (The slots jittered apart from the looks: a figure keeps its looks as the formation thins.)
-    s.figures = formationSlots(u.type, u.hp, mulberry32(u.id * 7 + 5)).map(([x, z], i) => ({
-      x, z, variant: variantOf(u.type, i, rand), ...figureLooks(u.type, u.civ, womenShare(u.type, u.suffrage), rand),
-      phase: rand() * Math.PI * 2, pos: new THREE.Vector3(), up: new THREE.Vector3(), ...unfought(),
-    }));
+    const exact = orderSlots(u.type, figuresOf(u), 'block');
+    s.figures = formationSlots(u.type, u.hp, mulberry32(u.id * 7 + 5)).map(([x, z], i) => {
+      const variant = variantOf(u.type, i, rand), looks = figureLooks(u.type, u.civ, womenShare(u.type, u.suffrage), rand), phase = rand() * Math.PI * 2;
+      return { jx: x - exact[i]![0], jz: z - exact[i]![1], slot: i, variant, ...looks, phase, ...motion(i, phase), ...unfought() };
+    });
   }
 
   // Where each figure stands now: around the unit's spot, on the ground
   // (ships and boats on the water; aircraft up as high as they fly).
+  // Its order as it is doing now (formation.ts); laid out anew (turned,
+  // reordered, closed up, thinned), each figure goes to the place nearest
+  // it and walks there from where it stands (fresh ones are stood there).
   private layout(s: Shown): void {
-    const right = new THREE.Vector3().crossVectors(s.forward, s.dir).normalize(), afloat = this.afloat(s.unit);
-    for (const f of s.figures) this.place(s, f, this.figureDir(s.dir, s.forward, right, f.x * s.spread, f.z * s.spread), afloat);
+    const right = new THREE.Vector3().crossVectors(s.forward, s.dir).normalize();
+    const order = this.orderOf(s), places = s.unit.embarked ? [[0, 0] as const] : orderSlots(s.unit.type, s.figures.length, order);
+    const dirs = s.figures.map((f, i) => this.figureDir(s.dir, s.forward, right, (places[i]![0] + f.jx) * s.spread, (places[i]![1] + f.jz) * s.spread));
+    const l = s.laid, anew = !l || l.order !== order || l.spread !== s.spread || l.n !== s.figures.length || l.fwd.dot(s.forward) < 0.9999;
+    s.order = order;
+    s.laid = { fwd: s.forward.clone(), spread: s.spread, n: s.figures.length, order };
+    if (anew) {
+      if (s.figures.some((f) => f.fresh)) s.figures.forEach((f, i) => { f.slot = i; });
+      else {
+        // (Nearest first: each figure to the free place nearest it.)
+        const pairs: [number, number, number][] = [];
+        s.figures.forEach((f, i) => dirs.forEach((d, j) => pairs.push([f.up.distanceToSquared(d), i, j])));
+        pairs.sort((a, b) => a[0] - b[0]);
+        const took = new Set<number>(), given = new Set<number>();
+        for (const [, i, j] of pairs) if (!took.has(i) && !given.has(j)) { took.add(i); given.add(j); s.figures[i]!.slot = j; }
+      }
+    }
+    const afloat = this.afloat(s.unit);
+    for (const f of s.figures) {
+      f.at.copy(dirs[f.slot]!);
+      if (f.fresh) { f.fresh = false; f.off.set(0, 0, 0); f.head.copy(s.forward); this.place(s, f, f.at, afloat); f.last.copy(f.pos); }
+      else if (anew) f.off.copy(f.up).sub(f.at);
+    }
+  }
+  // How a unit's figures stand now: in a column on the march, in a line
+  // shooting where they stand, else in their ranks.
+  private orderOf(s: Shown): Order {
+    if (!reforms(s.unit.type) || s.unit.embarked) return 'block';
+    if (s.march && this.now >= s.march.t0) return 'column';
+    const p = s.fight?.play;
+    return p && !p.close && p.charge === 0 && p.shots.length ? 'line' : 'block';
+  }
+  // Every frame: each figure (but those running at a foe, or struck down)
+  // walks on towards its place; then how fast each is going sets its legs'
+  // beat, and it turns towards where it goes (going fast enough) or else
+  // the way it faces.
+  private stride(s: Shown, now: number, dt: number): void {
+    const afloat = this.afloat(s.unit), d = new THREE.Vector3(), want = new THREE.Vector3(), rate = (isMachine(s.unit.type) ? TURN_MACHINE : TURN) * dt;
+    for (const f of s.figures) {
+      const running = s.fight !== null && f.goal !== null, down = now > f.fall;
+      if (!running && !down) {
+        const len = f.off.length();
+        if (len > 1e-9) {
+          const step = (SHUFFLE + (SHUFFLE_FAR * len) / this.size) * this.size * dt;
+          f.off.multiplyScalar(Math.max(0, len - step) / len);
+        }
+        this.place(s, f, d.copy(f.at).add(f.off).normalize(), afloat);
+      }
+      if (dt <= 0) continue;
+      d.copy(f.pos).sub(f.last);
+      const inst = d.length() / this.size / dt;
+      f.speed += (inst - f.speed) * Math.min(1, dt * 12);
+      f.last.copy(f.pos);
+      f.gait = (f.gait + dt * cadenceOf(f.speed)) % (Math.PI * 2);
+      if (down) continue;
+      // (Turned at its pace, on the ground where it stands.)
+      want.copy(f.speed > 0.8 && inst > 0.4 ? d : f.face ?? s.forward);
+      want.addScaledVector(f.up, -want.dot(f.up));
+      f.head.addScaledVector(f.up, -f.head.dot(f.up)).normalize();
+      if (want.lengthSq() < 1e-14) continue;
+      want.normalize();
+      const ang = Math.acos(Math.max(-1, Math.min(1, f.head.dot(want))));
+      if (ang <= rate) { f.head.copy(want); continue; }
+      const sign = Math.sign(new THREE.Vector3().crossVectors(f.head, want).dot(f.up)) || 1;
+      f.head.applyAxisAngle(f.up, sign * rate).normalize();
+    }
   }
   // A figure stood at `d` (a unit vector).
   private place(s: Shown, f: Figure, d: THREE.Vector3, afloat: boolean): void {
@@ -661,7 +772,7 @@ export class UnitView {
   // that, the spot with the most figures dry.
   private spot(u: ShownUnit, k: number, facing: THREE.Vector3): { dir: THREE.Vector3; forward: THREE.Vector3; spread: number } {
     const c = this.env.center(u.tile), look = UNIT_LOOK[u.type], afloat = this.afloat(u);
-    const n = u.embarked ? 1 : look.party === 'formation' ? figuresFor(u.hp, look.count) : look.count;
+    const n = figuresOf(u);
     const cols = colsOf(u.type, look.count), rows = Math.ceil(n / cols);
     const east = new THREE.Vector3(0, 1, 0).cross(c);
     if (east.lengthSq() < 1e-8) east.set(1, 0, 0);
