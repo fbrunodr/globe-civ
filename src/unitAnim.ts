@@ -254,3 +254,32 @@ export const armOf = (p: Pose): number => 3 + p.arm;
 // The dead lie where they fell for a while, then sink into the ground.
 export const CORPSE = 6, SINK = 1.2;
 export const sunk = (since: number): number => Math.max(0, Math.min(1, (since - CORPSE) / SINK));
+
+// ---- machines ----
+
+// How a machine sits now (guns, engines, armour; ships): kicked back and
+// nosed up by its own shot (`shot`: seconds since it fired), rocking on
+// the swell (a ship), jolting over the ground as it rolls (`speed`, figure
+// heights a second); struck down (`since`: seconds; or NaN), a wreck,
+// burnt black, settled askew (a ship listing and going down). Pitch (nose
+// down) and roll about its middle (radians), how far back and down it is
+// (figure heights), how charred (0..1).
+export interface MachinePose { readonly pitch: number; readonly roll: number; readonly back: number; readonly drop: number; readonly char: number }
+export function machinePose(sea: boolean, shot: number, now: number, phase: number, speed: number, since: number): MachinePose {
+  const kick = shot < 0 ? 0 : shot < 0.05 ? shot / 0.05 : Math.exp(-(shot - 0.05) * 7);
+  const swell = sea ? 1 : 0, jolt = sea ? 0 : Math.min(1, speed / 2);
+  let pitch = -(sea ? 0.03 : 0.07) * kick + 0.025 * swell * Math.sin(now * 0.9 + phase) + 0.012 * jolt * Math.sin(now * 23 + phase);
+  let roll = 0.05 * swell * Math.sin(now * 0.7 + phase * 1.7) + (sea ? 0.04 * kick : 0) + 0.01 * jolt * Math.sin(now * 17 + phase * 3);
+  let drop = 0.03 * swell * Math.sin(now * 1.1 + phase * 0.6), char = 0;
+  if (since >= 0) {
+    // (Burnt out at once; a ship heels over and settles, then goes down.)
+    const f = smooth(since / 0.6), side = frac(phase * 3.1) < 0.5 ? 1 : -1;
+    char = f;
+    pitch += (sea ? 0.12 : 0.06) * f * (frac(phase * 5.7) - 0.3);
+    roll += side * (sea ? 0.4 * smooth(since / 3) : 0.08 * f);
+    if (sea) drop += 0.5 * smooth((since - 1) / 6);
+  }
+  return { pitch, roll, back: (sea ? 0.04 : 0.16) * kick, drop, char };
+}
+// How long a wreck burns where it lies before it sinks away (seconds).
+export const WRECK = 10;

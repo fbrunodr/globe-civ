@@ -7,7 +7,7 @@ import { mulberry32 } from './rng.ts';
 import { HIP } from './people.ts';
 import { pairUp, type P2 } from './duel.ts';
 import { orderSlots, reforms, type Order } from './formation.ts';
-import { AFTER, armOf, deathBend, deathLegs, deathTurn, dropOf, legsOf, poseOf, poseTurn, sunk, type Cue } from './unitAnim.ts';
+import { AFTER, SINK, WRECK, armOf, deathBend, deathLegs, deathTurn, dropOf, legsOf, machinePose, poseOf, poseTurn, sunk, type Cue } from './unitAnim.ts';
 
 // The units on the globe, as figurines (unitModels.ts): a fighting unit is a
 // formation of up to a dozen figures (FORMATION), one fewer for every 8 HP
@@ -170,11 +170,21 @@ interface Figure {
   variant: number; female: boolean; skin: THREE.Color; hair: number; hairColor: THREE.Color; phase: number; pos: THREE.Vector3; up: THREE.Vector3;
   home: THREE.Vector3 | null; goal: THREE.Vector3 | null; foe: THREE.Vector3 | null; face: THREE.Vector3 | null; delay: number; curve: number; fall: number;
   beat: number | null; // where it is in its round of blows (null: its phase says)
+  shot: number; smoke: number; // when it last fired (its recoil); when it next smokes (a burning wreck)
 }
 interface Fight { at: THREE.Vector3; home: THREE.Vector3; t0: number; play: Play; fired: number; attack: Play; side: 'attacker' | 'defender'; won: boolean }
 // A figure struck down, lying where it fell (then sinking away).
-interface Corpse { key: string; hair: number; hairColor: THREE.Color; skin: THREE.Color; phase: number; color: THREE.Color; pos: THREE.Vector3; up: THREE.Vector3; face: THREE.Vector3; fall: number; beat: number; horse: boolean; lift: readonly [number, number] }
-const unfought = () => ({ home: null, goal: null, foe: null, face: null, delay: 0, curve: 0, fall: Infinity, beat: null });
+// (A machine's: a wreck burning, on land or at sea.)
+interface Corpse { wreck: Wreck | null; smoke: number; key: string; hair: number; hairColor: THREE.Color; skin: THREE.Color; phase: number; color: THREE.Color; pos: THREE.Vector3; up: THREE.Vector3; face: THREE.Vector3; fall: number; beat: number; horse: boolean; lift: readonly [number, number] }
+const unfought = () => ({ home: null, goal: null, foe: null, face: null, delay: 0, curve: 0, fall: Infinity, beat: null, shot: -Infinity, smoke: 0 });
+// What a machine struck down leaves: a wreck on land, or a ship going down
+// (aircraft and figures leave none).
+type Wreck = 'land' | 'sea';
+const wreckOf = (u: ShownUnit): Wreck | null => {
+  if (u.embarked) return 'sea';
+  const dom = domainOf(unitDef(u.type));
+  return dom === 'sea' ? 'sea' : dom === 'land' && isMachine(u.type) ? 'land' : null;
+};
 // The outcome of a fight, if known: the defending unit, the HP each side is left with.
 export interface FightResult { readonly defender: number; readonly attackerHp: number; readonly defenderHp: number }
 interface Shown {
@@ -205,7 +215,7 @@ const UNIT_VERTEX_DECL = /* glsl */ `
   attribute vec4 aAnim;     // per figure: its legs' beat (radians), its legs, its striking arm (unitAnim.ts legsOf, armOf); how its weapon points (radians from upright, forward)
   attribute vec4 aSkinTone; // per figure: its skin; how far its weapon is aimed (0: as it is made and carried)
   attribute vec4 aPose;     // per figure: its body above the hips bent forward, turned; its crouch; its striking elbow bent (radians)
-  attribute vec4 aMore;     // per figure: its shield raised, its bowstring drawn (0..1); (spare)
+  attribute vec4 aMore;     // per figure: its shield raised, its bowstring drawn, how burnt (0..1); (spare)
   uniform float uTime;
   // (A point or direction turned with the body above the hips.)
   vec3 bodyBend(vec3 p, float c1, float s1, float c2, float s2) {
@@ -274,6 +284,7 @@ export function makeUnitMaterial(time: { value: number }): THREE.MeshStandardMat
         #ifdef USE_INSTANCING_COLOR
           vec2 isTeamV = vec2(mod(aLimb.w, 2.0), mod(floor(aLimb.w / 2.0), 2.0)); // (team, skin: the flags)
           vColor.rgb = mix(mix(color.rgb, aSkinTone.rgb, isTeamV.y), color.rgb * instanceColor.rgb, isTeamV.x);
+          vColor.rgb *= 1.0 - 0.78 * aMore.z; // (burnt: a wreck)
         #endif`);
   };
   mat.customProgramCacheKey = () => 'unit-figure';
@@ -439,7 +450,7 @@ export class UnitView {
       figures += s.figures.length;
     }
     // (The dead, until they have sunk away.)
-    this.corpses = this.corpses.filter((c) => sunk(now - c.fall) < 1);
+    this.corpses = this.corpses.filter((c) => this.gone(c, now) < 1);
     for (const c of this.corpses) {
       need.set(c.key, (need.get(c.key) ?? 0) + 1);
       if (c.hair >= 0) need.set(`hair|${c.hair}`, (need.get(`hair|${c.hair}`) ?? 0) + 1);
@@ -451,7 +462,7 @@ export class UnitView {
     const x = new THREE.Vector3(), z = new THREE.Vector3(), color = new THREE.Color(), head = new THREE.Vector3();
     let shadowN = 0;
     const tip = new THREE.Quaternion(), turned = new THREE.Quaternion(), lift3 = new THREE.Vector3(), stepped = new THREE.Vector3();
-    const put = (key: string, pos: THREE.Vector3, c: THREE.Color, f: { gait: number; skin: THREE.Color }, walk: number, strike: number, body: Bends) => {
+    const put = (key: string, pos: THREE.Vector3, c: THREE.Color, f: { gait: number; skin: THREE.Color }, walk: number, strike: number, body: Bends, char = 0) => {
       const mesh = this.meshes.get(key)!, i = counts.get(key) ?? 0;
       counts.set(key, i + 1);
       mesh.setMatrixAt(i, m.compose(pos, turned, scale.setScalar(this.size)));
@@ -459,10 +470,10 @@ export class UnitView {
       (mesh.geometry.getAttribute('aAnim') as THREE.InstancedBufferAttribute).setXYZW(i, f.gait, walk, strike, body[4]);
       (mesh.geometry.getAttribute('aSkinTone') as THREE.InstancedBufferAttribute).setXYZW(i, f.skin.r, f.skin.g, f.skin.b, body[5]);
       (mesh.geometry.getAttribute('aPose') as THREE.InstancedBufferAttribute).setXYZW(i, body[0], body[1], body[2], body[3]);
-      (mesh.geometry.getAttribute('aMore') as THREE.InstancedBufferAttribute).setXY(i, body[6], body[7]);
+      (mesh.geometry.getAttribute('aMore') as THREE.InstancedBufferAttribute).setXYZ(i, body[6], body[7], char);
     };
     for (const s of drawn) {
-      const { strike } = this.pose(s, now);
+      const { strike } = this.pose(s, now), wreck = wreckOf(s.unit);
       color.set(s.unit.color);
       for (const f of s.figures) {
         const [lift, back] = headOffset(s.unit.type, f.variant), walk = walkOf(f.speed);
@@ -473,7 +484,7 @@ export class UnitView {
         // (People and horses posed as they act (unitAnim.ts); struck down,
         // falling. A rider's body doesn't bend: he sits his horse.)
         const body = falls(s.unit.type) && !s.unit.embarked, horse = rides(s.unit.type, f.variant), beat = f.beat ?? f.phase / (Math.PI * 2);
-        let at = f.pos, legs = walk, arm = strike, bends: Bends = FLAT;
+        let at = f.pos, legs = walk, arm = strike, bends: Bends = FLAT, char = 0;
         turned.copy(q);
         if (body && now > f.fall) {
           turned.multiply(deathTurn(tip, now - f.fall, beat, horse));
@@ -487,8 +498,15 @@ export class UnitView {
           at = stepped.copy(f.pos).addScaledVector(z, p.lunge * this.size).addScaledVector(f.up, (p.rise - dropOf(p.crouch)) * this.size);
           // (Walking to its place while it acts: its legs walk.)
           legs = p.walk === 0 && walk > 0.3 ? walk : legsOf(p); arm = armOf(p); bends = horse ? [0, 0, 0, p.elbow, p.aim, p.aimed, p.guard, p.draw] : [p.bend, p.twist, p.crouch, p.elbow, p.aim, p.aimed, p.guard, p.draw];
+        } else if (wreck) {
+          // (A machine: its recoil, the swell or the ground under it; struck, a burning wreck.)
+          const mp = machinePose(wreck === 'sea', now - f.shot, now, f.phase, f.speed, now > f.fall ? now - f.fall : -1);
+          turned.multiply(tip.setFromEuler(new THREE.Euler(mp.pitch, 0, mp.roll, 'YXZ')));
+          at = stepped.copy(f.pos).addScaledVector(z, -mp.back * this.size).addScaledVector(f.up, -mp.drop * this.size);
+          char = mp.char;
+          if (now > f.fall) f.smoke = this.volleys.burn(at, now, f.smoke, wreck === 'sea', f.phase);
         }
-        put(this.key(s, f), at, color, f, legs, arm, bends);
+        put(this.key(s, f), at, color, f, legs, arm, bends, char);
         if (f.hair >= 0) put(`hair|${f.hair}`, head.copy(at).add(lift3.set(0, lift * this.size, back * this.size).applyQuaternion(turned)), f.hairColor, f, legs, 0, bends);
         // Its shadow: a soft disc on the ground under it (longer under a horse).
         m.compose(f.pos.clone().addScaledVector(f.up, 0.002 * this.size), q, scale.set(this.size * (isMachine(s.unit.type) ? 0.8 : 0.42), 1, this.size * (isMachine(s.unit.type) ? 1.4 : rides(s.unit.type, f.variant) ? 0.95 : 0.42)));
@@ -501,6 +519,16 @@ export class UnitView {
       z.crossVectors(x, c.up).normalize();
       q.setFromRotationMatrix(basis.makeBasis(x, c.up, z));
       turned.copy(q).multiply(deathTurn(tip, since, c.beat, c.horse));
+      if (c.wreck) {
+        // (A wreck: burning, then sunk away.)
+        const mp = machinePose(c.wreck === 'sea', -1, now, c.phase, 0, since);
+        q.multiply(tip.setFromEuler(new THREE.Euler(mp.pitch, 0, mp.roll, 'YXZ')));
+        turned.copy(q);
+        const at = stepped.copy(c.pos).addScaledVector(c.up, -(mp.drop + 0.6 * this.gone(c, now)) * this.size);
+        put(c.key, at, c.color, { gait: 0, skin: c.skin }, 0, 0, FLAT, 1);
+        if (this.gone(c, now) < 0.5) c.smoke = this.volleys.burn(at, now, c.smoke, c.wreck === 'sea', c.phase);
+        continue;
+      }
       const at = stepped.copy(c.pos).addScaledVector(c.up, -0.5 * this.size * sunk(since)), bends: Bends = c.horse ? FLAT : [fold.bend, 0, fold.crouch, 0.6, fold.aim, 1, 0.4, 0];
       const g = { gait: c.phase, skin: c.skin };
       put(c.key, at, c.color, g, deathLegs(since, c.horse), 3 + fold.arm, bends);
@@ -529,11 +557,12 @@ export class UnitView {
       s.after = f;
       s.alt = 0;
       // (The fallen stay where they lie.)
-      if (falls(s.unit.type) && !s.unit.embarked) {
+      const wreck = wreckOf(s.unit);
+      if ((falls(s.unit.type) && !s.unit.embarked) || wreck) {
         for (const g of s.figures) {
           if (g.fall > now) continue;
           const [lift, back] = headOffset(s.unit.type, g.variant);
-          this.corpses.push({ key: this.key(s, g), hair: g.hair, hairColor: g.hairColor, skin: g.skin, phase: g.phase, color: new THREE.Color(s.unit.color), pos: g.pos.clone(), up: g.up.clone(),
+          this.corpses.push({ wreck: falls(s.unit.type) && !s.unit.embarked ? null : wreck, smoke: g.smoke, key: this.key(s, g), hair: g.hair, hairColor: g.hairColor, skin: g.skin, phase: g.phase, color: new THREE.Color(s.unit.color), pos: g.pos.clone(), up: g.up.clone(),
             face: g.head.clone(), fall: g.fall, beat: g.beat ?? g.phase / (Math.PI * 2), horse: rides(s.unit.type, g.variant), lift: [lift, back] });
         }
       }
@@ -556,7 +585,8 @@ export class UnitView {
     const shot = p.shots[f.fired];
     if (shot && t > shot.t) {
       f.fired++;
-      this.volleys.loose(s.figures.map((g) => g.pos.clone().addScaledVector(g.up, 0.75 * this.size)), f.at, this.env.step * 0.12, now, f.fired * 7 + s.unit.id, shot.kind);
+      const at = this.volleys.loose(s.figures.map((g) => g.pos.clone().addScaledVector(g.up, 0.75 * this.size)), f.at, this.env.step * 0.12, now, f.fired * 7 + s.unit.id, shot.kind);
+      s.figures.forEach((g, i) => { if (g.fall > now) g.shot = at[i] ?? now; });
     }
   }
 
@@ -582,6 +612,12 @@ export class UnitView {
     const sec = now - c.t0;
     if (!s.fight && (sec > FIGHT + AFTER || (s.march && now >= s.march.t0))) { s.after = null; return null; }
     return { sec, dur: FIGHT, play: c.play, attack: c.attack, side: c.side, engaged: f.goal !== null || f.foe !== null, delay: f.delay, fall: f.fall - c.t0, won: c.won };
+  }
+  // How far a corpse has sunk away (0..1): the dead after a while, wrecks
+  // when they have burnt out.
+  private gone(c: Corpse, now: number): number {
+    const since = now - c.fall;
+    return c.wreck ? Math.max(0, Math.min(1, (since - WRECK) / (2 * SINK))) : sunk(since);
   }
   // `v` made tangent at `at` (unit length), or null if it has no length there.
   private tangent(at: THREE.Vector3, v: THREE.Vector3): THREE.Vector3 | null {
@@ -849,6 +885,7 @@ export class UnitView {
 }
 
 const smooth = (t: number) => t * t * (3 - 2 * t);
+const frac = (x: number) => x - Math.floor(x);
 
 // A figure's own looks, drawn from its civ's: a woman (with odds `women`)
 // or a man, skin tone, hair style (by sex; fewer under a helmet: a beard,
@@ -939,7 +976,8 @@ export class Volleys {
   }
 
   // A volley from each of `from` at the spot `at` (scattered `spread` round it).
-  loose(from: readonly THREE.Vector3[], at: THREE.Vector3, spread: number, now: number, seed: number, kind: Projectile = 'arrow'): void {
+  // (Returns when each shot goes off.)
+  loose(from: readonly THREE.Vector3[], at: THREE.Vector3, spread: number, now: number, seed: number, kind: Projectile = 'arrow'): number[] {
     const rand = mulberry32(seed * 9973 + 5), k = FLIGHT[kind];
     const up = this.flatUp ?? at.clone().normalize();
     const e = new THREE.Vector3(1, 0, 0).cross(up);
@@ -947,10 +985,12 @@ export class Volleys {
     e.normalize();
     const n = up.clone().cross(e);
     const ground = this.flatUp ? at : at.clone().multiplyScalar(from[0] ? from[0].length() / at.length() : 1);
+    const times: number[] = [];
     for (const f of from) {
       if (this.arrows.length >= Volleys.CAP) break;
       const to = ground.clone().addScaledVector(e, (rand() - 0.5) * 2 * spread).addScaledVector(n, (rand() - 0.5) * 2 * spread);
       const t0 = now + rand() * 0.15, dur = k.dur + rand() * k.jitter;
+      times.push(t0);
       this.arrows.push({ from: f.clone(), to, t0, dur, kind });
       // (A gun: its flash and smoke at the muzzle, a little way towards the mark.)
       if (kind === 'bullet' || kind === 'shell') {
@@ -966,6 +1006,20 @@ export class Volleys {
         this.puff(lifted(1.0), t0 + dur + 0.05, 2.8, 0.6, 2.4, 0.65, 0x3a3632, 0.5);
       } else if (kind === 'stone') this.puff(lifted(0.6), t0 + dur, 1.6, 0.4, 1.5, 0.55, 0xb09a78, 0.3);
     }
+    return times;
+  }
+
+  // A wreck burning at `at`: flames licking up and a column of black smoke
+  // (a ship's paler, steam and smoke), a puff every so often; returns when
+  // the next is due (pass it back as `next`).
+  burn(at: THREE.Vector3, now: number, next: number, sea: boolean, seed: number): number {
+    if (now < next) return next;
+    const up = (this.flatUp ?? at).clone().normalize(), r = frac(Math.sin(now * 91.7 + seed * 13.1) * 43758.5);
+    const side = new THREE.Vector3(1, 0, 0).cross(up).normalize().multiplyScalar((r - 0.5) * 0.4 * this.size);
+    const base = at.clone().addScaledVector(up, 0.45 * this.size).add(side);
+    if (r < 0.6) this.puff(base, now, 0.45, 0.35, 0.6, 0.9, r < 0.3 ? 0xff7a20 : 0xffb040, 0.8);
+    this.puff(base.addScaledVector(up, 0.2 * this.size), now, 3.2, 0.35, 1.8, sea ? 0.45 : 0.6, sea ? 0x6a6662 : 0x262422, 0.55);
+    return now + 0.16 + 0.1 * r;
   }
 
   update(now: number): void {

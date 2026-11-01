@@ -87,23 +87,24 @@ const toggleSight = () => {
 };
 sightBtn.addEventListener('click', toggleSight);
 // Units to look at (dev): U drops one of each kind for a few civs round
-// where the camera looks, on dry land; M marches every unit a tile; B sets
+// where the camera looks (Y: modern ones), on dry land; M marches every unit a tile; B sets
 // them fighting their neighbours; N stages a melee where the camera looks
 // (a foe set beside a fighting unit, both hurt in it), R likewise a volley.
 const UNIT_SAMPLE: UnitKey[] = ['warrior', 'spearman', 'archer', 'horseman', 'swordsman', 'pikeman', 'crossbowman', 'knight', 'scout', 'settler', 'commander'];
-const dropUnits = () => {
+const MODERN_SAMPLE: UnitKey[] = ['musketman', 'rifleman', 'infantry', 'cavalry', 'cannon', 'artillery', 'tank', 'modernArmor', 'machineGun', 'gatlingGun', 'fieldCannon'];
+const dropUnits = (sample = UNIT_SAMPLE) => {
   const at = view.looking;
   let start = 0;
   game.tiles.forEach((t, i) => { if (t.center.dot(at) > game.tiles[start]!.center.dot(at)) start = i; });
   const seen = new Set<number>(), queue = [start], land: number[] = [];
-  while (queue.length && land.length < 2 * UNIT_SAMPLE.length) {
+  while (queue.length && land.length < 2 * sample.length) {
     const t = queue.shift()!;
     if (seen.has(t)) continue;
     seen.add(t);
     if (!game.isWater(t) && !game.units.some((u) => u.tile === t)) land.push(t);
     queue.push(...game.tiles[t]!.neighbors);
   }
-  land.forEach((t, i) => game.createUnit(UNIT_SAMPLE[i % UNIT_SAMPLE.length]!, (i + Math.floor(i / UNIT_SAMPLE.length)) % game.players.length, t));
+  land.forEach((t, i) => game.createUnit(sample[i % sample.length]!, (i + Math.floor(i / sample.length)) % game.players.length, t));
   view.syncWorld(null);
 };
 const marchUnits = () => {
@@ -144,6 +145,7 @@ const stage = (ranged = false) => {
 addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
   if (e.key === 'u' || e.key === 'U') dropUnits();
+  else if (e.key === 'y' || e.key === 'Y') dropUnits(MODERN_SAMPLE);
   else if (e.key === 'b' || e.key === 'B') battle();
   else if (e.key === 'm' || e.key === 'M') marchUnits();
   else if (e.key === 'n' || e.key === 'N') stage();
