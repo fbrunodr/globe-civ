@@ -299,5 +299,13 @@ export function machinePose(sea: boolean, shot: number, now: number, phase: numb
   }
   return { pitch, roll, back: (sea ? 0.04 : 0.16) * kick, drop, char };
 }
+// An engine's throwing arm (a catapult's, a trebuchet's: its strike limb,
+// as the shader's armOf takes it), `shot` seconds after it loosed: cocked
+// until then, flung over as it looses, a moment up, then winched slowly
+// back down.
+export const flingOf = (shot: number): number => {
+  const k = shot < 0 ? 0 : shot < 0.12 ? (shot / 0.12) ** 2 : shot < 0.45 ? 1 : 1 - smooth((shot - 0.45) / 1.6);
+  return 3 + k;
+};
 // How long a wreck burns where it lies before it sinks away (seconds).
 export const WRECK = 10;

@@ -7,7 +7,7 @@ import { mulberry32 } from './rng.ts';
 import { HIP } from './people.ts';
 import { pairUp, type P2 } from './duel.ts';
 import { orderSlots, reforms, type Order } from './formation.ts';
-import { AFTER, SINK, WRECK, armOf, deathBend, deathLegs, deathTurn, dropOf, legsOf, machinePose, nextBlow, poseOf, poseTurn, rearShift, sunk, type Cue } from './unitAnim.ts';
+import { AFTER, SINK, WRECK, armOf, deathBend, deathLegs, deathTurn, dropOf, flingOf, legsOf, machinePose, nextBlow, poseOf, poseTurn, rearShift, sunk, type Cue } from './unitAnim.ts';
 
 // The units on the globe, as figurines (unitModels.ts): a fighting unit is a
 // formation of up to a dozen figures (FORMATION), one fewer for every 8 HP
@@ -551,6 +551,7 @@ export class UnitView {
           turned.multiply(tip.setFromEuler(new THREE.Euler(mp.pitch, 0, mp.roll, 'YXZ')));
           at = stepped.copy(f.pos).addScaledVector(z, -mp.back * this.size).addScaledVector(f.up, -mp.drop * this.size);
           char = mp.char;
+          arm = flingOf(now - f.shot); // (an engine's throwing arm, if it has one)
           if (now > f.fall) f.smoke = this.volleys.burn(at, now, f.smoke, wreck === 'sea', f.phase);
         }
         put(this.key(s, f), at, color, f, legs, arm, bends, char);
