@@ -35,12 +35,18 @@ const FIGURE = 0.16;
 // close it may close up to keep its feet dry.
 const LOOSE = [1.4, 1.15, 0.9, 0.65] as const;
 // How long a march takes (seconds per tile step, and at least).
-const MARCH = 0.9, MARCH_MIN = 0.5;
+const MARCH = 1.3, MARCH_MIN = 0.7;
 // A figure finding its place in its formation (reforming): how fast it
 // walks there, and how much faster the further it has to go (figure
 // heights a second, and per figure height away); how fast it turns
 // (radians a second: a man, a machine).
-const SHUFFLE = 1.4, SHUFFLE_FAR = 0.9, TURN = 7, TURN_MACHINE = 2.2;
+const SHUFFLE = 1.1, SHUFFLE_FAR = 0.6, TURN = 3.6, TURN_MACHINE = 1.3;
+// A figure's weight (carry): how quickly it closes on where it is meant
+// to be (the spring's rate, a second), and how hard it can speed up or
+// slow down (figure heights a second, a second): a man, a horse, a machine.
+const INERTIA = { foot: [5.5, 9], horse: [4.6, 9], machine: [3, 4.5] } as const;
+// Further than this from where it is meant to be (figure heights), it is put there.
+const SNAP = 25;
 // Running faster than this (figure heights a second), a figure kicks up dust.
 const DUSTY = 3;
 // A figure's legs by how fast it goes over the ground (figure heights a
@@ -56,7 +62,7 @@ const DRY = 0.00005;
 const MIN_PX = 3;
 // A fight: how long (seconds; a melee longer, durOf), and how far a melee
 // unit charges (a share of the way to the enemy's tile).
-export const FIGHT = 3;
+export const FIGHT = 4.2;
 const CHARGE = 0.42, UNDEFENDED_CHARGE = 0.62;
 // Ships that fight with guns along their sides (a broadside), turning beam-on to the enemy.
 const BROADSIDE: ReadonlySet<UnitKey> = new Set<UnitKey>(['galleass', 'frigate', 'privateer', 'shipOfTheLine', 'ironclad', 'cruiser', 'battleship']);
@@ -75,14 +81,14 @@ export interface Play { readonly answered?: boolean; readonly dur?: number; read
 const still = (shots: Play['shots']): Play => ({ charge: 0, go: [0, 0], back: 1, strike: [0, 0], aim: true, shots });
 export const PLAYS: Record<AttackStyle, Play> = {
   // (A melee: a short run in, then a long while at it, as Civ V plays it, before falling back.)
-  melee: { dur: 4.6, close: true, charge: 1, go: [0.04, 0.2], back: 0.84, strike: [0.18, 0.84], aim: false, shots: [] },
-  charge: { dur: 4.4, close: true, charge: 1.25, go: [0.03, 0.15], back: 0.84, strike: [0.13, 0.84], aim: false, shots: [] },
+  melee: { dur: 7, close: true, charge: 1, go: [0.04, 0.26], back: 0.8, strike: [0.18, 0.8], aim: false, shots: [] },
+  charge: { dur: 6.6, close: true, charge: 1.25, go: [0.03, 0.2], back: 0.8, strike: [0.13, 0.8], aim: false, shots: [] },
   volley: still([{ t: 1 / 3, kind: 'arrow' }, { t: 2 / 3, kind: 'arrow' }]),
   lob: still([{ t: 0.3, kind: 'stone' }]),
   shell: still([{ t: 0.28, kind: 'shell' }, { t: 0.6, kind: 'shell' }]),
   fire: still([{ t: 0.25, kind: 'bullet' }, { t: 0.45, kind: 'bullet' }, { t: 0.65, kind: 'bullet' }]),
   // (Gunmen closing in: walking forward in their line, firing as they come, to short range; still firing there.)
-  advance: { dur: 4.6, answered: true, charge: 0.75, go: [0.06, 0.5], back: 0.86, strike: [0, 0], aim: false, shots: [0.1, 0.24, 0.38, 0.52, 0.64, 0.76].map((t) => ({ t, kind: 'bullet' as const })) },
+  advance: { dur: 7, answered: true, charge: 0.75, go: [0.06, 0.5], back: 0.86, strike: [0, 0], aim: false, shots: [0.1, 0.24, 0.38, 0.52, 0.64, 0.76].map((t) => ({ t, kind: 'bullet' as const })) },
   roll: { charge: 0.6, go: [0, 0.55], back: 0.8, strike: [0, 0], aim: false, shots: [{ t: 0.25, kind: 'shell' }, { t: 0.6, kind: 'bullet' }] },
   // (Out all the way to the target, high, and back: the shots fall from there.)
   sortie: { fly: 3, charge: 1 / CHARGE, go: [0, 0.4], back: 0.6, strike: [0, 0], aim: false, shots: [{ t: 0.42, kind: 'shell' }, { t: 0.5, kind: 'bullet' }] },
@@ -90,7 +96,7 @@ export const PLAYS: Record<AttackStyle, Play> = {
 // A defender charging an advancing gun line, once it has halted at short
 // range (as long a fight as the advance's: its figures come on as an
 // attacker's do, duel.ts).
-const COUNTER: Play = { dur: 4.6, close: true, charge: 1.1, go: [0.5, 0.62], back: 0.86, strike: [0.6, 0.86], aim: false, shots: [] };
+const COUNTER: Play = { dur: 7, close: true, charge: 1.1, go: [0.5, 0.62], back: 0.86, strike: [0.6, 0.86], aim: false, shots: [] };
 // How long a fight against `attack` lasts (seconds: both sides).
 export const durOf = (attack: Play): number => attack.dur ?? FIGHT;
 // Where a play is at `t` (a share of the fight): how far out (0..1, of its
@@ -191,7 +197,7 @@ export interface UnitViewEnv {
 // stood anywhere.
 interface Figure {
   jx: number; jz: number; slot: number; at: THREE.Vector3; off: THREE.Vector3; still: boolean; head: THREE.Vector3; last: THREE.Vector3; speed: number; gait: number; fresh: boolean; // (still: stood at its place, nothing to redo)
-  variant: number; female: boolean; skin: THREE.Color; hair: number; hairColor: THREE.Color; phase: number; pos: THREE.Vector3; up: THREE.Vector3;
+  variant: number; female: boolean; skin: THREE.Color; hair: number; hairColor: THREE.Color; phase: number; pos: THREE.Vector3; to: THREE.Vector3; vel: THREE.Vector3; up: THREE.Vector3; // (pos: where it is drawn, following `to`, where it is meant to be, with its weight: `vel`)
   home: THREE.Vector3 | null; goal: THREE.Vector3 | null; foe: THREE.Vector3 | null; face: THREE.Vector3 | null; delay: number; curve: number; fall: number;
   beat: number | null; // where it is in its round of blows (null: its phase says)
   shot: number; smoke: number; dust: number; // when it last fired (its recoil); when it next smokes (a burning wreck), kicks up dust (running)
@@ -280,7 +286,7 @@ const UNIT_LIMB = /* glsl */ `
   jointA *= aLimb.z > 0.0 ? isLower : 0.0; // (a limb that never moves keeps its forearm as it is: what it holds stays in hand)
   float jointC = cos(jointA), jointS = sin(jointA);
   // (A weapon turned in the hand to point as aimed, however the arm is.)
-  float hit = aAnim.z > 1.5 ? aAnim.z - 3.0 : aAnim.z * (0.6 + 0.4 * sin(uTime * 13.0 + aAnim.x)); // (past 1.5: a stance's arm, exactly)
+  float hit = aAnim.z > 1.5 ? aAnim.z - 3.0 : aAnim.z * (0.6 + 0.4 * sin(uTime * 7.0 + aAnim.x)); // (past 1.5: a stance's arm, exactly)
   float limbA = aLimb.z <= 0.0 ? 0.0 : isGuard ? -aMore.x * aLimb.z : isDraw ? -aMore.y * aLimb.z : isStrike ? -hit * aLimb.z
                                      : (aAnim.y > 1.5 ? aAnim.y - 3.0 : sin(beat) * aAnim.y) * aLimb.x * aLimb.z // (past 1.5: a stance's stride, exactly)
                                        - (isLeg ? aPose.z : 0.0);
@@ -909,8 +915,8 @@ export class UnitView {
     const u = s.unit, rand = mulberry32(u.id * 104729 + 3), old = keep ? s.figures : [];
     const motion = (i: number, phase: number) => {
       const o = old[i];
-      return o ? { at: o.at, off: o.off, still: false, head: o.head, last: o.last, speed: o.speed, gait: o.gait, fresh: o.fresh, pos: o.pos, up: o.up }
-        : { at: new THREE.Vector3(), off: new THREE.Vector3(), still: false, head: s.forward.clone(), last: new THREE.Vector3(), speed: 0, gait: phase, fresh: true, pos: new THREE.Vector3(), up: new THREE.Vector3() };
+      return o ? { at: o.at, off: o.off, still: false, head: o.head, last: o.last, speed: o.speed, gait: o.gait, fresh: o.fresh, pos: o.pos, to: o.to, vel: o.vel, up: o.up }
+        : { at: new THREE.Vector3(), off: new THREE.Vector3(), still: false, head: s.forward.clone(), last: new THREE.Vector3(), speed: 0, gait: phase, fresh: true, pos: new THREE.Vector3(), to: new THREE.Vector3(), vel: new THREE.Vector3(), up: new THREE.Vector3() };
     };
     // (Embarked: its one boat.)
     if (u.embarked) { s.figures = [{ jx: 0, jz: 0, slot: 0, variant: 0, female: false, skin: new THREE.Color(), hair: -1, hairColor: new THREE.Color(), phase: 0, ...motion(0, 0), ...unfought() }]; return; }
@@ -952,7 +958,7 @@ export class UnitView {
       if (f.held) continue;
       f.at.copy(dirs[f.slot]!);
       f.still = false;
-      if (f.fresh) { f.fresh = false; f.off.set(0, 0, 0); f.head.copy(s.forward); this.place(s, f, f.at, afloat); f.last.copy(f.pos); }
+      if (f.fresh) { f.fresh = false; f.off.set(0, 0, 0); f.head.copy(s.forward); this.place(s, f, f.at, afloat); f.pos.copy(f.to); f.vel.set(0, 0, 0); f.last.copy(f.pos); }
       else if (anew) f.off.copy(f.up).sub(f.at);
     }
   }
@@ -983,9 +989,10 @@ export class UnitView {
         this.place(s, f, d.copy(f.at).add(f.off).normalize(), afloat);
       }
       if (dt <= 0) continue;
+      this.carry(s, f, dt);
       d.copy(f.pos).sub(f.last);
       const inst = d.length() / this.size / dt;
-      f.speed += (inst - f.speed) * Math.min(1, dt * 12);
+      f.speed += (inst - f.speed) * Math.min(1, dt * 6);
       f.last.copy(f.pos);
       f.gait = (f.gait + dt * cadenceOf(f.speed)) % (Math.PI * 2);
       if (down) continue;
@@ -1009,13 +1016,33 @@ export class UnitView {
       f.head.applyAxisAngle(f.up, sign * rate).normalize();
     }
   }
+  // A figure's weight: it follows where it is meant to be (`to`) as a
+  // body does, gathering speed and slowing down (a spring, critically
+  // damped, its pull no more than its legs can give: INERTIA), never
+  // snapping there. (Far off, put there: a unit set down anew.)
+  private carry(s: Shown, f: Figure, dt: number): void {
+    const gap = new THREE.Vector3().subVectors(f.to, f.pos);
+    if (gap.length() > SNAP * this.size) { f.pos.copy(f.to); f.vel.set(0, 0, 0); return; }
+    const [w, most] = INERTIA[isMachine(s.unit.type) ? 'machine' : rides(s.unit.type, 0) ? 'horse' : 'foot'];
+    // (In small steps, so a slow frame doesn't overshoot.)
+    for (let left = dt; left > 1e-6; left -= 1 / 120) {
+      const h = Math.min(left, 1 / 120);
+      gap.subVectors(f.to, f.pos);
+      const acc = gap.multiplyScalar(w * w).addScaledVector(f.vel, -2 * w), cap = most * this.size;
+      if (acc.length() > cap) acc.setLength(cap);
+      f.vel.addScaledVector(acc, h);
+      f.pos.addScaledVector(f.vel, h);
+    }
+    // (On the ground: as high as where it is meant to be.)
+    f.pos.setLength(f.to.length());
+  }
   // A figure stood at `d` (a unit vector).
   private place(s: Shown, f: Figure, d: THREE.Vector3, afloat: boolean): void {
     const h = this.env.ground(d);
     f.up.copy(d);
     // (Aircraft at sea stand on their carrier's deck.)
     const deck = afloat && domainOf(unitDef(s.unit.type)) === 'air' ? CARRIER_DECK * this.size : 0;
-    f.pos.copy(d).multiplyScalar(1 + (afloat ? Math.max(h.ground, h.water) : Math.max(h.ground, h.water - 0.0004)) + deck + s.alt * this.size);
+    f.to.copy(d).multiplyScalar(1 + (afloat ? Math.max(h.ground, h.water) : Math.max(h.ground, h.water - 0.0004)) + deck + s.alt * this.size);
   }
   // Afloat: ships, boats, and aircraft on a carrier (their tile water).
   private afloat(u: ShownUnit): boolean {

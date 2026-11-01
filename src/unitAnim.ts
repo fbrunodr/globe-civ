@@ -49,9 +49,9 @@ const smooth = (t: number) => { const x = Math.max(0, Math.min(1, t)); return x 
 const frac = (x: number) => x - Math.floor(x);
 
 // How long a blend between acts takes; a blow (seconds).
-const BLEND = 0.22, BOUT = 0.7;
+const BLEND = 0.3, BOUT = 1.05;
 // Struck down: how long it staggers, then falls (seconds); how far over it lies (radians).
-const STAGGER = 0.14, FALL = 0.42, FALLEN = 1.42;
+const STAGGER = 0.2, FALL = 0.6, FALLEN = 1.42;
 // A horse: how long it stumbles, then rolls over (seconds).
 const HORSE_STUMBLE = 0.45, HORSE_ROLL = 0.5;
 // After the fight: how long the winners cheer (seconds).
