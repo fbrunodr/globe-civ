@@ -6,7 +6,7 @@ import { UNIT_LOOK, figuresFor, formationSlots, unitModel, variantOf, rides, hea
 import { mulberry32 } from './rng.ts';
 import { HIP } from './people.ts';
 import { pairUp, type P2 } from './duel.ts';
-import { AFTER, armOf, deathBend, deathTurn, dropOf, legsOf, poseOf, poseTurn, sunk, type Cue } from './unitAnim.ts';
+import { AFTER, armOf, deathBend, deathLegs, deathTurn, dropOf, legsOf, poseOf, poseTurn, sunk, type Cue } from './unitAnim.ts';
 
 // The units on the globe, as figurines (unitModels.ts): a fighting unit is a
 // formation of up to a dozen figures (FORMATION), one fewer for every 8 HP
@@ -433,7 +433,7 @@ export class UnitView {
         if (body && now > f.fall) {
           turned.multiply(deathTurn(tip, now - f.fall, beat, horse));
           const fold = deathBend(now - f.fall, beat);
-          legs = 3; arm = 3 + fold.arm; bends = horse ? FLAT : [fold.bend, 0, fold.crouch, 0.6, fold.aim, 1, 0.4];
+          legs = deathLegs(now - f.fall, horse); arm = 3 + fold.arm; bends = horse ? FLAT : [fold.bend, 0, fold.crouch, 0.6, fold.aim, 1, 0.4];
           if (!horse) at = stepped.copy(f.pos).addScaledVector(f.up, -dropOf(fold.crouch) * this.size);
         } else if (body) {
           const p = poseOf(this.cue(s, f, now), now, f.phase, beat, walk, horse);
@@ -456,7 +456,7 @@ export class UnitView {
       q.setFromRotationMatrix(basis.makeBasis(x, c.up, z));
       turned.copy(q).multiply(deathTurn(tip, since, c.beat, c.horse));
       const at = stepped.copy(c.pos).addScaledVector(c.up, -0.5 * this.size * sunk(since)), bends: Bends = c.horse ? FLAT : [fold.bend, 0, fold.crouch, 0.6, fold.aim, 1, 0.4];
-      put(c.key, at, c.color, c, 3, 3 + fold.arm, bends);
+      put(c.key, at, c.color, c, deathLegs(since, c.horse), 3 + fold.arm, bends);
       if (c.hair >= 0) put(`hair|${c.hair}`, head.copy(at).add(lift3.set(0, c.lift[0] * this.size, c.lift[1] * this.size).applyQuaternion(turned)), c.hairColor, c, 3, 0, bends);
     }
     for (const [key, mesh] of this.meshes) {

@@ -50,6 +50,8 @@ const frac = (x: number) => x - Math.floor(x);
 const BLEND = 0.22, BOUT = 0.7;
 // Struck down: how long it staggers, then falls (seconds); how far over it lies (radians).
 const STAGGER = 0.14, FALL = 0.42, FALLEN = 1.42;
+// A horse: how long it stumbles, then rolls over (seconds).
+const HORSE_STUMBLE = 0.45, HORSE_ROLL = 0.5;
 // After the fight: how long the winners cheer (seconds).
 const CHEER = 1.6;
 // How long after a fight its figures are still in it (cheering, settling down).
@@ -183,6 +185,12 @@ function inFight(c: Cue, now: number, phase: number, beat: number): Pose {
 // (its beat).
 export function deathTurn(q: THREE.Quaternion, since: number, beat: number, rides: boolean): THREE.Quaternion {
   const r1 = frac(beat * 7.31), r2 = frac(beat * 13.7);
+  // (A horse stumbles, its forelegs giving and its head going down, then rolls over onto its side.)
+  if (rides) {
+    const pitch = 0.42 * Math.sin(Math.min(1, since / HORSE_STUMBLE) * Math.PI);
+    const f = Math.max(0, Math.min(1, (since - HORSE_STUMBLE * 0.55) / HORSE_ROLL)), over = (FALLEN + 0.1 * r2) * f * f;
+    return q.setFromEuler(new THREE.Euler(pitch, (r2 - 0.5) * 0.8 * f, (r1 < 0.5 ? 1 : -1) * over, 'YXZ'));
+  }
   const way = rides ? 2 + Math.floor(r1 * 2) : Math.floor(r1 * 4); // (0 back, 1 face down, 2 left, 3 right)
   const reel = 0.22 * Math.sin(Math.min(1, since / STAGGER) * Math.PI);
   const f = Math.max(0, Math.min(1, (since - STAGGER * 0.6) / FALL)), over = (FALLEN + 0.14 * r2) * f * f;
@@ -195,6 +203,15 @@ export function deathTurn(q: THREE.Quaternion, since: number, beat: number, ride
 export function deathBend(since: number, beat: number): { readonly bend: number; readonly arm: number; readonly crouch: number; readonly aim: number } {
   const way = Math.floor(frac(beat * 7.31) * 4), f = smooth(since / (STAGGER + FALL)), buckle = smooth(since / STAGGER);
   return { bend: (way === 0 ? 0.55 : way === 1 ? 0.35 : 0.2) * f, arm: (way === 1 ? 1.4 : 0.7) * f, crouch: (way === 1 ? 0.8 : 0.3) * buckle, aim: 1.5 * f };
+}
+// The legs of a figure struck down (the shader's legs, as legsOf): a man's
+// still; a horse's thrown about as it stumbles, kicking once it is down,
+// then still.
+export function deathLegs(since: number, rides: boolean): number {
+  if (!rides) return 3;
+  const down = HORSE_STUMBLE * 0.55 + HORSE_ROLL;
+  if (since < down) return 3 + 0.45 * Math.sin((since / down) * Math.PI);
+  return 3 + 0.55 * Math.sin((since - down) * 15) * Math.exp(-(since - down) * 1.6);
 }
 // How far a crouch lowers the figure (figure heights: its legs fold under it).
 export const dropOf = (crouch: number): number => 0.5 * (1 - Math.cos(crouch));

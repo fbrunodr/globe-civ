@@ -24,7 +24,7 @@ import { FORTIFY_BONUS, combatStrength, fightRounds, matchup } from './game.ts';
 import { HAIR_STYLES, UNIT_LOOK, colsOf, figuresFor, formationSlots, hairModel, headOffset, isMachine, rides, unitModel, variantOf, womenShare } from './unitModels.ts';
 import { FIGHT, PLAYS, Volleys, defendPlay, fallShare, falls, figureLooks, makeUnitMaterial, playAt, playOf, prepareUnitGeometry, type Play } from './unitView.ts';
 import { pairUp, type P2 } from './duel.ts';
-import { AFTER, armOf, deathBend, deathTurn, dropOf, legsOf, poseOf, poseTurn, type Cue } from './unitAnim.ts';
+import { AFTER, armOf, deathBend, deathLegs, deathTurn, dropOf, legsOf, poseOf, poseTurn, type Cue } from './unitAnim.ts';
 import { attackBlock, attackStyle, siegeStyle } from './unitClasses.ts';
 import { WorldLabel, disposeLabels } from './worldLabel.ts';
 import { triangles } from './lowpoly.ts';
@@ -306,7 +306,7 @@ function pose(now: number): void {
       const since = (t - s.fall) * FIGHT, fold = deathBend(since, s.beat);
       if (!s.rides) m.multiply(turn.makeTranslation(0, -dropOf(fold.crouch), 0));
       m.multiply(turn.makeRotationFromQuaternion(deathTurn(tip, since, s.beat, s.rides)));
-      legs = 3; arm = 3 + fold.arm; bends = s.rides ? [0, 0, 0, 0, 0, 0, 0] : [fold.bend, 0, fold.crouch, 0.6, fold.aim, 1, 0.4];
+      legs = deathLegs(since, s.rides); arm = 3 + fold.arm; bends = s.rides ? [0, 0, 0, 0, 0, 0, 0] : [fold.bend, 0, fold.crouch, 0.6, fold.aim, 1, 0.4];
     } else if (body) {
       const won = o ? (c.side === 'attacker' ? o.defender <= 0 && o.attacker > 0 : o.attacker <= 0) : false;
       const cue: Cue | null = fight && c.play && c.attack ? { sec, dur: FIGHT, play: c.play, attack: c.attack, side: c.side, engaged: s.to !== null || s.foe !== null || (mode === 'sheet' && c.attack.close === true), delay: s.delay, fall: s.fall * FIGHT, won } : null;
