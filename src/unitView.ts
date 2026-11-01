@@ -87,6 +87,10 @@ export const PLAYS: Record<AttackStyle, Play> = {
   // (Out all the way to the target, high, and back: the shots fall from there.)
   sortie: { fly: 3, charge: 1 / CHARGE, go: [0, 0.4], back: 0.6, strike: [0, 0], aim: false, shots: [{ t: 0.42, kind: 'shell' }, { t: 0.5, kind: 'bullet' }] },
 };
+// A defender charging an advancing gun line, once it has halted at short
+// range (as long a fight as the advance's: its figures come on as an
+// attacker's do, duel.ts).
+const COUNTER: Play = { dur: 4.6, close: true, charge: 1.1, go: [0.5, 0.62], back: 0.86, strike: [0.6, 0.86], aim: false, shots: [] };
 // How long a fight against `attack` lasts (seconds: both sides).
 export const durOf = (attack: Play): number => attack.dur ?? FIGHT;
 // Where a play is at `t` (a share of the fight): how far out (0..1, of its
@@ -199,7 +203,8 @@ interface Figure {
 }
 // (`enemy`: the figures of the unit it is at grips with, in a melee.)
 // (`reach`: how far it goes in, times its play's charge: further at a tile no one defends, into a city's streets.)
-interface Fight { at: THREE.Vector3; home: THREE.Vector3; t0: number; play: Play; fired: number; attack: Play; side: 'attacker' | 'defender'; won: boolean; enemy: Figure[]; reach: number }
+// (`counter`: the unit it will charge once an advancing gun line has halted (a defender that can't fire back).)
+interface Fight { at: THREE.Vector3; home: THREE.Vector3; t0: number; play: Play; fired: number; attack: Play; side: 'attacker' | 'defender'; won: boolean; enemy: Figure[]; reach: number; counter: Shown | null }
 // A figure struck down, lying where it fell (then sinking away).
 // (A machine's: a wreck burning, on land or at sea.)
 interface Corpse { wreck: Wreck | null; smoke: number; key: string; hair: number; hairColor: THREE.Color; skin: THREE.Color; phase: number; color: THREE.Color; pos: THREE.Vector3; up: THREE.Vector3; face: THREE.Vector3; fall: number; beat: number; horse: boolean; lift: readonly [number, number] }
@@ -455,6 +460,8 @@ export class UnitView {
     if (a) this.startFight(a, at, play, now, play, 'attacker', aWins);
     if (a && !main) a.fight!.reach = UNDEFENDED_CHARGE;
     if (a && main) { a.fight!.enemy = main.figures; main.fight!.enemy = a.figures; }
+    // (An assault by fire answered by a defender that can't fire back: it charges the gun line once that has halted.)
+    if (a && main && play.answered && !returnFire(main.unit.type) && falls(main.unit.type) && !main.unit.embarked && !a.unit.embarked) main.fight!.counter = a;
     const melee = a !== undefined && main !== undefined && play.close === true && !a.unit.embarked && !main.unit.embarked;
     if (melee) this.pairUp(a, main);
     if (result && a) this.doom(a, result.attackerHp, play, 'attacker', now);
@@ -464,7 +471,7 @@ export class UnitView {
 
   private startFight(s: Shown, at: THREE.Vector3, play: Play, now: number, attack: Play, side: 'attacker' | 'defender', won: boolean): void {
     const home = s.fight?.home ?? s.dir.clone();
-    s.fight = { at, home, t0: now, play, fired: 0, attack, side, won, enemy: [], reach: CHARGE };
+    s.fight = { at, home, t0: now, play, fired: 0, attack, side, won, enemy: [], reach: CHARGE, counter: null };
     s.after = null;
     s.march = null;
     for (const f of s.figures) Object.assign(f, unfought());
@@ -682,6 +689,14 @@ export class UnitView {
     }
     const p = f.play, { out, back } = playAt(p, t);
     s.alt = (p.fly ?? 0) * out;
+    // (Its counter-charge: from here it fights as an attacker closing in, each figure at one of the gun line's.)
+    const foe = f.counter;
+    if (foe && t >= COUNTER.go[0] && foe.fight) {
+      f.counter = null;
+      Object.assign(f, { side: 'attacker', play: COUNTER, attack: COUNTER });
+      this.pairUp(s, foe);
+      this.struck(foe, s);
+    }
     this.retarget(s, now);
     if (f.side === 'defender' && f.attack.close && t > f.play.strike[0] + 0.03 && t < f.play.strike[1]) this.join(s, now);
     if (s.figures.some((g) => g.goal)) this.duel(s, t, dt);
@@ -704,7 +719,8 @@ export class UnitView {
       const aims: (THREE.Vector3 | null)[] = s.figures.map(() => null);
       mine.forEach((g, k) => { const i = shooters[k % Math.max(1, shooters.length)]; if (i !== undefined) aims[i] = g.pos.clone().addScaledVector(g.up, 0.45 * this.size); });
       // (At close quarters (gunmen firing at whoever has come at them): each at its own foe, point-blank.)
-      if (f.attack.close) s.figures.forEach((g, i) => { const e = g.foeFig; if (e && e.fall > now) aims[i] = e.pos.clone().addScaledVector(e.up, 0.45 * this.size); });
+      // (Or a foe that has come close: a charge against a gun line.)
+      s.figures.forEach((g, i) => { const e = g.foeFig; if (!aims[i] && e && e.fall > now && (f.attack.close || e.up.distanceTo(g.up) < 2.5 * this.size)) aims[i] = e.pos.clone().addScaledVector(e.up, 0.45 * this.size); });
       const { fire, land } = this.volleys.loose(s.figures.map((g) => g.pos.clone().addScaledVector(g.up, 0.75 * this.size)), f.at, this.env.step * 0.12, now, f.fired * 7 + s.unit.id, shot.kind, aims);
       s.figures.forEach((g, i) => { if (g.fall > now) g.shot = fire[i] ?? now; });
       mine.forEach((g, k) => { const i = shooters[k % Math.max(1, shooters.length)]; const t = i === undefined ? undefined : land[i]; if (t !== undefined) g.fall = t; });
