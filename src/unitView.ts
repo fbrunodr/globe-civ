@@ -654,12 +654,14 @@ export class UnitView {
       for (const g of s.figures) Object.assign(g, unfought());
       if (s.gone) { this.drop(s); return; }
       s.dir.copy(f.home);
+      s.laid = null; // (each walks back to its place from wherever the fight left it)
       if (!s.march) this.settle(s, s.k);
       return;
     }
     const p = f.play, { out, back } = playAt(p, t);
     s.alt = (p.fly ?? 0) * out;
     this.retarget(s, now);
+    if (f.side === 'defender' && f.attack.close && t > f.play.strike[0] + 0.03 && t < f.play.strike[1]) this.join(s, now);
     if (s.figures.some((g) => g.goal)) this.duel(s, t, dt);
     else {
       s.dir.copy(f.home).lerp(f.at, CHARGE * p.charge * out).normalize();
@@ -705,6 +707,32 @@ export class UnitView {
       f.off.copy(f.up).sub(f.at); // (from here it walks to its place once the fight is over)
       const foe = f.foeFig?.up ?? f.foe ?? f.goal;
       f.face = this.tangent(f.up, back ? f.home.clone().sub(reach) : out < 0.98 ? f.goal.clone().sub(f.home) : foe.clone().sub(f.up));
+    }
+  }
+  // In a melee, a defender's figure no one has come at (a rear rank) steps
+  // up to the nearest attacker within a few paces and joins in, standing at
+  // striking distance from it: the fight becomes one press, as in Civ V.
+  private join(s: Shown, now: number): void {
+    const enemy = s.fight!.enemy;
+    for (const f of s.figures) {
+      if (f.foeFig || now > f.fall) continue;
+      let best: Figure | null = null, bd = (3 * this.size) ** 2;
+      for (const g of enemy) {
+        if (g.fall <= now || !g.goal) continue;
+        const dd = f.up.distanceToSquared(g.up);
+        if (dd < bd) { bd = dd; best = g; }
+      }
+      if (!best) continue;
+      f.foeFig = best;
+      f.beat = (best.beat ?? best.phase / (Math.PI * 2)) + 0.5;
+      // (To arm's length of it, a little to one side of whoever is already at it.)
+      const away = f.up.clone().sub(best.up), reach = 0.75 * this.size;
+      away.addScaledVector(best.up, -away.dot(best.up));
+      if (away.length() > reach) {
+        f.at.copy(best.up).addScaledVector(away.normalize(), reach).normalize();
+        f.off.copy(f.up).sub(f.at);
+        f.still = false;
+      }
     }
   }
   // In a melee, a figure whose foe is struck down (and has had a moment to
