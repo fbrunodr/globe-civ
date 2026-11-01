@@ -743,7 +743,8 @@ export class UnitView {
     if (!s.fight && (sec > dur + AFTER || (s.march && now >= s.march.t0))) { s.after = null; return null; }
     // (Its foe struck down and no other to turn to: it stands ready.)
     const engaged = f.foeFig ? f.foeFig.fall + 0.35 > now : f.goal !== null || f.foe !== null;
-    return { sec, dur, play: c.play, attack: c.attack, side: c.side, engaged, delay: f.delay, fall: f.fall - c.t0, won: c.won };
+    const rear = s.order === 'line' && (orderSlots(s.unit.type, s.figures.length, 'line')[f.slot]?.[1] ?? 0) < 0;
+    return { rear, sec, dur, play: c.play, attack: c.attack, side: c.side, engaged, delay: f.delay, fall: f.fall - c.t0, won: c.won };
   }
   // How far a corpse has sunk away (0..1): the dead after a while, wrecks
   // when they have burnt out.

@@ -170,6 +170,7 @@ export interface Cue {
   readonly sec: number; readonly dur: number;
   readonly play: Play; readonly attack: Play; readonly side: 'attacker' | 'defender';
   readonly engaged: boolean; readonly delay: number; readonly fall: number; readonly won: boolean;
+  readonly rear?: boolean; // in the rear rank of a firing line: it fires standing, over the kneeling front rank
 }
 
 // A figure's pose now: in a fight (its cue), on the march (`walk`), or at
@@ -226,11 +227,13 @@ function inFight(c: Cue, now: number, phase: number, beat: number, whirl: boolea
     // Shot at: cowering from the first shot until a little after the last.
     const t0 = s(attack.shots[0]?.t ?? 0.3), t1 = s(attack.shots[attack.shots.length - 1]?.t ?? 0.6) + 0.5;
     const shots = play.shots.map((x) => s(x.t));
-    const base = shots.length ? shooting(sec, shots, whirl, play.shots[0]?.kind === 'bullet') : into;
-    return sec < t0 ? mix(into, base, sec / BLEND) : mix(base, cower(now, phase), smooth((sec - t0 + 0.15) / BLEND) * (sec < t1 ? 1 : 1 - smooth((sec - t1) / 0.3)));
+    const base = shots.length ? shooting(sec, shots, whirl, play.shots[0]?.kind === 'bullet' && !c.rear, play.shots[0]?.kind === 'bullet') : into;
+    // (Rising from its cover to take its own shots: none while it draws, looses and lowers.)
+    const firing = Math.max(0, ...shots.map((t) => (sec > t - 0.6 && sec < t + 0.7 ? Math.min(1, (sec - t + 0.6) / 0.2, (t + 0.7 - sec) / 0.2) : 0)));
+    return sec < t0 ? mix(into, base, sec / BLEND) : mix(base, cower(now, phase), smooth((sec - t0 + 0.15) / BLEND) * (sec < t1 ? 1 : 1 - smooth((sec - t1) / 0.3)) * (1 - firing));
   }
   // An attacker shooting (or rolling in: machines aren't posed).
-  return mix(into, shooting(sec, play.shots.map((x) => s(x.t)), whirl, play.shots[0]?.kind === 'bullet'), sec / BLEND);
+  return mix(into, shooting(sec, play.shots.map((x) => s(x.t)), whirl, play.shots[0]?.kind === 'bullet' && !c.rear, play.shots[0]?.kind === 'bullet'), sec / BLEND);
 }
 
 // ---- struck down ----
