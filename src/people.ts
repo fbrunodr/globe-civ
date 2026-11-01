@@ -111,7 +111,8 @@ export function person(d: Dress, armL: ArmPose = HANG, armR: ArmPose = HANG, swi
   // Legs: thigh and shin, boxes meeting at the knee (the shin bends
   // there); the shoe a wedge.
   for (const side of [1, -1] as const) {
-    const x = side * (f ? 0.056 : 0.062), lm = swing?.legs(side), r = f ? 0.056 : 0.054;
+    // (Under a skirt the thighs are slimmer, inside it as it swings: only the shins show.)
+    const x = side * (f ? 0.056 : 0.062), lm = swing?.legs(side), r = skirt === 'none' ? (f ? 0.056 : 0.054) : 0.04;
     // (Under a skirt to the ankle only the shoes show.)
     if (skirt !== 'ankle') {
       add(limb([[x, HIP + 0.03, 0], [x * 0.97, KNEE[0], KNEE[1]]], [r, 0.038], legPaint, 4, { caps: [false, false] }), legTag, lm);
