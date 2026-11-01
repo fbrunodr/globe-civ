@@ -464,7 +464,7 @@ addEventListener('resize', resize);
 resize();
 frame(build());
 showBattle();
-if (import.meta.env.DEV) Object.assign(window, { __units: { volleys, battle, setMode, startFight, camera, controls } });
+if (import.meta.env.DEV) Object.assign(window, { __units: { volleys, battle, setMode, startFight, camera, controls, view: () => battleView } });
 renderer.setAnimationLoop(() => {
   const now = performance.now() / 1000;
   time.value = now;

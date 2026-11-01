@@ -184,13 +184,14 @@ interface Figure {
   // another); where it stands to strike it now (`reach`: walking towards
   // `goal`), and how far from its foe that is (world units).
   foeFig: Figure | null; reach: THREE.Vector3 | null; gap: number;
+  held: boolean; // its place set by the fight (stepped up to a foe), not by its formation
 }
 // (`enemy`: the figures of the unit it is at grips with, in a melee.)
 interface Fight { at: THREE.Vector3; home: THREE.Vector3; t0: number; play: Play; fired: number; attack: Play; side: 'attacker' | 'defender'; won: boolean; enemy: Figure[] }
 // A figure struck down, lying where it fell (then sinking away).
 // (A machine's: a wreck burning, on land or at sea.)
 interface Corpse { wreck: Wreck | null; smoke: number; key: string; hair: number; hairColor: THREE.Color; skin: THREE.Color; phase: number; color: THREE.Color; pos: THREE.Vector3; up: THREE.Vector3; face: THREE.Vector3; fall: number; beat: number; horse: boolean; lift: readonly [number, number] }
-const unfought = () => ({ home: null, goal: null, foe: null, face: null, delay: 0, curve: 0, fall: Infinity, beat: null, shot: -Infinity, smoke: 0, dust: 0, foeFig: null, reach: null, gap: 0 });
+const unfought = () => ({ home: null, goal: null, foe: null, face: null, delay: 0, curve: 0, fall: Infinity, beat: null, shot: -Infinity, smoke: 0, dust: 0, foeFig: null, reach: null, gap: 0, held: false });
 // What a machine struck down leaves: a wreck on land, or a ship going down
 // (aircraft and figures leave none).
 type Wreck = 'land' | 'sea';
@@ -732,6 +733,7 @@ export class UnitView {
         f.at.copy(best.up).addScaledVector(away.normalize(), reach).normalize();
         f.off.copy(f.up).sub(f.at);
         f.still = false;
+        f.held = true;
       }
     }
   }
@@ -908,6 +910,7 @@ export class UnitView {
     }
     const afloat = this.afloat(s.unit);
     for (const f of s.figures) {
+      if (f.held) continue;
       f.at.copy(dirs[f.slot]!);
       f.still = false;
       if (f.fresh) { f.fresh = false; f.off.set(0, 0, 0); f.head.copy(s.forward); this.place(s, f, f.at, afloat); f.last.copy(f.pos); }
