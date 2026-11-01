@@ -26,15 +26,19 @@ function turn(g: Game): void {
 }
 
 describe('WR1: a city falls only when its walls are down and a melee unit enters', () => {
-  it('archers wear it down but never take it', () => {
+  it('archers wear it down by fire, unanswered, but fire never takes it: closing in does', () => {
     const { g, city, nb } = setup();
     for (let i = 0; i < 20; i++) {
       const a = g.createUnit('archer', 1, nb);
-      g.attack(a, city.tile);
+      g.attack(a, city.tile, 'ranged');
+      expect(a.hp).toBe(100);
       if (!a.dead) g.removeUnit(a);
     }
     expect(city.owner).toBe(0);
     expect(city.hp).toBe(0);
+    const a = g.createUnit('archer', 1, nb);
+    g.attack(a, city.tile);
+    expect(city.owner).toBe(1);
   });
 
   it('a melee unit takes it at 0 HP, not before', () => {

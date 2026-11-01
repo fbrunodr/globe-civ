@@ -80,7 +80,6 @@ export const PLAYS: Record<AttackStyle, Play> = {
   lob: still([{ t: 0.3, kind: 'stone' }]),
   shell: still([{ t: 0.28, kind: 'shell' }, { t: 0.6, kind: 'shell' }]),
   fire: still([{ t: 0.25, kind: 'bullet' }, { t: 0.45, kind: 'bullet' }, { t: 0.65, kind: 'bullet' }]),
-  fireCharge: { dur: 5.2, close: true, charge: 1, go: [0.17, 0.33], back: 0.86, strike: [0.31, 0.86], aim: false, shots: [{ t: 0.06, kind: 'bullet' }] },
   roll: { charge: 0.6, go: [0, 0.55], back: 0.8, strike: [0, 0], aim: false, shots: [{ t: 0.25, kind: 'shell' }, { t: 0.6, kind: 'bullet' }] },
   // (Out all the way to the target, high, and back: the shots fall from there.)
   sortie: { fly: 3, charge: 1 / CHARGE, go: [0, 0.4], back: 0.6, strike: [0, 0], aim: false, shots: [{ t: 0.42, kind: 'shell' }, { t: 0.5, kind: 'bullet' }] },
@@ -107,18 +106,14 @@ export function figureOut(p: Play, t: number, delay: number): { out: number; bac
 }
 // How far a path bows to one side, `out` along it.
 export const bow = (curve: number, out: number): number => curve * Math.sin(Math.PI * out);
-// A defender: shoots back once, or strikes where it stands.
+// A defender standing its ground (it strikes whoever comes at it).
 const DEFEND: Play = { charge: 0, go: [0, 0], back: 1, strike: [0.2, 0.8], aim: false, shots: [] };
-export const playOf = (style: AttackStyle | null, type: UnitKey): Play => {
-  if (style) return PLAYS[style];
-  const kind = returnFire(type);
-  return kind ? still([{ t: 0.45, kind }]) : DEFEND;
-};
+export const playOf = (style: AttackStyle | null): Play => (style ? PLAYS[style] : DEFEND);
 // A defender against `attack`: come at, it strikes back from when the
-// attackers arrive until they fall back (shooting once as they come, if
-// it has time); shot at, it shoots back.
+// attackers arrive until they fall back (firing once at them as they come,
+// if it has time); shot at, it never fires back: it takes cover (unitAnim.ts).
 export function defendPlay(attack: Play, type: UnitKey): Play {
-  if (!attack.close) return playOf(null, type);
+  if (!attack.close) return { ...DEFEND, strike: [0, 0] };
   const met = attack.go[1], kind = returnFire(type);
   return { charge: 0, go: [0, 0], back: 1, strike: [met - 0.04, attack.back], aim: false, shots: kind && met > 0.2 ? [{ t: met - 0.18, kind }] : [] };
 }

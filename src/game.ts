@@ -1,4 +1,4 @@
-import { attackBlock, attackStyle, siegeStyle, UNIT_CLASS, type AttackStyle } from './unitClasses.ts';
+import { attackBlock, attackStyle, canAssault, canAttackType, canShoot, isShooter, siegeStyle, UNIT_CLASS, type AttackMode, type AttackStyle } from './unitClasses.ts';
 import { buildFlora, type Flora } from './flora.ts';
 import type { ArchCiv } from './architecture.ts';
 import type { Globe, Tile } from './goldberg.ts';
@@ -120,11 +120,16 @@ const STARTING: readonly BuildKey[] = ['warrior', 'slinger', 'scout', 'settler',
 // ---- combat (shared with the Units page's battle sandbox) ----
 // Fortified, a unit defends this much better.
 export const FORTIFY_BONUS = 0.5;
-// A unit's strength attacking, or defending with a bonus (a fraction:
-// ground, city, fortified), weakened as it is hurt (half at no HP).
-export function combatStrength(type: UnitKey, role: 'atk' | 'def', hp: number, bonus: number): number {
-  const T = unitDef(type);
-  return (role === 'atk' ? T.atk : T.def * (1 + bonus)) * (0.5 + 0.5 * hp / 100);
+// Which of its strengths a unit fights with (rules.ts): at close quarters
+// (attacking or defending), shooting, or under fire.
+export type Stat = 'melee' | 'ranged' | 'guard';
+// What an attacker and its target fight with, as the attack is made.
+export const statOf = (mode: AttackMode, role: 'atk' | 'def'): Stat => (mode === 'melee' ? 'melee' : role === 'atk' ? 'ranged' : 'guard');
+// A unit's strength, with a bonus (a fraction: defending, its ground, city,
+// fortified), weakened as it is hurt (half at no HP).
+export function combatStrength(type: UnitKey, stat: Stat, hp: number, bonus: number): number {
+  const T = unitDef(type), s = stat === 'melee' ? T.melee : stat === 'ranged' ? T.rangedAtk ?? 0 : T.rangedDef;
+  return s * (1 + bonus) * (0.5 + 0.5 * hp / 100);
 }
 // Siege engines are this much weaker against units than their attack
 // (they are built for walls: twice as strong against a city).
@@ -138,20 +143,24 @@ export function matchup(self: UnitKey, other: UnitKey, role: 'atk' | 'def'): num
   let k = 1;
   if (O.mounted && !O.armored) k += S.vsMounted ?? 0;
   if (O.armored) k += S.vsArmor ?? 0;
-  if (role === 'atk' && (O.ranged || O.siege)) k += S.vsRanged ?? 0;
+  if (role === 'atk' && (isShooter(other) || O.siege)) k += S.vsRanged ?? 0;
   if (domainOf(O) === 'sea') k += S.vsShips ?? 0;
   if (domainOf(O) === 'air') k += S.vsAir ?? 0;
   if (role === 'atk' && S.siege) k *= SIEGE_VS_UNITS;
   return k;
 }
 // A fight between strengths A and D: exchanges of 18-31 damage, each won by
-// the attacker with odds A / (A + D), until one side has no HP left. A
-// ranged attack is a volley: three exchanges at most, half the damage back.
+// the attacker with odds A / (A + D). A melee goes on until one side has
+// no HP left; fire is a volley of three exchanges, the target never firing
+// back (an exchange it wins is a miss); a dogfight (fighters intercepting)
+// is three exchanges, each side hurting the other.
 // The HP each side is left with (at or below 0: destroyed).
-export function fightRounds(hpA: number, hpD: number, A: number, D: number, ranged: boolean, rng: () => number): { attacker: number; defender: number } {
-  for (let round = 0; hpA > 0 && hpD > 0 && (!ranged || round < 3); round++) {
+export type Fight = 'melee' | 'ranged' | 'dogfight';
+export function fightRounds(hpA: number, hpD: number, A: number, D: number, kind: Fight, rng: () => number): { attacker: number; defender: number } {
+  const back = kind === 'melee' ? 1 : kind === 'dogfight' ? 0.5 : 0;
+  for (let round = 0; hpA > 0 && hpD > 0 && (kind === 'melee' || round < 3); round++) {
     const dmg = 18 + Math.floor(rng() * 14);
-    if (rng() < A / (A + D)) hpD -= dmg; else hpA -= ranged ? Math.round(dmg / 2) : dmg;
+    if (rng() < A / (A + D)) hpD -= dmg; else hpA -= Math.round(dmg * back);
   }
   return { attacker: hpA, defender: hpD };
 }
@@ -190,6 +199,7 @@ export interface Unit {
   fortified: boolean;
   skipped: boolean;
   goal: number | null;
+  goalMode: AttackMode | null;          // how it attacks at its goal (null: as it does unless told: defaultMode)
   dead: boolean;
   aiTarget: number | null;
 }
@@ -238,6 +248,7 @@ export interface CombatPreview {
   atk: number;
   def: number;
   defender: Unit;
+  mode: AttackMode;
 }
 
 export interface Message {
@@ -424,14 +435,26 @@ export class Game {
     return this.units.some((u) => u.tile === t && u.packedIn === null && u.owner !== owner && !this.atWar(owner, u.owner));
   }
 
-  canAttack(u: Unit): boolean { return unitDef(u.type).atk > 0; }
-  // Why `u` can't attack `tile` now (its class against the unit that would
-  // defend it: unitClasses.ts), or null if it can.
-  attackBlockAt(u: Unit, tile: number): string | null {
+  canAttack(u: Unit): boolean { return canAttackType(u.type); }
+  // How `u` attacks `tile` unless told otherwise: by fire if it can shoot
+  // and there is something there to shoot (a defender, a city's walls
+  // standing); else it closes in (to take what is left: a fallen city, a
+  // civilian).
+  attackModeFor(u: Unit, tile: number): AttackMode {
+    if (!canShoot(u.type)) return 'melee';
+    const city = this.cityByTile.get(tile);
+    const target = this.bestDefender(tile, u.owner, 'ranged') !== null || (city !== undefined && city.owner !== u.owner && city.hp > 0);
+    return target || !canAssault(u.type) ? 'ranged' : 'melee';
+  }
+  // Why `u` can't attack `tile` now, so (`mode`: its class against the
+  // unit that would defend it: unitClasses.ts), or null if it can.
+  attackBlockAt(u: Unit, tile: number, mode: AttackMode = this.attackModeFor(u, tile)): string | null {
     if (!this.canAttack(u)) return 'cannot attack';
     if (domainOf(unitDef(u.type)) === 'air' && !this.inRange(u, tile)) return 'out of range';
-    const d = this.bestDefender(tile, u.owner), where = { atSea: this.isWater(tile), city: this.cityByTile.has(tile), embarked: this.isEmbarked(u) };
-    if (d) return attackBlock(u.type, d.type, where);
+    const d = this.bestDefender(tile, u.owner, mode), where = { atSea: this.isWater(tile), city: this.cityByTile.has(tile), embarked: this.isEmbarked(u) };
+    if (d) return attackBlock(u.type, d.type, where, mode);
+    if (mode === 'melee' && !canAssault(u.type)) return 'cannot close in';
+    if (mode === 'ranged' && !canShoot(u.type)) return 'cannot shoot';
     if (where.embarked && !unitDef(u.type).amphibious) return 'cannot attack while embarked';
     return null;
   }
@@ -559,7 +582,7 @@ export class Game {
     tile = this.freeTileNear(type, owner, tile) ?? tile;
     this.record('unitCreated', owner, { unit: type, tile });
     const u: Unit = { id: this.nextId++, type, owner, tile, packedIn: null, moves: this.maxMoves(type, owner), hp: 100,
-      fortified: false, skipped: false, goal: null, dead: false, aiTarget: null };
+      fortified: false, skipped: false, goal: null, goalMode: null, dead: false, aiTarget: null };
     this.units.push(u);
     return u;
   }
@@ -627,7 +650,7 @@ export class Game {
       if (!reach || v.owner === u.owner || !this.atWar(u.owner, v.owner) || v.packedIn !== null) continue;
       const near = this.tilesWithinMap(v.tile, reach);
       if (!way.some((t) => near.has(t))) continue;
-      const after = fightRounds(v.hp, u.hp, this.unitStrength(v, 'atk', tile) * matchup(v.type, u.type, 'atk'), this.unitStrength(u, 'def', tile), true, this.rng);
+      const after = fightRounds(v.hp, u.hp, this.unitStrength(v, 'ranged', 'atk', tile) * matchup(v.type, u.type, 'atk'), this.unitStrength(u, 'ranged', 'def', tile), 'ranged', this.rng);
       u.hp = after.defender;
       this.record('intercept', v.owner, { unit: v.type, target: u.type, hp: Math.max(0, u.hp) });
       if (u.owner === HUMAN || v.owner === HUMAN) this.log(`${this.players[v.owner].name} anti-aircraft fire hit the ${this.players[u.owner].name} ${unitDef(u.type).name}${u.hp <= 0 ? ', shooting it down' : ''}.`);
@@ -647,7 +670,7 @@ export class Game {
       if (!best || v.hp > best.hp) best = v;
     }
     if (!best) return true;
-    const after = fightRounds(best.hp, u.hp, this.unitStrength(best, 'atk', tile) * matchup(best.type, u.type, 'atk'), this.unitStrength(u, 'def', tile), true, this.rng);
+    const after = fightRounds(best.hp, u.hp, this.unitStrength(best, 'ranged', 'atk', tile) * matchup(best.type, u.type, 'atk'), this.unitStrength(u, 'ranged', 'def', tile), 'dogfight', this.rng);
     best.hp = after.attacker;
     u.hp = after.defender;
     this.record('intercept', best.owner, { unit: best.type, target: u.type, hp: Math.max(0, u.hp) });
@@ -748,11 +771,13 @@ export class Game {
     for (const v of this.armyOf(u)) { this.onStep?.(v, v.tile, t); v.tile = t; }
   }
 
-  goTo(u: Unit, goal: number): void {
+  // (`mode`: how it attacks there, if it is an enemy's: unless told, attackModeFor.)
+  goTo(u: Unit, goal: number, mode: AttackMode | null = null): void {
     if (domainOf(unitDef(u.type)) === 'air') { this.fly(u, goal); return; }
     if (this.canParadrop(u, goal)) { this.record('rebase', u.owner, { unit: u.type, from: u.tile, to: goal }); u.tile = goal; u.moves = 0; u.fortified = false; return; }
     this.record('move', u.owner, { unit: u.type, id: u.id, from: u.tile, to: goal });
     u.goal = goal;
+    u.goalMode = mode;
     u.fortified = false;
     this.continueGoto(u);
   }
@@ -764,7 +789,8 @@ export class Game {
       if (!path || !path.length) { u.goal = null; break; }
       const next = path[0];
       if (this.isEnemyOccupied(next, u.owner)) {
-        if (next === u.goal && this.attackBlockAt(u, next) === null) this.attack(u, next);
+        const mode = u.goalMode ?? this.attackModeFor(u, next);
+        if (next === u.goal && this.attackBlockAt(u, next, mode) === null) this.attack(u, next, mode);
         u.goal = null;
         break;
       }
@@ -784,18 +810,20 @@ export class Game {
     if (u.owner === HUMAN) this.updateVisibility();
   }
 
-  unitStrength(u: Unit, role: 'atk' | 'def', tile: number): number {
-    const fx = this.effectsOf(this.players[u.owner]!), combat = 1 + total(fx, 'combat') / 100;
-    if (role === 'atk') return combatStrength(u.type, 'atk', u.hp, 0) * (combat + (this.cityByTile.has(tile) ? total(fx, 'vsCities') / 100 : 0));
+  // A unit's strength in an attack made so (`mode`), attacking or defending.
+  unitStrength(u: Unit, mode: AttackMode, role: 'atk' | 'def', tile: number): number {
+    const fx = this.effectsOf(this.players[u.owner]!), combat = 1 + total(fx, 'combat') / 100, stat = statOf(mode, role);
+    if (role === 'atk') return combatStrength(u.type, stat, u.hp, 0) * (combat + (this.cityByTile.has(tile) ? total(fx, 'vsCities') / 100 : 0));
     let bonus = this.defenseBonus(tile) + (this.ownerOf(tile) === u.owner ? total(fx, 'homeDefense') / 100 : 0);
     const city = this.cityByTile.get(tile);
     if (city) bonus += 0.5 + (city.buildings.has('walls') ? 1 : 0) + 0.25 * (Number(city.buildings.has('barracks')) + Number(city.buildings.has('stable')));
     if (u.fortified) bonus += FORTIFY_BONUS;
-    if (this.isEmbarked(u)) return combatStrength(u.type, 'def', u.hp, 0) * combat * EMBARKED_DEF;
-    return combatStrength(u.type, 'def', u.hp, bonus) * combat;
+    if (this.isEmbarked(u)) return combatStrength(u.type, stat, u.hp, 0) * combat * EMBARKED_DEF;
+    return combatStrength(u.type, stat, u.hp, bonus) * combat;
   }
 
-  bestDefender(tile: number, attackerOwner: number): Unit | null {
+  // The unit that defends a tile against an attack made so (the strongest against it).
+  bestDefender(tile: number, attackerOwner: number, mode: AttackMode = 'melee'): Unit | null {
     let best: Unit | null = null, bestS = -1;
     // (An army's units defend their commander, on its tile; the commander
     // itself only once none is left.)
@@ -803,37 +831,38 @@ export class Game {
       // (Aircraft never defend a tile, nor ships in port.)
       const dom = domainOf(unitDef(d.type));
       if (d.tile !== tile || d.owner === attackerOwner || unitDef(d.type).civilian || dom === 'air' || (dom === 'sea' && !this.isWater(tile))) continue;
-      const s = this.unitStrength(d, 'def', tile) + (d.type === 'commander' ? -1000 : 0);
+      const s = this.unitStrength(d, mode, 'def', tile) + (d.type === 'commander' ? -1000 : 0);
       if (s > bestS) { best = d; bestS = s; }
     }
     return best;
   }
 
-  // Strengths of a prospective fight, or null if nothing defends the tile.
-  combatPreview(u: Unit, tile: number): CombatPreview | null {
-    const d = this.bestDefender(tile, u.owner);
+  // Strengths of a prospective fight (made so: `mode`), or null if nothing defends the tile.
+  combatPreview(u: Unit, tile: number, mode: AttackMode = this.attackModeFor(u, tile)): CombatPreview | null {
+    const d = this.bestDefender(tile, u.owner, mode);
     if (!d) return null;
-    return { atk: this.unitStrength(u, 'atk', tile) * matchup(u.type, d.type, 'atk'), def: this.unitStrength(d, 'def', tile) * matchup(d.type, u.type, 'def'), defender: d };
+    return { atk: this.unitStrength(u, mode, 'atk', tile) * matchup(u.type, d.type, 'atk'), def: this.unitStrength(d, mode, 'def', tile) * matchup(d.type, u.type, 'def'), defender: d, mode };
   }
 
-  attack(u: Unit, tile: number): void {
-    if (this.attackBlockAt(u, tile) !== null) return;
+  // (`mode`: by fire, or closing in: unless told, attackModeFor.)
+  attack(u: Unit, tile: number, mode: AttackMode = this.attackModeFor(u, tile)): void {
+    if (this.attackBlockAt(u, tile, mode) !== null) return;
     u.moves = 0;
     if (domainOf(unitDef(u.type)) === 'air' && (!this.flak(u, tile) || !this.intercept(u, tile))) return;
     u.fortified = false;
-    const ranged = unitDef(u.type).ranged === true;
+    const ranged = mode === 'ranged';
     // (Attacking a civ at peace is a declaration of war.)
     const target = this.cityByTile.get(tile)?.owner ?? this.units.find((v) => v.tile === tile && v.owner !== u.owner)?.owner;
     if (target !== undefined && target !== u.owner && !this.atWar(u.owner, target)) this.declareWar(u.owner, target);
-    const d = this.bestDefender(tile, u.owner);
-    const style = (d ? attackStyle(u.type, d.type) : siegeStyle(u.type)) ?? 'melee';
+    const d = this.bestDefender(tile, u.owner, mode);
+    const style = (d ? attackStyle(u.type, d.type, mode) : siegeStyle(u.type, mode)) ?? 'melee';
     if (!d) this.onBattle?.(u, tile, style);
     if (d) {
       // (The counters: pikes against horse, a charge against archers...)
-      const A = this.unitStrength(u, 'atk', tile) * matchup(u.type, d.type, 'atk');
-      const D = this.unitStrength(d, 'def', tile) * matchup(d.type, u.type, 'def');
+      const A = this.unitStrength(u, mode, 'atk', tile) * matchup(u.type, d.type, 'atk');
+      const D = this.unitStrength(d, mode, 'def', tile) * matchup(d.type, u.type, 'def');
       const before = { a: u.hp, d: d.hp };
-      const after = fightRounds(u.hp, d.hp, A, D, ranged, this.rng);
+      const after = fightRounds(u.hp, d.hp, A, D, mode, this.rng);
       this.onBattle?.(u, tile, style, { defender: d.id, attackerHp: after.attacker, defenderHp: after.defender });
       u.hp = after.attacker;
       d.hp = after.defender;
@@ -850,16 +879,16 @@ export class Game {
       if (d.hp > 0) return; // the volley did not finish it
       this.removeUnit(d);
       if (involved) this.log(`${an} ${unitDef(u.type).name} defeated ${dn} ${unitDef(d.type).name}.`);
-      if (this.bestDefender(tile, u.owner)) return;
+      if (this.bestDefender(tile, u.owner, mode)) return;
     }
     // No defenders left: a city still stands while it has hit points.
     const city = this.cityByTile.get(tile);
     if (city && city.owner !== u.owner && city.hp > 0) {
       // That attack went into the defender, or into the walls; entering takes another.
-      if (!d) this.siege(u, city, ranged);
+      if (!d) this.siege(u, city, mode);
       return;
     }
-    if (ranged) return; // ranged units never move in
+    if (ranged) return; // fire never moves in
     // Civilians are captured and the attacker moves in (its army with it).
     for (const v of this.unitsAt(tile)) {
       if (v.owner === u.owner) continue;
@@ -883,12 +912,13 @@ export class Game {
   }
 
   // A unit attacks a city with no defenders: a few exchanges with its walls.
-  private siege(u: Unit, city: City, ranged: boolean): void {
-    const A = this.unitStrength(u, 'atk', city.tile) * (unitDef(u.type).siege ? 2 : 1), D = this.cityStrength(city);
+  // (By fire, the walls don't answer: the city's own bombardment is its answer.)
+  private siege(u: Unit, city: City, mode: AttackMode): void {
+    const A = this.unitStrength(u, mode, 'atk', city.tile) * (unitDef(u.type).siege ? 2 : 1), D = this.cityStrength(city);
     for (let round = 0; round < 3 && u.hp > 0 && city.hp > 0; round++) {
       const dmg = 18 + Math.floor(this.rng() * 14);
       if (this.rng() < A / (A + D)) city.hp = Math.max(0, city.hp - dmg);
-      else u.hp -= ranged ? Math.round(dmg / 2) : dmg;
+      else if (mode === 'melee') u.hp -= dmg;
     }
     const involved = u.owner === HUMAN || city.owner === HUMAN;
     if (u.hp <= 0) {
@@ -909,7 +939,7 @@ export class Game {
       if (!target || u.hp < target.hp) target = u;
     }
     if (!target) return;
-    const dmg = Math.min(35, Math.round(10 + (6 * this.cityStrength(city)) / Math.max(1, unitDef(target.type).def)));
+    const dmg = Math.min(35, Math.round(10 + (6 * this.cityStrength(city)) / Math.max(1, unitDef(target.type).rangedDef)));
     target.hp -= dmg;
     const involved = target.owner === HUMAN || city.owner === HUMAN;
     if (target.hp <= 0) {
@@ -1550,7 +1580,7 @@ export class Game {
       if (key === 'settler') return ['settler'];
       const d = unitDef(key);
       if (d.civilian || key === 'commander' || key === 'scout') return [];
-      const out: ProdTarget[] = ['military', d.siege ? 'siege' : d.ranged ? 'ranged' : d.mounted ? 'mounted' : 'melee'];
+      const out: ProdTarget[] = ['military', d.siege ? 'siege' : isShooter(key) ? 'ranged' : d.mounted ? 'mounted' : 'melee'];
       return out;
     }
     return isWonder(key) ? ['wonder'] : ['building'];

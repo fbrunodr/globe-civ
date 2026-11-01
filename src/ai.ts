@@ -7,6 +7,7 @@ import { TECH_KEYS, techDef, type TechKey } from './techs.ts';
 import { POLITICS_KEYS, politicsDef, policyDef, SLOT_KINDS, fits, type PoliticsKey, type GovernmentKey, type PolicyKey } from './politics.ts';
 import { TRAIT_KEYS, traitDef, PATH_KEYS, PATHS, type PathKey, type TraitKey } from './identity.ts';
 import { mulberry32 } from './rng.ts';
+import { canAttackType } from './unitClasses.ts';
 import { MIN_WAR, type Game, type Player, type Unit, type City, type DealSide } from './game.ts';
 
 // Deliberately simple AI: expand with settlers, keep a garrison in every
@@ -29,7 +30,7 @@ export function aiTurn(g: Game, p: Player): void {
   const isMilitary = (u: Unit) => !unitDef(u.type).civilian;
   // (A garrison is a land unit: ships in port and aircraft don't hold a city.)
   const garrisoned = (c: City) => units.some((u) => u.tile === c.tile && isMilitary(u) && domainOf(unitDef(u.type)) === 'land');
-  const spare = units.filter((u) => isMilitary(u) && unitDef(u.type).atk > 0 && !g.cityByTile.has(u.tile)).length;
+  const spare = units.filter((u) => isMilitary(u) && canAttackType(u.type) && !g.cityByTile.has(u.tile)).length;
   const military = units.filter(isMilitary).length;
   p.offensive = spare >= 3 && g.players.some((o) => g.atWar(p.id, o.id));
 
@@ -73,7 +74,9 @@ function bestUnit(g: Game, city: City, role: 'def' | 'atk' | 'siege' | 'sea' | '
     // (The AI builds no nuclear weapons.)
     if (d.civilian || d.nuke || k === 'commander' || k === 'scout' || !g.canBuild(city, k) || domainOf(d) !== domain) continue;
     if (domain === 'land' && (role === 'siege') !== (d.siege === true)) continue;
-    const s = (role === 'def' ? d.def * 1.5 + d.atk : d.atk * 1.5 + d.def + (d.mv > 1 ? 1 : 0)) / Math.sqrt(d.cost);
+    // (A unit's punch: its better attack; its staying power: at close quarters and under fire.)
+    const hit = Math.max(canAttackType(k) ? d.melee : 0, d.rangedAtk ?? 0), hold = (d.melee + d.rangedDef) / 2;
+    const s = (role === 'def' ? hold * 1.5 + hit : hit * 1.5 + hold + (d.mv > 1 ? 1 : 0)) / Math.sqrt(d.cost);
     if (s > bestS) { best = k; bestS = s; }
   }
   return best;
@@ -181,7 +184,6 @@ function seaTurn(g: Game, u: Unit): void {
 }
 
 function militaryTurn(g: Game, u: Unit, p: Player, cities: City[], garrisoned: (c: City) => boolean): void {
-  const T = unitDef(u.type);
 
   // Stay as the garrison if this city has no other defender.
   const here = g.cityByTile.get(u.tile);
@@ -194,12 +196,13 @@ function militaryTurn(g: Game, u: Unit, p: Player, cities: City[], garrisoned: (
   const empty = cities.find((c) => !garrisoned(c) && g.approxDist(c.tile, u.tile) < 6);
   if (empty) { g.goTo(u, empty.tile); return; }
 
-  if (T.atk > 0) {
+  if (g.canAttack(u)) {
     for (const nb of g.tiles[u.tile].neighbors) {
       // (isEnemyOccupied: civs at war with it only.)
       if (!g.isEnemyOccupied(nb, u.owner) || g.isWater(nb) || g.attackBlockAt(u, nb) !== null) continue;
+      // (Fire costs nothing: it shoots whatever it can reach; closing in, it wants the odds.)
       const pv = g.combatPreview(u, nb);
-      if (!pv || pv.atk / (pv.atk + pv.def) > 0.55) { g.attack(u, nb); return; }
+      if (!pv || pv.mode === 'ranged' || pv.atk / (pv.atk + pv.def) > 0.55) { g.attack(u, nb); return; }
     }
 
     if (p.offensive) {
@@ -322,7 +325,7 @@ export function aiGovern(g: Game, p: Player): void {
 
 // A civ's fighting strength: its fighting units' attack and defense, as hurt.
 export function power(g: Game, owner: number): number {
-  return g.units.reduce((s, u) => s + (u.owner === owner && !unitDef(u.type).civilian ? (unitDef(u.type).atk + unitDef(u.type).def) * (0.5 + u.hp / 200) : 0), 0);
+  return g.units.reduce((s, u) => s + (u.owner === owner && !unitDef(u.type).civilian ? (Math.max(unitDef(u.type).melee, unitDef(u.type).rangedAtk ?? 0) + unitDef(u.type).rangedDef) * (0.5 + u.hp / 200) : 0), 0);
 }
 
 // War when much stronger than a civ it has met nearby (warlike civs sooner);

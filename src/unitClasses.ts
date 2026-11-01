@@ -49,22 +49,33 @@ export const UNIT_CLASS: Record<UnitKey, UnitClass> = {
 };
 
 // How an attack plays out:
-//   melee       walk in and strike
+//   melee       walk in and strike (guns with the bayonet, bows with what they have)
 //   charge      gallop in and strike
 //   volley      arrows, high and arcing
 //   lob         stones from an engine, slow and high
 //   shell       cannon shells, low and fast
 //   fire        gunfire, flat bursts
-//   fireCharge  a volley of gunfire, then in with the bayonet
 //   roll        armour (or a steamship) advancing, its gun firing
 //   sortie      aircraft flying out to strike and back
-export type AttackStyle = 'melee' | 'charge' | 'volley' | 'lob' | 'shell' | 'fire' | 'fireCharge' | 'roll' | 'sortie';
+export type AttackStyle = 'melee' | 'charge' | 'volley' | 'lob' | 'shell' | 'fire' | 'roll' | 'sortie';
 // What flies (Volleys, unitView.ts).
 export type Projectile = 'arrow' | 'stone' | 'shell' | 'bullet';
+// An attack is made at close quarters (an assault: the attacker closes in,
+// both sides fight, and if the defender falls it moves in), or by fire
+// (from the next tile: the target doesn't fire back).
+export type AttackMode = 'melee' | 'ranged';
 
 const NEVER: ReadonlySet<UnitClass> = new Set(['civilian', 'recon', 'leader', 'carrier']);
-// What closes in to fight (the rest shoot, or fly).
-const CLOSES: ReadonlySet<UnitClass> = new Set(['melee', 'antiCav', 'gunline', 'cavalry', 'armor', 'warship', 'steamship', 'submarine']);
+// Who may close in to fight (engines, crewed guns, bombarding ships and
+// aircraft only ever shoot).
+const ASSAULTS: ReadonlySet<UnitClass> = new Set(['melee', 'antiCav', 'gunline', 'archer', 'mountedArcher', 'cavalry', 'armor', 'warship', 'steamship', 'submarine']);
+export const canAssault = (k: UnitKey): boolean => ASSAULTS.has(UNIT_CLASS[k]) && unitDef(k).melee > 0;
+export const canShoot = (k: UnitKey): boolean => !NEVER.has(UNIT_CLASS[k]) && (unitDef(k).rangedAtk ?? 0) > 0;
+export const canAttackType = (k: UnitKey): boolean => canAssault(k) || canShoot(k);
+// A unit's attack unless told otherwise: by fire if it can shoot.
+export const defaultMode = (k: UnitKey): AttackMode => (canShoot(k) ? 'ranged' : 'melee');
+// A dedicated shooter (bows, guns, engines): better at range than at close quarters.
+export const isShooter = (k: UnitKey): boolean => (unitDef(k).rangedAtk ?? 0) > unitDef(k).melee;
 
 // Where a fight would be: the defender at sea (a ship, or a unit embarked
 // on the water), on a city's tile, the attacker embarked.
@@ -72,41 +83,47 @@ export interface Where { readonly atSea?: boolean; readonly city?: boolean; read
 export const isAir = (k: UnitKey): boolean => domainOf(unitDef(k)) === 'air';
 export const isSea = (k: UnitKey): boolean => domainOf(unitDef(k)) === 'sea';
 
-// Why `a` can't attack `d` (the unit that would defend), or null if it can.
-// (Without `where`: as the units' own domains say, the defender on its own
-// element.)
-export function attackBlock(a: UnitKey, d: UnitKey, where: Where = { atSea: isSea(d) }): string | null {
+// Why `a` can't attack `d` (the unit that would defend) so (`mode`), or
+// null if it can. (Without `where`: as the units' own domains say, the
+// defender on its own element.)
+export function attackBlock(a: UnitKey, d: UnitKey, where: Where = { atSea: isSea(d) }, mode: AttackMode = defaultMode(a)): string | null {
   const A = UNIT_CLASS[a];
   if (NEVER.has(A)) return 'cannot attack';
+  if (mode === 'melee' && !canAssault(a)) return 'cannot close in';
+  if (mode === 'ranged' && !canShoot(a)) return 'cannot shoot';
   if (where.embarked && !unitDef(a).amphibious) return 'cannot attack while embarked';
-  if (isAir(d) && A !== 'fighter' && A !== 'antiAir') return 'cannot reach aircraft';
+  if (isAir(d) && (mode === 'melee' || (A !== 'fighter' && A !== 'antiAir'))) return 'cannot reach aircraft';
   if (A === 'submarine' && !where.atSea) return 'attacks only ships';
-  if (!isSea(a) && !isAir(a) && where.atSea && CLOSES.has(A)) return 'cannot reach ships at sea';
-  if (isSea(a) && !where.atSea && !where.city && CLOSES.has(A)) return 'cannot fight on land';
+  if (mode === 'melee' && !isSea(a) && !isAir(a) && where.atSea) return 'cannot reach ships at sea';
+  if (mode === 'melee' && isSea(a) && !where.atSea && !where.city) return 'cannot fight on land';
   return null;
 }
 
-// How `a` attacks (as its class does), or null if it never attacks.
-export function attackStyle(a: UnitKey, d: UnitKey): AttackStyle | null {
-  switch (UNIT_CLASS[a]) {
-    case 'melee': case 'antiCav': case 'warship': case 'submarine': return 'melee';
-    case 'cavalry': return 'charge';
-    case 'archer': case 'mountedArcher': return 'volley';
-    case 'engine': return 'lob';
-    case 'artillery': case 'antiTank': case 'gunship': return 'shell';
-    case 'gun': case 'antiAir': return 'fire';
-    case 'gunline': return UNIT_CLASS[d] === 'armor' ? 'fire' : 'fireCharge';
+// How `a` attacks so (`mode`), as its class does (`d`: the defender, if any).
+export function attackStyle(a: UnitKey, _d: UnitKey | null, mode: AttackMode = defaultMode(a)): AttackStyle | null {
+  const C = UNIT_CLASS[a];
+  if (NEVER.has(C)) return null;
+  if (C === 'fighter' || C === 'bomber' || C === 'helicopter') return 'sortie';
+  if (mode === 'ranged') {
+    switch (C) {
+      case 'archer': case 'mountedArcher': return 'volley';
+      case 'engine': return 'lob';
+      case 'artillery': case 'antiTank': case 'gunship': return 'shell';
+      default: return 'fire';
+    }
+  }
+  switch (C) {
+    case 'cavalry': case 'mountedArcher': return 'charge';
     case 'armor': case 'steamship': return 'roll';
-    case 'fighter': case 'bomber': case 'helicopter': return 'sortie';
-    case 'civilian': case 'recon': case 'leader': case 'carrier': return null;
+    default: return 'melee';
   }
 }
 // How a unit attacks a city with no defender left (its walls).
-export function siegeStyle(a: UnitKey): AttackStyle | null {
-  return attackStyle(a, 'warrior');
+export function siegeStyle(a: UnitKey, mode: AttackMode = defaultMode(a)): AttackStyle | null {
+  return attackStyle(a, null, mode);
 }
 
-// What a defender shoots back, or null (it strikes where it stands).
+// What a defender fires at attackers closing in on it, or null (it strikes where it stands).
 export function returnFire(d: UnitKey): Projectile | null {
   switch (UNIT_CLASS[d]) {
     case 'archer': case 'mountedArcher': return 'arrow';

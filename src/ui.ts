@@ -3,6 +3,7 @@ import { unitDef, buildDef, isUnitKey, isWonder, BUILDINGS, WONDERS, type BuildK
 import { terrainName } from './terrain.ts';
 import { HUMAN, BUILDABLE, PILLAGE_GOLD, COMMANDER_CAPACITY, type Game, type City, type Unit } from './game.ts';
 import type { Selection } from './render.ts';
+import { canAssault, canShoot, type AttackMode } from './unitClasses.ts';
 import { techDef } from './techs.ts';
 import { politicsDef } from './politics.ts';
 import { RELIGIONS } from './religion.ts';
@@ -206,11 +207,11 @@ export class UI {
       ? `<div class="desc">Army ${armyUnits.length}/${COMMANDER_CAPACITY}${armyUnits.length ? `: ${armyUnits.map((v) => `${esc(unitDef(v.type).name)} <small>${v.hp} HP</small>`).join(', ')}` : ' · rally units from its tile and the tiles next to it'}</div>`
       : '';
     return `<h3>${esc(T.name)} <small>${esc(g.players[u.owner].name)}</small></h3>
-      <div class="stats">Attack ${T.atk} · Defense ${T.def} · Moves ${u.moves}/${g.maxMoves(u.type, u.owner)} · HP ${u.hp}</div>
+      <div class="stats">Melee ${T.melee}${T.rangedAtk ? ` · Ranged ${T.rangedAtk}` : ''} · Defence under fire ${T.rangedDef} · Moves ${u.moves}/${g.maxMoves(u.type, u.owner)} · HP ${u.hp}</div>
       ${T.desc ? `<div class="desc">${esc(T.desc)}</div>` : ''}
       ${status ? `<div class="desc">${status}</div>` : ''}
       ${army}
-      ${mine ? '<div class="desc">Right-click a tile to move or attack.</div>' : ''}
+      ${mine ? `<div class="desc">Right-click a tile to move or attack${canShoot(u.type) && canAssault(u.type) ? ' (it shoots; Shift + right-click to close in instead)' : ''}.</div>` : ''}
       <div class="buttons">${buttons.join('')}</div>`;
   }
 
@@ -256,7 +257,7 @@ export class UI {
     const wonders = BUILDABLE.filter((k) => isWonder(k) && g.canBuild(c, k));
     const button = (k: BuildKey) => {
       const d = buildDef(k);
-      const label = isUnitKey(k) ? `${d.name} <small>${unitDef(k).atk}/${unitDef(k).def}</small>` : isWonder(k) ? `${d.name}` : `${d.name}${buildingTag(k)}`;
+      const label = isUnitKey(k) ? `${d.name} <small>${unitDef(k).melee}${unitDef(k).rangedAtk ? `·${unitDef(k).rangedAtk}` : ''}/${unitDef(k).rangedDef}</small>` : isWonder(k) ? `${d.name}` : `${d.name}${buildingTag(k)}`;
       return `<button data-act="build" data-key="${k}" class="${c.building === k ? 'active' : ''}" title="${esc(d.desc ?? '')}">
         ${label}<span class="turns">${turnsFor(k)}t</span></button>`;
     };
@@ -352,21 +353,33 @@ export class UI {
       const blocker = g.isForeignBlocked(t, u.owner) ? (g.cityByTile.get(t)?.owner ?? g.unitsAt(t).find((v) => v.owner !== u.owner)?.owner) : undefined;
       if (blocker !== undefined) lines.push(`<span class="bad">At peace with the ${esc(g.players[blocker]!.name)}: declare war (Diplomacy) to attack</span>`);
       else if (!path) lines.push('<span class="bad">Unreachable</span>');
-      else if (g.isEnemyOccupied(t, u.owner) && g.attackBlockAt(u, t) !== null) {
-        const d = g.bestDefender(t, u.owner);
-        lines.push(`<span class="bad">${unitDef(u.type).name} ${g.attackBlockAt(u, t)}${d ? ` (${unitDef(d.type).name})` : ''}</span>`);
+      else if (g.isEnemyOccupied(t, u.owner) && g.attackBlockAt(u, t, modeOf(g, u, t)) !== null) {
+        const mode = modeOf(g, u, t), d = g.bestDefender(t, u.owner, mode);
+        lines.push(`<span class="bad">${unitDef(u.type).name} ${g.attackBlockAt(u, t, mode)}${d ? ` (${unitDef(d.type).name})` : ''}</span>`);
       } else if (g.isEnemyOccupied(t, u.owner)) {
-        const pv = g.combatPreview(u, t);
-        const city = g.cityByTile.get(t);
+        const mode = modeOf(g, u, t), pv = g.combatPreview(u, t, mode);
+        const city = g.cityByTile.get(t), how = mode === 'ranged' ? 'Fire' : 'Assault';
+        const other = canShoot(u.type) && canAssault(u.type) ? ` <small>(Shift: ${mode === 'ranged' ? 'close in' : 'shoot'})</small>` : '';
         lines.push(pv
-          ? `<span class="warn">Attack: ${pv.atk.toFixed(1)} against ${pv.def.toFixed(1)} (${unitDef(pv.defender.type).name})</span>`
+          ? `<span class="warn">${how}: ${pv.atk.toFixed(1)} against ${pv.def.toFixed(1)} (${unitDef(pv.defender.type).name})${mode === 'ranged' ? ', unanswered' : ''}</span>${other}`
           : city && city.hp > 0
-            ? `<span class="warn">Siege: ${g.unitStrength(u, 'atk', t).toFixed(1)} against the city's ${g.cityStrength(city).toFixed(1)} · HP ${city.hp}/${g.cityMaxHp(city)}</span>`
-            : unitDef(u.type).ranged && city ? '<span class="bad">Ranged units cannot take a city</span>' : '<span class="warn">Undefended — capture!</span>');
+            ? `<span class="warn">${how} on the walls: ${g.unitStrength(u, mode, 'atk', t).toFixed(1)} against the city's ${g.cityStrength(city).toFixed(1)} · HP ${city.hp}/${g.cityMaxHp(city)}</span>${other}`
+            : '<span class="warn">Undefended — capture!</span>');
       } else lines.push(`Path: ${g.pathTurns(u, path)} turn(s)`);
     }
     box.innerHTML = lines.map((l) => `<div>${l}</div>`).join('');
   }
+}
+
+// The player's attack orders: Shift held (main.ts) turns a unit's attack
+// from its usual way (fire, if it can shoot) to the other.
+export const attackInput = { swap: false };
+// How `u` would attack `t` now, Shift held or not.
+export function modeOf(g: Game, u: Unit, t: number): AttackMode {
+  const usual = g.attackModeFor(u, t);
+  if (!attackInput.swap) return usual;
+  const other: AttackMode = usual === 'ranged' ? 'melee' : 'ranged';
+  return (other === 'melee' ? canAssault(u.type) : canShoot(u.type)) ? other : usual;
 }
 
 // A building's specialist slots, as a small tag in the build list.

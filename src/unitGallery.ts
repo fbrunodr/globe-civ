@@ -21,12 +21,12 @@ import { ARCH_CIVS, type ArchCiv } from './architecture.ts';
 import { CIVS, UNITS, domainOf, type UnitKey } from './rules.ts';
 import { TECHS, TECH_KEYS } from './techs.ts';
 import { POLITICS } from './politics.ts';
-import { FORTIFY_BONUS, combatStrength, fightRounds, matchup } from './game.ts';
+import { FORTIFY_BONUS, combatStrength, fightRounds, matchup, statOf } from './game.ts';
 import { HAIR_STYLES, UNIT_LOOK, colsOf, formationSlots, hairModel, headOffset, isMachine, rides, unitModel, variantOf, whirls, womenShare } from './unitModels.ts';
 import { FIGHT, PLAYS, UnitView, Volleys, durOf, defendPlay, falls, figureLooks, makeUnitMaterial, playAt, playOf, prepareUnitGeometry, type Play, type ShownUnit } from './unitView.ts';
 import type { P2 } from './duel.ts';
 import { AFTER, armOf, dropOf, legsOf, poseOf, poseTurn, rearShift, type Cue } from './unitAnim.ts';
-import { attackBlock, attackStyle, siegeStyle } from './unitClasses.ts';
+import { attackBlock, attackStyle, canAssault, canAttackType, canShoot, defaultMode, siegeStyle, type AttackMode } from './unitClasses.ts';
 import { WorldLabel, disposeLabels } from './worldLabel.ts';
 import { triangles } from './lowpoly.ts';
 import { mulberry32 } from './rng.ts';
@@ -61,8 +61,7 @@ const unlockEra = (k: UnitKey): number => {
   return Number.isFinite(e) ? e : 0; // (none: there from the start)
 };
 const TYPES = (Object.keys(UNITS) as UnitKey[]).sort((a, b) => DOMAIN_ORDER[domainOf(UNITS[a])] - DOMAIN_ORDER[domainOf(UNITS[b])] || unlockEra(a) - unlockEra(b) || UNITS[a].cost - UNITS[b].cost);
-const FIGHTERS = TYPES.filter((t) => UNITS[t].atk > 0);
-const isRanged = (t: UnitKey): boolean => 'ranged' in UNITS[t] && UNITS[t].ranged === true;
+const FIGHTERS = TYPES.filter(canAttackType);
 const DEFENDERS = TYPES.filter((t) => !('civilian' in UNITS[t] && UNITS[t].civilian));
 const CELL_W = 4.2, CELL_D = 4.4; // a cell of the sheet (figure heights), at least
 // Each column of the sheet as wide as its unit's formation needs (aircraft
@@ -119,7 +118,9 @@ let suffrage = false;
 // battle) what it comes to.
 let fight: { t0: number; loop: boolean; outcome: { attacker: number; defender: number } | null; dur: number } | null = null;
 // The battle's sides.
-const battle = { aCiv: 'Romans' as ArchCiv, aType: 'spearman' as UnitKey, aHp: 100, dCiv: 'Egyptians' as ArchCiv, dType: 'archer' as UnitKey, dHp: 100, ground: 0, fortified: false };
+// (`how`: the attack made: by fire, or closing in; the attacker's usual way if it can't make the other.)
+const battle = { aCiv: 'Romans' as ArchCiv, aType: 'spearman' as UnitKey, aHp: 100, dCiv: 'Egyptians' as ArchCiv, dType: 'archer' as UnitKey, dHp: 100, ground: 0, fortified: false, how: 'ranged' as AttackMode };
+const howOf = (): AttackMode => ((battle.how === 'ranged' ? canShoot(battle.aType) : canAssault(battle.aType)) ? battle.how : defaultMode(battle.aType));
 
 function label(text: string, x: number, z: number, bold = false, sub?: string): void {
   const o = new WorldLabel(sub ? [{ text, bold }, { text: sub, small: true }] : [{ text, bold }], sub ? 0.8 : 0.45);
@@ -135,7 +136,7 @@ function sheetCells(): Cell[] {
   return civs.flatMap((civ, row) => TYPES.map((type, col): Cell => ({
     type, civ, hp: sheetHp, x: COL_X[col]!, z: row * CELL_D, half: COL_W[col]! / 2, facing: 1,
     target: FIGHTERS.includes(type) ? new THREE.Vector3(COL_X[col]!, 0, row * CELL_D + (PLAYS[siegeStyle(type) ?? 'melee'].charge === 0 ? 7 : SHEET_CHARGE / CHARGE_SHARE)) : null,
-    play: FIGHTERS.includes(type) ? playOf(siegeStyle(type), type) : null, attack: FIGHTERS.includes(type) ? playOf(siegeStyle(type), type) : null, side: 'attacker', fired: 0, seed: row * 31 + col + 1,
+    play: FIGHTERS.includes(type) ? playOf(siegeStyle(type)) : null, attack: FIGHTERS.includes(type) ? playOf(siegeStyle(type)) : null, side: 'attacker', fired: 0, seed: row * 31 + col + 1,
   })));
 }
 
@@ -339,11 +340,11 @@ function pose(now: number): void {
 
 const unitName = (civ: ArchCiv, type: UnitKey) => `${civ} ${UNITS[type].name.toLowerCase()}`;
 function strengths(): { A: number; D: number; bonus: number } {
-  const bonus = GROUNDS[battle.ground]!.bonus + (battle.fortified ? FORTIFY_BONUS : 0);
+  const bonus = GROUNDS[battle.ground]!.bonus + (battle.fortified ? FORTIFY_BONUS : 0), how = howOf();
   // (As the game: pikemen fight mounted units at double strength.)
   return {
-    A: combatStrength(battle.aType, 'atk', battle.aHp, 0) * matchup(battle.aType, battle.dType, 'atk'),
-    D: combatStrength(battle.dType, 'def', battle.dHp, bonus) * matchup(battle.dType, battle.aType, 'def'),
+    A: combatStrength(battle.aType, statOf(how, 'atk'), battle.aHp, 0) * matchup(battle.aType, battle.dType, 'atk'),
+    D: combatStrength(battle.dType, statOf(how, 'def'), battle.dHp, bonus) * matchup(battle.dType, battle.aType, 'def'),
     bonus,
   };
 }
@@ -351,16 +352,18 @@ function showBattle(): void {
   $('aHp').textContent = `${Math.max(0, battle.aHp)} HP`;
   $('dHp').textContent = `${Math.max(0, battle.dHp)} HP`;
   const { A, D, bonus } = strengths();
-  const alive = battle.aHp > 0 && battle.dHp > 0, block = attackBlock(battle.aType, battle.dType);
+  const alive = battle.aHp > 0 && battle.dHp > 0, how = howOf(), block = attackBlock(battle.aType, battle.dType, undefined, how);
+  $<HTMLSelectElement>('how').value = how;
   $('odds').innerHTML = block ? `<b class="loss">The ${UNITS[battle.aType].name.toLowerCase()} ${block}</b> (${UNITS[battle.dType].name.toLowerCase()}).` : alive
-    ? `Strength <b>${A.toFixed(2)}</b> against <b>${D.toFixed(2)}</b>${bonus ? ` (defence ${bonus > 0 ? '+' : ''}${Math.round(bonus * 100)}%)` : ''} · each exchange won <b>${Math.round((100 * A) / (A + D))}%</b> of the time${isRanged(battle.aType) ? ' · a volley: three exchanges at most, half the damage back' : ''}`
+    ? `Strength <b>${A.toFixed(2)}</b> against <b>${D.toFixed(2)}</b>${bonus ? ` (defence ${bonus > 0 ? '+' : ''}${Math.round(bonus * 100)}%)` : ''} · each exchange won <b>${Math.round((100 * A) / (A + D))}%</b> of the time${how === 'ranged' ? ' · fire: three exchanges at most, unanswered' : ' · at close quarters, to the end'}`
     : 'One side has fallen: Heal both to fight again.';
   $<HTMLButtonElement>('fight').disabled = !alive || fight !== null || block !== null;
 }
 function startFight(): void {
-  if (mode !== 'battle' || fight || !battleView || battle.aHp <= 0 || battle.dHp <= 0 || attackBlock(battle.aType, battle.dType)) return;
+  const how = howOf();
+  if (mode !== 'battle' || fight || !battleView || battle.aHp <= 0 || battle.dHp <= 0 || attackBlock(battle.aType, battle.dType, undefined, how)) return;
   const { A, D } = strengths();
-  const outcome = fightRounds(battle.aHp, battle.dHp, A, D, isRanged(battle.aType), Math.random), style = attackStyle(battle.aType, battle.dType)!, now = performance.now() / 1000;
+  const outcome = fightRounds(battle.aHp, battle.dHp, A, D, how, Math.random), style = attackStyle(battle.aType, battle.dType, how)!, now = performance.now() / 1000;
   fight = { t0: now, loop: false, outcome, dur: durOf(PLAYS[style]) };
   // (As the game: the fight first, then the units as they come out of it.)
   battleView.fight(1, 0, style, now, { defender: 2, attackerHp: outcome.attacker, defenderHp: outcome.defender });
@@ -378,7 +381,7 @@ function endFight(): void {
   const lost = (before: number, after: number) => `${before} → ${Math.max(0, after)} HP`;
   const line = o.attacker <= 0 ? `<b class="loss">The ${a} is destroyed</b> by the ${d}.`
     : o.defender <= 0 ? `<b class="win">The ${a} destroys the ${d}.</b>`
-    : `Neither falls${isRanged(battle.aType) ? ' (the volley is spent)' : ''}.`;
+    : `Neither falls${howOf() === 'ranged' ? ' (the volley is spent)' : ''}.`;
   $('result').innerHTML = `${line}<br>${a}: ${lost(battle.aHp, o.attacker)} · ${d}: ${lost(battle.dHp, o.defender)}`;
   battle.aHp = o.attacker;
   battle.dHp = o.defender;
@@ -419,6 +422,7 @@ options<UnitKey>('aType', FIGHTERS, (v) => UNITS[v].name, battle.aType, (v) => {
 options<ArchCiv>('dCiv', ARCH_CIVS, (v) => v, battle.dCiv, (v) => { battle.dCiv = v; reset(); });
 options<UnitKey>('dType', DEFENDERS, (v) => UNITS[v].name, battle.dType, (v) => { battle.dType = v; reset(); });
 options<string>('ground', GROUNDS.map((_, i) => String(i)), (v) => GROUNDS[Number(v)]!.name, '0', (v) => { battle.ground = Number(v); showBattle(); });
+options<AttackMode>('how', ['ranged', 'melee'], (v) => (v === 'ranged' ? 'Attack by fire' : 'Attack at close quarters'), battle.how, (v) => { battle.how = v; showBattle(); });
 $<HTMLInputElement>('fort').addEventListener('change', (e) => { battle.fortified = (e.target as HTMLInputElement).checked; showBattle(); });
 $('fight').addEventListener('click', (e) => { startFight(); (e.currentTarget as HTMLElement).blur(); });
 $('heal').addEventListener('click', (e) => { reset(); (e.currentTarget as HTMLElement).blur(); });

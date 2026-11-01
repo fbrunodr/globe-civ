@@ -2,7 +2,7 @@ import './style.css';
 import { Game, HUMAN, type City, type Unit } from './game.ts';
 import { mountSettings } from './settingsMenu.ts';
 import { GlobeRenderer, type DebugView, type Selection, type TileMark } from './render.ts';
-import { UI, assertNever, wonderPicked, type Action, type Placing } from './ui.ts';
+import { UI, assertNever, attackInput, modeOf, wonderPicked, type Action, type Placing } from './ui.ts';
 import { Sheets } from './sheets.ts';
 import { gameLogId } from './gameLog.ts';
 import { MAP_SCRIPTS, MAP_SIZES, isMapScript, tileCount, unitDef, isWonder, type MapScriptKey, type MapSizeKey } from './rules.ts';
@@ -292,8 +292,9 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
     if (game.over) return;
     if (button === 2) {
       if (sel?.kind === 'unit' && sel.unit.owner === HUMAN && t !== sel.unit.tile) {
+        // (Shift held: it attacks the other way, closing in instead of shooting.)
         const u = sel.unit;
-        game.goTo(u, t);
+        game.goTo(u, t, attackInput.swap && game.isEnemyOccupied(t, u.owner) ? modeOf(game, u, t) : null);
         afterUnitAction(u);
       }
     } else if (button === 0) {
@@ -327,6 +328,11 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
     refresh();
   }
 
+  // (Shift swaps a unit's attack: the hint shows which, as it changes.)
+  const swap = (on: boolean) => { if (attackInput.swap !== on) { attackInput.swap = on; onHover(hover); } };
+  addEventListener('keydown', (e) => { if (e.key === 'Shift') swap(true); });
+  addEventListener('keyup', (e) => { if (e.key === 'Shift') swap(false); });
+  addEventListener('blur', () => swap(false));
   addEventListener('keydown', (e) => {
     if (e.target instanceof HTMLInputElement) return;
     const keyActions: Record<string, Action> = {

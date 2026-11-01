@@ -2,12 +2,12 @@
 // (in sight, or explored only), with no units, cities or turns. For looking
 // at terrain generation and terrain painting.
 
-import { attackStyle } from './unitClasses.ts';
+import { attackStyle, canAttackType, canAssault, canShoot } from './unitClasses.ts';
 import './style.css';
 import { Game } from './game.ts';
 import { GlobeRenderer, type DebugView } from './render.ts';
 import { mountSettings } from './settingsMenu.ts';
-import { MAP_SCRIPTS, MAP_SIZES, isMapScript, tileCount, type MapScriptKey, type MapSizeKey, type UnitKey, unitDef } from './rules.ts';
+import { MAP_SCRIPTS, MAP_SIZES, isMapScript, tileCount, type MapScriptKey, type MapSizeKey, type UnitKey } from './rules.ts';
 import { terrainName } from './terrain.ts';
 import { floraLabel } from './flora.ts';
 
@@ -117,7 +117,7 @@ const marchUnits = () => {
 // B: every fighting unit fights a unit next to it (a show: nobody is hurt).
 const battle = () => {
   for (const u of game.units) {
-    if (unitDef(u.type).atk <= 0) continue;
+    if (!canAttackType(u.type)) continue;
     const foe = game.tiles[u.tile]!.neighbors.find((n) => game.units.some((v) => v.tile === n && v.owner !== u.owner));
     const d = foe === undefined ? undefined : game.units.find((v) => v.tile === foe && v.owner !== u.owner);
     const style = d ? attackStyle(u.type, d.type) : null;
@@ -127,11 +127,11 @@ const battle = () => {
 // N (R): the melee (ranged) unit nearest the camera's look attacks a foe set down beside it (made up: it loses 40 HP, the foe 80; shooting, none and 30).
 const stage = (ranged = false) => {
   const at = view.looking, near = (u: { tile: number }) => -game.tiles[u.tile]!.center.dot(at);
-  const a = game.units.filter((u) => attackStyle(u.type, 'warrior') !== null && (unitDef(u.type).ranged === true) === ranged).sort((x, y) => near(x) - near(y))[0];
+  const a = game.units.filter((u) => (ranged ? canShoot(u.type) : canAssault(u.type))).sort((x, y) => near(x) - near(y))[0];
   if (!a) return;
-  const d = game.units.filter((u) => u.owner !== a.owner && unitDef(u.type).atk > 0).sort((x, y) => near(x) - near(y))[0];
+  const d = game.units.filter((u) => u.owner !== a.owner && canAttackType(u.type)).sort((x, y) => near(x) - near(y))[0];
   const spot = game.tiles[a.tile]!.neighbors.find((n) => !game.isWater(n) && !game.units.some((v) => v.tile === n && v !== d));
-  const style = d ? attackStyle(a.type, d.type) : null;
+  const style = d ? attackStyle(a.type, d.type, ranged ? 'ranged' : 'melee') : null;
   if (!d || spot === undefined || !style) return;
   d.tile = spot;
   view.syncWorld(null);

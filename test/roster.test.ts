@@ -3,7 +3,7 @@ import { Game, matchup, combatStrength, SIEGE_VS_UNITS, EMBARKED_DEF } from '../
 import { UNITS, UPGRADES, type UnitKey } from '../src/rules.ts';
 import { TECHS, TECH_KEYS } from '../src/techs.ts';
 import { POLITICS } from '../src/politics.ts';
-import { UNIT_CLASS, attackBlock, attackStyle } from '../src/unitClasses.ts';
+import { UNIT_CLASS, attackBlock, attackStyle, canAttackType } from '../src/unitClasses.ts';
 import { SPECIALIST_KINDS } from '../src/cities.ts';
 import { unitModel, unitVariants, fullCount } from '../src/unitModels.ts';
 
@@ -25,7 +25,7 @@ describe('R1: the roster', () => {
     for (const k of KEYS) expect(unlockers(k).length + (STARTING.includes(k) ? 1 : 0), k).toBe(1);
   });
   it('every era brings new fighting units, at least three', () => {
-    for (let era = 0; era <= 6; era++) expect(KEYS.filter((k) => UNITS[k].atk > 0 && eraOf(k) === era).length, `era ${era}`).toBeGreaterThanOrEqual(3);
+    for (let era = 0; era <= 6; era++) expect(KEYS.filter((k) => canAttackType(k) && eraOf(k) === era).length, `era ${era}`).toBeGreaterThanOrEqual(3);
   });
   it('siege engines in every era from the Classical on: catapult, trebuchet, cannon, artillery', () => {
     expect(['catapult', 'trebuchet', 'cannon', 'artillery'].map((k) => eraOf(k as UnitKey))).toEqual([1, 2, 3, 4]);
@@ -86,13 +86,14 @@ describe('R3: classes say which attacks can be made, and how', () => {
     expect(attackBlock('fighter', 'bomber')).toBeNull();
     expect(attackBlock('bomber', 'battleship')).toBeNull();
   });
-  it('the pair sets the play: swords strike, cavalry charges, archers loose, engines lob, riflemen fire then charge', () => {
+  it('the class and the way of attacking set the play: swords strike, cavalry charges, archers loose or close in, engines lob, riflemen fire or fix bayonets', () => {
     expect(attackStyle('swordsman', 'archer')).toBe('melee');
     expect(attackStyle('knight', 'archer')).toBe('charge');
     expect(attackStyle('archer', 'warrior')).toBe('volley');
+    expect(attackStyle('archer', 'warrior', 'melee')).toBe('melee');
     expect(attackStyle('trebuchet', 'warrior')).toBe('lob');
-    expect(attackStyle('rifleman', 'warrior')).toBe('fireCharge');
-    expect(attackStyle('rifleman', 'tank')).toBe('fire');
+    expect(attackStyle('rifleman', 'warrior')).toBe('fire');
+    expect(attackStyle('rifleman', 'warrior', 'melee')).toBe('melee');
     expect(attackStyle('tank', 'rifleman')).toBe('roll');
   });
   it('the game refuses an attack its pair forbids, and the unit keeps its moves', () => {
@@ -141,7 +142,7 @@ describe('R4: at sea and in the air', () => {
     const foe = g.createUnit('warrior', 1, coast), w = g.createUnit('spearman', 0, sea);
     w.tile = sea; // (a new land unit comes out on land: it embarks)
     g.declareWar(0, 1);
-    expect(g.unitStrength(w, 'def', sea)).toBeCloseTo(combatStrength('spearman', 'def', 100, 0) * EMBARKED_DEF, 5);
+    expect(g.unitStrength(w, 'melee', 'def', sea)).toBeCloseTo(combatStrength('spearman', 'melee', 100, 0) * EMBARKED_DEF, 5);
     expect(g.attackBlockAt(w, coast)).not.toBeNull();
     expect(foe.hp).toBe(100);
   });
