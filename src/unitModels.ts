@@ -126,6 +126,8 @@ export const DRAW = 4;
 const DRAW_ARM = [DRAW, SHOULDER, 1.45] as const;
 // Whether a unit's weapon is whirled before it is loosed (a sling).
 export const whirls = (type: UnitKey): boolean => type === 'slinger';
+// Whether a type's figures carry a bow (at close quarters they lay about them with it).
+export const bowman = (type: UnitKey): boolean => type === 'archer' || type === 'compositeBowman' || type === 'horseArcher';
 
 type Hold = 'spear' | 'pike' | 'club' | 'sword' | 'longsword' | 'bow' | 'recurve' | 'sling' | 'crossbow' | 'musket' | 'rifle' | 'mg' | 'staff' | 'banner' | 'none';
 

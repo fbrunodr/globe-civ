@@ -180,9 +180,12 @@ export interface Cue {
 // A figure's pose now: in a fight (its cue), on the march (`walk`), or at
 // ease. (Struck down, it is posed by deathTurn and deathBend.)
 // (`whirl`: its weapon whirled before it is loosed, a sling.)
-// (`dug`: fortified, at rest: crouched behind its shield, its weapon levelled.)
-export function poseOf(c: Cue | null, now: number, phase: number, beat: number, walk: number, rides: boolean, whirl = false, dug = false): Pose {
-  const acted = c ? inFight(c, now, phase, beat, whirl) : walk > 0 ? march(now, phase, walk) : dug ? dugIn(now, phase) : idle(now, phase);
+// (`dug`: fortified, at rest: crouched behind its shield, its weapon levelled;
+// `bow`: a bowman, who at close quarters swings his bow like a stave, the
+// bow arm (a short lever as rigged) driven through a wider arc.)
+export function poseOf(c: Cue | null, now: number, phase: number, beat: number, walk: number, rides: boolean, whirl = false, dug = false, bow = false): Pose {
+  const fought = c ? inFight(c, now, phase, beat, whirl) : walk > 0 ? march(now, phase, walk) : dug ? dugIn(now, phase) : idle(now, phase);
+  const acted = bow && c?.attack.close === true && c.engaged ? { ...fought, arm: fought.arm * 2.6 } : fought;
   // (On its feet: whatever lean or turn an act asks of the whole figure is the body's above the hips.)
   const pose = { ...acted, lean: 0, yaw: 0, bend: acted.bend + acted.lean * 1.5, twist: acted.twist + acted.yaw };
   // (A rider strikes from the saddle: the horse hardly moves.)

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { ArchCiv } from './architecture.ts';
 import { unitDef, domainOf, type UnitKey } from './rules.ts';
 import { returnFire, type AttackStyle, type Projectile } from './unitClasses.ts';
-import { UNIT_LOOK, figuresFor, formationSlots, unitModel, variantOf, rides, headOffset, hairModel, transportModel, wearsHelmet, womenShare, isMachine, colsOf, GEAR, HAIR_BY, HAIR_STYLES, STRIKE, GUARD, DRAW, whirls } from './unitModels.ts';
+import { UNIT_LOOK, figuresFor, formationSlots, unitModel, variantOf, rides, headOffset, hairModel, transportModel, wearsHelmet, womenShare, isMachine, colsOf, GEAR, HAIR_BY, HAIR_STYLES, STRIKE, GUARD, DRAW, whirls, bowman } from './unitModels.ts';
 import { mulberry32 } from './rng.ts';
 import { HIP } from './people.ts';
 import { pairUp, type P2 } from './duel.ts';
@@ -569,7 +569,7 @@ export class UnitView {
           legs = deathLegs(now - f.fall, horse); arm = 3 + fold.arm; bends = horse ? FLAT : [fold.bend, 0, fold.crouch, 0.6, fold.aim, 1, 0.4, 0];
           if (!horse) at = stepped.copy(f.pos).addScaledVector(f.up, -dropOf(fold.crouch) * this.size);
         } else if (body) {
-          const p = poseOf(this.cue(s, f, now), now, f.phase, beat, walk, horse, whirls(s.unit.type), s.unit.fortified === true && !s.march);
+          const p = poseOf(this.cue(s, f, now), now, f.phase, beat, walk, horse, whirls(s.unit.type), s.unit.fortified === true && !s.march, bowman(s.unit.type));
           turned.multiply(poseTurn(tip, p));
           // (Crouched, lower: the legs fold under it.)
           const [ry, rz] = rearShift(p);
