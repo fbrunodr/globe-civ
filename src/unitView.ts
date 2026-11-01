@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { SURFACE_FRAGMENT, surfaceUniform } from './surfaces.ts';
 import type { ArchCiv } from './architecture.ts';
 import { unitDef, domainOf, type UnitKey } from './rules.ts';
 import { firesAtClose, returnFire, type AttackStyle, type Projectile } from './unitClasses.ts';
@@ -245,8 +244,7 @@ interface Shown {
 const UNIT_VERTEX_DECL = /* glsl */ `
   attribute vec4 aLimb;     // (side, pivot, amplitude; flags: unitModels.ts RIG)
   attribute vec4 aRig;      // a lower piece's middle joint (knee, elbow) at y, z; a weapon's grip at y, z
-  attribute vec4 aTex;      // its surface texture (surfaces.ts: u, v, layer); w: how far forward of upright a weapon points as made (radians)
-  varying vec3 vTex;
+  attribute float aRest;    // how far forward of upright a weapon points as made (radians)
   attribute vec4 aAnim;     // per figure: its legs' beat (radians), its legs, its striking arm (unitAnim.ts legsOf, armOf); how its weapon points (radians from upright, forward)
   attribute vec4 aSkinTone; // per figure: its skin; how far its weapon is aimed (0: as it is made and carried)
   attribute vec4 aPose;     // per figure: its body above the hips bent forward, turned; its crouch; its striking elbow bent (radians)
@@ -294,7 +292,7 @@ const UNIT_LIMB = /* glsl */ `
     limbA = aRig.y * (aRig.x * swing * aLimb.x + (1.0 - aRig.x) * (position.z >= 0.0 ? -abs(swing) : 1.4 * abs(swing)) - aPose.z);
   }
   float limbC = cos(limbA), limbS = sin(limbA);
-  float gripA = isGrip > 0.5 ? aSkinTone.w * (aAnim.w - aTex.w - limbA - jointA) : 0.0, gripC = cos(gripA), gripS = sin(gripA);
+  float gripA = isGrip > 0.5 ? aSkinTone.w * (aAnim.w - aRest - limbA - jointA) : 0.0, gripC = cos(gripA), gripS = sin(gripA);
   // (Above the hips, not a leg: the body, its arms, head and hair.)
   bool upper = position.y > ${(HIP - 0.02).toFixed(2)} && !isLeg;
   float twC = cos(upper ? aPose.y : 0.0), twS = sin(upper ? aPose.y : 0.0), bnC = cos(upper ? aPose.x : 0.0), bnS = sin(upper ? aPose.x : 0.0);`;
@@ -329,21 +327,16 @@ export function makeUnitMaterial(time: { value: number }): THREE.MeshStandardMat
   const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, side: THREE.DoubleSide });
   mat.onBeforeCompile = (shader) => {
     shader.uniforms['uTime'] = time;
-    shader.uniforms['uSurfaces'] = surfaceUniform(true);
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>\n${UNIT_VERTEX_DECL}`)
       .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>\n${UNIT_NORMAL}`)
-      .replace('#include <begin_vertex>', `#include <begin_vertex>\n${UNIT_VERTEX}\n vTex = aTex.xyz;`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>\n${UNIT_VERTEX}`)
       .replace('#include <color_vertex>', `#include <color_vertex>
         #ifdef USE_INSTANCING_COLOR
           vec2 isTeamV = vec2(mod(aLimb.w, 2.0), mod(floor(aLimb.w / 2.0), 2.0)); // (team, skin: the flags)
           vColor.rgb = mix(mix(color.rgb, aSkinTone.rgb, isTeamV.y), color.rgb * instanceColor.rgb, isTeamV.x);
           vColor.rgb *= 1.0 - 0.78 * aMore.z; // (burnt: a wreck)
         #endif`);
-    // (Their surfaces' textures: cloth, metal, wood, a face.)
-    shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', `#include <common>\n${SURFACE_FRAGMENT}`)
-      .replace('#include <color_fragment>', `#include <color_fragment>\n diffuseColor.rgb *= surfaceDetail();`);
   };
   mat.customProgramCacheKey = () => 'unit-figure';
   return mat;

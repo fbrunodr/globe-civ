@@ -135,10 +135,7 @@ export function person(d: Dress, armL: ArmPose = HANG, armR: ArmPose = HANG, swi
   }
   if (d.belt !== undefined) add(hull([R([0, 0.64, 0], wa! + 0.018, wb! + 0.018), R([0, 0.61, 0], wa! + 0.018, wb! + 0.018)], 6, d.belt, { caps: [false, false] }), 'plain');
   // The head: chin, cheekbones, crown; its front edge the nose.
-  // (Its front drawn as a face: surfaces.ts faceSurface.)
-  const head = hull([R([0, HEAD_Y - 0.068, 0.012], 0.036, 0.042), HEAD_BROW, HEAD_CROWN], 5, SKIN_PAINT, FIVE);
-  head.userData['face'] = true;
-  add(head, 'skin');
+  add(hull([R([0, HEAD_Y - 0.068, 0.012], 0.036, 0.042), HEAD_BROW, HEAD_CROWN], 5, SKIN_PAINT, FIVE), 'skin');
   // Arms: sleeve (cloth) to the elbow, the forearm sleeved or bare, the hand.
   for (const side of [1, -1] as const) {
     const pose = side === 1 ? armL : armR, lm = swing?.arms(side);

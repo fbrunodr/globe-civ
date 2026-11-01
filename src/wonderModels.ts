@@ -9,7 +9,6 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { BUILDING_SCALE, BUILDING_ZOOM, buildingPick, mapSurfaces } from './surfaces.ts';
 import { cone, cyl } from './propCatalog.ts';
 import { CELL } from './town/geometry.ts';
 import { wonderBeside, type WonderKey } from './cities.ts';
@@ -305,7 +304,6 @@ export function wonderGeometry(kind: WonderModelKind): G {
     if (m !== 'scaffold' && !wonderBeside(m) && top < MIN_HEIGHT) g.scale(1, MIN_HEIGHT / top, 1);
     g.setAttribute('leafMask', new THREE.BufferAttribute(new Float32Array(g.getAttribute('position').count), 1));
     g.computeVertexNormals();
-    mapSurfaces(g, BUILDING_SCALE, BUILDING_ZOOM, buildingPick({ masonry: 'ashlar' }));
     cache.set(kind, g);
   }
   return g;

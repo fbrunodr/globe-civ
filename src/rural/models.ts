@@ -12,7 +12,6 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { cone, cyl, part, tf, type Tf } from '../propCatalog.ts';
 import { RESOURCE_MODELS, RESOURCE_MODEL_KEYS } from './resourceModels.ts';
 import { kitModel, KIT_MODELS, type KitModel } from './kit.ts';
-import { BUILDING_SCALE, BUILDING_ZOOM, buildingPick, mapSurfaces } from '../surfaces.ts';
 
 export const RURAL_MODELS = ['crop', 'heap', 'block', 'logs', 'stump', 'haystack', 'rack', 'incaHouse', 'incaHall', ...RESOURCE_MODEL_KEYS, ...KIT_MODELS] as const;
 export type RuralModel = (typeof RURAL_MODELS)[number];
@@ -155,12 +154,6 @@ export function ruralGeometry(kind: RuralModelKind): THREE.BufferGeometry {
     g = mergeGeometries(parts)!;
     if (!g) throw new Error(`rural model ${kind}`);
     for (const p of parts) p.dispose();
-    // (Its buildings, fences and boats textured as a town's are; the
-    // leaves, and the kit's round people and animals, left bare.)
-    if (!isSmoothRural(kind)) {
-      const mask = g.getAttribute('leafMask'), pick = buildingPick();
-      mapSurfaces(g, BUILDING_SCALE, BUILDING_ZOOM, (f) => (mask.getX(f.i) > 0.5 ? 'none' : pick(f)));
-    }
     cache.set(kind, g);
   }
   return g;
