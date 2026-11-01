@@ -393,7 +393,8 @@ export class UnitView {
   step(id: number, from: number, to: number): void {
     const s = this.shown.get(id);
     if (!s) return;
-    if (!s.route.length && s.unit.tile !== from) s.route = [];
+    // (A step not on from where its route ends (or it stands) starts the route anew.)
+    if ((s.route[s.route.length - 1] ?? s.unit.tile) !== from) s.route = [];
     s.route.push(to);
   }
   // On to the next tile of its route from `from` (a spot), from `t0`: the
