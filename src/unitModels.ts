@@ -116,6 +116,11 @@ const HIT = (pivot: number, amp: number) => [STRIKE, pivot, amp] as const;
 // In a fight: the shield arm raises its shield to ward off a blow (or arrows) about the shoulder.
 export const GUARD = 3;
 const GUARD_ARM = [GUARD, SHOULDER, 1.25] as const;
+// An archer's string hand drawing back to the cheek (raised from the shoulder, bent at the elbow).
+export const DRAW = 4;
+const DRAW_ARM = [DRAW, SHOULDER, 1.45] as const;
+// Whether a unit's weapon is whirled before it is loosed (a sling).
+export const whirls = (type: UnitKey): boolean => type === 'slinger';
 
 type Hold = 'spear' | 'pike' | 'club' | 'sword' | 'longsword' | 'bow' | 'recurve' | 'sling' | 'crossbow' | 'musket' | 'rifle' | 'mg' | 'staff' | 'banner' | 'none';
 
@@ -151,16 +156,17 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
   const armL: ArmPose = shield ? SHIELD : bow ? RAISE : hold === 'longsword' ? GRIP2 : twoHands ? HOLD : HANG;
   const strike = hold === 'sling' ? HIT(SHOULDER, 1.4) : hold === 'spear' || hold === 'pike' ? HIT(SHOULDER, 1.5) : hold === 'club' || hold === 'sword' || hold === 'longsword' ? HIT(SHOULDER, 1.5)
     : hold === 'mg' ? HIT(SHOULDER, 0.4) : twoHands ? HIT(SHOULDER, 0.9) : null;
-  const bowUp = HIT(SHOULDER, 1.3); // (an archer raises his bow to loose)
+  const bowUp = HIT(SHOULDER, 0.4); // (an archer raises his bow to loose: from where he holds it forward)
   const freeL = !shield && !bow && !twoHands;
   const out = tagged(person(dress, armL, armR, {
     legs: (side) => (opts.still ? [0, HIP, 0] as const : LEG(side)),
-    arms: (side) => (side === -1 ? (hold === 'none' ? ARM(-1) : strike ?? undefined) : shield ? GUARD_ARM : freeL ? ARM(1) : bow ? bowUp : hold === 'longsword' || hold === 'mg' ? strike ?? undefined : undefined),
+    arms: (side) => (side === -1 ? (hold === 'none' ? ARM(-1) : bow ? DRAW_ARM : strike ?? undefined) : shield ? GUARD_ARM : freeL ? ARM(1) : bow ? bowUp : hold === 'longsword' || hold === 'mg' ? strike ?? undefined : undefined),
   }));
   const hR = handAt(-1, armR, f), hL = handAt(1, armL, f), eR = elbowAt(-1, armR, f), eL = elbowAt(1, armL, f);
   // (What the right hand holds goes with its forearm: bent at the elbow.)
   const w: Tag = strike ? { limb: strike, joint: [eR.y, eR.z], grip: [hR.y, hR.z, REST_PITCH[hold]] } : {};
-  const bowTag: Tag = { limb: bowUp, joint: [eL.y, eL.z] };
+  // (A bow points where its arrow would fly: square to its limbs, level as it is made.)
+  const bowTag: Tag = { limb: bowUp, joint: [eL.y, eL.z], grip: [hL.y, hL.z, Math.PI / 2] };
   const up = (d: number) => v3(hR).add(V(0, d, 0));
   if (hold === 'spear') out.push(rod(up(-0.42), up(0.86), 0.012, 0.011, 5, WOOD, w), point(0.11, 0.026, 3, METAL, { x: hR.x, y: hR.y + 0.86, z: hR.z }, w));
   if (hold === 'pike') out.push(rod(up(-0.4), up(1.25), 0.012, 0.011, 5, WOOD, w), point(0.13, 0.024, 3, METAL, { x: hR.x, y: hR.y + 1.25, z: hR.z }, w));

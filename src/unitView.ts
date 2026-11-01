@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { ArchCiv } from './architecture.ts';
 import { unitDef, domainOf, type UnitKey } from './rules.ts';
 import { returnFire, type AttackStyle, type Projectile } from './unitClasses.ts';
-import { UNIT_LOOK, figuresFor, formationSlots, unitModel, variantOf, rides, headOffset, hairModel, transportModel, wearsHelmet, womenShare, isMachine, colsOf, GEAR, HAIR_BY, HAIR_STYLES, STRIKE, GUARD } from './unitModels.ts';
+import { UNIT_LOOK, figuresFor, formationSlots, unitModel, variantOf, rides, headOffset, hairModel, transportModel, wearsHelmet, womenShare, isMachine, colsOf, GEAR, HAIR_BY, HAIR_STYLES, STRIKE, GUARD, DRAW, whirls } from './unitModels.ts';
 import { mulberry32 } from './rng.ts';
 import { HIP } from './people.ts';
 import { pairUp, type P2 } from './duel.ts';
@@ -115,9 +115,9 @@ export function fallShare(attack: Play, side: 'attacker' | 'defender', r: number
 export const falls = (type: UnitKey): boolean => !isMachine(type) && domainOf(unitDef(type)) === 'land';
 
 
-const FLAT = [0, 0, 0, 0, 0, 0, 0] as const;
-// (The shader's aPose, then the aim and how far aimed (aAnim.w, aSkinTone.w), the guard (aMore.x): bend, twist, crouch, elbow; aim, aimed; guard.)
-type Bends = readonly [number, number, number, number, number, number, number];
+const FLAT = [0, 0, 0, 0, 0, 0, 0, 0] as const;
+// (The shader's aPose, then the aim and how far aimed (aAnim.w, aSkinTone.w), the guard and draw (aMore.xy): bend, twist, crouch, elbow; aim, aimed; guard, draw.)
+type Bends = readonly [number, number, number, number, number, number, number, number];
 
 export interface ShownUnit {
   readonly id: number;
@@ -177,7 +177,7 @@ const UNIT_VERTEX_DECL = /* glsl */ `
   attribute vec4 aAnim;     // per figure: phase, its legs, its striking arm (unitAnim.ts legsOf, armOf); how its weapon points (radians from upright, forward)
   attribute vec4 aSkinTone; // per figure: its skin; how far its weapon is aimed (0: as it is made and carried)
   attribute vec4 aPose;     // per figure: its body above the hips bent forward, turned; its crouch; its striking elbow bent (radians)
-  attribute vec4 aMore;     // per figure: its shield raised (0..1); (spare)
+  attribute vec4 aMore;     // per figure: its shield raised, its bowstring drawn (0..1); (spare)
   uniform float uTime;
   // (A point or direction turned with the body above the hips.)
   vec3 bodyBend(vec3 p, float c1, float s1, float c2, float s2) {
@@ -194,17 +194,18 @@ const UNIT_LIMB = /* glsl */ `
   float beat = uTime * 9.0 + aAnim.x;
   bool isLeg = aLimb.z > 0.0 && abs(aLimb.x) < 1.5 && aLimb.y < ${(HIP + 0.01).toFixed(2)};
   bool isStrike = aLimb.x > ${(STRIKE - 0.5).toFixed(1)} && aLimb.x < ${(GUARD - 0.5).toFixed(1)};
-  bool isGuard = aLimb.x > ${(GUARD - 0.5).toFixed(1)};
+  bool isGuard = aLimb.x > ${(GUARD - 0.5).toFixed(1)} && aLimb.x < ${(DRAW - 0.5).toFixed(1)};
+  bool isDraw = aLimb.x > ${(DRAW - 0.5).toFixed(1)};
   float marching = aAnim.y > 1.5 ? 0.0 : aAnim.y;
   float rigFlags = aLimb.w;
   float isTeam = mod(rigFlags, 2.0), isSkin = mod(floor(rigFlags / 2.0), 2.0), isLower = mod(floor(rigFlags / 4.0), 2.0), isGrip = mod(floor(rigFlags / 8.0), 2.0);
   float jointA = isLeg ? 2.0 * aPose.z + marching * 0.95 * max(0.0, -cos(beat) * aLimb.x)
-               : isStrike ? -aPose.w : -0.35 * marching;
+               : isStrike ? -aPose.w : isDraw ? -2.3 * aMore.y : -0.35 * marching;
   jointA *= aLimb.z > 0.0 ? isLower : 0.0; // (a limb that never moves keeps its forearm as it is: what it holds stays in hand)
   float jointC = cos(jointA), jointS = sin(jointA);
   // (A weapon turned in the hand to point as aimed, however the arm is.)
   float hit = aAnim.z > 1.5 ? aAnim.z - 3.0 : aAnim.z * (0.6 + 0.4 * sin(uTime * 13.0 + aAnim.x)); // (past 1.5: a stance's arm, exactly)
-  float limbA = aLimb.z <= 0.0 ? 0.0 : isGuard ? -aMore.x * aLimb.z : isStrike ? -hit * aLimb.z
+  float limbA = aLimb.z <= 0.0 ? 0.0 : isGuard ? -aMore.x * aLimb.z : isDraw ? -aMore.y * aLimb.z : isStrike ? -hit * aLimb.z
                                      : (aAnim.y > 1.5 ? aAnim.y - 3.0 : sin(beat) * aAnim.y) * aLimb.x * aLimb.z // (past 1.5: a stance's stride, exactly)
                                        - (isLeg ? aPose.z : 0.0);
   float limbC = cos(limbA), limbS = sin(limbA);
@@ -425,7 +426,7 @@ export class UnitView {
       (mesh.geometry.getAttribute('aAnim') as THREE.InstancedBufferAttribute).setXYZW(i, f.phase, walk, strike, body[4]);
       (mesh.geometry.getAttribute('aSkinTone') as THREE.InstancedBufferAttribute).setXYZW(i, f.skin.r, f.skin.g, f.skin.b, body[5]);
       (mesh.geometry.getAttribute('aPose') as THREE.InstancedBufferAttribute).setXYZW(i, body[0], body[1], body[2], body[3]);
-      (mesh.geometry.getAttribute('aMore') as THREE.InstancedBufferAttribute).setX(i, body[6]);
+      (mesh.geometry.getAttribute('aMore') as THREE.InstancedBufferAttribute).setXY(i, body[6], body[7]);
     };
     for (const s of drawn) {
       const { walk, strike } = this.pose(s, now);
@@ -444,14 +445,14 @@ export class UnitView {
         if (body && now > f.fall) {
           turned.multiply(deathTurn(tip, now - f.fall, beat, horse));
           const fold = deathBend(now - f.fall, beat);
-          legs = deathLegs(now - f.fall, horse); arm = 3 + fold.arm; bends = horse ? FLAT : [fold.bend, 0, fold.crouch, 0.6, fold.aim, 1, 0.4];
+          legs = deathLegs(now - f.fall, horse); arm = 3 + fold.arm; bends = horse ? FLAT : [fold.bend, 0, fold.crouch, 0.6, fold.aim, 1, 0.4, 0];
           if (!horse) at = stepped.copy(f.pos).addScaledVector(f.up, -dropOf(fold.crouch) * this.size);
         } else if (body) {
-          const p = poseOf(this.cue(s, f, now), now, f.phase, beat, walk, horse);
+          const p = poseOf(this.cue(s, f, now), now, f.phase, beat, walk, horse, whirls(s.unit.type));
           turned.multiply(poseTurn(tip, p));
           // (Crouched, lower: the legs fold under it.)
-          at = stepped.copy(f.pos).addScaledVector(z, p.lunge * this.size).addScaledVector(f.up, -dropOf(p.crouch) * this.size);
-          legs = legsOf(p); arm = armOf(p); bends = horse ? [0, 0, 0, p.elbow, p.aim, p.aimed, p.guard] : [p.bend, p.twist, p.crouch, p.elbow, p.aim, p.aimed, p.guard];
+          at = stepped.copy(f.pos).addScaledVector(z, p.lunge * this.size).addScaledVector(f.up, (p.rise - dropOf(p.crouch)) * this.size);
+          legs = legsOf(p); arm = armOf(p); bends = horse ? [0, 0, 0, p.elbow, p.aim, p.aimed, p.guard, p.draw] : [p.bend, p.twist, p.crouch, p.elbow, p.aim, p.aimed, p.guard, p.draw];
         }
         put(this.key(s, f), at, color, f, legs, arm, bends);
         if (f.hair >= 0) put(`hair|${f.hair}`, head.copy(at).add(lift3.set(0, lift * this.size, back * this.size).applyQuaternion(turned)), f.hairColor, f, legs, 0, bends);
@@ -466,7 +467,7 @@ export class UnitView {
       z.crossVectors(x, c.up).normalize();
       q.setFromRotationMatrix(basis.makeBasis(x, c.up, z));
       turned.copy(q).multiply(deathTurn(tip, since, c.beat, c.horse));
-      const at = stepped.copy(c.pos).addScaledVector(c.up, -0.5 * this.size * sunk(since)), bends: Bends = c.horse ? FLAT : [fold.bend, 0, fold.crouch, 0.6, fold.aim, 1, 0.4];
+      const at = stepped.copy(c.pos).addScaledVector(c.up, -0.5 * this.size * sunk(since)), bends: Bends = c.horse ? FLAT : [fold.bend, 0, fold.crouch, 0.6, fold.aim, 1, 0.4, 0];
       put(c.key, at, c.color, c, deathLegs(since, c.horse), 3 + fold.arm, bends);
       if (c.hair >= 0) put(`hair|${c.hair}`, head.copy(at).add(lift3.set(0, c.lift[0] * this.size, c.lift[1] * this.size).applyQuaternion(turned)), c.hairColor, c, 3, 0, bends);
     }

@@ -26,23 +26,25 @@ import type { Play } from './unitView.ts';
 // bent (radians); where its weapon points (`aim`: radians from upright,
 // forward: levelled at 1.5; turned in the hand whatever the arm does), and
 // how far it is so aimed (`aimed`: 0, as it is made and carried, at ease);
-// its shield raised (`guard`: 0 carried, 1 up before its face).
+// its shield raised (`guard`: 0 carried, 1 up before its face); its
+// bowstring drawn to the cheek (`draw`, 0..1); how far it is lifted
+// (`rise`, figure heights: a rearing horse on its hind legs).
 export interface Pose {
   readonly lunge: number; readonly lean: number; readonly yaw: number;
   readonly bend: number; readonly twist: number; readonly arm: number;
   readonly walk: number; readonly stride: number;
   readonly crouch: number; readonly elbow: number; readonly aim: number; readonly aimed: number;
-  readonly guard: number;
+  readonly guard: number; readonly draw: number; readonly rise: number;
 }
 // (Aimed: what holds an aim, in a fight.)
 const P = (lunge: number, lean: number, yaw: number, bend: number, twist: number, arm: number, walk: number, stride: number, crouch = 0, elbow = 0, aim?: number): Pose =>
-  ({ lunge, lean, yaw, bend, twist, arm, walk, stride, crouch, elbow, aim: aim ?? 0, aimed: aim === undefined ? 0 : 1, guard: 0 });
+  ({ lunge, lean, yaw, bend, twist, arm, walk, stride, crouch, elbow, aim: aim ?? 0, aimed: aim === undefined ? 0 : 1, guard: 0, draw: 0, rise: 0 });
 const guarded = (p: Pose, guard: number): Pose => ({ ...p, guard });
 const mix = (a: Pose, b: Pose, k: number): Pose => {
   const t = Math.max(0, Math.min(1, k)), m = (x: number, y: number) => x + (y - x) * t;
-  return { ...P(m(a.lunge, b.lunge), m(a.lean, b.lean), m(a.yaw, b.yaw), m(a.bend, b.bend), m(a.twist, b.twist), m(a.arm, b.arm), m(a.walk, b.walk), m(a.stride, b.stride), m(a.crouch, b.crouch), m(a.elbow, b.elbow), m(a.aim, b.aim)), aimed: m(a.aimed, b.aimed), guard: m(a.guard, b.guard) };
+  return { ...P(m(a.lunge, b.lunge), m(a.lean, b.lean), m(a.yaw, b.yaw), m(a.bend, b.bend), m(a.twist, b.twist), m(a.arm, b.arm), m(a.walk, b.walk), m(a.stride, b.stride), m(a.crouch, b.crouch), m(a.elbow, b.elbow), m(a.aim, b.aim)), aimed: m(a.aimed, b.aimed), guard: m(a.guard, b.guard), draw: m(a.draw, b.draw), rise: m(a.rise, b.rise) };
 };
-const add = (a: Pose, d: Partial<Pose>): Pose => ({ ...P(a.lunge + (d.lunge ?? 0), a.lean + (d.lean ?? 0), a.yaw + (d.yaw ?? 0), a.bend + (d.bend ?? 0), a.twist + (d.twist ?? 0), a.arm + (d.arm ?? 0), a.walk, a.stride + (d.stride ?? 0), a.crouch + (d.crouch ?? 0), a.elbow + (d.elbow ?? 0), a.aim + (d.aim ?? 0)), aimed: a.aimed, guard: a.guard + (d.guard ?? 0) });
+const add = (a: Pose, d: Partial<Pose>): Pose => ({ ...P(a.lunge + (d.lunge ?? 0), a.lean + (d.lean ?? 0), a.yaw + (d.yaw ?? 0), a.bend + (d.bend ?? 0), a.twist + (d.twist ?? 0), a.arm + (d.arm ?? 0), a.walk, a.stride + (d.stride ?? 0), a.crouch + (d.crouch ?? 0), a.elbow + (d.elbow ?? 0), a.aim + (d.aim ?? 0)), aimed: a.aimed, guard: a.guard + (d.guard ?? 0), draw: a.draw + (d.draw ?? 0), rise: a.rise + (d.rise ?? 0) });
 const smooth = (t: number) => { const x = Math.max(0, Math.min(1, t)); return x * x * (3 - 2 * x); };
 const frac = (x: number) => x - Math.floor(x);
 
@@ -107,15 +109,26 @@ function blows(sec: number, beat: number, now: number, phase: number): Pose {
   return pose;
 }
 // Shooting: drawing (or shouldering) before each shot, loosed (a recoil),
-// lowered to reload.
-function shooting(sec: number, shots: readonly number[]): Pose {
-  let pose = P(0, 0, 0, 0.06, 0, 0.4, 0, 0.3, 0.15, 0.5, 0.5);
+// lowered to reload. A bow is drawn, the string hand back to the cheek; a
+// sling (`whirl`) is whirled overhead, then slung.
+// (Between shots: the weapon lowered, a bow's arrow down at the ground before it, a sling hanging.)
+const AT_EASE = (whirl: boolean) => ({ ...P(0, 0, 0, 0.06, 0, whirl ? 0.2 : 0.4, 0, 0.3, 0.15, 0.5, whirl ? Math.PI : 0.9) });
+function shooting(sec: number, shots: readonly number[], whirl = false): Pose {
+  let pose = AT_EASE(whirl);
   for (const ts of shots) {
     const d = sec - ts;
-    if (d > -0.4 && d <= 0) pose = mix(pose, P(0, 0, 0, -0.06, 0.2, 1.0, 0, 0.35, 0.2, 0.15, 1.5), smooth((d + 0.4) / 0.3));
-    else if (d > 0 && d < 0.55) pose = mix(P(0, 0, 0, -0.14, 0.14, 0.85, 0, 0.35, 0.2, 0.3, 1.3), P(0, 0, 0, 0.06, 0, 0.4, 0, 0.3, 0.15, 0.5, 0.5), smooth(d / 0.55));
+    const drawn = whirl ? P(0, 0, 0, -0.08, -0.2, 1.75, 0, 0.35, 0.2, 0.6, sec * 26) : { ...P(0, 0, 0, -0.06, 0.2, 1.0, 0, 0.35, 0.2, 0.15, 1.35), draw: 1 };
+    const loosed = whirl ? P(0, 0, 0, 0.3, 0.3, 0.9, 0, 0.45, 0.3, 0.1, 1.6) : P(0, 0, 0, -0.14, 0.14, 0.85, 0, 0.35, 0.2, 0.3, 1.3);
+    if (d > -0.45 && d <= 0) pose = mix(pose, drawn, smooth((d + 0.45) / 0.3));
+    else if (d > 0 && d < 0.55) pose = mix(loosed, AT_EASE(whirl), smooth(d / 0.55));
   }
   return pose;
+}
+// A horse in a melee: stamping, now and then rearing (on its hind legs,
+// its rider striking down from up there).
+function prance(pose: Pose, sec: number, beat: number): Pose {
+  const rear = Math.max(0, Math.sin(sec * 2.4 + beat * 6.3)) ** 6;
+  return { ...pose, lean: -0.42 * rear, rise: 0.3 * rear, walk: 0, stride: 0.3 * Math.sin(sec * 9 + beat * 5) * (1 - rear) + 0.5 * rear };
 }
 
 // ---- a figure's part in a fight ----
@@ -132,15 +145,27 @@ export interface Cue {
 
 // A figure's pose now: in a fight (its cue), on the march (`walk`), or at
 // ease. (Struck down, it is posed by deathTurn and deathBend.)
-export function poseOf(c: Cue | null, now: number, phase: number, beat: number, walk: number, rides: boolean): Pose {
-  const acted = c ? inFight(c, now, phase, beat) : walk > 0 ? march(now, phase, walk) : idle(now, phase);
+// (`whirl`: its weapon whirled before it is loosed, a sling.)
+export function poseOf(c: Cue | null, now: number, phase: number, beat: number, walk: number, rides: boolean, whirl = false): Pose {
+  const acted = c ? inFight(c, now, phase, beat, whirl) : walk > 0 ? march(now, phase, walk) : idle(now, phase);
   // (On its feet: whatever lean or turn an act asks of the whole figure is the body's above the hips.)
   const pose = { ...acted, lean: 0, yaw: 0, bend: acted.bend + acted.lean * 1.5, twist: acted.twist + acted.yaw };
   // (A rider strikes from the saddle: the horse hardly moves.)
-  return rides ? P(pose.lunge * 0.4, 0, pose.yaw * 0.5, 0, pose.twist * 0.5, pose.arm, pose.walk, 0, 0, pose.elbow, pose.aim) : pose;
+  if (!rides) return pose;
+  const rider = { ...P(pose.lunge * 0.4, 0, pose.yaw * 0.5, 0, pose.twist * 0.5, pose.arm, pose.walk, 0, 0, pose.elbow, pose.aim), aimed: pose.aimed, draw: pose.draw };
+  const [ex, left] = c ? exchange(c) : [-1, 0];
+  return ex >= 0 ? mix(rider, prance(rider, ex, beat), Math.min(ex, left) / BLEND) : rider;
 }
 
-function inFight(c: Cue, now: number, phase: number, beat: number): Pose {
+// How long a figure has been at it with its foe (seconds), or -1 if it
+// isn't; and how long it has left.
+function exchange(c: Cue): readonly [number, number] {
+  if (!c.engaged || c.sec >= c.dur || c.sec >= c.fall) return [-1, 0];
+  const from = c.side === 'attacker' ? (c.play.go[1] + c.delay) * c.dur : c.play.strike[0] * c.dur;
+  const to = c.side === 'attacker' ? (c.play.back + c.delay * 0.4) * c.dur : c.play.strike[1] * c.dur;
+  return c.sec >= from && c.sec < to ? [c.sec - from, to - c.sec] : [-1, 0];
+}
+function inFight(c: Cue, now: number, phase: number, beat: number, whirl: boolean): Pose {
   const { sec, dur, play, attack } = c, s = (share: number) => share * dur;
   // Over: the winners cheer, the rest stand easy again.
   if (sec >= dur) {
@@ -161,7 +186,7 @@ function inFight(c: Cue, now: number, phase: number, beat: number): Pose {
   if (c.side === 'defender' && attack.close) {
     const met = s(play.strike[0]), part = s(play.strike[1]);
     const shot = play.shots[0];
-    let pose = shot ? mix(into, shooting(sec, [s(shot.t)]), smooth(sec / BLEND)) : into;
+    let pose = shot ? mix(into, shooting(sec, [s(shot.t)], whirl), smooth(sec / BLEND)) : into;
     if (c.engaged && sec >= met && sec < part) pose = mix(pose, blows(sec - met, beat, now, phase), (sec - met) / BLEND);
     else if (c.engaged && sec >= part) pose = mix(blows(part - met, beat, now, phase), ready(now, phase), (sec - part) / BLEND);
     return pose;
@@ -170,11 +195,11 @@ function inFight(c: Cue, now: number, phase: number, beat: number): Pose {
     // Shot at: cowering from the first shot until a little after the last.
     const t0 = s(attack.shots[0]?.t ?? 0.3), t1 = s(attack.shots[attack.shots.length - 1]?.t ?? 0.6) + 0.5;
     const shots = play.shots.map((x) => s(x.t));
-    const base = shots.length ? shooting(sec, shots) : into;
+    const base = shots.length ? shooting(sec, shots, whirl) : into;
     return sec < t0 ? mix(into, base, sec / BLEND) : mix(base, cower(now, phase), smooth((sec - t0 + 0.15) / BLEND) * (sec < t1 ? 1 : 1 - smooth((sec - t1) / 0.3)));
   }
   // An attacker shooting (or rolling in: machines aren't posed).
-  return mix(into, shooting(sec, play.shots.map((x) => s(x.t))), sec / BLEND);
+  return mix(into, shooting(sec, play.shots.map((x) => s(x.t)), whirl), sec / BLEND);
 }
 
 // ---- struck down ----
