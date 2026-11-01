@@ -14,8 +14,9 @@ import type { UnitKey } from './rules.ts';
 export interface P2 { readonly x: number; readonly z: number }
 // An attacking figure's fight: whom it goes at (an index into the
 // defender's figures), where it stops, how much later than the others it
-// sets out (a share of the fight).
-export interface Duel { readonly foe: number; readonly to: P2; readonly delay: number }
+// sets out (a share of the fight), how far its path bows to one side
+// (figure heights: they don't run in step, in straight lines).
+export interface Duel { readonly foe: number; readonly to: P2; readonly delay: number; readonly curve: number }
 
 // How far a weapon reaches past the figure's front (figure heights): held
 // upright, it comes down as the figure strikes.
@@ -74,5 +75,5 @@ export function pairUp(att: readonly P2[], def: readonly P2[], a: UnitKey, d: Un
     });
   }
   // (They don't set out as one: the formation breaks up, streaming at the enemy.)
-  return att.map((_, ai) => ({ foe: foeOf.get(ai)!, to: to[ai]!, delay: rand() * 0.13 }));
+  return att.map((_, ai) => ({ foe: foeOf.get(ai)!, to: to[ai]!, delay: rand() * 0.13, curve: (rand() - 0.5) * 1.1 }));
 }

@@ -149,7 +149,7 @@ function inFight(c: Cue, now: number, phase: number, beat: number): Pose {
   }
   const into = mix(idle(now, phase), ready(now, phase), sec / BLEND); // (taking its stance as the fight begins)
   if (c.side === 'attacker' && attack.close) {
-    const go0 = s(play.go[0] + c.delay), met = s(play.go[1] + c.delay), back = s(play.back), run = play.charge > 1 ? 1.4 : 1;
+    const go0 = s(play.go[0] + c.delay), met = s(play.go[1] + c.delay), back = s(play.back + c.delay * 0.4), run = play.charge > 1 ? 1.4 : 1;
     if (sec < go0) return into;
     if (sec < met) return mix(into, march(now, phase, run), (sec - go0) / BLEND);
     if (sec < back) {

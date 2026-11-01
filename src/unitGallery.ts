@@ -22,7 +22,7 @@ import { TECHS, TECH_KEYS } from './techs.ts';
 import { POLITICS } from './politics.ts';
 import { FORTIFY_BONUS, combatStrength, fightRounds, matchup } from './game.ts';
 import { HAIR_STYLES, UNIT_LOOK, colsOf, figuresFor, formationSlots, hairModel, headOffset, isMachine, rides, unitModel, variantOf, womenShare } from './unitModels.ts';
-import { FIGHT, PLAYS, Volleys, defendPlay, fallShare, falls, figureLooks, makeUnitMaterial, playAt, playOf, prepareUnitGeometry, type Play } from './unitView.ts';
+import { FIGHT, PLAYS, Volleys, bow, figureOut, defendPlay, fallShare, falls, figureLooks, makeUnitMaterial, playAt, playOf, prepareUnitGeometry, type Play } from './unitView.ts';
 import { pairUp, type P2 } from './duel.ts';
 import { AFTER, armOf, deathBend, deathLegs, deathTurn, dropOf, legsOf, poseOf, poseTurn, type Cue } from './unitAnim.ts';
 import { attackBlock, attackStyle, siegeStyle } from './unitClasses.ts';
@@ -102,7 +102,7 @@ interface Cell { type: UnitKey; civ: ArchCiv; hp: number; x: number; z: number; 
 // faces (field places), how late it sets out; when it falls (a share of
 // the fight; never: Infinity).
 // (`beat`: where it is in its round of blows: unitAnim.ts.)
-interface Soul { idx: number; rides: boolean; to: P2 | null; foe: P2 | null; delay: number; fall: number; beat: number }
+interface Soul { idx: number; rides: boolean; to: P2 | null; foe: P2 | null; delay: number; curve: number; fall: number; beat: number }
 // Every figure drawn: its mesh and slot, its cell and place in it.
 interface Placed { mesh: THREE.InstancedMesh; i: number; cell: Cell; fx: number; fz: number; lift: readonly [number, number]; phase: number; hair: boolean; soul: Soul }
 let cells: Cell[] = [];
@@ -166,7 +166,7 @@ function build(): { w: number; d: number } {
     const rand = mulberry32(cell.seed);
     for (const [i, [fx, fz]] of formationSlots(cell.type, cell.hp, rand).entries()) {
       const variant = variantOf(cell.type, i, rand), looks = figureLooks(cell.type, cell.civ, womenShare(cell.type, suffrage), rand), phase = rand() * Math.PI * 2;
-      const soul: Soul = { idx: i, rides: rides(cell.type, variant), to: null, foe: null, delay: 0, fall: Infinity, beat: phase / (Math.PI * 2) };
+      const soul: Soul = { idx: i, rides: rides(cell.type, variant), to: null, foe: null, delay: 0, curve: 0, fall: Infinity, beat: phase / (Math.PI * 2) };
       const f: Fig = { cell, fx, fz, lift: [0, 0], color: new THREE.Color(colorOf(cell.civ)), skin: looks.skin, phase, hair: false, soul };
       push(`${cell.type}|${cell.civ}|${variant}|${looks.female ? 1 : 0}`, f);
       if (looks.hair >= 0) push(`hair|${looks.hair}`, { ...f, lift: headOffset(cell.type, variant), color: looks.hairColor, hair: true });
@@ -249,7 +249,7 @@ function pairBattle(): void {
   const att = sideOf(a), def = sideOf(d);
   pairUp(att.map(homeOf), def.map(homeOf), a.type, d.type, mulberry32(7)).forEach((duel, i) => {
     const s = att[i]!.soul, foe = def[duel.foe]!;
-    Object.assign(s, { to: duel.to, foe: homeOf(foe), delay: duel.delay });
+    Object.assign(s, { to: duel.to, foe: homeOf(foe), delay: duel.delay, curve: duel.curve });
     if (!foe.soul.foe) { foe.soul.foe = duel.to; foe.soul.beat = s.beat + 0.5; }
   });
 }
@@ -284,12 +284,14 @@ function pose(now: number): void {
     // (The fallen stay where they fell, after the fight too.)
     const c = p.cell, s = p.soul, fell = fight !== null && falls(c.type) && t > s.fall, play = (fighting || fell) && c.target !== null ? c.play : null;
     // (Struck down: as far as it got, then over.)
-    const tt = play ? Math.min(t, s.fall) - s.delay : t, st = play ? playAt(play, Math.max(0, tt)) : null;
+    const st = play ? { ...playAt(play, Math.min(t, s.fall)), ...figureOut(play, Math.min(t, s.fall), s.delay) } : null;
     const home = homeOf(p);
     let x = home.x, z = home.z, ry = (c.facing === 1 ? 0 : Math.PI) + (st?.back ? Math.PI : 0);
     if (play && st && s.to) {
       // (A melee: out to its foe, facing it, then home.)
-      x += (s.to.x - home.x) * st.out; z += (s.to.z - home.z) * st.out;
+      // (Its path bowed to one side.)
+      const dx = s.to.x - home.x, dz = s.to.z - home.z, len = Math.hypot(dx, dz) || 1, b = bow(s.curve, st.out);
+      x += dx * st.out - (dz / len) * b; z += dz * st.out + (dx / len) * b;
       ry = st.back ? heading(home.x - s.to.x, home.z - s.to.z) : st.out < 0.98 ? heading(s.to.x - home.x, s.to.z - home.z) : heading(s.foe!.x - x, s.foe!.z - z);
     } else if (play && st) {
       offset.set(c.target!.x - c.x, 0, c.target!.z - c.z).multiplyScalar(CHARGE_SHARE * play.charge * st.out);

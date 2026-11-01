@@ -78,6 +78,16 @@ export function playAt(p: Play, t: number): { out: number; moving: boolean; stri
   const strike = p.aim ? Math.min(1, t * 4) * (t < 0.85 ? 1 : (1 - t) / 0.15) : t > p.strike[0] && t < p.strike[1] ? 1 : 0;
   return { out, moving, strike, back: p.charge > 0 && t > p.back };
 }
+// How far out a melee's figure is, `t` into the fight, having set out
+// `delay` late (a share): out as its play goes, then home again a little
+// late too (but home as the fight ends: each runs back at its own pace).
+export function figureOut(p: Play, t: number, delay: number): { out: number; back: boolean } {
+  const turn = p.back + delay * 0.4;
+  if (t < turn) return { out: playAt(p, Math.max(0, t - delay)).out, back: false };
+  return { out: 1 - smooth(Math.min(1, (t - turn) / (1 - turn))), back: true };
+}
+// How far a path bows to one side, `out` along it.
+export const bow = (curve: number, out: number): number => curve * Math.sin(Math.PI * out);
 // A defender: shoots back once, or strikes where it stands.
 const DEFEND: Play = { charge: 0, go: [0, 0], back: 1, strike: [0.2, 0.8], aim: false, shots: [] };
 export const playOf = (style: AttackStyle | null, type: UnitKey): Play => {
@@ -132,13 +142,13 @@ export interface UnitViewEnv {
 // Infinity).
 interface Figure {
   x: number; z: number; variant: number; female: boolean; skin: THREE.Color; hair: number; hairColor: THREE.Color; phase: number; pos: THREE.Vector3; up: THREE.Vector3;
-  home: THREE.Vector3 | null; goal: THREE.Vector3 | null; foe: THREE.Vector3 | null; face: THREE.Vector3 | null; delay: number; fall: number;
+  home: THREE.Vector3 | null; goal: THREE.Vector3 | null; foe: THREE.Vector3 | null; face: THREE.Vector3 | null; delay: number; curve: number; fall: number;
   beat: number | null; // where it is in its round of blows (null: its phase says)
 }
 interface Fight { at: THREE.Vector3; home: THREE.Vector3; t0: number; play: Play; fired: number; attack: Play; side: 'attacker' | 'defender'; won: boolean }
 // A figure struck down, lying where it fell (then sinking away).
 interface Corpse { key: string; hair: number; hairColor: THREE.Color; skin: THREE.Color; phase: number; color: THREE.Color; pos: THREE.Vector3; up: THREE.Vector3; face: THREE.Vector3; fall: number; beat: number; horse: boolean; lift: readonly [number, number] }
-const unfought = () => ({ home: null, goal: null, foe: null, face: null, delay: 0, fall: Infinity, beat: null });
+const unfought = () => ({ home: null, goal: null, foe: null, face: null, delay: 0, curve: 0, fall: Infinity, beat: null });
 // The outcome of a fight, if known: the defending unit, the HP each side is left with.
 export interface FightResult { readonly defender: number; readonly attackerHp: number; readonly defenderHp: number }
 interface Shown {
@@ -354,6 +364,7 @@ export class UnitView {
       f.goal = c.clone().addScaledVector(right, duel.to.x * size).addScaledVector(fwd, duel.to.z * size).normalize();
       f.foe = foe.up.clone();
       f.delay = duel.delay;
+      f.curve = duel.curve;
       if (!foe.foe) { foe.foe = f.goal.clone(); foe.beat = f.phase / (Math.PI * 2) + 0.5; }
     });
   }
@@ -517,11 +528,12 @@ export class UnitView {
   // (or as far as it got before it fell), facing it, then its foe, then
   // turned about to go home.
   private duel(s: Shown, t: number): void {
-    const p = s.fight!.play, afloat = this.afloat(s.unit), d = new THREE.Vector3();
+    const p = s.fight!.play, afloat = this.afloat(s.unit), d = new THREE.Vector3(), side = new THREE.Vector3();
     for (const f of s.figures) {
       if (!f.goal || !f.home) continue;
-      const tt = Math.min(t, (f.fall - s.fight!.t0) / FIGHT) - f.delay, { out, back } = playAt(p, Math.max(0, tt));
-      this.place(s, f, d.copy(f.home).lerp(f.goal, out).normalize(), afloat);
+      const { out, back } = figureOut(p, Math.min(t, (f.fall - s.fight!.t0) / FIGHT), f.delay);
+      side.crossVectors(f.goal.clone().sub(f.home), f.home).normalize();
+      this.place(s, f, d.copy(f.home).lerp(f.goal, out).addScaledVector(side, bow(f.curve, out) * this.size).normalize(), afloat);
       f.face = this.tangent(f.up, back ? f.home.clone().sub(f.goal) : out < 0.98 ? f.goal.clone().sub(f.home) : f.foe!.clone().sub(f.up));
     }
   }
