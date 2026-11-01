@@ -74,6 +74,12 @@ function idle(now: number, phase: number): Pose {
 // On the march (`walk` 1), or at a run (more): leaning into it.
 const march = (now: number, phase: number, walk: number): Pose =>
   P(0, 0, 0, 0.1 * walk + 0.03 * Math.sin(now * 18 + phase * 2), 0.06 * Math.sin(now * 9 + phase), 0.1 * walk, walk, 0, 0.1 * walk, 0.35 * walk, walk > 1.2 ? 1.2 : undefined);
+// Charging home: at a run, the weapon brought down level at the enemy as
+// it closes (`k`: 0 setting out, 1 upon it), the body leaning into it.
+const charging = (now: number, phase: number, walk: number, k: number): Pose => {
+  const run = march(now, phase, walk), t = smooth(k);
+  return { ...run, bend: run.bend + 0.12 * t, arm: run.arm + (0.35 - run.arm) * t, elbow: run.elbow + (0.7 - run.elbow) * t, aim: run.aimed ? run.aim + (1.4 - run.aim) * t : 1.4 * t, aimed: Math.max(run.aimed, t) };
+};
 // Ready to fight: knees bent, a foot forward and planted, weapon up and
 // aimed, the shoulders turned a little, weaving slowly.
 const STANCE = 0.45;
@@ -187,10 +193,10 @@ function inFight(c: Cue, now: number, phase: number, beat: number, whirl: boolea
     // (A volley first, if it fires before it goes in: guns levelled.)
     const opening = play.shots.length ? mix(into, shooting(sec, play.shots.map((x) => s(x.t)), whirl), smooth(sec / 0.12)) : into;
     if (sec < go0) return opening;
-    if (sec < met) return mix(opening, march(now, phase, run), (sec - go0) / BLEND);
+    if (sec < met) return mix(opening, charging(now, phase, run, ((sec - go0) / (met - go0)) * 1.8 - 0.6), (sec - go0) / BLEND);
     if (sec < back) {
       const fight = c.engaged ? blows(sec - met, beat, now, phase) : ready(now, phase);
-      return mix(mix(pullUp, march(now, phase, run), 1 - (sec - met) / 0.12), fight, (sec - met) / 0.3);
+      return mix(mix(pullUp, charging(now, phase, run, 1), 1 - (sec - met) / 0.12), fight, (sec - met) / 0.3);
     }
     return mix(blows(back - met, beat, now, phase), march(now, phase, 1), (sec - back) / BLEND);
   }
