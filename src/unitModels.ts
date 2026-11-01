@@ -315,7 +315,9 @@ function rider(gear: Gear, coat: number, female: boolean, style: RiderStyle): TH
   const amp = style === 'cavalry' ? 0.9 : style === 'horseman' ? 0.8 : 0.6, strike = HIT(SEAT + 0.3, amp);
   out.push(...tagged(riderBody(dress, SEAT, armL, armR, style === 'officer' ? undefined : strike)));
   const hR = handAt(-1, armR, female).add(V(0, SEAT - HIP, 0)), hL = handAt(1, armL, female).add(V(0, SEAT - HIP, 0)), eR = elbowAt(-1, armR, female).add(V(0, SEAT - HIP, 0));
-  const w: Tag = { limb: strike, joint: [eR.y, eR.z] };
+  // (Turned in the hand to point as aimed (a lance couched as it charges), from how it is carried.)
+  const rest = style === 'knight' || style === 'lancer' ? Math.atan2(0.75, 0.55) : style === 'cavalry' ? Math.atan2(0.18, 0.42) : Math.atan2(0.3, 0.7);
+  const w: Tag = { limb: strike, joint: [eR.y, eR.z], grip: [hR.y, hR.z, rest] };
   const plume = (dy: number) => box(0.024, 0.11, 0.15, PAINT, { y: SEAT - HIP + HEAD_Y + 0.12 + dy }, { team: true });
   const lance = (len: number) => {
     const tip = hR.clone().add(V(0, 0.55, 0.75).multiplyScalar(len));
