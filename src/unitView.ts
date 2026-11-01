@@ -174,7 +174,7 @@ export interface UnitViewEnv {
 // and where its legs are in their beat (`gait`, radians). `fresh`: not yet
 // stood anywhere.
 interface Figure {
-  jx: number; jz: number; slot: number; at: THREE.Vector3; off: THREE.Vector3; head: THREE.Vector3; last: THREE.Vector3; speed: number; gait: number; fresh: boolean;
+  jx: number; jz: number; slot: number; at: THREE.Vector3; off: THREE.Vector3; still: boolean; head: THREE.Vector3; last: THREE.Vector3; speed: number; gait: number; fresh: boolean; // (still: stood at its place, nothing to redo)
   variant: number; female: boolean; skin: THREE.Color; hair: number; hairColor: THREE.Color; phase: number; pos: THREE.Vector3; up: THREE.Vector3;
   home: THREE.Vector3 | null; goal: THREE.Vector3 | null; foe: THREE.Vector3 | null; face: THREE.Vector3 | null; delay: number; curve: number; fall: number;
   beat: number | null; // where it is in its round of blows (null: its phase says)
@@ -801,8 +801,8 @@ export class UnitView {
     const u = s.unit, rand = mulberry32(u.id * 104729 + 3), old = keep ? s.figures : [];
     const motion = (i: number, phase: number) => {
       const o = old[i];
-      return o ? { at: o.at, off: o.off, head: o.head, last: o.last, speed: o.speed, gait: o.gait, fresh: o.fresh, pos: o.pos, up: o.up }
-        : { at: new THREE.Vector3(), off: new THREE.Vector3(), head: s.forward.clone(), last: new THREE.Vector3(), speed: 0, gait: phase, fresh: true, pos: new THREE.Vector3(), up: new THREE.Vector3() };
+      return o ? { at: o.at, off: o.off, still: false, head: o.head, last: o.last, speed: o.speed, gait: o.gait, fresh: o.fresh, pos: o.pos, up: o.up }
+        : { at: new THREE.Vector3(), off: new THREE.Vector3(), still: false, head: s.forward.clone(), last: new THREE.Vector3(), speed: 0, gait: phase, fresh: true, pos: new THREE.Vector3(), up: new THREE.Vector3() };
     };
     // (Embarked: its one boat.)
     if (u.embarked) { s.figures = [{ jx: 0, jz: 0, slot: 0, variant: 0, female: false, skin: new THREE.Color(), hair: -1, hairColor: new THREE.Color(), phase: 0, ...motion(0, 0), ...unfought() }]; return; }
@@ -840,6 +840,7 @@ export class UnitView {
     const afloat = this.afloat(s.unit);
     for (const f of s.figures) {
       f.at.copy(dirs[f.slot]!);
+      f.still = false;
       if (f.fresh) { f.fresh = false; f.off.set(0, 0, 0); f.head.copy(s.forward); this.place(s, f, f.at, afloat); f.last.copy(f.pos); }
       else if (anew) f.off.copy(f.up).sub(f.at);
     }
@@ -860,12 +861,13 @@ export class UnitView {
     const afloat = this.afloat(s.unit), d = new THREE.Vector3(), want = new THREE.Vector3(), rate = (isMachine(s.unit.type) ? TURN_MACHINE : TURN) * dt;
     for (const f of s.figures) {
       const running = s.fight !== null && f.goal !== null, down = now > f.fall;
-      if (!running && !down) {
+      // (One stood at its place, its place unmoved, needn't be stood there again: the ground isn't sampled for it.)
+      if (!running && !down && !f.still) {
         const len = f.off.length();
         if (len > 1e-9) {
           const step = (SHUFFLE + (SHUFFLE_FAR * len) / this.size) * this.size * dt;
           f.off.multiplyScalar(Math.max(0, len - step) / len);
-        }
+        } else f.still = true;
         this.place(s, f, d.copy(f.at).add(f.off).normalize(), afloat);
       }
       if (dt <= 0) continue;
