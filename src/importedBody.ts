@@ -56,21 +56,22 @@ const PIECES = new Map<BodyData, Piece[]>();
 // a body in place of its own: each 1 tall from its neck's foot, centred on
 // its skull; their textures in one image (u from 1 to 2: the units' shader
 // reads it there).
-interface HeadData { readonly verts: readonly (readonly number[])[]; readonly tris: readonly number[]; readonly uv: readonly number[] }
+interface HeadData { readonly chin: number; readonly verts: readonly (readonly number[])[]; readonly tris: readonly number[]; readonly uv: readonly number[] }
 export type HeadName = keyof typeof heads;
 const HEADS: Record<HeadName, HeadData> = heads;
 export const HEAD_NAMES = Object.keys(heads) as HeadName[];
-// Where a head goes on a body: its skull as wide as the body's own, its
-// crown where the body's is, over it; and how high the body's own is cut
+// Where a head goes on a body: as big as a head is on a figure (HEAD: from
+// its crown to its chin, of the figure's height; the classical 1 in 7.5),
+// its crown where the body's is, over its own (the skull's middle); and how high the body's own is cut
 // off: up under the new one's jaw, its neck there inside the new one's (the
 // two overlap: no gap under the chin).
+const HEAD = 0.133;
 function headFit(b: BodyData, h: HeadData): { s: number; base: THREE.Vector3; cut: number; axis: number } {
   const axis = b.joints['Head']![2]!;
   const own = b.verts.filter((p) => p[1]! > 0.9 && Math.hypot(p[0]!, p[2]! - axis) < 0.1);
-  const top = Math.max(...own.map((p) => p[1]!)), w = Math.max(...own.map((p) => Math.abs(p[0]!)));
-  const zs = own.map((p) => p[2]!), z = (Math.min(...zs) + Math.max(...zs)) / 2;
-  const s = w / Math.max(...h.verts.filter((p) => p[1]! > 0.6).map((p) => Math.abs(p[0]!)));
-  return { s, base: new THREE.Vector3(0, top - s, z), cut: top - s * 0.7, axis };
+  const top = Math.max(...own.map((p) => p[1]!));
+  const s = HEAD / (1 - h.chin);
+  return { s, base: new THREE.Vector3(0, top - s, axis), cut: top - s * 0.7, axis };
 }
 
 const v = (a: readonly number[]) => new THREE.Vector3(a[0], a[1], a[2]);

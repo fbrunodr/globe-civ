@@ -49,7 +49,9 @@ specs.forEach((spec, n) => {
   const img = readImage(file.replace(/\.fbx$/, '.png'), CELL);
   keyMagenta(img);
   for (let y = 0; y < CELL; y++) img.rgba.copy(atlas.rgba, ((row * CELL + y) * atlas.w + col * CELL) * 4, y * CELL * 4, (y + 1) * CELL * 4);
-  heads[id] = { source: file.split('/').pop(), verts, tris, uv: uvs };
+  // (The chin: the face's lowest point, in front.)
+  const zmax = Math.max(...verts.map((p) => p[2])), chin = Math.min(...verts.filter((p) => p[2] > zmax * 0.5 && Math.abs(p[0]) < 0.12).map((p) => p[1]));
+  heads[id] = { source: file.split('/').pop(), chin: +chin.toFixed(4), verts, tris, uv: uvs };
   console.log(`${id}: ${tris.length / 3} triangles (of ${index.length / 3}; the rest below the neck)`);
 });
 fs.writeFileSync(out, JSON.stringify(heads));
