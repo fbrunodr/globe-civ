@@ -17,6 +17,7 @@ import { KNEE, SKIN_PAINT, CLOTH_PAINT, type ArmPose, type Dress, type Part, typ
 import wanderer from './bodies/wanderer.json';
 import tribal from './bodies/tribal.json';
 import ancient from './bodies/ancient.json';
+import heads from './bodies/heads.json';
 
 interface BodyData {
   readonly uv?: readonly number[]; // (each triangle's corners, in order: textured bodies)
@@ -51,12 +52,33 @@ function pieces(b: BodyData): Piece[] {
 }
 const PIECES = new Map<BodyData, Piece[]>();
 
+// The heads (scripts/importHeads.mjs: docs/asset-prompts.md's H1…), set on
+// a body in place of its own: each 1 tall from its neck's foot, centred on
+// its skull; their textures in one image (u from 1 to 2: the units' shader
+// reads it there).
+interface HeadData { readonly verts: readonly (readonly number[])[]; readonly tris: readonly number[]; readonly uv: readonly number[] }
+export type HeadName = keyof typeof heads;
+const HEADS: Record<HeadName, HeadData> = heads;
+export const HEAD_NAMES = Object.keys(heads) as HeadName[];
+// Where a head goes on a body: its skull as wide as the body's own, its
+// crown where the body's is, over it; and how high the body's own is cut
+// off: up under the new one's jaw, its neck there inside the new one's (the
+// two overlap: no gap under the chin).
+function headFit(b: BodyData, h: HeadData): { s: number; base: THREE.Vector3; cut: number; axis: number } {
+  const axis = b.joints['Head']![2]!;
+  const own = b.verts.filter((p) => p[1]! > 0.9 && Math.hypot(p[0]!, p[2]! - axis) < 0.1);
+  const top = Math.max(...own.map((p) => p[1]!)), w = Math.max(...own.map((p) => Math.abs(p[0]!)));
+  const zs = own.map((p) => p[2]!), z = (Math.min(...zs) + Math.max(...zs)) / 2;
+  const s = w / Math.max(...h.verts.filter((p) => p[1]! > 0.6).map((p) => Math.abs(p[0]!)));
+  return { s, base: new THREE.Vector3(0, top - s, z), cut: top - s * 0.7, axis };
+}
+
 const v = (a: readonly number[]) => new THREE.Vector3(a[0], a[1], a[2]);
 
 export interface ImportedBody { readonly parts: Part[]; readonly texture?: string; hand(side: 1 | -1): THREE.Vector3; elbow(side: 1 | -1): THREE.Vector3 }
-// The body, `name`, dressed (`d`: its legs bare or trousered, its skirt) and its arms
+// The body, `name` (with `newHead` in place of its own, if given), dressed (`d`: its legs bare or trousered, its skirt) and its arms
 // posed; `swing`, as person()'s: how its legs and arms move.
-export function importedPerson(name: BodyName, d: Dress, armL: ArmPose, armR: ArmPose, swing: { legs: (side: number) => readonly [number, number, number]; arms: (side: number) => readonly [number, number, number] | undefined }): ImportedBody {
+export function importedPerson(name: BodyName, newHead: HeadName | null, d: Dress, armL: ArmPose, armR: ArmPose, swing: { legs: (side: number) => readonly [number, number, number]; arms: (side: number) => readonly [number, number, number] | undefined }): ImportedBody {
   const b = BODIES[name], J = b.joints;
   const L = Object.fromEntries(b.limbs.map((limb, i) => [limb, i])) as Record<string, number>;
   const PIECE = PIECES.get(b) ?? PIECES.set(b, pieces(b)).get(b)!;
@@ -155,8 +177,16 @@ export function importedPerson(name: BodyName, d: Dress, armL: ArmPose, armR: Ar
   // hanging from it at all, stays with the body).
   const groups = new Map<string, { pos: number[]; col: number[]; uv: number[]; blend: number[]; tag: PartTag; limb: number; skirt: boolean }>();
   const a = new THREE.Vector3(), bb = new THREE.Vector3(), c = new THREE.Vector3(), nrm = new THREE.Vector3(), col = new THREE.Color();
+  // (With another head: the body's own left off, above where the new one's neck goes in.)
+  const fitted = newHead ? headFit(b, HEADS[newHead]) : null;
+  const offHead = (i0: number, i1: number, i2: number): boolean => {
+    if (!fitted) return false;
+    const [p, q, r] = [b.verts[i0]!, b.verts[i1]!, b.verts[i2]!];
+    return (p[1]! + q[1]! + r[1]!) / 3 > fitted.cut && Math.hypot((p[0]! + q[0]! + r[0]!) / 3, (p[2]! + q[2]! + r[2]!) / 3 - fitted.axis) < 0.085;
+  };
   for (let t = 0; t < b.tris.length; t += 3) {
     const [i0, i1, i2] = [b.tris[t]!, b.tris[t + 1]!, b.tris[t + 2]!];
+    if (offHead(i0, i1, i2)) continue;
     a.copy(moved[i0]!); bb.copy(moved[i1]!); c.copy(moved[i2]!);
     nrm.copy(bb).sub(a).cross(c.clone().sub(a)).normalize();
     const piece = PIECE[b.part[i0]!]!, mid = a.clone().add(bb).add(c).divideScalar(3);
@@ -174,6 +204,16 @@ export function importedPerson(name: BodyName, d: Dress, armL: ArmPose, armR: Ar
       const x = cs[k]!.chain === limb ? cs[k]! : { on: 0, lower: 0 };
       gr!.blend.push(skirt ? 1 : x.on, skirt ? 0 : x.lower);
     });
+  }
+  // The new head: on the body's neck, with the body (not with a limb).
+  if (newHead && fitted) {
+    const h = HEADS[newHead], gr = { pos: [] as number[], col: [] as number[], uv: [] as number[], blend: [] as number[], tag: 'plain' as PartTag, limb: -1, skirt: false };
+    h.tris.forEach((i, k) => {
+      const p = h.verts[i]!;
+      gr.pos.push(fitted.base.x + p[0]! * fitted.s, fitted.base.y + p[1]! * fitted.s, fitted.base.z + p[2]! * fitted.s);
+      gr.col.push(1, 1, 1); gr.uv.push(h.uv[k * 2]!, h.uv[k * 2 + 1]!);
+    });
+    groups.set('head', gr);
   }
   const parts: Part[] = [];
   for (const gr of groups.values()) {

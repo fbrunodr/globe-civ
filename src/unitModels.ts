@@ -3,7 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { part, seg, tf, V, type Tf } from './propCatalog.ts';
 import { person, riderBody, handAt, elbowAt, hairShapes, headShell, HAIR_STYLE_KEYS, HIP, SHOULDER, HEAD_Y, HANG, HOLD, RAISE, SHIELD, GRIP2, GUN_R, GUN_L, type ArmPose, type Dress, type Part, type HairStyleKey } from './people.ts';
 import { horseParts } from './creatures.ts';
-import { importedPerson, type BodyName } from './importedBody.ts';
+import { importedPerson, HEAD_NAMES, type BodyName, type HeadName } from './importedBody.ts';
 import { gem, hull, plate, R, type V3 } from './lowpoly.ts';
 import type { ArchCiv } from './architecture.ts';
 import type { UnitKey } from './rules.ts';
@@ -145,9 +145,14 @@ const hilt = (g: THREE.Vector3, dir: THREE.Vector3, len: number, color: number, 
 const BODY_PARAM = typeof location !== 'undefined' ? new URLSearchParams(location.search).get('body') : null;
 const BODY_OF: Partial<Record<UnitKey, BodyName>> = { warrior: 'tribal', slinger: 'tribal', spearman: 'ancient', archer: 'ancient' };
 export const importedBodyOf = (type: UnitKey): BodyName | null => (BODY_PARAM === 'wanderer' ? 'wanderer' : BODY_PARAM === 'ai' ? BODY_OF[type] ?? null : null);
+// Their heads, by civ (docs/asset-prompts.md: H1…), where there is one yet,
+// else the body's own; ?head=… sets one on every civ's (=none: their own).
+const HEAD_PARAM = typeof location !== 'undefined' ? new URLSearchParams(location.search).get('head') : null;
+const HEAD_OF: Partial<Record<ArchCiv, HeadName>> = { English: 'H1', French: 'H1', Germans: 'H1', Russians: 'H1' };
+const headOf = (civ: ArchCiv): HeadName | null => (HEAD_PARAM === 'none' ? null : (HEAD_NAMES as string[]).includes(HEAD_PARAM ?? '') ? HEAD_PARAM as HeadName : HEAD_OF[civ] ?? null);
 // Whether the model being built has the finer bodies (unitModel's `fine`),
 // and its type (for its body).
-let FINE = true, TYPE: UnitKey = 'warrior';
+let FINE = true, TYPE: UnitKey = 'warrior', CIV: ArchCiv = 'Romans';
 // The march: legs swing from the hip, arms against them from the shoulder.
 export const LEG_AMP = 0.45;
 const LEG = (side: number) => [side, HIP, LEG_AMP] as const;
@@ -239,7 +244,7 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
   };
   // (An imported body, on trial: its own hands hold the weapons; its texture goes with the model.)
   const bodyName = FINE ? importedBodyOf(TYPE) : null;
-  const body = bodyName ? importedPerson(bodyName, dress, armL, armR, swing) : null;
+  const body = bodyName ? importedPerson(bodyName, bodyName === 'wanderer' ? null : headOf(CIV), dress, armL, armR, swing) : null;
   const out = tagged(body ? body.parts : person(dress, armL, armR, swing));
   if (body?.texture) out[0]!.userData['texture'] = body.texture;
   const hR = body ? body.hand(-1) : handAt(-1, armR, f), hL = body ? body.hand(1) : handAt(1, armL, f), eR = body ? body.elbow(-1) : elbowAt(-1, armR, f), eL = body ? body.elbow(1) : elbowAt(1, armL, f);
@@ -879,7 +884,7 @@ export function formationSlots(type: UnitKey, hp: number, rand?: () => number): 
 // (`fine`: its people in the finer body (people.ts finePerson), for when it
 // is seen close; else the plain one, for far off.)
 export function unitModel(type: UnitKey, civ: ArchCiv, variant = 0, female = false, fine = true): THREE.BufferGeometry {
-  FINE = fine; TYPE = type;
+  FINE = fine; TYPE = type; CIV = civ;
   const gear = GEAR[civ];
   const parts = (() => {
     switch (type) {

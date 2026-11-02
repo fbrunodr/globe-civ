@@ -348,20 +348,24 @@ const UNIT_VERTEX = /* glsl */ `
 // (`texture`: a textured body's (public/ path): sampled where a corner has
 // texture coordinates (an imported body), not where it has none (-1: what it holds).)
 const textures = new Map<string, THREE.Texture>();
+const textureOf = (path: string): THREE.Texture => {
+  let map = textures.get(path);
+  if (!map) {
+    map = new THREE.TextureLoader().load(`${import.meta.env.BASE_URL}${path}`);
+    map.colorSpace = THREE.SRGBColorSpace;
+    map.anisotropy = 4;
+    textures.set(path, map);
+  }
+  return map;
+};
 export function makeUnitMaterial(time: { value: number }, texture?: string): THREE.MeshStandardMaterial {
   const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, side: THREE.DoubleSide });
-  if (texture) {
-    let map = textures.get(texture);
-    if (!map) {
-      map = new THREE.TextureLoader().load(`${import.meta.env.BASE_URL}${texture}`);
-      map.colorSpace = THREE.SRGBColorSpace;
-      map.anisotropy = 4;
-      textures.set(texture, map);
-    }
-    mat.map = map;
-  }
+  if (texture) mat.map = textureOf(texture);
+  // (And the heads set on them (importedBody.ts), their texture beside it: u from 1 to 2.)
+  const headMap = texture ? textureOf('bodies/heads.png') : null;
   mat.onBeforeCompile = (shader) => {
     shader.uniforms['uTime'] = time;
+    if (headMap) shader.uniforms['headMap'] = { value: headMap };
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>\n${UNIT_VERTEX_DECL}\nvarying vec3 vTeam;`)
       .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>\n${UNIT_NORMAL}`)
@@ -377,9 +381,9 @@ export function makeUnitMaterial(time: { value: number }, texture?: string): THR
         #endif`);
     // (A keyed texture (scripts/rigBody.mjs) marks the owner's colour in its
     // alpha: 0 there, its grey shading painted in that colour.)
-    if (texture) shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vTeam;').replace('#include <map_fragment>', `
+    if (texture) shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vTeam;\nuniform sampler2D headMap;').replace('#include <map_fragment>', `
       #ifdef USE_MAP
-        if (vMapUv.x >= 0.0) { vec4 tex = texture2D(map, vMapUv); diffuseColor.rgb *= mix(tex.rgb * vTeam, tex.rgb, tex.a); }
+        if (vMapUv.x >= 0.0) { vec4 tex = vMapUv.x >= 1.0 ? texture2D(headMap, vec2(vMapUv.x - 1.0, vMapUv.y)) : texture2D(map, vMapUv); diffuseColor.rgb *= mix(tex.rgb * vTeam, tex.rgb, tex.a); }
       #endif`);
   };
   mat.customProgramCacheKey = () => (texture ? 'unit-figure-textured' : 'unit-figure');
