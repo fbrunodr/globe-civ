@@ -61,7 +61,7 @@ for (const b of mesh.skeleton.bones) {
 }
 // Texture coordinates: from the textured copy, each triangle matched by
 // its middle, each corner by its place (both fitted to 1 tall).
-let uv;
+let uv, team;
 if (texFile) {
   const tb = fs.readFileSync(texFile), troot = new FBXLoader().parse(tb.buffer.slice(tb.byteOffset, tb.byteOffset + tb.byteLength), '');
   troot.updateMatrixWorld(true);
@@ -70,22 +70,76 @@ if (texFile) {
   const tw = (i) => new THREE.Vector3().fromBufferAttribute(tp, i).applyMatrix4(tm.matrixWorld);
   let tlo = Infinity, thi = -Infinity;
   for (let i = 0; i < tp.count; i++) { const p = tw(i); tlo = Math.min(tlo, p.y); thi = Math.max(thi, p.y); }
-  const tk = 1 / (thi - tlo), tfit = (p) => new THREE.Vector3(p.x * tk, (p.y - tlo) * tk, p.z * tk);
-  const T = [];
-  for (let t = 0; t < tp.count; t += 3) { const c = [0, 1, 2].map((k) => tfit(tw(t + k))); T.push({ t, c, mid: c[0].clone().add(c[1]).add(c[2]).divideScalar(3) }); }
+  // (Both fitted to 1 tall, standing on y = 0, centred alike: the copies can be a little apart.)
+  const center = (ps) => { const b = new THREE.Box3().setFromPoints(ps); return new THREE.Vector3((b.min.x + b.max.x) / 2, 0, (b.min.z + b.max.z) / 2); };
+  const tk = 1 / (thi - tlo), tpts = [];
+  for (let i = 0; i < tp.count; i++) { const p = tw(i); tpts.push(new THREE.Vector3(p.x * tk, (p.y - tlo) * tk, p.z * tk)); }
+  const shift = center(verts.map((v) => new THREE.Vector3(...v))).sub(center(tpts));
+  tpts.forEach((p) => p.add(shift));
+  // (Each corner: its texture coordinates from a textured triangle with a
+  // corner there, the one sharing most corners with this triangle: the same
+  // triangle mostly; where the two split a four-sided face along different
+  // diagonals, its neighbour across the split, on the same island of the texture.)
+  const same = (p, q) => p.distanceToSquared(q) < 1e-8;
   uv = [];
+  let exact = 0;
   for (let t = 0; t < tris.length; t += 3) {
-    const c = [0, 1, 2].map((k) => new THREE.Vector3(...verts[tris[t + k]]));
-    const mid = c[0].clone().add(c[1]).add(c[2]).divideScalar(3);
-    let best = T[0], bd = Infinity;
-    for (const x of T) { const d = x.mid.distanceToSquared(mid); if (d < bd) { bd = d; best = x; } }
-    for (const p of c) {
-      let k = 0, kd = Infinity;
-      best.c.forEach((q, j) => { const d = q.distanceToSquared(p); if (d < kd) { kd = d; k = j; } });
-      uv.push(+tuv.getX(best.t + k).toFixed(5), +tuv.getY(best.t + k).toFixed(5));
+    const ps = [0, 1, 2].map((k) => new THREE.Vector3(...verts[tris[t + k]]));
+    const shares = (i) => { const t0 = i - (i % 3); return [0, 1, 2].filter((k) => ps.some((p) => same(p, tpts[t0 + k]))).length; };
+    for (const p of ps) {
+      const cands = [];
+      for (let i = 0; i < tpts.length; i++) if (same(p, tpts[i])) cands.push(i);
+      if (!cands.length) throw new Error(`no textured corner at ${p.toArray()}`);
+      const best = cands.reduce((a, b) => (shares(b) > shares(a) ? b : a));
+      if (shares(best) === 3) exact++;
+      uv.push(+tuv.getX(best).toFixed(5), +tuv.getY(best).toFixed(5));
     }
   }
+  console.log(`texture: ${exact / 3} of ${tris.length / 3} triangles matched whole`);
   execFileSync('sips', ['-Z', '512', texPng, '--out', texOut], { stdio: 'ignore' });
+  team = teamCloth(texPng, uv);
+  // (A lone misread (a highlight, a shadow) takes its neighbours' side: each
+  // triangle as most of those it shares an edge with, twice over.)
+  const edges = new Map();
+  for (let t = 0; t < tris.length / 3; t++) for (let k = 0; k < 3; k++) {
+    const a = tris[t * 3 + k], b = tris[t * 3 + ((k + 1) % 3)], key = a < b ? `${a}|${b}` : `${b}|${a}`;
+    (edges.get(key) ?? edges.set(key, []).get(key)).push(t);
+  }
+  const near = Array.from({ length: tris.length / 3 }, () => []);
+  for (const ts of edges.values()) for (const t of ts) for (const u of ts) if (t !== u) near[t].push(u);
+  for (let pass = 0; pass < 2; pass++) {
+    const next = team.slice();
+    near.forEach((ns, t) => { if (ns.length >= 2) { const on = ns.filter((u) => team[u]).length; if (on * 2 > ns.length) next[t] = 1; else if (on * 2 < ns.length) next[t] = 0; } });
+    team = next;
+  }
 }
-fs.writeFileSync(out, JSON.stringify({ source: file.split('/').pop(), limbs: LIMBS, joints: J, verts, weights, part, tris, ...(uv ? { uv } : {}) }));
+fs.writeFileSync(out, JSON.stringify({ source: file.split('/').pop(), limbs: LIMBS, joints: J, verts, weights, part, tris, ...(uv ? { uv, team } : {}) }));
+
+// Which triangles are the owner's cloth: those the texture paints in the
+// plain off-white the models' team garment is made in (nearly grey, any
+// but the darkest: its folds are painted in), seen at their corners and middle. (The texture read through a
+// small uncompressed copy: sips, BMP.)
+function teamCloth(png, uv) {
+  const tmp = `${out}.tmp.bmp`;
+  execFileSync('sips', ['-Z', '256', '-s', 'format', 'bmp', png, '--out', tmp], { stdio: 'ignore' });
+  const bmp = fs.readFileSync(tmp); fs.unlinkSync(tmp);
+  const off = bmp.readUInt32LE(10), w = bmp.readInt32LE(18), h = bmp.readInt32LE(22), bpp = bmp.readUInt16LE(28) / 8, row = Math.ceil((w * bpp) / 4) * 4;
+  const px = (u, v) => {
+    const x = Math.min(w - 1, Math.max(0, Math.floor(u * w))), y = Math.min(Math.abs(h) - 1, Math.max(0, Math.floor(v * Math.abs(h))));
+    // (Rows run up from the bottom (h > 0), as v does; BGR.)
+    const o = off + (h > 0 ? y : Math.abs(h) - 1 - y) * row + x * bpp;
+    return [bmp[o + 2] / 255, bmp[o + 1] / 255, bmp[o] / 255];
+  };
+  const out2 = [];
+  for (let t = 0; t < uv.length / 6; t++) {
+    const c = [0, 1, 2].map((k) => [uv[t * 6 + k * 2], uv[t * 6 + k * 2 + 1]]);
+    const pts = [...c, [(c[0][0] + c[1][0] + c[2][0]) / 3, (c[0][1] + c[1][1] + c[2][1]) / 3]];
+    let r = 0, g = 0, b = 0;
+    for (const [u, v] of pts) { const [pr, pg, pb] = px(u, v); r += pr / 4; g += pg / 4; b += pb / 4; }
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, sat = mx === mn ? 0 : (mx - mn) / (1 - Math.abs(2 * l - 1));
+    // (Cloth in shade too (folds are painted in): any but the darkest; skin, hair and leather have colour.)
+    out2.push(l > 0.2 && sat < 0.15 ? 1 : 0);
+  }
+  return out2;
+}
 console.log(`${out}: ${verts.length} corners, ${tris.length / 3} triangles, ${roots.length} parts`);
