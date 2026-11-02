@@ -4,7 +4,7 @@ import { creature, horseParts, type Species } from '../src/creatures.ts';
 import { workerModel, type Worker } from '../src/rural/kit.ts';
 import { hairShapes } from '../src/people.ts';
 import { unitModel, rides, isMachine, unitVariants, wearsHelmet, HAIR_BY } from '../src/unitModels.ts';
-import { LOWPOLY_BUDGET, triangles } from '../src/lowpoly.ts';
+import { LOWPOLY_BUDGET, FIGURE_BUDGET, triangles } from '../src/lowpoly.ts';
 import { UNITS, type UnitKey } from '../src/rules.ts';
 const UNIT_TYPES = Object.keys(UNITS) as UnitKey[];
 
@@ -31,6 +31,7 @@ describe('L1: people and animals within the low-poly budget', () => {
       expect(n, w).toBeLessThanOrEqual(LOWPOLY_BUDGET + GEAR);
     }
   });
+  // (A unit's figure, in finer detail, its own budget: FIGURE_BUDGET.)
   it('each unit figure with its hair and gear (a rider and his horse each)', () => {
     // (The fullest hair a figure may wear: bareheaded, or under a helmet.)
     const hairOf = (helmet: boolean) => Math.max(...[...HAIR_BY.man[helmet ? 'helmet' : 'bare'], ...HAIR_BY.woman[helmet ? 'helmet' : 'bare']].map((s) => triangles(hairShapes(s))));
@@ -41,7 +42,7 @@ describe('L1: people and animals within the low-poly budget', () => {
         // (A rider's count holds his horse's tack and cloth.)
         const n = tris(unitModel(type, 'Romans', v)) + hairOf(wearsHelmet(type, 'Romans')) - (rides(type, v) ? horse : 0);
         console.log(`${type}/${v}: ${n}${rides(type, v) ? ` + horse ${horse}` : ''}`);
-        expect(n, type).toBeLessThanOrEqual(LOWPOLY_BUDGET + GEAR + (rides(type, v) ? 30 : 0));
+        expect(n, type).toBeLessThanOrEqual(FIGURE_BUDGET + 2 * GEAR);
       }
     }
   });

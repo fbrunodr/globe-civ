@@ -41,6 +41,7 @@ export interface Dress {
   readonly sleeves?: 'short' | 'long';
   readonly belt?: number;
   readonly shoes?: number;
+  readonly fine?: boolean; // the units' figure: about three times the faces (finePerson)
 }
 // How its arms are held: each arm's upper and lower directions (unit
 // vectors, from the shoulder and the elbow; x out to its side).
@@ -104,6 +105,7 @@ export function handAt(side: 1 | -1, pose: ArmPose, female = false): THREE.Vecto
 // arm is at +x); `swing`: the march's swing for legs and the arms left
 // free (null: still, as in the countryside).
 export function person(d: Dress, armL: ArmPose = HANG, armR: ArmPose = HANG, swing: { legs: (side: number) => readonly [number, number, number]; arms: (side: number) => readonly [number, number, number] | undefined } | null = null): Part[] {
+  if (d.fine) return finePerson(d, armL, armR, swing);
   const f = d.female === true, skirt = d.skirt ?? 'knee', bare = d.legs === undefined || d.legs === 'bare';
   const legPaint: Paint = bare ? SKIN_PAINT : (d.legs as number), legTag: PartTag = bare ? 'skin' : 'plain';
   const out: Part[] = [];
@@ -151,6 +153,135 @@ export function person(d: Dress, armL: ArmPose = HANG, armR: ArmPose = HANG, swi
   }
   return out;
 }
+
+// ---- the units' figure, in finer detail ----
+// The same body (the same joints: hips, knees, shoulders, elbows, hands
+// where person() has them, so what it holds and how it moves are the
+// same), in about three times the faces: a torso shaped at the chest,
+// waist and hips; a neck; a head with jaw, cheekbones, brow and crown, a
+// nose and eyes; each arm and leg one surface from shoulder to wrist and
+// hip to ankle, swelling at the biceps and calf and bending smoothly at the
+// elbow and knee (its corners there turned part of the way: `aBlend`,
+// unitModels.ts tag); hands with a thumb; shoes with heel and toe.
+type Swing = { legs: (side: number) => readonly [number, number, number]; arms: (side: number) => readonly [number, number, number] | undefined } | null;
+const EIGHT = { turn: Math.PI / 8 } as const, FLAT8 = 1 / Math.cos(Math.PI / 8), SIX = 1 / Math.cos(Math.PI / 6); // (8 or 6 points a ring, flat in front)
+const EYE = 0x1e1814;
+// A limb's corners, how far each is past its joint: 0 above it, 1 below,
+// between them across the joint (`a`: the upper piece's way, `b`: the lower's).
+function blendAt(g: THREE.BufferGeometry, joint: THREE.Vector3, a: THREE.Vector3, b: THREE.Vector3, span = 0.022): THREE.BufferGeometry {
+  const pos = g.getAttribute('position'), w = new Float32Array(pos.count * 2), p = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    p.fromBufferAttribute(pos, i).sub(joint);
+    w[i * 2] = 1;
+    w[i * 2 + 1] = Math.max(0, Math.min(1, 0.5 + (p.dot(b) - p.dot(a)) / (2 * span)));
+  }
+  g.setAttribute('aBlend', new THREE.BufferAttribute(w, 2));
+  return g;
+}
+// A geometry's triangles parted by what each is (by its middle).
+function split<K extends string>(g: THREE.BufferGeometry, kind: (mid: THREE.Vector3) => K): Map<K, THREE.BufferGeometry> {
+  const out = new Map<K, number[]>(), pos = g.getAttribute('position'), mid = new THREE.Vector3(), v = new THREE.Vector3();
+  for (let t = 0; t + 2 < pos.count; t += 3) {
+    mid.set(0, 0, 0);
+    for (let k = 0; k < 3; k++) mid.add(v.fromBufferAttribute(pos, t + k));
+    const key = kind(mid.divideScalar(3));
+    let l = out.get(key);
+    if (!l) out.set(key, l = []);
+    l.push(t, t + 1, t + 2);
+  }
+  const res = new Map<K, THREE.BufferGeometry>();
+  for (const [key, idx] of out) {
+    const piece = new THREE.BufferGeometry();
+    for (const [name, attr] of Object.entries(g.attributes)) {
+      const a = attr as THREE.BufferAttribute, arr = new Float32Array(idx.length * a.itemSize);
+      idx.forEach((i, j) => { for (let c = 0; c < a.itemSize; c++) arr[j * a.itemSize + c] = a.getComponent(i, c); });
+      piece.setAttribute(name, new THREE.BufferAttribute(arr, a.itemSize, a.normalized));
+    }
+    res.set(key, piece);
+  }
+  return res;
+}
+// (Paints a geometry one colour.)
+const painted = (g: THREE.BufferGeometry, c: number) => {
+  const col = g.getAttribute('color') as THREE.BufferAttribute, k = new THREE.Color(c);
+  for (let i = 0; i < col.count; i++) col.setXYZ(i, k.r, k.g, k.b);
+  return g;
+};
+
+function finePerson(d: Dress, armL: ArmPose, armR: ArmPose, swing: Swing): Part[] {
+  const f = d.female === true, skirt = d.skirt ?? 'knee', bare = d.legs === undefined || d.legs === 'bare';
+  const legPaint = bare ? SKIN_PAINT : (d.legs as number), legTag: PartTag = bare ? 'skin' : 'plain';
+  const out: Part[] = [];
+  const add = (geo: THREE.BufferGeometry, tag: PartTag, limb?: readonly [number, number, number], joint?: readonly [number, number], skirtTo?: number) =>
+    out.push({ geo, tag, ...(limb ? { limb } : {}), ...(joint ? { joint } : {}), ...(skirtTo !== undefined ? { skirt: skirtTo } : {}) });
+  // Legs: hip to ankle in one, the thigh full, the knee, the calf, the
+  // ankle slim; bending at the knee. (Under a skirt, the thighs slimmer.)
+  for (const side of [1, -1] as const) {
+    const x = side * (f ? 0.056 : 0.062), lm = swing?.legs(side);
+    const hip = new THREE.Vector3(x, HIP + 0.03, 0), knee = new THREE.Vector3(x * 0.97, KNEE[0], KNEE[1]), ankle = new THREE.Vector3(x * 0.95, 0.05, -0.004);
+    const top = skirt === 'none' ? (f ? 0.058 : 0.057) : 0.042;
+    if (skirt !== 'ankle') {
+      const along = (a: THREE.Vector3, b: THREE.Vector3, t: number, dz = 0): V3 => { const p = a.clone().lerp(b, t); return [p.x, p.y, p.z + dz]; };
+      const leg = hull([R(along(hip, knee, 0), top, top), R(along(hip, knee, 0.45), top * 0.9, top * 0.95), R(along(hip, knee, 0.9), 0.039, 0.04), R(v3(knee), 0.037, 0.039),
+        R(along(knee, ankle, 0.3, -0.01), 0.042, 0.045), R(along(knee, ankle, 0.65, -0.004), 0.031, 0.033), R(along(knee, ankle, 1), 0.025, 0.026)].map((r) => ({ ...r, a: r.a * SIX, b: r.b * SIX })),
+      6, legPaint, { turn: Math.PI / 6, caps: [false, false], side: [1, 0, 0] });
+      add(blendAt(leg, knee, hip.clone().sub(knee).normalize(), ankle.clone().sub(knee).normalize()), legTag, lm, KNEE);
+    }
+    add(fineShoe(x * 0.95, 0, d.shoes ?? SHOE), 'plain', lm, KNEE);
+  }
+  // The torso: hips, waist, chest, shoulders, the base of the neck.
+  const T = f ? [[0.104, 0.07, 0], [0.076, 0.056, 0], [0.098, 0.074, 0.008], [0.104, 0.072, 0.006], [0.108, 0.058, 0], [0.05, 0.042, 0]]
+    : [[0.094, 0.064, 0], [0.084, 0.06, 0], [0.104, 0.07, 0.008], [0.118, 0.072, 0.006], [0.126, 0.062, 0], [0.055, 0.045, 0]];
+  const TY = [0.46, 0.58, 0.68, 0.75, 0.815, 0.857];
+  // (Under a skirt too, from the hips: so no gap opens between them as the skirt swings.)
+  const from = 0;
+  add(hull(TY.slice(from).map((y, i) => R([0, y, T[i + from]![2]!], T[i + from]![0]! * FLAT8, T[i + from]![1]! * FLAT8)), 8, CLOTH_PAINT, { ...EIGHT, caps: [false, true] }), 'team');
+  const [wa, wb] = T[1]!;
+  if (skirt !== 'none') {
+    // (An A-line, out past the tops of the thighs at the hips; its sides swing with the legs.)
+    const hem = skirt === 'ankle' ? 0.07 : f ? 0.27 : 0.3;
+    const rings = [R([0, 0.63, 0], (wa! + 0.02) * FLAT8, (wb! + 0.016) * FLAT8), R([0, (0.63 + hem) / 2, 0.003], (wa! + 0.03) * 1.25 * FLAT8, (wb! + 0.032) * 1.25 * FLAT8),
+      R([0, hem, 0.006], (wa! + 0.031) * 1.52 * FLAT8, (wb! + 0.035) * 1.52 * FLAT8)];
+    add(hull(rings, 8, (p) => (p.y < hem + 0.01 ? TRIM : CLOTH_PAINT), { ...EIGHT, caps: [false, false] }), 'team', swing?.legs(1), undefined, hem);
+  }
+  if (d.belt !== undefined) add(hull([R([0, 0.645, 0], (wa! + 0.019) * FLAT8, (wb! + 0.019) * FLAT8), R([0, 0.612, 0], (wa! + 0.019) * FLAT8, (wb! + 0.019) * FLAT8)], 8, d.belt, { ...EIGHT, caps: [false, false] }), 'plain');
+  // The neck and head: under the jaw, the chin, the cheekbones, the brow,
+  // the forehead, the crown; a nose; the eyes.
+  add(hull([R([0, 0.85, -0.004], 0.034, 0.036), R([0, 0.9, 0.002], 0.032, 0.034)], 6, SKIN_PAINT, { caps: [false, false] }), 'skin');
+  const head: [number, number, number, number][] = [[0.872, 0.026, 0.028, 0.024], [0.884, 0.044, 0.048, 0.016], [0.912, 0.059, 0.064, 0.006], [0.938, 0.063, 0.069, 0.002], [0.964, 0.054, 0.062, -0.004], [0.99, 0.038, 0.046, -0.008]];
+  // (Its corners on the old head's outline, no further: helmets and hair are sized to it.)
+  add(hull(head.map(([y, a, b, z]) => R([0, y, z], a, b)), 8, SKIN_PAINT, { ...EIGHT, caps: [true, true] }), 'skin');
+  add(spike([[0, 0.928, 0.064], [0, 0.912, 0.074], [0, 0.904, 0.082]], 0.013, SKIN_PAINT, 3), 'skin');
+  for (const s of [1, -1]) add(plate([[-0.009, 0], [0.009, 0], [0.007, 0.006], [-0.007, 0.006]], EYE).translate(s * 0.024, 0.927, 0.07), 'plain');
+  // Arms: one surface, shoulder to wrist (the deltoid, the biceps, the
+  // elbow, the forearm), the sleeve to the elbow or the wrist; a hand,
+  // its thumb.
+  for (const side of [1, -1] as const) {
+    const pose = side === 1 ? armL : armR, lm = swing?.arms(side);
+    const sh = new THREE.Vector3(side * (f ? 0.115 : 0.128), SHOULDER - 0.01, 0);
+    const u = norm(pose.upper), fo = norm(pose.fore);
+    u.x *= side; fo.x *= side;
+    const el = sh.clone().addScaledVector(u, UPPER), wr = el.clone().addScaledVector(fo, FORE);
+    const at = (p: THREE.Vector3): V3 => [p.x, p.y, p.z];
+    const arm = hull([R(at(sh.clone().addScaledVector(u, -0.025)), 0.04, 0.042), R(at(sh.clone().addScaledVector(u, 0.07)), 0.039, 0.041),
+      R(at(el), 0.028, 0.029), R(at(el.clone().addScaledVector(fo, 0.055)), 0.029, 0.031), R(at(wr), 0.02, 0.022)], 6, CLOTH_PAINT, { caps: [false, false], side: [1, 0, 0] });
+    blendAt(arm, el, u.clone().negate(), fo, 0.018);
+    // (The sleeve: the upper arm in cloth; the forearm in cloth too if long, else bare.)
+    const long = d.sleeves === 'long', cut = split(arm, (m) => (long || m.clone().sub(el).dot(fo) < 0.004 ? 'sleeve' : 'bare'));
+    const elbow = [el.y, el.z] as const;
+    for (const [k, g] of cut) add(k === 'sleeve' ? g : painted(g, SKIN_PAINT), k === 'sleeve' ? 'team' : 'skin', lm, elbow);
+    // (The hand: the palm, flat, the fingers together; the thumb up along the grip.)
+    const across = new THREE.Vector3(1, 0, 0).addScaledVector(fo, -fo.x).normalize(), thumb = wr.clone().addScaledVector(fo, 0.02);
+    add(hull([R(at(wr), 0.021, 0.014), R(at(wr.clone().addScaledVector(fo, 0.045)), 0.023, 0.012), R(at(wr.clone().addScaledVector(fo, 0.078)), 0.012, 0.008)], 4, SKIN_PAINT, { side: [1, 0, 0], caps: [false, true] }), 'skin', lm, elbow);
+    add(spike([at(thumb), at(thumb.clone().addScaledVector(across, -side * 0.012).add(new THREE.Vector3(0, 0.012, 0.022)))], 0.009, SKIN_PAINT, 3), 'skin', lm, elbow);
+  }
+  return out;
+}
+// A shoe: the heel, the instep, the ball of the foot, the toe.
+function fineShoe(x: number, z0: number, color: number): THREE.BufferGeometry {
+  return hull([R([x, 0.03, z0 - 0.045], 0.027, 0.026), R([x, 0.042, z0 + 0.005], 0.031, 0.031), R([x, 0.024, z0 + 0.065], 0.026, 0.029), R([x, 0.012, z0 + 0.1], 0.008, 0.016)], 4, color, { side: [1, 0, 0], turn: Math.PI / 4 });
+}
+
 // A shoe: a wedge, flat below, its heel at z = z0 - 0.04, toe forward.
 function shoe(x: number, z0: number, color: number): THREE.BufferGeometry {
   return hull([R([x, 0.013, z0 - 0.04], 0.026, 0.028), R([x, 0.008, z0 + 0.08], 0.016, 0.024)], 3, color, { side: [1, 0, 0], turn: Math.PI / 3 });

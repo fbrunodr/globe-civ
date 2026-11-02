@@ -60,8 +60,8 @@ const SHOULDER_X = 0.128;
 const FLAG_LIFT = 1.7;
 // A figure stands on dry ground: the water there no deeper than this (world units).
 const DRY = 0.00005;
-// The figures are drawn while at least this many pixels tall.
-const MIN_PX = 3;
+// The figures are drawn while at least this many pixels tall; in their finer bodies (unitModels.ts unitModel `fine`) while this many.
+const MIN_PX = 3, NEAR_PX = 40;
 // A fight: how long (seconds; a melee longer, durOf), and how far a melee
 // unit charges (a share of the way to the enemy's tile).
 export const FIGHT = 4.2;
@@ -246,6 +246,7 @@ interface Shown {
   gone: boolean;               // no longer in the game (shown until its fight is over)
   flag: THREE.Sprite;
   k: number;                   // its place among the units on its tile (0: the middle)
+  near: boolean;               // seen close: its people in their finer bodies
   seen: boolean;
 }
 
@@ -568,7 +569,10 @@ export class UnitView {
       this.stride(s, now, dt);
       const ground = this.env.ground(s.dir);
       s.flag.position.copy(s.dir).multiplyScalar(1 + Math.max(ground.ground, ground.water) + FLAG_LIFT * this.size);
-      if ((this.size * pxPerUnit) / camera.position.distanceTo(s.flag.position) < MIN_PX) continue;
+      const px = (this.size * pxPerUnit) / camera.position.distanceTo(s.flag.position);
+      if (px < MIN_PX) continue;
+      // (Close enough to be seen in detail: its people in their finer bodies.)
+      s.near = px >= NEAR_PX;
       drawn.push(s);
       for (const f of s.figures) {
         const key = this.key(s, f);
@@ -871,7 +875,7 @@ export class UnitView {
     if (heading.lengthSq() > 1e-14) s.forward.copy(heading.normalize());
   }
 
-  private key(s: Shown, f: Figure): string { return s.unit.embarked ? `transport|${s.unit.civ}|0|0` : `${s.unit.type}|${s.unit.civ}|${f.variant}|${f.female ? 1 : 0}`; }
+  private key(s: Shown, f: Figure): string { return s.unit.embarked ? `transport|${s.unit.civ}|0|0|1` : `${s.unit.type}|${s.unit.civ}|${f.variant}|${f.female ? 1 : 0}|${s.near ? 1 : 0}`; }
 
   dispose(): void {
     for (const s of this.shown.values()) s.flag.material.dispose();
@@ -893,7 +897,7 @@ export class UnitView {
     const north = c.clone().cross(east);
     const s: Shown = {
       unit: u, dir: c.clone(), forward: east.multiplyScalar(Math.cos(a)).addScaledVector(north, Math.sin(a)).normalize(),
-      figures: [], spread: LOOSE[0], order: 'block', laid: null, alt: 0, march: null, route: [], fight: null, after: null, gone: false, flag: this.makeFlag(u), k, seen: true,
+      figures: [], spread: LOOSE[0], order: 'block', laid: null, alt: 0, march: null, route: [], fight: null, after: null, gone: false, flag: this.makeFlag(u), k, seen: true, near: false,
     };
     this.group.add(s.flag);
     this.shown.set(u.id, s);
@@ -1118,8 +1122,8 @@ export class UnitView {
     let mesh = this.meshes.get(key);
     if (mesh && mesh.instanceMatrix.count >= need) return mesh;
     const cap = Math.max(64, need, mesh ? mesh.instanceMatrix.count * 2 : 0);
-    const [a, b, c, d] = key.split('|') as [string, string, string | undefined, string | undefined];
-    const geo = mesh ? mesh.geometry : a === 'hair' ? hairModel(HAIR_STYLES[Number(b)]!) : a === 'transport' ? transportModel() : unitModel(a as UnitKey, b as ArchCiv, Number(c), d === '1');
+    const [a, b, c, d, e] = key.split('|') as [string, string, string | undefined, string | undefined, string | undefined];
+    const geo = mesh ? mesh.geometry : a === 'hair' ? hairModel(HAIR_STYLES[Number(b)]!) : a === 'transport' ? transportModel() : unitModel(a as UnitKey, b as ArchCiv, Number(c), d === '1', e === '1');
     prepareUnitGeometry(geo, cap);
     const next = new THREE.InstancedMesh(geo, this.material, cap);
     next.setColorAt(0, new THREE.Color());

@@ -122,6 +122,8 @@ const rod = (a: THREE.Vector3, b: THREE.Vector3, r0: number, r1: number, n: numb
 const lp = (g: THREE.BufferGeometry, o: Tf = {}, t?: Tag) => { g.deleteAttribute('leafMask'); return tag(g.applyMatrix4(tf(o)), t); };
 const point = (h: number, r: number, n: number, color: number, o: Tf, t?: Tag) => lp(hull([R([0, 0, 0], r), R([0, h, 0], 0, 0)], n, color, { side: [0, 0, 1] }), o, t);
 
+// Whether the model being built has the finer bodies (unitModel's `fine`).
+let FINE = true;
 // The march: legs swing from the hip, arms against them from the shoulder.
 export const LEG_AMP = 0.45;
 const LEG = (side: number) => [side, HIP, LEG_AMP] as const;
@@ -194,7 +196,7 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
   const gear: Gear = { ...gear1, helmet: opts.helmetAs ?? gear1.helmet, shield: opts.shieldAs ?? gear1.shield };
   const f = opts.female === true;
   const dress: Dress = {
-    female: f, skirt: opts.modern ? 'none' : opts.civilian && f ? 'ankle' : 'knee', legs: gear.legs,
+    fine: FINE, female: f, skirt: opts.modern ? 'none' : opts.civilian && f ? 'ankle' : 'knee', legs: gear.legs,
     sleeves: gear.legs === 'bare' && !opts.modern ? 'short' : 'long',
   };
   // The arms: the right one carries the weapon, the left the shield (or the bow).
@@ -348,7 +350,7 @@ function mount(coat: number, cloth: boolean): THREE.BufferGeometry[] {
 function rider(gear: Gear, coat: number, female: boolean, style: RiderStyle): THREE.BufferGeometry[] {
   const heavy = style === 'knight';
   const out: THREE.BufferGeometry[] = [...mount(coat, !heavy), box(0.16, 0.05, 0.22, LEATHER, { y: SEAT - 0.03, z: 0.02 })];
-  const dress: Dress = { female, legs: gear.legs, sleeves: 'long' };
+  const dress: Dress = { fine: FINE, female, legs: gear.legs, sleeves: 'long' };
   const armR: ArmPose = HOLD, armL: ArmPose = HOLD;
   // (The weapon arm strikes with its weapon: the same swing, bent at the same elbow.)
   const amp = style === 'cavalry' ? 0.9 : style === 'horseman' ? 0.8 : 0.6, strike = HIT(SEAT + 0.3, amp);
@@ -389,7 +391,7 @@ function horseArcher(gear: Gear, coat: number, female: boolean): THREE.BufferGeo
   const out: THREE.BufferGeometry[] = [...mount(coat, true), box(0.16, 0.05, 0.22, LEATHER, { y: SEAT - 0.03, z: 0.02 })];
   const armR: ArmPose = HOLD, armL: ArmPose = RAISE;
   const raise = HIT(SEAT + 0.3, 0.8), eL = elbowAt(1, armL, female).add(V(0, SEAT - HIP, 0));
-  out.push(...tagged(riderBody({ female, legs: gear.legs, sleeves: 'long' }, SEAT, armL, armR, undefined, raise)));
+  out.push(...tagged(riderBody({ fine: FINE, female, legs: gear.legs, sleeves: 'long' }, SEAT, armL, armR, undefined, raise)));
   const g = handAt(1, armL, female).add(V(0, SEAT - HIP, 0)), up: Tag = { limb: raise, joint: [eL.y, eL.z] };
   out.push(rod(g, g.clone().add(V(0, 0.26, -0.05)), 0.01, 0.007, 3, 0x5a3a22, up), rod(g, g.clone().add(V(0, -0.26, -0.05)), 0.01, 0.007, 3, 0x5a3a22, up), rod(g.clone().add(V(0, 0.26, -0.05)), g.clone().add(V(0, -0.26, -0.05)), 0.003, 0.003, 3, 0xd8d0c0, up),
     lp(hull([R([0, 0, 0], 0.03), R([0, 0.26, 0], 0.034)], 4, LEATHER, { caps: [true, false] }), { x: 0.12, y: SEAT - 0.1, z: -0.12, rz: -0.3 }));
@@ -839,7 +841,10 @@ export function formationSlots(type: UnitKey, hp: number, rand?: () => number): 
 
 // One figure of a unit type, dressed for a civ (each instance draws its own
 // horse coat from a few: the variant).
-export function unitModel(type: UnitKey, civ: ArchCiv, variant = 0, female = false): THREE.BufferGeometry {
+// (`fine`: its people in the finer body (people.ts finePerson), for when it
+// is seen close; else the plain one, for far off.)
+export function unitModel(type: UnitKey, civ: ArchCiv, variant = 0, female = false, fine = true): THREE.BufferGeometry {
+  FINE = fine;
   const gear = GEAR[civ];
   const parts = (() => {
     switch (type) {
