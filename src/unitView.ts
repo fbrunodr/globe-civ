@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { ArchCiv } from './architecture.ts';
 import { unitDef, domainOf, type UnitKey } from './rules.ts';
 import { firesAtClose, returnFire, type AttackStyle, type Projectile } from './unitClasses.ts';
-import { UNIT_LOOK, figuresFor, formationSlots, unitModel, variantOf, rides, headOffset, hairModel, transportModel, wearsHelmet, womenShare, isMachine, colsOf, GEAR, HAIR_BY, HAIR_STYLES, STRIKE, GUARD, DRAW, whirls, bowman, cuts, IMPORTED_BODY } from './unitModels.ts';
+import { UNIT_LOOK, figuresFor, formationSlots, unitModel, variantOf, rides, headOffset, hairModel, transportModel, wearsHelmet, womenShare, isMachine, colsOf, GEAR, HAIR_BY, HAIR_STYLES, STRIKE, GUARD, DRAW, whirls, bowman, cuts } from './unitModels.ts';
 import { mulberry32 } from './rng.ts';
 import { HIP } from './people.ts';
 import { pairUp, type P2 } from './duel.ts';
@@ -1162,8 +1162,7 @@ export function figureLooks(type: UnitKey, civ: ArchCiv, women: number, rand: ()
   const style = pick(helmet ? styles.helmet : styles.bare);
   // (Machines: no one shows.)
   const none = isMachine(type) || (style === 'bald' && helmet);
-  // (An imported body has its own hair.)
-  return { female: female && !isMachine(type), skin: new THREE.Color(pick(g.skin)), hair: none || (IMPORTED_BODY && !rides(type, 0)) ? -1 : HAIR_STYLES.indexOf(style), hairColor: new THREE.Color(pick(g.hair)) };
+  return { female: female && !isMachine(type), skin: new THREE.Color(pick(g.skin)), hair: none ? -1 : HAIR_STYLES.indexOf(style), hairColor: new THREE.Color(pick(g.hair)) };
 }
 
 // Arrows in flight: each volley a dozen, from the archers to around the
