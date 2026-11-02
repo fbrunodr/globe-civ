@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { ArchCiv } from './architecture.ts';
 import { unitDef, domainOf, type UnitKey } from './rules.ts';
 import { firesAtClose, returnFire, type AttackStyle, type Projectile } from './unitClasses.ts';
-import { UNIT_LOOK, figuresFor, formationSlots, unitModel, variantOf, rides, headOffset, hairModel, transportModel, wearsHelmet, womenShare, isMachine, colsOf, GEAR, HAIR_BY, HAIR_STYLES, STRIKE, GUARD, DRAW, whirls, bowman, cuts, thrusts, draws } from './unitModels.ts';
+import { UNIT_LOOK, figuresFor, formationSlots, unitModel, variantOf, rides, headOffset, hairModel, transportModel, wearsHelmet, womenShare, isMachine, colsOf, GEAR, HAIR_BY, HAIR_STYLES, STRIKE, GUARD, DRAW, whirls, bowman, cuts, thrusts, draws, bayonets } from './unitModels.ts';
 import { mulberry32 } from './rng.ts';
 import { HIP } from './people.ts';
 import { pairUp, type P2 } from './duel.ts';
@@ -859,7 +859,7 @@ export class UnitView {
     // (Its foe struck down and no other to turn to: it stands ready.)
     const engaged = f.foeFig ? f.foeFig.fall + 0.35 > now : f.goal !== null || f.foe !== null;
     const rear = s.order === 'line' && (orderSlots(s.unit.type, s.figures.length, 'line')[f.slot]?.[1] ?? 0) < 0;
-    return { rear, cut: cuts(s.unit.type), thrust: thrusts(s.unit.type), bow: draws(s.unit.type), sec, dur, play: c.play, attack: c.attack, side: c.side, engaged, delay: f.delay, fall: f.fall - c.t0, won: c.won };
+    return { rear, cut: cuts(s.unit.type), thrust: thrusts(s.unit.type), bow: draws(s.unit.type), bayonet: bayonets(s.unit.type), sec, dur, play: c.play, attack: c.attack, side: c.side, engaged, delay: f.delay, fall: f.fall - c.t0, won: c.won };
   }
   // How far a corpse has sunk away (0..1): the dead after a while, wrecks
   // when they have burnt out.

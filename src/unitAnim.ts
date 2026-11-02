@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { Play } from './unitView.ts';
-import { HOLD, RAISE } from './people.ts';
-import { BOW_REACH, REACH } from './unitModels.ts';
+import { GUN_R, HOLD, RAISE } from './people.ts';
+import { BOW_REACH, GUN_REACH, REACH } from './unitModels.ts';
 
 // How a figure moves, as a small machine of acts, blended one into the
 // next (unitView.ts and the Units page draw it). Out of a fight a figure
@@ -97,18 +97,21 @@ const march = (now: number, phase: number, walk: number): Pose =>
 // spearman with his spear levelled from the hip.)
 const charging = (now: number, phase: number, walk: number, arms: Arms, k: number): Pose => {
   const run = march(now, phase, walk), t = smooth(k);
-  if (arms === 'thrust') return { ...run, bend: run.bend + 0.12 * t, arm: run.arm + (SPEAR_LEVEL.arm - run.arm) * t, elbow: run.elbow + (SPEAR_LEVEL.elbow - run.elbow) * t, aim: (run.aimed ? run.aim : 0) * (1 - t) + SPEAR_LEVEL.aim * t, aimed: Math.max(run.aimed, t), out: SPEAR_LEVEL.out * t };
+  if (arms === 'thrust' || arms === 'bayonet') {
+    const lv = arms === 'thrust' ? SPEAR_LEVEL : BAYONET_LEVEL;
+    return { ...run, bend: run.bend + 0.12 * t, arm: run.arm + (lv.arm - run.arm) * t, elbow: run.elbow + (lv.elbow - run.elbow) * t, aim: (run.aimed ? run.aim : 0) * (1 - t) + lv.aim * t, aimed: Math.max(run.aimed, t), out: lv.out * t };
+  }
   if (arms === 'cut') return { ...run, bend: run.bend + 0.08 * t, arm: run.arm + (CUT_RAISED.arm - run.arm) * t, elbow: run.elbow + (CUT_RAISED.elbow - run.elbow) * t, aim: (run.aimed ? run.aim : 0) * (1 - t) + CUT_RAISED.aim * t, aimed: Math.max(run.aimed, t), out: 0.45 * t };
   return { ...run, bend: run.bend + 0.12 * t, arm: run.arm + (0.35 - run.arm) * t, elbow: run.elbow + (0.7 - run.elbow) * t, aim: run.aimed ? run.aim + (1.4 - run.aim) * t : 1.4 * t, aimed: Math.max(run.aimed, t) };
 };
 // How a figure fights at close quarters (Cue): cutting, thrusting, or as of old.
-type Arms = 'cut' | 'thrust' | 'other';
+type Arms = 'cut' | 'thrust' | 'bayonet' | 'other';
 // Ready to fight: knees bent, a foot forward and planted, weapon up and
 // aimed, the shoulders turned a little, weaving slowly.
 const STANCE = 0.45;
 // (A swordsman's guard, the blade up, not levelled at the foe; a spearman's, levelled.)
 const ready = (now: number, phase: number, arms: Arms = 'other'): Pose => arms !== 'other'
-  ? add(arms === 'cut' ? CUT_GUARD : SPEAR_GUARD, { bend: 0.02 * Math.sin(now * 2.3 + phase), twist: 0.07 * Math.sin(now * 1.7 + phase), arm: 0.04 * Math.sin(now * 2.9 + phase + 1), aim: 0.08 * Math.sin(now * 2.3 + phase + 1) })
+  ? add(arms === 'cut' ? CUT_GUARD : arms === 'thrust' ? SPEAR_GUARD : BAYONET_GUARD, { bend: 0.02 * Math.sin(now * 2.3 + phase), twist: 0.07 * Math.sin(now * 1.7 + phase), arm: 0.04 * Math.sin(now * 2.9 + phase + 1), aim: 0.08 * Math.sin(now * 2.3 + phase + 1) })
   : guarded(P(0, 0, 0, 0.18 + 0.02 * Math.sin(now * 2.3 + phase), -0.12 + 0.07 * Math.sin(now * 1.7 + phase), 0.32 + 0.04 * Math.sin(now * 2.9 + phase + 1), 0, STANCE, 0.34, 0.7, 0.75 + 0.06 * Math.sin(now * 2.3 + phase + 1)), 0.3 + 0.05 * Math.sin(now * 1.9 + phase));
 // Fortified: down on bent knees behind its shield, the weapon levelled
 // over it, watchful (a slow look about, a breath).
@@ -151,8 +154,11 @@ export const cutAngles = (p: Pose) =>
   ({ upper: UPPER0 + REACH * p.arm, fore: FORE0 + REACH * p.arm + p.elbow, blade: Math.PI - p.aim });
 // (`level`: the blade as it points in the world, not from the body: the
 // body's bend, which tips the arm and all it holds forward, taken back out.)
-const cutPose = (c: { upper: number; fore: number; blade: number; out: number; bend: number; twist: number; crouch: number; guard: number; stride?: number; lunge?: number; level?: boolean }): Pose => {
-  const a = cutArm(c.upper, c.fore, c.blade + (c.level ? c.bend : 0));
+// (`gun`: both arms on a long gun (people.ts GUN_R), swung GUN_REACH together.)
+const GUN_UPPER0 = Math.atan2(GUN_R.upper[2], -GUN_R.upper[1]), GUN_FORE0 = Math.atan2(GUN_R.fore[2], -GUN_R.fore[1]);
+const cutPose = (c: { upper: number; fore: number; blade: number; out: number; bend: number; twist: number; crouch: number; guard: number; stride?: number; lunge?: number; level?: boolean; gun?: boolean }): Pose => {
+  const blade = c.blade + (c.level ? c.bend : 0);
+  const a = c.gun ? { arm: (c.upper - GUN_UPPER0) / GUN_REACH, elbow: c.fore - GUN_FORE0 - (c.upper - GUN_UPPER0), aim: Math.PI - blade } : cutArm(c.upper, c.fore, blade);
   return out(guarded(P(c.lunge ?? 0, 0, 0, c.bend, c.twist, a.arm, 0, c.stride ?? STANCE, c.crouch, a.elbow, a.aim), c.guard), c.out);
 };
 const out = (p: Pose, o: number): Pose => ({ ...p, out: o });
@@ -203,6 +209,17 @@ const STAB = {
   hit: cutPose({ upper: 1.85, fore: 1.95, blade: 1.25, out: 0.05, bend: 0.55, twist: 0.3, crouch: 0.5, guard: 0.05, stride: STANCE + 0.1, lunge: 0.05, level: true }),
   through: cutPose({ upper: 1.8, fore: 1.85, blade: 1.15, out: 0.05, bend: 0.58, twist: 0.32, crouch: 0.52, guard: 0.05, stride: STANCE + 0.1, lunge: 0.05, level: true }),
 };
+// A bayonet (`bayonet` figures), likewise: on guard with the musket in
+// both hands, the bayonet up at the foe's face; drawn back to the hip and
+// lunged out level, both arms driving it, the body turning in behind it.
+// (Both arms swing together on the gun: they never straighten.)
+const BAYONET_GUARD = cutPose({ upper: 0.45, fore: 1.45, blade: 1.8, out: 0, bend: 0.18, twist: -0.15, crouch: 0.36, guard: 0, level: true, gun: true });
+const BAYONET_LEVEL = cutPose({ upper: 0.5, fore: 1.4, blade: 1.62, out: 0, bend: 0, twist: 0, crouch: 0, guard: 0, level: true, gun: true });
+const LUNGE = {
+  wind: cutPose({ upper: 0.05, fore: 1.3, blade: 1.72, out: 0, bend: -0.05, twist: -0.3, crouch: 0.38, guard: 0, level: true, gun: true }),
+  hit: cutPose({ upper: 0.95, fore: 1.3, blade: 1.62, out: 0, bend: 0.42, twist: 0.1, crouch: 0.46, guard: 0, stride: STANCE + 0.14, lunge: 0.07, level: true, gun: true }),
+  through: cutPose({ upper: 1.0, fore: 1.35, blade: 1.6, out: 0, bend: 0.45, twist: 0.15, crouch: 0.48, guard: 0, stride: STANCE + 0.14, lunge: 0.07, level: true, gun: true }),
+};
 // When a figure's next blow lands at or after `t` (seconds), its exchange
 // begun at `from` (where it starts in its round: `beat`): each lands as
 // its round is 0.55 through (blows).
@@ -214,8 +231,8 @@ export const nextBlow = (t: number, from: number, beat: number): number => {
 // seconds; `beat` where it starts in it). Its foe is half a round apart:
 // each of its blows lands as this one is winding up, and it flinches.
 // (`arms`: a sword or a club, it cuts; a spear, a pike or a lance, it
-// thrusts (or now and then stabs from above); anything else (a bayonet, a
-// bow laid about it) it thrusts or strikes down as of old.)
+// thrusts (or now and then stabs from above); a bayonet, it lunges;
+// anything else (a bow laid about it) it thrusts or strikes down as of old.)
 function blows(sec: number, beat: number, now: number, phase: number, arms: Arms = 'other'): Pose {
   const x = sec / BOUT + beat, n = Math.floor(x), u = frac(x), r = frac(Math.sin(n * 12.9898 + beat * 78.233) * 43758.5453);
   const rest = ready(now, phase, arms);
@@ -223,7 +240,7 @@ function blows(sec: number, beat: number, now: number, phase: number, arms: Arms
   if (arms !== 'other') {
     // (Wound up, slowly, and held a beat; the blow, fast (chain); carried on
     // through, slowing; back to the guard.)
-    const kind = arms === 'thrust' ? (r < 0.75 ? JAB : STAB) : r < 0.25 ? OVERHAND : n % 2 ? BACKHAND : FOREHAND;
+    const kind = arms === 'bayonet' ? LUNGE : arms === 'thrust' ? (r < 0.75 ? JAB : STAB) : r < 0.25 ? OVERHAND : n % 2 ? BACKHAND : FOREHAND;
     pose = u < 0.36 ? mix(rest, kind.wind, smooth(u / 0.36)) : u < 0.41 ? kind.wind : u < 0.55 ? chain(kind.wind, kind.hit, (u - 0.41) / 0.14)
       : u < 0.68 ? mix(kind.hit, kind.through, 1 - (1 - (u - 0.55) / 0.13) ** 2) : mix(kind.through, rest, smooth((u - 0.68) / 0.32));
   } else {
@@ -235,7 +252,7 @@ function blows(sec: number, beat: number, now: number, phase: number, arms: Arms
   // (The foe's blow landing: the body knocked back and turned at the hips, the knees sagging.)
   // (Shield raised against it, if it has one: the knock taken on the shield.)
   // (A spear's point kept on the foe, the body knocked back about it.)
-  if (f > 0) pose = add(pose, { bend: -0.38 * f, twist: (n % 2 ? 0.32 : -0.32) * f, crouch: 0.07 * f, elbow: 0.4 * f, aim: (arms === 'thrust' ? 0.3 : -0.35) * f, guard: 0.6 * f });
+  if (f > 0) pose = add(pose, { bend: -0.38 * f, twist: (n % 2 ? 0.32 : -0.32) * f, crouch: 0.07 * f, elbow: 0.4 * f, aim: (arms === 'thrust' || arms === 'bayonet' ? 0.3 : -0.35) * f, guard: 0.6 * f });
   return pose;
 }
 // Shooting: drawing (or shouldering) before each shot, loosed (a recoil),
@@ -311,6 +328,7 @@ export interface Cue {
   readonly cut?: boolean;  // it fights with a blade or a club: it cuts
   readonly thrust?: boolean; // it fights with a spear, a pike or a lance: it thrusts
   readonly bow?: boolean;  // it shoots a bow on foot, drawn to the cheek
+  readonly bayonet?: boolean; // it fights at close quarters with a bayonet on its musket or rifle
 }
 
 // A figure's pose now: in a fight (its cue), on the march (`walk`), or at
@@ -341,7 +359,7 @@ function exchange(c: Cue): readonly [number, number] {
   return c.sec >= from && c.sec < to ? [c.sec - from, to - c.sec] : [-1, 0];
 }
 function inFight(c: Cue, now: number, phase: number, beat: number, whirl: boolean): Pose {
-  const { sec, dur, play, attack } = c, s = (share: number) => share * dur, bow = c.bow === true, arms: Arms = c.cut ? 'cut' : c.thrust ? 'thrust' : 'other';
+  const { sec, dur, play, attack } = c, s = (share: number) => share * dur, bow = c.bow === true, arms: Arms = c.cut ? 'cut' : c.thrust ? 'thrust' : c.bayonet ? 'bayonet' : 'other';
   // Over: the winners cheer, the rest stand easy again.
   if (sec >= dur) {
     const after = sec - dur, done = mix(ready(now, phase, arms), idle(now, phase), after / 0.6);
@@ -356,7 +374,7 @@ function inFight(c: Cue, now: number, phase: number, beat: number, whirl: boolea
     if (sec < met) return mix(opening, charging(now, phase, run, arms, ((sec - go0) / (met - go0)) * 1.8 - 0.6), (sec - go0) / BLEND);
     if (sec < back) {
       const fight = c.engaged ? blows(sec - met, beat, now, phase, arms) : ready(now, phase, arms);
-      return mix(mix(arms === 'cut' ? CUT_GUARD : arms === 'thrust' ? SPEAR_PULL_UP : pullUp, charging(now, phase, run, arms, 1), 1 - (sec - met) / 0.12), fight, (sec - met) / 0.3);
+      return mix(mix(arms === 'cut' ? CUT_GUARD : arms === 'thrust' ? SPEAR_PULL_UP : arms === 'bayonet' ? BAYONET_GUARD : pullUp, charging(now, phase, run, arms, 1), 1 - (sec - met) / 0.12), fight, (sec - met) / 0.3);
     }
     return mix(blows(back - met, beat, now, phase, arms), march(now, phase, 1), (sec - back) / BLEND);
   }

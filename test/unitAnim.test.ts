@@ -90,3 +90,15 @@ describe('A3: an archer shooting a volley', () => {
     expect(p.aim).toBeGreaterThan(2);
   });
 });
+
+describe('A4: a bayonet', () => {
+  it('is held levelled at the foe through every lunge, never pointed at the ground or the sky', () => {
+    for (const side of ['attacker', 'defender'] as const) for (let sec = 0; sec < 7; sec += 0.01) for (const beat of [0, 0.3, 0.71]) {
+      const p = poseOf({ sec, dur: 7, play: MELEE, attack: MELEE, side, engaged: true, delay: 0, fall: Infinity, won: false, bayonet: true }, 100 + sec, 1.3, beat, 0, false);
+      if (p.aimed < 0.999) continue;
+      // (The gun's aim, from upright forward, as it points in the world: the body's bend tips it forward.)
+      expect(p.aim + p.bend).toBeGreaterThan(0.9);
+      expect(p.aim + p.bend).toBeLessThan(2.1);
+    }
+  });
+});
