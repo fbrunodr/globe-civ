@@ -3,6 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { part, seg, tf, V, type Tf } from './propCatalog.ts';
 import { person, riderBody, handAt, elbowAt, hairShapes, headShell, HAIR_STYLE_KEYS, HIP, SHOULDER, HEAD_Y, HANG, HOLD, RAISE, SHIELD, GRIP2, GUN_R, GUN_L, type ArmPose, type Dress, type Part, type HairStyleKey } from './people.ts';
 import { horseParts } from './creatures.ts';
+import { importedPerson } from './importedBody.ts';
 import { hull, plate, R } from './lowpoly.ts';
 import type { ArchCiv } from './architecture.ts';
 import type { UnitKey } from './rules.ts';
@@ -89,7 +90,7 @@ const HORSE = [0x6a4a32, 0x8a6a4a, 0x4a3a2e, 0xb8a888] as const;
 // about the axle through its hub at (y, z): the hub kept where the grip is
 // (aRig.zw).)
 type Tag = { team?: boolean; skin?: boolean; limb?: readonly [number, number, number]; joint?: readonly [number, number]; grip?: readonly [number, number, number]; spin?: { readonly axis: 'x' | 'y' | 'z'; readonly at: readonly [number, number] } };
-export const RIG = { team: 1, skin: 2, joint: 4, grip: 8, spinY: 16, spinZ: 32, spinX: 64, skirt: 128 } as const;
+export const RIG = { team: 1, skin: 2, joint: 4, grip: 8, spinY: 16, spinZ: 32, spinX: 64, skirt: 128, blend: 256 } as const;
 const wheelSpin = (y: number, z = 0): Tag => ({ spin: { axis: 'x', at: [y, z] } });
 function tag(g: THREE.BufferGeometry, t: Tag = {}): THREE.BufferGeometry {
   if (g.getAttribute('leafMask')) g.deleteAttribute('leafMask');
@@ -98,6 +99,16 @@ function tag(g: THREE.BufferGeometry, t: Tag = {}): THREE.BufferGeometry {
   const limb = new Float32Array(n * 4), rig = new Float32Array(n * 4), rest = new Float32Array(n).fill(t.grip?.[2] ?? 0);
   const [s, pivot, amp] = t.limb ?? [0, 0, 0], [jy, jz] = t.joint ?? [0, 0], [gy, gz] = t.spin?.at ?? t.grip ?? [0, 0];
   for (let i = 0; i < n; i++) { limb.set([s, pivot, amp, flags], i * 4); rig.set([jy, jz, gy, gz], i * 4); }
+  // (A body that bends smoothly (importedBody.ts): each corner swung as much as it hangs from its
+  // limb, and bent at the joint as much as it hangs from the lower piece (aRig.z: RIG.blend).)
+  const blend = g.getAttribute('aBlend');
+  if (blend) {
+    for (let i = 0; i < n; i++) {
+      limb[i * 4 + 2]! *= blend.getX(i);
+      if (t.joint) { limb[i * 4 + 3]! += RIG.blend; rig[i * 4 + 2] = blend.getY(i); rig[i * 4 + 3] = blend.getX(i); }
+    }
+    g.deleteAttribute('aBlend');
+  }
   g.setAttribute('aLimb', new THREE.BufferAttribute(limb, 4));
   g.setAttribute('aRig', new THREE.BufferAttribute(rig, 4));
   g.setAttribute('aRest', new THREE.BufferAttribute(rest, 1));
@@ -112,6 +123,9 @@ const rod = (a: THREE.Vector3, b: THREE.Vector3, r0: number, r1: number, n: numb
 const lp = (g: THREE.BufferGeometry, o: Tf = {}, t?: Tag) => { g.deleteAttribute('leafMask'); return tag(g.applyMatrix4(tf(o)), t); };
 const point = (h: number, r: number, n: number, color: number, o: Tf, t?: Tag) => lp(hull([R([0, 0, 0], r), R([0, h, 0], 0, 0)], n, color, { side: [0, 0, 1] }), o, t);
 
+// On trial: units on foot built on an imported body (importedBody.ts), with
+// ?body=wanderer in the page's address.
+export const IMPORTED_BODY = typeof location !== 'undefined' && new URLSearchParams(location.search).get('body') === 'wanderer';
 // The march: legs swing from the hip, arms against them from the shoulder.
 export const LEG_AMP = 0.45;
 const LEG = (side: number) => [side, HIP, LEG_AMP] as const;
@@ -197,11 +211,14 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
     : hold === 'mg' ? HIT(SHOULDER, 0.4) : twoHands ? HIT(SHOULDER, 0.9) : null;
   const bowUp = HIT(SHOULDER, 0.4); // (an archer raises his bow to loose: from where he holds it forward)
   const freeL = !shield && !bow && !twoHands;
-  const out = tagged(person(dress, armL, armR, {
-    legs: (side) => (opts.still ? [0, HIP, 0] as const : LEG(side)),
-    arms: (side) => (side === -1 ? (hold === 'none' ? ARM(-1) : bow ? DRAW_ARM : strike ?? undefined) : shield ? GUARD_ARM : freeL ? ARM(1) : bow ? bowUp : hold === 'longsword' || hold === 'mg' || longGun ? strike ?? undefined : undefined),
-  }));
-  const hR = handAt(-1, armR, f), hL = handAt(1, armL, f), eR = elbowAt(-1, armR, f), eL = elbowAt(1, armL, f);
+  const swing = {
+    legs: (side: number) => (opts.still ? [0, HIP, 0] as const : LEG(side)),
+    arms: (side: number) => (side === -1 ? (hold === 'none' ? ARM(-1) : bow ? DRAW_ARM : strike ?? undefined) : shield ? GUARD_ARM : freeL ? ARM(1) : bow ? bowUp : hold === 'longsword' || hold === 'mg' || longGun ? strike ?? undefined : undefined),
+  };
+  // (An imported body, on trial: its own hands hold the weapons.)
+  const body = IMPORTED_BODY ? importedPerson(dress, armL, armR, swing) : null;
+  const out = tagged(body ? body.parts : person(dress, armL, armR, swing));
+  const hR = body ? body.hand(-1) : handAt(-1, armR, f), hL = body ? body.hand(1) : handAt(1, armL, f), eR = body ? body.elbow(-1) : elbowAt(-1, armR, f), eL = body ? body.elbow(1) : elbowAt(1, armL, f);
   // (What the right hand holds goes with its forearm: bent at the elbow.)
   // (A long gun's rest: as it lies through both hands.)
   const rest = longGun ? Math.atan2(hL.z - hR.z, hL.y - hR.y) : REST_PITCH[hold];
@@ -266,7 +283,7 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
   if (opts.pack) out.push(box(0.2, 0.22, 0.1, 0x9a8462, { y: 0.62, z: -0.11 }), rod(V(-0.11, 0.77, -0.1), V(0.11, 0.77, -0.1), 0.022, 0.022, 4, 0x6a5440));
   // (The shield goes with its forearm.)
   if (shield) out.push(...shieldOf(gear.shield, hL, { limb: GUARD_ARM, joint: [eL.y, eL.z] }));
-  if (opts.helmet) out.push(...helmetOf(gear.helmet));
+  if (opts.helmet && !body) out.push(...helmetOf(gear.helmet));
   return out;
 }
 

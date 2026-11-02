@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { ArchCiv } from './architecture.ts';
 import { unitDef, domainOf, type UnitKey } from './rules.ts';
 import { firesAtClose, returnFire, type AttackStyle, type Projectile } from './unitClasses.ts';
-import { UNIT_LOOK, figuresFor, formationSlots, unitModel, variantOf, rides, headOffset, hairModel, transportModel, wearsHelmet, womenShare, isMachine, colsOf, GEAR, HAIR_BY, HAIR_STYLES, STRIKE, GUARD, DRAW, whirls, bowman, cuts } from './unitModels.ts';
+import { UNIT_LOOK, figuresFor, formationSlots, unitModel, variantOf, rides, headOffset, hairModel, transportModel, wearsHelmet, womenShare, isMachine, colsOf, GEAR, HAIR_BY, HAIR_STYLES, STRIKE, GUARD, DRAW, whirls, bowman, cuts, IMPORTED_BODY } from './unitModels.ts';
 import { mulberry32 } from './rng.ts';
 import { HIP } from './people.ts';
 import { pairUp, type P2 } from './duel.ts';
@@ -286,12 +286,17 @@ const UNIT_LIMB = /* glsl */ `
   float jointA = isLeg ? 2.0 * aPose.z + marching * 0.95 * max(0.0, -cos(beat) * aLimb.x)
                : isStrike ? -aPose.w : isDraw ? -2.3 * aMore.y : -0.35 * marching;
   jointA *= aLimb.z > 0.0 ? isLower : 0.0; // (a limb that never moves keeps its forearm as it is: what it holds stays in hand)
+  // (A body that bends smoothly: each corner at a joint bent as much as it hangs from the lower piece.)
+  // (aRig.z: how much it hangs from the lower piece; aRig.w: from the limb at all.)
+  bool blended = mod(floor(rigFlags / 256.0), 2.0) > 0.5;
+  float blendOn = blended ? aRig.w : 1.0;
+  if (blended) jointA *= aRig.z;
   float jointC = cos(jointA), jointS = sin(jointA);
   // (A weapon turned in the hand to point as aimed, however the arm is.)
   float hit = aAnim.z > 1.5 ? aAnim.z - 3.0 : aAnim.z * (0.6 + 0.4 * sin(uTime * 7.0 + aAnim.x)); // (past 1.5: a stance's arm, exactly)
   float limbA = aLimb.z <= 0.0 ? 0.0 : isGuard ? -aMore.x * aLimb.z : isDraw ? -aMore.y * aLimb.z : isStrike ? -hit * aLimb.z
                                      : (aAnim.y > 1.5 ? aAnim.y - 3.0 : sin(beat) * aAnim.y) * aLimb.x * aLimb.z // (past 1.5: a stance's stride, exactly)
-                                       - (isLeg ? aPose.z : 0.0);
+                                       - (isLeg ? aPose.z * blendOn : 0.0);
   // (A skirt: its sides with their own leg, its front middle with the leg
   // further forward, its back with the one further back (a leg forward
   // turns by -|swing|); all crouched with the thighs; nothing at the waist.)
@@ -301,7 +306,7 @@ const UNIT_LIMB = /* glsl */ `
   }
   float limbC = cos(limbA), limbS = sin(limbA);
   // (The striking arm carried out to its side, or across the body, about its shoulder: a cut on a slant.)
-  float outA = isStrike ? -aMore.w : 0.0, outC = cos(outA), outS = sin(outA);
+  float outA = isStrike ? -aMore.w * blendOn : 0.0, outC = cos(outA), outS = sin(outA);
   float gripA = isGrip > 0.5 ? aSkinTone.w * (aAnim.w - aRest - limbA - jointA) : 0.0, gripC = cos(gripA), gripS = sin(gripA);
   // (Above the hips, not a leg: the body, its arms, head and hair.)
   bool upper = position.y > ${(HIP - 0.02).toFixed(2)} && !isLeg;
@@ -1157,7 +1162,8 @@ export function figureLooks(type: UnitKey, civ: ArchCiv, women: number, rand: ()
   const style = pick(helmet ? styles.helmet : styles.bare);
   // (Machines: no one shows.)
   const none = isMachine(type) || (style === 'bald' && helmet);
-  return { female: female && !isMachine(type), skin: new THREE.Color(pick(g.skin)), hair: none ? -1 : HAIR_STYLES.indexOf(style), hairColor: new THREE.Color(pick(g.hair)) };
+  // (An imported body has its own hair.)
+  return { female: female && !isMachine(type), skin: new THREE.Color(pick(g.skin)), hair: none || (IMPORTED_BODY && !rides(type, 0)) ? -1 : HAIR_STYLES.indexOf(style), hairColor: new THREE.Color(pick(g.hair)) };
 }
 
 // Arrows in flight: each volley a dozen, from the archers to around the
