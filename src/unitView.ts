@@ -310,8 +310,11 @@ const UNIT_LIMB = /* glsl */ `
   float outA = isStrike ? -aMore.w * blendOn : 0.0, outC = cos(outA), outS = sin(outA);
   float gripA = isGrip > 0.5 ? aSkinTone.w * (aAnim.w - aRest - limbA - jointA) : 0.0, gripC = cos(gripA), gripS = sin(gripA);
   // (Above the hips, not a leg: the body, its arms, head and hair.)
-  bool upper = position.y > ${(HIP - 0.02).toFixed(2)} && !isLeg;
-  float twC = cos(upper ? aPose.y : 0.0), twS = sin(upper ? aPose.y : 0.0), bnC = cos(upper ? aPose.x : 0.0), bnS = sin(upper ? aPose.x : 0.0);`;
+  // (Eased in across the waist, not cut there: a body in one piece (an
+  // imported one: its tunic and skirt run past the hips) stretches, not tears.)
+  // (A leg's corner that hangs partly from the pelvis (blended) goes partly with it.)
+  float upper = (isLeg ? 1.0 - blendOn : 1.0) * smoothstep(${(HIP - 0.07).toFixed(2)}, ${(HIP + 0.03).toFixed(2)}, position.y);
+  float twC = cos(upper * aPose.y), twS = sin(upper * aPose.y), bnC = cos(upper * aPose.x), bnS = sin(upper * aPose.x);`;
 const UNIT_NORMAL = /* glsl */ `
   ${UNIT_LIMB}
   if (spinY > 0.5) objectNormal.xz = vec2(spinC * objectNormal.x - spinS * objectNormal.z, spinS * objectNormal.x + spinC * objectNormal.z);
