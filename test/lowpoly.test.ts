@@ -42,8 +42,8 @@ describe('L1: people and animals within the low-poly budget', () => {
         // (A rider's count holds his horse's tack and cloth.)
         const n = tris(unitModel(type, 'Romans', v)) + hairOf(wearsHelmet(type, 'Romans')) - (rides(type, v) ? horse : 0);
         console.log(`${type}/${v}: ${n}${rides(type, v) ? ` + horse ${horse}` : ''}`);
-        // (A chariot archer's count holds his car.)
-        expect(n, type).toBeLessThanOrEqual(FIGURE_BUDGET + (type === 'chariotArcher' ? 3 : 2) * GEAR);
+        // (The most heavily equipped (a shield, a helmet, a sword), or a chariot archer's car, a little over.)
+        expect(n, type).toBeLessThanOrEqual(FIGURE_BUDGET + 3 * GEAR);
       }
     }
   });

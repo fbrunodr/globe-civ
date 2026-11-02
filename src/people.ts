@@ -15,7 +15,7 @@
 // skin and cloth itself (ruralPerson).
 
 import * as THREE from 'three';
-import { hull, limb, spike, gem, plate, R, type V3 } from './lowpoly.ts';
+import { hull, limb, spike, gem, plate, R, type Ring, type V3 } from './lowpoly.ts';
 import type { Paint } from './creatures.ts';
 
 export const HIP = 0.5, SHOULDER = 0.8, HEAD_Y = 0.93;
@@ -73,17 +73,43 @@ const FIVE = { turn: Math.PI / 2 } as const;
 
 // The head's widest ring and its crown (a flat top), five-sided as it.
 const HEAD_BROW = R([0, HEAD_Y + 0.005, 0.002], 0.064, 0.07), HEAD_CROWN = R([0, HEAD_Y + 0.06, -0.006], 0.044, 0.05);
+const HEAD_CHIN = R([0, HEAD_Y - 0.068, 0.012], 0.036, 0.042);
+// The heads' rings, chin to crown: the plain one's (five-sided, person()) and the finer one's (eight-sided, finePerson()).
+export const PLAIN_HEAD: readonly Ring[] = [HEAD_CHIN, HEAD_BROW, HEAD_CROWN];
+export const FINE_HEAD: readonly Ring[] = [[0.872, 0.026, 0.028, 0.024], [0.884, 0.044, 0.048, 0.016], [0.912, 0.059, 0.064, 0.006], [0.938, 0.063, 0.069, 0.002], [0.964, 0.054, 0.062, -0.004], [0.99, 0.038, 0.046, -0.008]]
+  .map(([y, a, b, z]) => R([0, y!, z!], a!, b!));
 // A shell over the head (helmets, hats, turbans: unitModels.ts): its
 // rings the head's own, scaled out, so that it holds the head at every
 // height. `levels`: (height over HEAD_Y, how far out: 1 the head's own
 // size there, 0 a point), below the crown sized on the brow, above it on
 // the crown.
-export function headShell(levels: readonly (readonly [number, number])[], paint: Paint, caps: readonly [boolean, boolean] = [false, false]): THREE.BufferGeometry {
+// (Eight-sided, corner to corner with the finer head's rings and round
+// either head: a level's size the larger of the two heads' there; below
+// the crown sized on the brow at least (so a rim stands clear of the
+// face), above it on the crown.)
+// (`sides`: 5, as the plain head's, for the countryside's people, who have only it: fewer faces.)
+export function headShell(levels: readonly (readonly [number, number])[], paint: Paint, caps: readonly [boolean, boolean] = [false, false], sides: 5 | 8 = 8): THREE.BufferGeometry {
   const rings = levels.map(([dy, k]) => {
-    const base = dy < 0.035 ? HEAD_BROW : HEAD_CROWN;
-    return R([0, HEAD_Y + dy, base.c[2]], base.a * k, base.b * k);
+    const y = HEAD_Y + dy, r = dy < 0.035 ? headAt(Math.max(y, HEAD_BROW.c[1])) : HEAD_CROWN;
+    return R([0, y, r.c[2]], r.a * k, r.b * k);
   });
-  return hull(rings, 5, paint, { ...FIVE, caps });
+  const g = hull(rings, sides, paint, { ...(sides === 8 ? { turn: Math.PI / 8 } : FIVE), caps });
+  g.userData['shell'] = true; // (it holds the head: test/fit.test.ts)
+  return g;
+}
+// The head's outline at a height: the larger of the plain head's and the
+// finer head's there (half extents; its middle's z).
+function headAt(y: number): Ring {
+  const at = (rings: readonly Ring[]): Ring => {
+    if (y <= rings[0]!.c[1]) return rings[0]!;
+    for (let i = 1; i < rings.length; i++) {
+      const a = rings[i - 1]!, b = rings[i]!;
+      if (y <= b.c[1]) { const t = (y - a.c[1]) / (b.c[1] - a.c[1]); return R([0, y, a.c[2] + (b.c[2] - a.c[2]) * t], a.a + (b.a - a.a) * t, a.b + (b.b - a.b) * t); }
+    }
+    return rings[rings.length - 1]!;
+  };
+  const p = at(PLAIN_HEAD), f = at(FINE_HEAD);
+  return R([0, y, Math.max(p.c[2], f.c[2])], Math.max(p.a, f.a), Math.max(p.b, f.b));
 }
 
 // Where an arm's elbow comes to (side as handAt's).
@@ -137,7 +163,7 @@ export function person(d: Dress, armL: ArmPose = HANG, armR: ArmPose = HANG, swi
   }
   if (d.belt !== undefined) add(hull([R([0, 0.64, 0], wa! + 0.018, wb! + 0.018), R([0, 0.61, 0], wa! + 0.018, wb! + 0.018)], 6, d.belt, { caps: [false, false] }), 'plain');
   // The head: chin, cheekbones, crown; its front edge the nose.
-  add(hull([R([0, HEAD_Y - 0.068, 0.012], 0.036, 0.042), HEAD_BROW, HEAD_CROWN], 5, SKIN_PAINT, FIVE), 'skin');
+  add(hull([HEAD_CHIN, HEAD_BROW, HEAD_CROWN], 5, SKIN_PAINT, FIVE), 'skin');
   // Arms: sleeve (cloth) to the elbow, the forearm sleeved or bare, the hand.
   for (const side of [1, -1] as const) {
     const pose = side === 1 ? armL : armR, lm = swing?.arms(side);
@@ -222,7 +248,7 @@ function finePerson(d: Dress, armL: ArmPose, armR: ArmPose, swing: Swing): Part[
     const top = skirt === 'none' ? (f ? 0.058 : 0.057) : 0.042;
     if (skirt !== 'ankle') {
       const along = (a: THREE.Vector3, b: THREE.Vector3, t: number, dz = 0): V3 => { const p = a.clone().lerp(b, t); return [p.x, p.y, p.z + dz]; };
-      const leg = hull([R(along(hip, knee, 0), top, top), R(along(hip, knee, 0.45), top * 0.9, top * 0.95), R(along(hip, knee, 0.9), 0.039, 0.04), R(v3(knee), 0.037, 0.039),
+      const leg = hull([R(along(hip, knee, 0), top, top), R(along(hip, knee, 0.85), 0.04, 0.041), R(v3(knee), 0.037, 0.039),
         R(along(knee, ankle, 0.3, -0.01), 0.042, 0.045), R(along(knee, ankle, 0.65, -0.004), 0.031, 0.033), R(along(knee, ankle, 1), 0.025, 0.026)].map((r) => ({ ...r, a: r.a * SIX, b: r.b * SIX })),
       6, legPaint, { turn: Math.PI / 6, caps: [false, false], side: [1, 0, 0] });
       add(blendAt(leg, knee, hip.clone().sub(knee).normalize(), ankle.clone().sub(knee).normalize()), legTag, lm, KNEE);
@@ -230,9 +256,9 @@ function finePerson(d: Dress, armL: ArmPose, armR: ArmPose, swing: Swing): Part[
     add(fineShoe(x * 0.95, 0, d.shoes ?? SHOE), 'plain', lm, KNEE);
   }
   // The torso: hips, waist, chest, shoulders, the base of the neck.
-  const T = f ? [[0.104, 0.07, 0], [0.076, 0.056, 0], [0.098, 0.074, 0.008], [0.104, 0.072, 0.006], [0.108, 0.058, 0], [0.05, 0.042, 0]]
-    : [[0.094, 0.064, 0], [0.084, 0.06, 0], [0.104, 0.07, 0.008], [0.118, 0.072, 0.006], [0.126, 0.062, 0], [0.055, 0.045, 0]];
-  const TY = [0.46, 0.58, 0.68, 0.75, 0.815, 0.857];
+  const T = f ? [[0.104, 0.07, 0], [0.076, 0.056, 0], [0.103, 0.074, 0.007], [0.108, 0.058, 0], [0.05, 0.042, 0]]
+    : [[0.094, 0.064, 0], [0.084, 0.06, 0], [0.114, 0.072, 0.007], [0.126, 0.062, 0], [0.055, 0.045, 0]];
+  const TY = [0.46, 0.58, 0.72, 0.815, 0.857];
   // (Under a skirt too, from the hips: so no gap opens between them as the skirt swings.)
   const from = 0;
   add(hull(TY.slice(from).map((y, i) => R([0, y, T[i + from]![2]!], T[i + from]![0]! * FLAT8, T[i + from]![1]! * FLAT8)), 8, CLOTH_PAINT, { ...EIGHT, caps: [false, true] }), 'team');
@@ -248,9 +274,8 @@ function finePerson(d: Dress, armL: ArmPose, armR: ArmPose, swing: Swing): Part[
   // The neck and head: under the jaw, the chin, the cheekbones, the brow,
   // the forehead, the crown; a nose; the eyes.
   add(hull([R([0, 0.85, -0.004], 0.034, 0.036), R([0, 0.9, 0.002], 0.032, 0.034)], 6, SKIN_PAINT, { caps: [false, false] }), 'skin');
-  const head: [number, number, number, number][] = [[0.872, 0.026, 0.028, 0.024], [0.884, 0.044, 0.048, 0.016], [0.912, 0.059, 0.064, 0.006], [0.938, 0.063, 0.069, 0.002], [0.964, 0.054, 0.062, -0.004], [0.99, 0.038, 0.046, -0.008]];
-  // (Its corners on the old head's outline, no further: helmets and hair are sized to it.)
-  add(hull(head.map(([y, a, b, z]) => R([0, y, z], a, b)), 8, SKIN_PAINT, { ...EIGHT, caps: [true, true] }), 'skin');
+  // (Its corners where helmets' and hair's are, inside them: headShell.)
+  add(hull(FINE_HEAD, 8, SKIN_PAINT, { ...EIGHT, caps: [true, true] }), 'skin');
   add(spike([[0, 0.928, 0.064], [0, 0.912, 0.074], [0, 0.904, 0.082]], 0.013, SKIN_PAINT, 3), 'skin');
   for (const s of [1, -1]) add(plate([[-0.009, 0], [0.009, 0], [0.007, 0.006], [-0.007, 0.006]], EYE).translate(s * 0.024, 0.927, 0.07), 'plain');
   // Arms: one surface, shoulder to wrist (the deltoid, the biceps, the
@@ -341,16 +366,21 @@ const tipBack = (g: THREE.BufferGeometry, a = 0.35) =>
 // (A cap's lower edge sheared: high on the brow, low on the nape.)
 function hairline(g: THREE.BufferGeometry): THREE.BufferGeometry {
   const pos = g.getAttribute('position');
-  for (let i = 0; i < pos.count; i++) if (pos.getY(i) < HEAD_Y + 0.01) pos.setY(i, pos.getY(i) + Math.max(-0.05, Math.min(0.035, pos.getZ(i) * 0.55)));
+  // (Lowered at the nape, it stands a little further out: the head is broader there than at its rim.)
+  for (let i = 0; i < pos.count; i++) {
+    if (pos.getY(i) >= HEAD_Y + 0.01) continue;
+    const dy = Math.max(-0.05, Math.min(0.035, pos.getZ(i) * 0.55)), out = dy < 0 ? 1 - dy * 1.8 : 1;
+    pos.setXYZ(i, pos.getX(i) * out, pos.getY(i) + dy, pos.getZ(i) * out);
+  }
   g.computeVertexNormals();
   return g;
 }
-export function hairShapes(style: HairStyleKey): THREE.BufferGeometry[] {
+export function hairShapes(style: HairStyleKey, sides: 5 | 8 = 8): THREE.BufferGeometry[] {
   const W = 0xffffff;
   // A cap over the crown, down to the brow in front and the nape behind: a
   // shell over the head's own rings (so the head never shows through it),
   // its edge raised in front and lowered behind.
-  const cap = () => hairline(headShell([[0.0, 1.1], [0.066, 1.2], [0.088, 0]], W));
+  const cap = () => hairline(headShell([[0.0, 1.1], [0.066, 1.2], [0.088, 0]], W, [false, false], sides));
   const beard = () => hull([R([0, HEAD_Y - 0.03, 0.014], 0.056, 0.06), R([0, HEAD_Y - 0.092, 0.042], 0, 0)], 5, W, { ...FIVE, caps: [false, false] });
   const long = () => hull([R([0, HEAD_Y - 0.005, -0.045], 0.064, 0.03), R([0, HEAD_Y - 0.13, -0.062], 0.06, 0.018)], 4, W);
   switch (style) {

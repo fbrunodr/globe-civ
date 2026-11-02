@@ -3,7 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { part, seg, tf, V, type Tf } from './propCatalog.ts';
 import { person, riderBody, handAt, elbowAt, hairShapes, headShell, HAIR_STYLE_KEYS, HIP, SHOULDER, HEAD_Y, HANG, HOLD, RAISE, SHIELD, GRIP2, GUN_R, GUN_L, type ArmPose, type Dress, type Part, type HairStyleKey } from './people.ts';
 import { horseParts } from './creatures.ts';
-import { hull, plate, R } from './lowpoly.ts';
+import { gem, hull, plate, R, type V3 } from './lowpoly.ts';
 import type { ArchCiv } from './architecture.ts';
 import type { UnitKey } from './rules.ts';
 
@@ -121,6 +121,21 @@ const rod = (a: THREE.Vector3, b: THREE.Vector3, r0: number, r1: number, n: numb
 // A low-poly piece (lowpoly.ts) tagged.
 const lp = (g: THREE.BufferGeometry, o: Tf = {}, t?: Tag) => { g.deleteAttribute('leafMask'); return tag(g.applyMatrix4(tf(o)), t); };
 const point = (h: number, r: number, n: number, color: number, o: Tf, t?: Tag) => lp(hull([R([0, 0, 0], r), R([0, h, 0], 0, 0)], n, color, { side: [0, 0, 1] }), o, t);
+// A blade from `a` to its tip at `b`, flat (its faces to the sides, x;
+// its edges fore and aft), a diamond in section: `w` wide at the hilt,
+// narrowing to the point; a leaf-shaped head (a spear's) swells first.
+const blade = (a: THREE.Vector3, b: THREE.Vector3, w: number, color: number, t?: Tag, leaf = false) => {
+  const at = (k: number): V3 => { const p = a.clone().lerp(b, k); return [p.x, p.y, p.z]; };
+  const rings = leaf ? [R(at(0), 0.006, w * 0.45), R(at(0.35), 0.005, w), R(at(1), 0, 0)] : [R(at(0), 0.0045, w), R(at(0.82), 0.004, w * 0.8), R(at(1), 0, 0)];
+  return lp(hull(rings, 4, color, { side: [0, 0, 1], turn: 0, caps: [true, false] }), {}, t);
+};
+// A sword's hilt at the grip `g`, the blade pointing along `dir`: the
+// crossguard, the grip, the pommel.
+const hilt = (g: THREE.Vector3, dir: THREE.Vector3, len: number, color: number, t?: Tag) => {
+  const d = dir.clone().normalize(), guard = g.clone().addScaledVector(d, 0.04);
+  return [rod(guard.clone().add(V(-0.045, 0, 0)), guard.clone().add(V(0.045, 0, 0)), 0.009, 0.009, 4, color, t), rod(g.clone().addScaledVector(d, -len), guard, 0.011, 0.011, 4, LEATHER, t),
+    lp(gem([g.x - d.x * (len + 0.012), g.y - d.y * (len + 0.012), g.z - d.z * (len + 0.012)], [0.016, 0.016, 0.016], color, 4), {}, t)];
+};
 
 // Whether the model being built has the finer bodies (unitModel's `fine`).
 let FINE = true;
@@ -222,15 +237,16 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
   // (A bow points where its arrow would fly: square to its limbs, level as it is made.)
   const bowTag: Tag = { limb: bowUp, joint: [eL.y, eL.z], grip: [hL.y, hL.z, Math.PI / 2] };
   const up = (d: number) => v3(hR).add(V(0, d, 0));
-  if (hold === 'spear') out.push(rod(up(-0.42), up(0.86), 0.012, 0.011, 5, WOOD, w), point(0.11, 0.026, 3, METAL, { x: hR.x, y: hR.y + 0.86, z: hR.z }, w));
-  if (hold === 'pike') out.push(rod(up(-0.4), up(1.25), 0.012, 0.011, 5, WOOD, w), point(0.13, 0.024, 3, METAL, { x: hR.x, y: hR.y + 1.25, z: hR.z }, w));
-  if (hold === 'club') out.push(rod(v3(hR).add(V(0, -0.04, -0.02)), v3(hR).add(V(-0.02, 0.3, 0.08)), 0.012, 0.028, 6, WOOD, w));
-  if (hold === 'sword') out.push(rod(v3(hR).add(V(-0.04, 0.04, 0.01)), v3(hR).add(V(0.04, 0.04, 0.01)), 0.008, 0.008, 4, METAL, w), rod(v3(hR).add(V(0, 0.04, 0.01)), v3(hR).add(V(0, 0.4, 0.1)), 0.016, 0.005, 4, METAL, w));
+  if (hold === 'spear') out.push(rod(up(-0.42), up(0.86), 0.012, 0.011, 5, WOOD, w), blade(up(0.84), up(1.0), 0.026, METAL, w, true));
+  if (hold === 'pike') out.push(rod(up(-0.4), up(1.25), 0.012, 0.011, 5, WOOD, w), blade(up(1.23), up(1.38), 0.022, METAL, w, true));
+  // (A club: a grip, swelling to a knobbed head.)
+  if (hold === 'club') { const c = (dx: number, dy: number, dz: number): V3 => [hR.x + dx, hR.y + dy, hR.z + dz]; out.push(lp(hull([R(c(0, -0.05, -0.02), 0.011), R(c(-0.008, 0.12, 0.03), 0.015), R(c(-0.016, 0.25, 0.065), 0.03), R(c(-0.02, 0.31, 0.08), 0.022)], 6, WOOD), {}, w)); }
+  if (hold === 'sword') { const d = V(0, 0.36, 0.09), g0 = v3(hR).add(V(0, 0, 0.01)); out.push(...hilt(g0, d, 0.035, METAL, w), blade(g0.clone().addScaledVector(d.clone().normalize(), 0.045), g0.clone().add(d).add(V(0, 0.04, 0.01)), 0.022, METAL, w)); }
   // (A two-handed sword, its grip between both hands, the long blade up and forward.)
   if (hold === 'longsword') {
     const g = v3(hR).add(v3(hL)).multiplyScalar(0.5);
-    out.push(rod(g.clone().add(V(-0.06, 0.05, 0.01)), g.clone().add(V(0.06, 0.05, 0.01)), 0.01, 0.01, 4, METAL, w), rod(g.clone().add(V(0, -0.04, 0)), g.clone().add(V(0, 0.05, 0.01)), 0.013, 0.013, 4, LEATHER, w),
-      rod(g.clone().add(V(0, 0.05, 0.01)), g.clone().add(V(0, 0.62, 0.2)), 0.018, 0.004, 4, METAL, w));
+    const d = V(0, 0.57, 0.19);
+    out.push(...hilt(g.clone().add(V(0, 0.01, 0)), d, 0.07, METAL, w), blade(g.clone().add(V(0, 0.05, 0.015)), g.clone().add(V(0, 0.64, 0.21)), 0.026, METAL, w));
   }
   // (A machine gun at the hip: its body, barrel and drum.)
   // (Like every gun, straight in the plane its grip turns in: gunAt.)
@@ -287,9 +303,11 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
 // forward: a flat polygon (both faces drawn) and its boss.
 // (`t`: how it moves, with the arm.)
 function shieldOf(s: Shield, hand: THREE.Vector3, t: Tag = {}): THREE.BufferGeometry[] {
-  const at: Tf = { x: hand.x - 0.02, y: hand.y + 0.02, z: hand.z + 0.035 }, face: Tag = { ...t, team: true };
-  const boss = point(0.025, 0.026, 3, METAL, { ...at, z: (at.z ?? 0) + 0.004, rx: Math.PI / 2 }, t);
-  const ngon = (r: number, sy = 1, n = 8) => lp(plate(Array.from({ length: n }, (_, i) => [Math.cos((i + 0.5) * 2 * Math.PI / n) * r, Math.sin((i + 0.5) * 2 * Math.PI / n) * r * sy] as const), PAINT), at, face);
+  // (In front of the fingers that grip it.)
+  const at: Tf = { x: hand.x - 0.02, y: hand.y + 0.02, z: hand.z + 0.062 }, face: Tag = { ...t, team: true };
+  // (Boards with an edge (some thickness), a domed boss.)
+  const boss = lp(gem([at.x ?? 0, at.y ?? 0, (at.z ?? 0) + 0.008], [0.032, 0.032, 0.022], METAL, 6, [Math.PI / 2, 0, 0]), {}, t);
+  const ngon = (r: number, sy = 1, n = 8) => lp(plate(Array.from({ length: n }, (_, i) => [Math.cos((i + 0.5) * 2 * Math.PI / n) * r, Math.sin((i + 0.5) * 2 * Math.PI / n) * r * sy] as const), PAINT, 0.012), at, face);
   switch (s) {
     case 'round': return [ngon(0.16), boss];
     case 'big round': return [ngon(0.2), boss];
@@ -297,12 +315,13 @@ function shieldOf(s: Shield, hand: THREE.Vector3, t: Tag = {}): THREE.BufferGeom
     case 'oval': return [ngon(0.12, 1.6), boss];
     case 'scutum': return [shape(new THREE.CylinderGeometry(0.2, 0.2, 0.42, 3, 1, true, -0.62, 1.24).rotateY(Math.PI), PAINT, { ...at, z: (at.z ?? 0) + 0.18, y: (at.y ?? 0) - 0.02 }, face), boss];
     case 'pavise': return [box(0.26, 0.46, 0.025, PAINT, { ...at, y: (at.y ?? 0) - 0.03 }, face)];
-    case 'kite': return [lp(plate([[-0.12, 0.14], [0.12, 0.14], [0.11, -0.03], [0, -0.29], [-0.11, -0.03]], PAINT), at, face), boss];
+    case 'kite': return [lp(plate([[-0.12, 0.14], [0, 0.155], [0.12, 0.14], [0.11, -0.03], [0.06, -0.17], [0, -0.29], [-0.06, -0.17], [-0.11, -0.03]], PAINT, 0.012), at, face), boss];
   }
 }
 
 // Helmets and headgear, on a head at HEAD_Y: shells over the head's own
 // five-sided rings (people.ts headShell), so the head never shows through.
+export const helmetModel = (h: Helmet): THREE.BufferGeometry[] => helmetOf(h);
 function helmetOf(h: Helmet): THREE.BufferGeometry[] {
   const Y = HEAD_Y;
   const shell = (levels: readonly (readonly [number, number])[], color: number, t?: Tag) => lp(headShell(levels, color), {}, t);
@@ -310,7 +329,9 @@ function helmetOf(h: Helmet): THREE.BufferGeometry[] {
   const DOME = [[-0.004, 1.16], [0.07, 1.3], [0.098, 0]] as const;
   const brim = (r: number, color: number, dy = 0) => lp(plate(Array.from({ length: 6 }, (_, i) => [Math.cos(i * Math.PI / 3) * r, Math.sin(i * Math.PI / 3) * r] as const), color), { y: Y + dy, rx: -Math.PI / 2 });
   switch (h) {
-    case 'crest': return [shell(DOME, METAL), lp(plate([[-0.085, 0], [0.085, 0], [0.07, 0.075], [-0.07, 0.075]], PAINT), { y: Y + 0.085, ry: Math.PI / 2 }, { team: true })];
+    // (A crested helmet with cheek guards hanging beside the face.)
+    case 'crest': return [shell(DOME, METAL), lp(plate([[-0.085, 0], [0.085, 0], [0.07, 0.075], [-0.07, 0.075]], PAINT), { y: Y + 0.085, ry: Math.PI / 2 }, { team: true }),
+      ...[1, -1].map((s) => lp(plate([[-0.022, 0], [0.026, 0], [0.018, -0.055], [-0.012, -0.05]], METAL, 0.004), { x: s * 0.071, y: Y - 0.002, z: 0.022, ry: s * Math.PI / 2 }))];
     case 'cone': return [shell([[-0.004, 1.16], [0.07, 1.25], [0.17, 0]], METAL), lp(plate([[-0.006, 0], [0.006, 0], [0.006, -0.05], [-0.006, -0.05]], METAL), { y: Y + 0.005, z: 0.084 })];
     case 'kettle': return [shell(DOME, METAL), brim(0.135, METAL, 0.002)];
     case 'hat': return [shell([[0.0, 1.18], [0.07, 1.3], [0.12, 0]], 0xb8a070), brim(0.17, 0xb8a070, 0.006)];
@@ -366,7 +387,8 @@ function rider(gear: Gear, coat: number, female: boolean, style: RiderStyle): TH
   };
   switch (style) {
     case 'officer': out.push(lp(plate([[-0.12, 0.2], [0.12, 0.2], [0.14, -0.2], [-0.14, -0.2]], CLOTH), { y: SEAT + 0.12, z: -0.11, rx: 0.12 }, { team: true }), plume(gear.helmet === 'none' ? -0.03 : 0.04)); break;
-    case 'cavalry': out.push(rod(hR, hR.clone().add(V(0, 0.42, 0.18)), 0.014, 0.005, 4, METAL, w)); break;
+    // (A sabre: a curved blade (two pieces), a knuckle-guarded hilt.)
+    case 'cavalry': out.push(...hilt(hR.clone(), V(0, 0.42, 0.18), 0.035, METAL, w), blade(hR.clone().add(V(0, 0.04, 0.02)), hR.clone().add(V(0, 0.3, 0.1)), 0.02, METAL, w), blade(hR.clone().add(V(0, 0.29, 0.1)), hR.clone().add(V(0, 0.45, 0.22)), 0.016, METAL, w)); break;
     case 'knight': out.push(...lance(1), tag(caparison(), { team: true })); break;
     case 'lancer': {
       // (The pennant just below the lance's head.)

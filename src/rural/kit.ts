@@ -54,7 +54,7 @@ function worker(dress: Dress, armL: ArmPose, armR: ArmPose, skin: number, extra:
     return p.geo;
   });
   // (Under a hat only what shows below it: the beard, the bun.)
-  out.push(...hairShapes(hair).slice(hat ? 1 : 0).map((g) => recolor(g, 0x3a2a1e)));
+  out.push(...hairShapes(hair, 5).slice(hat ? 1 : 0).map((g) => recolor(g, 0x3a2a1e)));
   if (hat) out.push(...hatShapes(hat, hat === 'straw' ? 0xd8bc78 : hat === 'felt' ? 0x4a3a2a : 0x6a5a48));
   out.push(...extra(handAt(1, armL, dress.female), handAt(-1, armR, dress.female)));
   // (People face +z; the kit faces +x. 1 tall: 1.72 m.)
