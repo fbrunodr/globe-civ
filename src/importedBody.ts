@@ -164,7 +164,8 @@ export function importedPerson(d: Dress, armL: ArmPose, armR: ArmPose, swing: { 
     geo.setAttribute('leafMask', new THREE.Float32BufferAttribute(new Array(gr.pos.length / 3).fill(0), 1));
     geo.computeVertexNormals();
     if (!gr.skirt && gr.limb >= 0) geo.setAttribute('aBlend', new THREE.Float32BufferAttribute(gr.blend, 2));
-    const m = motion(gr.limb);
+    // (The skirt hangs from the hips, swung as the legs go (unitModels.ts tagged): no knee.)
+    const m = gr.skirt ? { limb: swing.legs(1) } : motion(gr.limb);
     parts.push({ geo, tag: gr.tag, ...(m.limb ? { limb: m.limb } : {}), ...(m.joint ? { joint: m.joint } : {}), ...(gr.skirt ? { skirt: hem } : {}) });
   }
   return { parts, ...(textured ? { texture: BODY_TEXTURE } : {}), hand: (side) => (side === 1 ? left : right).grip.clone(), elbow: (side) => (side === 1 ? left : right).el1.clone() };
