@@ -86,6 +86,15 @@ const GROUNDS = [
 
 const time = { value: 0 };
 const material = makeUnitMaterial(time);
+// (A textured model's own material: its texture, unitView.ts makeUnitMaterial.)
+const texturedMats = new Map<string, THREE.MeshStandardMaterial>();
+const materialOf = (geo: THREE.BufferGeometry): THREE.MeshStandardMaterial => {
+  const t = geo.userData['texture'] as string | undefined;
+  if (!t) return material;
+  let m = texturedMats.get(t);
+  if (!m) texturedMats.set(t, m = makeUnitMaterial(time, t));
+  return m;
+};
 const volleys = new Volleys(1, new THREE.Vector3(0, 1, 0));
 scene.add(volleys.lines);
 let world = new THREE.Group();
@@ -188,7 +197,7 @@ function build(): { w: number; d: number } {
     drawn += n * list.length;
     if (a === 'hair') hairTris.set(b, n);
     else perFigure.set(a as UnitKey, Math.max(perFigure.get(a as UnitKey) ?? 0, n));
-    const mesh = new THREE.InstancedMesh(geo, material, list.length);
+    const mesh = new THREE.InstancedMesh(geo, materialOf(geo), list.length);
     const tone = geo.getAttribute('aSkinTone') as THREE.InstancedBufferAttribute;
     list.forEach((f, i) => {
       mesh.setColorAt(i, f.color);

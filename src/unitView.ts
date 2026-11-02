@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { ArchCiv } from './architecture.ts';
 import { unitDef, domainOf, type UnitKey } from './rules.ts';
 import { firesAtClose, returnFire, type AttackStyle, type Projectile } from './unitClasses.ts';
-import { UNIT_LOOK, figuresFor, formationSlots, unitModel, variantOf, rides, headOffset, hairModel, transportModel, wearsHelmet, womenShare, isMachine, colsOf, GEAR, HAIR_BY, HAIR_STYLES, STRIKE, GUARD, DRAW, whirls, bowman, cuts } from './unitModels.ts';
+import { UNIT_LOOK, figuresFor, formationSlots, unitModel, variantOf, rides, headOffset, hairModel, transportModel, wearsHelmet, womenShare, isMachine, colsOf, GEAR, HAIR_BY, HAIR_STYLES, STRIKE, GUARD, DRAW, whirls, bowman, cuts, IMPORTED_BODY } from './unitModels.ts';
 import { mulberry32 } from './rng.ts';
 import { HIP } from './people.ts';
 import { pairUp, type P2 } from './duel.ts';
@@ -342,8 +342,21 @@ const UNIT_VERTEX = /* glsl */ `
 // The figures' material: the props' look (smooth-shaded, painted), the
 // owner's colour on the team parts (the instance colour), each figure's
 // skin, and the limbs swinging on the march (`time`: seconds).
-export function makeUnitMaterial(time: { value: number }): THREE.MeshStandardMaterial {
+// (`texture`: a textured body's (public/ path): sampled where a corner has
+// texture coordinates (an imported body), not where it has none (-1: what it holds).)
+const textures = new Map<string, THREE.Texture>();
+export function makeUnitMaterial(time: { value: number }, texture?: string): THREE.MeshStandardMaterial {
   const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, side: THREE.DoubleSide });
+  if (texture) {
+    let map = textures.get(texture);
+    if (!map) {
+      map = new THREE.TextureLoader().load(`${import.meta.env.BASE_URL}${texture}`);
+      map.colorSpace = THREE.SRGBColorSpace;
+      map.anisotropy = 4;
+      textures.set(texture, map);
+    }
+    mat.map = map;
+  }
   mat.onBeforeCompile = (shader) => {
     shader.uniforms['uTime'] = time;
     shader.vertexShader = shader.vertexShader
@@ -356,8 +369,12 @@ export function makeUnitMaterial(time: { value: number }): THREE.MeshStandardMat
           vColor.rgb = mix(mix(color.rgb, aSkinTone.rgb, isTeamV.y), color.rgb * instanceColor.rgb, isTeamV.x);
           vColor.rgb *= 1.0 - 0.78 * aMore.z; // (burnt: a wreck)
         #endif`);
+    if (texture) shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', `
+      #ifdef USE_MAP
+        if (vMapUv.x >= 0.0) diffuseColor *= texture2D(map, vMapUv);
+      #endif`);
   };
-  mat.customProgramCacheKey = () => 'unit-figure';
+  mat.customProgramCacheKey = () => (texture ? 'unit-figure-textured' : 'unit-figure');
   return mat;
 }
 // A model's geometry made ready for `cap` instances (their gait and skin).
@@ -1116,6 +1133,15 @@ export class UnitView {
 
   // ---- drawing ----
 
+  // A model's material: the figures' own, or one with the model's texture.
+  private readonly textured = new Map<string, THREE.MeshStandardMaterial>();
+  private materialOf(geo: THREE.BufferGeometry): THREE.MeshStandardMaterial {
+    const t = geo.userData['texture'] as string | undefined;
+    if (!t) return this.material;
+    let m = this.textured.get(t);
+    if (!m) this.textured.set(t, m = makeUnitMaterial(this.time, t));
+    return m;
+  }
   // The instanced mesh of a model (type|civ|variant, or hair|style), room
   // for `need` figures.
   private mesh(key: string, need: number): THREE.InstancedMesh {
@@ -1125,7 +1151,7 @@ export class UnitView {
     const [a, b, c, d, e] = key.split('|') as [string, string, string | undefined, string | undefined, string | undefined];
     const geo = mesh ? mesh.geometry : a === 'hair' ? hairModel(HAIR_STYLES[Number(b)]!) : a === 'transport' ? transportModel() : unitModel(a as UnitKey, b as ArchCiv, Number(c), d === '1', e === '1');
     prepareUnitGeometry(geo, cap);
-    const next = new THREE.InstancedMesh(geo, this.material, cap);
+    const next = new THREE.InstancedMesh(geo, this.materialOf(geo), cap);
     next.setColorAt(0, new THREE.Color());
     next.receiveShadow = true;
     next.frustumCulled = false;
@@ -1166,7 +1192,8 @@ export function figureLooks(type: UnitKey, civ: ArchCiv, women: number, rand: ()
   const style = pick(helmet ? styles.helmet : styles.bare);
   // (Machines: no one shows.)
   const none = isMachine(type) || (style === 'bald' && helmet);
-  return { female: female && !isMachine(type), skin: new THREE.Color(pick(g.skin)), hair: none ? -1 : HAIR_STYLES.indexOf(style), hairColor: new THREE.Color(pick(g.hair)) };
+  // (An imported body has its own hair.)
+  return { female: female && !isMachine(type), skin: new THREE.Color(pick(g.skin)), hair: none || (IMPORTED_BODY && !rides(type, 0)) ? -1 : HAIR_STYLES.indexOf(style), hairColor: new THREE.Color(pick(g.hair)) };
 }
 
 // Arrows in flight: each volley a dozen, from the archers to around the
