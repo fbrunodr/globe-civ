@@ -4,6 +4,7 @@
 
 import { attackStyle, canAttackType, canAssault, canShoot } from './unitClasses.ts';
 import './style.css';
+import './topbar.ts';
 import { Game } from './game.ts';
 import { GlobeRenderer, type DebugView } from './render.ts';
 import { mountSettings } from './settingsMenu.ts';

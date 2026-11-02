@@ -4,6 +4,7 @@
 // and the game read it from there.
 
 import './style.css';
+import './topbar.ts';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import type { Globe } from './goldberg.ts';

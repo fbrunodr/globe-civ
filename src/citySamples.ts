@@ -8,6 +8,7 @@
 // next sheet.
 
 import './style.css';
+import './topbar.ts';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { ARCH_CIVS, type ArchCiv } from './architecture.ts';

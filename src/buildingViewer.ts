@@ -9,6 +9,7 @@
 // the lot models' scale (tile steps), on a plain ground.
 
 import './style.css';
+import './topbar.ts';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { ARCH_CIVS, STYLES, STYLE_NAME, pairsOf, styleFloors, styleOf, type ArchCiv, type Style } from './architecture.ts';

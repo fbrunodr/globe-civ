@@ -1,4 +1,5 @@
 import './style.css';
+import './topbar.ts';
 import { Game, HUMAN, type City, type Unit } from './game.ts';
 import { mountSettings } from './settingsMenu.ts';
 import { GlobeRenderer, type DebugView, type Selection, type TileMark } from './render.ts';

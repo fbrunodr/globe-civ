@@ -5,6 +5,7 @@
 // (Machu Picchu stands on a mountain top: the gallery's catalog has it.)
 
 import './style.css';
+import './topbar.ts';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { FlatPainter } from './flatPainter.ts';

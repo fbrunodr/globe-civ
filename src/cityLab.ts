@@ -5,6 +5,7 @@
 // buildings and wonders, raise walls, damage it, burn its fields, raze it.
 
 import './style.css';
+import './topbar.ts';
 import { Game, type City } from './game.ts';
 import { GlobeRenderer, type DebugView, type TileMark } from './render.ts';
 import { mountSettings } from './settingsMenu.ts';
