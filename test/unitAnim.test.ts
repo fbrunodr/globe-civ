@@ -1,0 +1,46 @@
+import { describe, it, expect } from 'vitest';
+import { cutAngles, nextBlow, poseOf, type Cue } from '../src/unitAnim.ts';
+import type { Play } from '../src/unitView.ts';
+
+// How a figure moves (unitAnim.ts): its cuts with a sword or a club.
+
+// A melee (unitView.ts PLAYS.melee), and a figure cutting in it, engaged with its foe.
+const MELEE: Play = { dur: 7, close: true, charge: 1, go: [0.04, 0.26], back: 0.8, strike: [0.18, 0.8], aim: false, shots: [] };
+const cue = (sec: number, side: 'attacker' | 'defender'): Cue => ({ sec, dur: 7, play: MELEE, attack: MELEE, side, engaged: true, delay: 0, fall: Infinity, won: false, cut: true });
+
+describe('A1: a cut with a sword or a club', () => {
+  for (const side of ['attacker', 'defender'] as const) {
+    it(`${side}: the elbow bends only one way and the blade goes with the forearm, never against it`, () => {
+      for (let sec = 0; sec < 7; sec += 0.01) for (const beat of [0, 0.3, 0.71]) {
+        const p = poseOf(cue(sec, side), 100 + sec, 1.3, beat, 0, false);
+        if (p.aimed < 0.999) continue;
+        const a = cutAngles(p);
+        // (The elbow: straight at most, bent no further than a forearm folds.)
+        expect(a.fore - a.upper).toBeGreaterThan(-0.08);
+        expect(a.fore - a.upper).toBeLessThan(2.5);
+        // (The wrist: the blade from in line with the forearm to cocked back square to it, no further.)
+        expect(a.blade - a.fore).toBeGreaterThan(-0.2);
+        expect(a.blade - a.fore).toBeLessThan(1.7);
+      }
+    });
+  }
+  it('lands with the arm straight out and the blade in line with it', () => {
+    const met = MELEE.go[1] * 7;
+    for (const beat of [0, 0.3, 0.71]) {
+      const t = nextBlow(met + 1.5, met, beat), p = poseOf(cue(t, 'attacker'), 100 + t, 1.3, beat, 0, false), a = cutAngles(p);
+      expect(Math.abs(a.fore - a.upper)).toBeLessThan(0.15);
+      expect(Math.abs(a.blade - a.fore)).toBeLessThan(0.45);
+      // (Out in front, about shoulder high.)
+      expect(Math.abs(a.upper - Math.PI / 2)).toBeLessThan(0.4);
+    }
+  });
+  it('winds up with the blade back behind the shoulders, the hand up by the head', () => {
+    const met = MELEE.go[1] * 7;
+    for (const beat of [0, 0.3, 0.71]) {
+      // (Just before the cut begins: wound up, 0.14 of a round before it lands.)
+      const t = nextBlow(met + 1.5, met, beat) - 0.16, a = cutAngles(poseOf(cue(t, 'attacker'), 100 + t, 1.3, beat, 0, false));
+      expect(a.blade).toBeGreaterThan(Math.PI * 1.15); // (past upright, back)
+      expect(a.upper).toBeGreaterThan(1.7);           // (the elbow up)
+    }
+  });
+});

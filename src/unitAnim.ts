@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import type { Play } from './unitView.ts';
+import { HOLD } from './people.ts';
+import { CUT_REACH } from './unitModels.ts';
 
 // How a figure moves, as a small machine of acts, blended one into the
 // next (unitView.ts and the Units page draw it). Out of a fight a figure
@@ -91,10 +93,10 @@ const march = (now: number, phase: number, walk: number): Pose =>
   P(0, 0, 0, 0.1 * walk + 0.03 * Math.sin(now * 18 + phase * 2), 0.06 * Math.sin(now * 9 + phase), 0.1 * walk, walk, 0, 0.1 * walk, 0.35 * walk, walk > 1.2 ? 1.2 : undefined);
 // Charging home: at a run, the weapon brought down level at the enemy as
 // it closes (`k`: 0 setting out, 1 upon it), the body leaning into it.
-// (A swordsman runs in with his blade raised to strike, not levelled.)
+// (A swordsman runs in with his blade raised over his shoulder, to cut.)
 const charging = (now: number, phase: number, walk: number, cut: boolean, k: number): Pose => {
   const run = march(now, phase, walk), t = smooth(k);
-  if (cut) return { ...run, bend: run.bend + 0.08 * t, arm: run.arm + (0.9 - run.arm) * t, elbow: run.elbow + (1.3 - run.elbow) * t, aim: (run.aimed ? run.aim : 0) * (1 - t) + 0.1 * t, aimed: Math.max(run.aimed, t), out: 0.4 * t };
+  if (cut) return { ...run, bend: run.bend + 0.08 * t, arm: run.arm + (CUT_RAISED.arm - run.arm) * t, elbow: run.elbow + (CUT_RAISED.elbow - run.elbow) * t, aim: (run.aimed ? run.aim : 0) * (1 - t) + CUT_RAISED.aim * t, aimed: Math.max(run.aimed, t), out: 0.45 * t };
   return { ...run, bend: run.bend + 0.12 * t, arm: run.arm + (0.35 - run.arm) * t, elbow: run.elbow + (0.7 - run.elbow) * t, aim: run.aimed ? run.aim + (1.4 - run.aim) * t : 1.4 * t, aimed: Math.max(run.aimed, t) };
 };
 // Ready to fight: knees bent, a foot forward and planted, weapon up and
@@ -124,19 +126,58 @@ const cheer = (now: number, phase: number): Pose => guarded(P(0, 0, 0, -0.12, 0.
 // (The shield held up as it winds up, swung aside as it strikes.)
 const THRUST = { wind: guarded(P(0, 0, 0, -0.18, -0.55, -0.3, 0, STANCE, 0.38, 1.6, 1.35), 0.55), hit: guarded(P(0.04, 0, 0, 0.42, 0.38, 1.0, 0, STANCE, 0.46, 0.02, 1.6), 0.1) };
 const OVERHEAD = { wind: guarded(P(0, 0, 0, -0.3, -0.28, 1.8, 0, STANCE, 0.3, 1.1, 1.7), 0.4), hit: guarded(P(0.03, 0, 0, 0.58, 0.16, 0.5, 0, STANCE, 0.5, 0.3, 2.2), 0.05) };
-// Cuts (a sword, a club: `cut` figures), as a swordsman makes them (the
-// timing and the arcs taken from motion-captured slashes): from its guard
-// (the blade up and forward, the arm a little out), wound up with the
-// shoulders turned away, then brought down on a slant across the body,
-// the shoulders turned hard into it, a half step in, the arm straightening
-// as the blade comes through. A forehand comes down from high on its right
-// to low on its left; a backhand back up the other way, from where the
-// forehand left it; now and then one straight down from overhead.
+// Cuts (a sword, a club: `cut` figures), as a swordsman makes them. Each
+// is posed by where the arm's parts point, in the plane the arm swings in
+// (cutArm): wound up with the elbow high and out, the hand by the head and
+// the blade hanging back behind the shoulders, the shoulders turned away;
+// struck with the arm straight out and the blade in line with it; carried
+// on through, down and across the body, before the guard is taken again.
+// A forehand comes down on a slant from high on its right to low on its
+// left; a backhand sweeps back across from its left; now and then one
+// comes straight down from overhead.
+// (The rig's cutting arm as made (people.ts HOLD): the upper arm and the
+// forearm, radians from straight down towards forward; it swings
+// CUT_REACH about the shoulder per unit of `arm`, bends `elbow` more,
+// and the weapon points `aim` from upright.)
+const UPPER0 = Math.atan2(HOLD.upper[2], -HOLD.upper[1]), FORE0 = Math.atan2(HOLD.fore[2], -HOLD.fore[1]);
+export const cutArm = (upper: number, fore: number, blade: number) =>
+  ({ arm: (upper - UPPER0) / CUT_REACH, elbow: fore - FORE0 - (upper - UPPER0), aim: Math.PI - blade });
+// (And back: where a pose's upper arm, forearm and blade point.)
+export const cutAngles = (p: Pose) =>
+  ({ upper: UPPER0 + CUT_REACH * p.arm, fore: FORE0 + CUT_REACH * p.arm + p.elbow, blade: Math.PI - p.aim });
+const cutPose = (c: { upper: number; fore: number; blade: number; out: number; bend: number; twist: number; crouch: number; guard: number; stride?: number; lunge?: number }): Pose => {
+  const a = cutArm(c.upper, c.fore, c.blade);
+  return out(guarded(P(c.lunge ?? 0, 0, 0, c.bend, c.twist, a.arm, 0, c.stride ?? STANCE, c.crouch, a.elbow, a.aim), c.guard), c.out);
+};
 const out = (p: Pose, o: number): Pose => ({ ...p, out: o });
-const CUT_GUARD = out(guarded(P(0, 0, 0, 0.22, -0.15, 0.35, 0, STANCE, 0.38, 1.1, 0.45), 0.35), 0.3);
-const FOREHAND = { wind: out(guarded(P(0, 0, 0, 0.05, -0.45, 1.25, 0, STANCE, 0.3, 1.5, -0.4), 0.3), 0.75), hit: out(guarded(P(0.04, 0, 0, 0.42, 0.55, 0.7, 0, STANCE + 0.1, 0.5, 0.15, 1.9), 0.1), -0.75) };
-const BACKHAND = { wind: out(guarded(P(0, 0, 0, 0.1, 0.5, 1.1, 0, STANCE, 0.32, 1.4, -0.2), 0.3), -0.7), hit: out(guarded(P(0.04, 0, 0, 0.35, -0.45, 0.75, 0, STANCE + 0.1, 0.48, 0.2, 1.8), 0.15), 0.8) };
-const OVERHAND = { wind: out(guarded(P(0, 0, 0, -0.15, -0.15, 1.85, 0, STANCE, 0.28, 1.3, -0.6), 0.35), 0.15), hit: out(guarded(P(0.05, 0, 0, 0.55, 0.1, 0.75, 0, STANCE + 0.1, 0.55, 0.25, 2.0), 0.1), -0.1) };
+// (The guard: the hand before the chest, the blade up and a little forward.)
+const CUT_GUARD = cutPose({ upper: 0.75, fore: 1.75, blade: 2.65, out: 0.3, bend: 0.22, twist: -0.15, crouch: 0.38, guard: 0.35 });
+// (Running in: the hand up by the shoulder, the blade back over it.)
+const CUT_RAISED = cutPose({ upper: 1.6, fore: 2.9, blade: 3.7, out: 0.45, bend: 0, twist: 0, crouch: 0, guard: 0 });
+const FOREHAND = {
+  wind: cutPose({ upper: 2.3, fore: 3.7, blade: 4.65, out: 0.45, bend: -0.05, twist: -0.6, crouch: 0.32, guard: 0.35 }),
+  hit: cutPose({ upper: 1.45, fore: 1.5, blade: 1.75, out: -0.2, bend: 0.38, twist: 0.4, crouch: 0.48, guard: 0.1, stride: STANCE + 0.12, lunge: 0.04 }),
+  through: cutPose({ upper: 0.8, fore: 0.85, blade: 0.95, out: -0.75, bend: 0.5, twist: 0.7, crouch: 0.52, guard: 0.15, stride: STANCE + 0.12, lunge: 0.04 }),
+};
+const BACKHAND = {
+  wind: cutPose({ upper: 1.85, fore: 3.0, blade: 4.3, out: -0.55, bend: 0.1, twist: 0.55, crouch: 0.32, guard: 0.3 }),
+  hit: cutPose({ upper: 1.5, fore: 1.55, blade: 1.8, out: 0.35, bend: 0.3, twist: -0.35, crouch: 0.46, guard: 0.15, stride: STANCE + 0.1, lunge: 0.04 }),
+  through: cutPose({ upper: 1.4, fore: 1.45, blade: 1.55, out: 0.95, bend: 0.32, twist: -0.6, crouch: 0.48, guard: 0.2, stride: STANCE + 0.1, lunge: 0.04 }),
+};
+const OVERHAND = {
+  wind: cutPose({ upper: 2.7, fore: 3.9, blade: 4.8, out: 0.15, bend: -0.2, twist: -0.2, crouch: 0.28, guard: 0.35 }),
+  hit: cutPose({ upper: 1.6, fore: 1.6, blade: 1.85, out: 0, bend: 0.55, twist: 0.1, crouch: 0.55, guard: 0.1, stride: STANCE + 0.1, lunge: 0.05 }),
+  through: cutPose({ upper: 0.85, fore: 0.9, blade: 1.0, out: -0.15, bend: 0.65, twist: 0.15, crouch: 0.58, guard: 0.1, stride: STANCE + 0.1, lunge: 0.05 }),
+};
+// A cut driven from the ground up (`s`: 0 wound up, 1 as it lands): the
+// body turns and bends first, the upper arm follows, the forearm unfolds
+// after it, and the blade, left behind, whips through last, fastest as it
+// lands (each part gathering speed after the one before).
+const chain = (a: Pose, b: Pose, s: number): Pose => {
+  const k = (delay: number, ease: number) => Math.max(0, Math.min(1, (s - delay) / (1 - delay))) ** ease, m = (x: number, y: number, t: number) => x + (y - x) * t;
+  const arm = k(0.08, 1.3), fore = k(0.18, 1.6), blade = k(0.26, 2);
+  return { ...mix(a, b, k(0, 1)), arm: m(a.arm, b.arm, arm), out: m(a.out, b.out, arm), elbow: m(a.elbow, b.elbow, fore), aim: m(a.aim, b.aim, blade) };
+};
 // When a figure's next blow lands at or after `t` (seconds), its exchange
 // begun at `from` (where it starts in its round: `beat`): each lands as
 // its round is 0.55 through (blows).
@@ -150,9 +191,19 @@ export const nextBlow = (t: number, from: number, beat: number): number => {
 // (`cut`: a sword or a club, it cuts; else it thrusts (a spear, a pike) or now and then strikes down.)
 function blows(sec: number, beat: number, now: number, phase: number, cut = false): Pose {
   const x = sec / BOUT + beat, n = Math.floor(x), u = frac(x), r = frac(Math.sin(n * 12.9898 + beat * 78.233) * 43758.5453);
-  const kind = cut ? (r < 0.25 ? OVERHAND : n % 2 ? BACKHAND : FOREHAND) : r < 0.75 ? THRUST : OVERHEAD, rest = ready(now, phase, cut);
-  // (Wound up, slowly; the blow, fast, the blade gathering speed; held a moment as it follows through; back to the guard.)
-  let pose = u < 0.38 ? mix(rest, kind.wind, smooth(u / 0.38)) : u < 0.55 ? mix(kind.wind, kind.hit, ((u - 0.38) / 0.17) ** 1.6) : u < 0.63 ? kind.hit : mix(kind.hit, rest, smooth((u - 0.63) / 0.37));
+  const rest = ready(now, phase, cut);
+  let pose: Pose;
+  if (cut) {
+    // (Wound up, slowly, and held a beat; the cut, fast (chain); carried on
+    // through, slowing; back to the guard.)
+    const kind = r < 0.25 ? OVERHAND : n % 2 ? BACKHAND : FOREHAND;
+    pose = u < 0.36 ? mix(rest, kind.wind, smooth(u / 0.36)) : u < 0.41 ? kind.wind : u < 0.55 ? chain(kind.wind, kind.hit, (u - 0.41) / 0.14)
+      : u < 0.68 ? mix(kind.hit, kind.through, 1 - (1 - (u - 0.55) / 0.13) ** 2) : mix(kind.through, rest, smooth((u - 0.68) / 0.32));
+  } else {
+    // (Wound up, slowly; the blow, fast, gathering speed; held a moment; back to the stance.)
+    const kind = r < 0.75 ? THRUST : OVERHEAD;
+    pose = u < 0.38 ? mix(rest, kind.wind, smooth(u / 0.38)) : u < 0.55 ? mix(kind.wind, kind.hit, ((u - 0.38) / 0.17) ** 1.6) : u < 0.63 ? kind.hit : mix(kind.hit, rest, smooth((u - 0.63) / 0.37));
+  }
   const f = u < 0.16 ? Math.sin((u / 0.16) * Math.PI) : 0;
   // (The foe's blow landing: the body knocked back and turned at the hips, the knees sagging.)
   // (Shield raised against it, if it has one: the knock taken on the shield.)

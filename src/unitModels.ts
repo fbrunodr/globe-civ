@@ -145,6 +145,8 @@ const LEG = (side: number) => [side, HIP, LEG_AMP] as const;
 const ARM = (side: number) => [-side, SHOULDER, 0.35] as const;
 // In a fight: the weapon arm thrusts (and its weapon with it) about the shoulder.
 export const STRIKE = 2;
+// How far a cutting arm (a sword's, a club's) swings from the shoulder, per unit of its pose's arm (unitAnim.ts cuts).
+export const CUT_REACH = 1.5;
 const HIT = (pivot: number, amp: number) => [STRIKE, pivot, amp] as const;
 // In a fight: the shield arm raises its shield to ward off a blow (or arrows) about the shoulder.
 export const GUARD = 3;
@@ -220,7 +222,7 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
   const longGun = hold === 'musket' || hold === 'rifle';
   const armR: ArmPose = hold === 'none' || bow || hold === 'sling' ? HANG : hold === 'longsword' ? GRIP2 : longGun ? GUN_R : HOLD;
   const armL: ArmPose = shield ? SHIELD : bow ? RAISE : hold === 'longsword' ? GRIP2 : longGun ? GUN_L : twoHands ? HOLD : HANG;
-  const strike = hold === 'sling' ? HIT(SHOULDER, 1.4) : hold === 'spear' || hold === 'pike' ? HIT(SHOULDER, 1.5) : hold === 'club' || hold === 'sword' || hold === 'longsword' ? HIT(SHOULDER, 1.5)
+  const strike = hold === 'sling' ? HIT(SHOULDER, 1.4) : hold === 'spear' || hold === 'pike' ? HIT(SHOULDER, 1.5) : hold === 'club' || hold === 'sword' || hold === 'longsword' ? HIT(SHOULDER, CUT_REACH)
     : hold === 'mg' ? HIT(SHOULDER, 0.4) : twoHands ? HIT(SHOULDER, 0.9) : null;
   const bowUp = HIT(SHOULDER, 0.4); // (an archer raises his bow to loose: from where he holds it forward)
   const freeL = !shield && !bow && !twoHands;
@@ -374,7 +376,7 @@ function rider(gear: Gear, coat: number, female: boolean, style: RiderStyle): TH
   const dress: Dress = { fine: FINE, female, legs: gear.legs, sleeves: 'long' };
   const armR: ArmPose = HOLD, armL: ArmPose = HOLD;
   // (The weapon arm strikes with its weapon: the same swing, bent at the same elbow.)
-  const amp = style === 'cavalry' ? 0.9 : style === 'horseman' ? 0.8 : 0.6, strike = HIT(SEAT + 0.3, amp);
+  const amp = style === 'cavalry' ? CUT_REACH : style === 'horseman' ? 0.8 : 0.6, strike = HIT(SEAT + 0.3, amp);
   out.push(...tagged(riderBody(dress, SEAT, armL, armR, style === 'officer' ? undefined : strike)));
   const hR = handAt(-1, armR, female).add(V(0, SEAT - HIP, 0)), hL = handAt(1, armL, female).add(V(0, SEAT - HIP, 0)), eR = elbowAt(-1, armR, female).add(V(0, SEAT - HIP, 0));
   // (Turned in the hand to point as aimed (a lance couched as it charges), from how it is carried.)

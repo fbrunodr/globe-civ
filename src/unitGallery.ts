@@ -7,6 +7,7 @@
 //              March sets them marching on the spot; Attack has
 //              them fight, over and over (melee units charge forward and
 //              strike, archers loose volleys forward).
+//   Slow       everything at a quarter of its speed (to watch a blow).
 //   Battle     an attacker and a defender of your choosing, facing each
 //              other: Fight resolves an attack by the game's own rules
 //              (game.ts combatStrength, fightRounds), and the game's own
@@ -86,6 +87,14 @@ const GROUNDS = [
 ] as const;
 
 const time = { value: 0 };
+// The page's clock (seconds): real time, or slowed (Slow: `rate`).
+let rate = 1, clockAt = performance.now() / 1000, clockReal = clockAt;
+const pageNow = (): number => {
+  const real = performance.now() / 1000;
+  clockAt += (real - clockReal) * rate;
+  clockReal = real;
+  return clockAt;
+};
 const material = makeUnitMaterial(time);
 // (A textured model's own material: its texture, unitView.ts makeUnitMaterial.)
 const texturedMats = new Map<string, THREE.MeshStandardMaterial>();
@@ -246,7 +255,7 @@ function build(): { w: number; d: number } {
   sun.target.position.set(w / 2, 0, d / 2);
   Object.assign(sun.shadow.camera, { left: -half, right: half, top: half, bottom: -half, near: 1, far: 120 });
   sun.shadow.camera.updateProjectionMatrix();
-  pose(performance.now() / 1000);
+  pose(pageNow());
   return { w, d };
 }
 
@@ -269,7 +278,7 @@ function makeBattleView(): UnitView {
   const view = new UnitView({ center: battleCentre, ground: () => ({ ground: 0, water: -1 }), step: BATTLE_STEP }, () => new THREE.Sprite(new THREE.SpriteMaterial({ visible: false })));
   view.group.scale.setScalar(1 / view.size);
   view.group.position.set(0, -1 / view.size, 0);
-  const now = performance.now() / 1000;
+  const now = pageNow();
   view.sync(battleUnits(), now);
   view.turnTo(1, 0);
   view.turnTo(2, 1);
@@ -373,7 +382,7 @@ function startFight(): void {
   const how = howOf();
   if (mode !== 'battle' || fight || !battleView || battle.aHp <= 0 || battle.dHp <= 0 || attackBlock(battle.aType, battle.dType, undefined, how)) return;
   const { A, D } = strengths();
-  const outcome = fightRounds(battle.aHp, battle.dHp, A, D, how, Math.random), style = attackStyle(battle.aType, battle.dType, how)!, now = performance.now() / 1000;
+  const outcome = fightRounds(battle.aHp, battle.dHp, A, D, how, Math.random), style = attackStyle(battle.aType, battle.dType, how)!, now = pageNow();
   fight = { t0: now, loop: false, outcome, dur: durOf(PLAYS[style]) };
   // (As the game: the fight first, then the units as they come out of it.)
   battleView.fight(1, 0, style, now, { defender: 2, attackerHp: outcome.attacker, defenderHp: outcome.defender });
@@ -421,8 +430,10 @@ function options<T extends string>(id: string, values: readonly T[], name: (v: T
 options<ArchCiv | 'all'>('civSel', ['all', ...ARCH_CIVS], (v) => (v === 'all' ? 'All' : v), 'all', (v) => { civFilter = v; frame(build()); });
 $<HTMLInputElement>('suffrage').addEventListener('change', (e) => { suffrage = (e.target as HTMLInputElement).checked; build(); (e.target as HTMLElement).blur(); });
 $('hp').addEventListener('input', (e) => { sheetHp = Number((e.target as HTMLInputElement).value); $('hpV').textContent = String(sheetHp); build(); });
+const setSlow = (on: boolean) => { pageNow(); rate = on ? 0.25 : 1; $('slow').classList.toggle('active', on); };
+$('slow').addEventListener('click', (e) => { setSlow(rate === 1); (e.currentTarget as HTMLElement).blur(); });
 const setMarching = (on: boolean) => { marching = on; $('march').classList.toggle('active', on); };
-const setAttacking = (on: boolean) => { fight = on ? { t0: performance.now() / 1000, loop: true, outcome: null, dur: FIGHT } : null; $('attack').classList.toggle('active', on); };
+const setAttacking = (on: boolean) => { fight = on ? { t0: pageNow(), loop: true, outcome: null, dur: FIGHT } : null; $('attack').classList.toggle('active', on); };
 $('march').addEventListener('click', (e) => { setMarching(!marching); (e.currentTarget as HTMLElement).blur(); });
 $('attack').addEventListener('click', (e) => { setAttacking(!fight); (e.currentTarget as HTMLElement).blur(); });
 
@@ -454,7 +465,7 @@ function stopMovie(): void {
 function nextTake(): void {
   if (!movie) return;
   if (++movie.i >= movie.takes.length) { stopMovie(); return; }
-  const { a, d, how } = movie.takes[movie.i]!, now = performance.now() / 1000;
+  const { a, d, how } = movie.takes[movie.i]!, now = pageNow();
   Object.assign(battle, { aType: a, dType: d, how });
   $<HTMLSelectElement>('aType').value = a;
   $<HTMLSelectElement>('dType').value = d;
@@ -486,11 +497,12 @@ $('fight').addEventListener('click', (e) => { startFight(); (e.currentTarget as 
 $('heal').addEventListener('click', (e) => { reset(); (e.currentTarget as HTMLElement).blur(); });
 
 // Keyboard: W A S D move, Q E rotate, T G tilt, Z X zoom (as the other
-// sheets); M march, B attack (all units); Space fight (a battle).
+// sheets); M march, B attack (all units); L slow; Space fight (a battle).
 const keys = new Set<string>();
 addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLSelectElement || e.target instanceof HTMLInputElement) return;
-  if (mode === 'sheet' && (e.key === 'm' || e.key === 'M')) setMarching(!marching);
+  if (e.key === 'l' || e.key === 'L') setSlow(rate === 1);
+  else if (mode === 'sheet' && (e.key === 'm' || e.key === 'M')) setMarching(!marching);
   else if (mode === 'sheet' && (e.key === 'b' || e.key === 'B')) setAttacking(!fight);
   else if (mode === 'battle' && e.key === ' ') { e.preventDefault(); startFight(); }
   else keys.add(e.key.toLowerCase());
@@ -526,9 +538,9 @@ addEventListener('resize', resize);
 resize();
 frame(build());
 showBattle();
-if (import.meta.env.DEV) Object.assign(window, { __units: { volleys, battle, setMode, startFight, camera, controls, view: () => battleView } });
+if (import.meta.env.DEV) Object.assign(window, { __units: { setRate: (r: number) => { pageNow(); rate = r; }, volleys, battle, setMode, startFight, camera, controls, view: () => battleView } });
 renderer.setAnimationLoop(() => {
-  const now = performance.now() / 1000;
+  const now = pageNow();
   time.value = now;
   if (fight && !fight.loop && now - fight.t0 >= fight.dur + AFTER) endFight();
   movieTick(now);
