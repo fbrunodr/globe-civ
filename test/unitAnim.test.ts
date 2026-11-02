@@ -2,11 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { cutAngles, nextBlow, poseOf, type Cue } from '../src/unitAnim.ts';
 import type { Play } from '../src/unitView.ts';
 
-// How a figure moves (unitAnim.ts): its cuts with a sword or a club.
+// How a figure moves (unitAnim.ts): its cuts with a sword or a club, its thrusts with a spear.
 
 // A melee (unitView.ts PLAYS.melee), and a figure cutting in it, engaged with its foe.
 const MELEE: Play = { dur: 7, close: true, charge: 1, go: [0.04, 0.26], back: 0.8, strike: [0.18, 0.8], aim: false, shots: [] };
-const cue = (sec: number, side: 'attacker' | 'defender'): Cue => ({ sec, dur: 7, play: MELEE, attack: MELEE, side, engaged: true, delay: 0, fall: Infinity, won: false, cut: true });
+const cue = (sec: number, side: 'attacker' | 'defender', thrust = false): Cue => ({ sec, dur: 7, play: MELEE, attack: MELEE, side, engaged: true, delay: 0, fall: Infinity, won: false, cut: !thrust, thrust });
 
 describe('A1: a cut with a sword or a club', () => {
   for (const side of ['attacker', 'defender'] as const) {
@@ -41,6 +41,32 @@ describe('A1: a cut with a sword or a club', () => {
       const t = nextBlow(met + 1.5, met, beat) - 0.16, a = cutAngles(poseOf(cue(t, 'attacker'), 100 + t, 1.3, beat, 0, false));
       expect(a.blade).toBeGreaterThan(Math.PI * 1.15); // (past upright, back)
       expect(a.upper).toBeGreaterThan(1.7);           // (the elbow up)
+    }
+  });
+});
+
+describe('A2: a thrust with a spear', () => {
+  for (const side of ['attacker', 'defender'] as const) {
+    it(`${side}: the elbow bends only one way, the spear held at the hip or overhand, never flailing`, () => {
+      for (let sec = 0; sec < 7; sec += 0.01) for (const beat of [0, 0.3, 0.71, 0.9]) {
+        const p = poseOf(cue(sec, side, true), 100 + sec, 1.3, beat, 0, false);
+        if (p.aimed < 0.999) continue;
+        const a = cutAngles(p);
+        expect(a.fore - a.upper).toBeGreaterThan(-0.08);
+        expect(a.fore - a.upper).toBeLessThan(2.5);
+        // (Levelled at the foe, or a little up or down, as it points in the
+        // world (the body's bend tips it forward): never upright or trailing.)
+        expect(a.blade - p.bend).toBeGreaterThan(1.0);
+        expect(a.blade - p.bend).toBeLessThan(2.2); // (tipped up a little as a blow knocks it back)
+      }
+    });
+  }
+  it('lands with the arm straight out', () => {
+    const met = MELEE.go[1] * 7;
+    for (const beat of [0, 0.3, 0.71, 0.9]) {
+      const t = nextBlow(met + 1.5, met, beat), a = cutAngles(poseOf(cue(t, 'attacker', true), 100 + t, 1.3, beat, 0, false));
+      expect(Math.abs(a.fore - a.upper)).toBeLessThan(0.15);
+      expect(a.upper).toBeGreaterThan(1.1);
     }
   });
 });

@@ -145,8 +145,8 @@ const LEG = (side: number) => [side, HIP, LEG_AMP] as const;
 const ARM = (side: number) => [-side, SHOULDER, 0.35] as const;
 // In a fight: the weapon arm thrusts (and its weapon with it) about the shoulder.
 export const STRIKE = 2;
-// How far a cutting arm (a sword's, a club's) swings from the shoulder, per unit of its pose's arm (unitAnim.ts cuts).
-export const CUT_REACH = 1.5;
+// How far a fighting arm (cutting: a sword's, a club's; thrusting: a spear's, a lance's) swings from the shoulder, per unit of its pose's arm (unitAnim.ts cutArm).
+export const REACH = 1.5;
 const HIT = (pivot: number, amp: number) => [STRIKE, pivot, amp] as const;
 // In a fight: the shield arm raises its shield to ward off a blow (or arrows) about the shoulder.
 export const GUARD = 3;
@@ -160,6 +160,9 @@ export const whirls = (type: UnitKey): boolean => type === 'slinger';
 // Whether a type's figures fight with a blade or a club, cutting (the rest thrust: spears, pikes, lances).
 const CUTTERS: ReadonlySet<UnitKey> = new Set<UnitKey>(['warrior', 'swordsman', 'longswordsman', 'manAtArms', 'cavalry']);
 export const cuts = (type: UnitKey): boolean => CUTTERS.has(type);
+// Whether a type's figures fight with a spear, a pike or a lance, thrusting.
+const THRUSTERS: ReadonlySet<UnitKey> = new Set<UnitKey>(['spearman', 'pikeman', 'horseman', 'knight', 'lancer']);
+export const thrusts = (type: UnitKey): boolean => THRUSTERS.has(type);
 export const bowman = (type: UnitKey): boolean => type === 'archer' || type === 'compositeBowman' || type === 'horseArcher';
 
 type Hold = 'spear' | 'pike' | 'club' | 'sword' | 'longsword' | 'bow' | 'recurve' | 'sling' | 'crossbow' | 'musket' | 'rifle' | 'mg' | 'staff' | 'banner' | 'none';
@@ -222,7 +225,7 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
   const longGun = hold === 'musket' || hold === 'rifle';
   const armR: ArmPose = hold === 'none' || bow || hold === 'sling' ? HANG : hold === 'longsword' ? GRIP2 : longGun ? GUN_R : HOLD;
   const armL: ArmPose = shield ? SHIELD : bow ? RAISE : hold === 'longsword' ? GRIP2 : longGun ? GUN_L : twoHands ? HOLD : HANG;
-  const strike = hold === 'sling' ? HIT(SHOULDER, 1.4) : hold === 'spear' || hold === 'pike' ? HIT(SHOULDER, 1.5) : hold === 'club' || hold === 'sword' || hold === 'longsword' ? HIT(SHOULDER, CUT_REACH)
+  const strike = hold === 'sling' ? HIT(SHOULDER, 1.4) : hold === 'spear' || hold === 'pike' || hold === 'club' || hold === 'sword' || hold === 'longsword' ? HIT(SHOULDER, REACH)
     : hold === 'mg' ? HIT(SHOULDER, 0.4) : twoHands ? HIT(SHOULDER, 0.9) : null;
   const bowUp = HIT(SHOULDER, 0.4); // (an archer raises his bow to loose: from where he holds it forward)
   const freeL = !shield && !bow && !twoHands;
@@ -376,7 +379,7 @@ function rider(gear: Gear, coat: number, female: boolean, style: RiderStyle): TH
   const dress: Dress = { fine: FINE, female, legs: gear.legs, sleeves: 'long' };
   const armR: ArmPose = HOLD, armL: ArmPose = HOLD;
   // (The weapon arm strikes with its weapon: the same swing, bent at the same elbow.)
-  const amp = style === 'cavalry' ? CUT_REACH : style === 'horseman' ? 0.8 : 0.6, strike = HIT(SEAT + 0.3, amp);
+  const amp = style === 'officer' ? 0.6 : REACH, strike = HIT(SEAT + 0.3, amp);
   out.push(...tagged(riderBody(dress, SEAT, armL, armR, style === 'officer' ? undefined : strike)));
   const hR = handAt(-1, armR, female).add(V(0, SEAT - HIP, 0)), hL = handAt(1, armL, female).add(V(0, SEAT - HIP, 0)), eR = elbowAt(-1, armR, female).add(V(0, SEAT - HIP, 0));
   // (Turned in the hand to point as aimed (a lance couched as it charges), from how it is carried.)

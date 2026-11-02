@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { Play } from './unitView.ts';
 import { HOLD } from './people.ts';
-import { CUT_REACH } from './unitModels.ts';
+import { REACH } from './unitModels.ts';
 
 // How a figure moves, as a small machine of acts, blended one into the
 // next (unitView.ts and the Units page draw it). Out of a fight a figure
@@ -93,18 +93,22 @@ const march = (now: number, phase: number, walk: number): Pose =>
   P(0, 0, 0, 0.1 * walk + 0.03 * Math.sin(now * 18 + phase * 2), 0.06 * Math.sin(now * 9 + phase), 0.1 * walk, walk, 0, 0.1 * walk, 0.35 * walk, walk > 1.2 ? 1.2 : undefined);
 // Charging home: at a run, the weapon brought down level at the enemy as
 // it closes (`k`: 0 setting out, 1 upon it), the body leaning into it.
-// (A swordsman runs in with his blade raised over his shoulder, to cut.)
-const charging = (now: number, phase: number, walk: number, cut: boolean, k: number): Pose => {
+// (A swordsman runs in with his blade raised over his shoulder, to cut; a
+// spearman with his spear levelled from the hip.)
+const charging = (now: number, phase: number, walk: number, arms: Arms, k: number): Pose => {
   const run = march(now, phase, walk), t = smooth(k);
-  if (cut) return { ...run, bend: run.bend + 0.08 * t, arm: run.arm + (CUT_RAISED.arm - run.arm) * t, elbow: run.elbow + (CUT_RAISED.elbow - run.elbow) * t, aim: (run.aimed ? run.aim : 0) * (1 - t) + CUT_RAISED.aim * t, aimed: Math.max(run.aimed, t), out: 0.45 * t };
+  if (arms === 'thrust') return { ...run, bend: run.bend + 0.12 * t, arm: run.arm + (SPEAR_LEVEL.arm - run.arm) * t, elbow: run.elbow + (SPEAR_LEVEL.elbow - run.elbow) * t, aim: (run.aimed ? run.aim : 0) * (1 - t) + SPEAR_LEVEL.aim * t, aimed: Math.max(run.aimed, t), out: SPEAR_LEVEL.out * t };
+  if (arms === 'cut') return { ...run, bend: run.bend + 0.08 * t, arm: run.arm + (CUT_RAISED.arm - run.arm) * t, elbow: run.elbow + (CUT_RAISED.elbow - run.elbow) * t, aim: (run.aimed ? run.aim : 0) * (1 - t) + CUT_RAISED.aim * t, aimed: Math.max(run.aimed, t), out: 0.45 * t };
   return { ...run, bend: run.bend + 0.12 * t, arm: run.arm + (0.35 - run.arm) * t, elbow: run.elbow + (0.7 - run.elbow) * t, aim: run.aimed ? run.aim + (1.4 - run.aim) * t : 1.4 * t, aimed: Math.max(run.aimed, t) };
 };
+// How a figure fights at close quarters (Cue): cutting, thrusting, or as of old.
+type Arms = 'cut' | 'thrust' | 'other';
 // Ready to fight: knees bent, a foot forward and planted, weapon up and
 // aimed, the shoulders turned a little, weaving slowly.
 const STANCE = 0.45;
-// (`cut`: a swordsman's guard, the blade up, not levelled at the foe.)
-const ready = (now: number, phase: number, cut = false): Pose => cut
-  ? add(CUT_GUARD, { bend: 0.02 * Math.sin(now * 2.3 + phase), twist: 0.07 * Math.sin(now * 1.7 + phase), arm: 0.04 * Math.sin(now * 2.9 + phase + 1), aim: 0.08 * Math.sin(now * 2.3 + phase + 1) })
+// (A swordsman's guard, the blade up, not levelled at the foe; a spearman's, levelled.)
+const ready = (now: number, phase: number, arms: Arms = 'other'): Pose => arms !== 'other'
+  ? add(arms === 'cut' ? CUT_GUARD : SPEAR_GUARD, { bend: 0.02 * Math.sin(now * 2.3 + phase), twist: 0.07 * Math.sin(now * 1.7 + phase), arm: 0.04 * Math.sin(now * 2.9 + phase + 1), aim: 0.08 * Math.sin(now * 2.3 + phase + 1) })
   : guarded(P(0, 0, 0, 0.18 + 0.02 * Math.sin(now * 2.3 + phase), -0.12 + 0.07 * Math.sin(now * 1.7 + phase), 0.32 + 0.04 * Math.sin(now * 2.9 + phase + 1), 0, STANCE, 0.34, 0.7, 0.75 + 0.06 * Math.sin(now * 2.3 + phase + 1)), 0.3 + 0.05 * Math.sin(now * 1.9 + phase));
 // Fortified: down on bent knees behind its shield, the weapon levelled
 // over it, watchful (a slow look about, a breath).
@@ -137,16 +141,18 @@ const OVERHEAD = { wind: guarded(P(0, 0, 0, -0.3, -0.28, 1.8, 0, STANCE, 0.3, 1.
 // comes straight down from overhead.
 // (The rig's cutting arm as made (people.ts HOLD): the upper arm and the
 // forearm, radians from straight down towards forward; it swings
-// CUT_REACH about the shoulder per unit of `arm`, bends `elbow` more,
+// REACH about the shoulder per unit of `arm`, bends `elbow` more,
 // and the weapon points `aim` from upright.)
 const UPPER0 = Math.atan2(HOLD.upper[2], -HOLD.upper[1]), FORE0 = Math.atan2(HOLD.fore[2], -HOLD.fore[1]);
 export const cutArm = (upper: number, fore: number, blade: number) =>
-  ({ arm: (upper - UPPER0) / CUT_REACH, elbow: fore - FORE0 - (upper - UPPER0), aim: Math.PI - blade });
+  ({ arm: (upper - UPPER0) / REACH, elbow: fore - FORE0 - (upper - UPPER0), aim: Math.PI - blade });
 // (And back: where a pose's upper arm, forearm and blade point.)
 export const cutAngles = (p: Pose) =>
-  ({ upper: UPPER0 + CUT_REACH * p.arm, fore: FORE0 + CUT_REACH * p.arm + p.elbow, blade: Math.PI - p.aim });
-const cutPose = (c: { upper: number; fore: number; blade: number; out: number; bend: number; twist: number; crouch: number; guard: number; stride?: number; lunge?: number }): Pose => {
-  const a = cutArm(c.upper, c.fore, c.blade);
+  ({ upper: UPPER0 + REACH * p.arm, fore: FORE0 + REACH * p.arm + p.elbow, blade: Math.PI - p.aim });
+// (`level`: the blade as it points in the world, not from the body: the
+// body's bend, which tips the arm and all it holds forward, taken back out.)
+const cutPose = (c: { upper: number; fore: number; blade: number; out: number; bend: number; twist: number; crouch: number; guard: number; stride?: number; lunge?: number; level?: boolean }): Pose => {
+  const a = cutArm(c.upper, c.fore, c.blade + (c.level ? c.bend : 0));
   return out(guarded(P(c.lunge ?? 0, 0, 0, c.bend, c.twist, a.arm, 0, c.stride ?? STANCE, c.crouch, a.elbow, a.aim), c.guard), c.out);
 };
 const out = (p: Pose, o: number): Pose => ({ ...p, out: o });
@@ -178,6 +184,25 @@ const chain = (a: Pose, b: Pose, s: number): Pose => {
   const arm = k(0.08, 1.3), fore = k(0.18, 1.6), blade = k(0.26, 2);
   return { ...mix(a, b, k(0, 1)), arm: m(a.arm, b.arm, arm), out: m(a.out, b.out, arm), elbow: m(a.elbow, b.elbow, fore), aim: m(a.aim, b.aim, blade) };
 };
+// Thrusts (a spear, a pike, a lance: `thrust` figures), likewise posed: a
+// spear levelled from the hip, its butt under the forearm; drawn back with
+// the elbow and the shoulders turned away, then driven straight out at the
+// foe, the arm straightening behind it and the body turning into it; now
+// and then a stab from above the shoulder (the spear gripped overhand,
+// its point down at the foe's face).
+const SPEAR_GUARD = cutPose({ upper: 0.45, fore: 1.5, blade: 1.72, out: 0.12, bend: 0.18, twist: -0.12, crouch: 0.34, guard: 0.3, level: true });
+const SPEAR_LEVEL = cutPose({ upper: 0.55, fore: 1.5, blade: 1.62, out: 0.1, bend: 0, twist: 0, crouch: 0, guard: 0, level: true });
+const SPEAR_PULL_UP = { ...SPEAR_GUARD, bend: -0.12, crouch: 0.42, stride: STANCE + 0.05, guard: 0.45 };
+const JAB = {
+  wind: cutPose({ upper: -0.3, fore: 1.45, blade: 1.75, out: 0.15, bend: -0.08, twist: -0.55, crouch: 0.38, guard: 0.55, level: true }),
+  hit: cutPose({ upper: 1.5, fore: 1.6, blade: 1.62, out: 0, bend: 0.42, twist: 0.4, crouch: 0.46, guard: 0.1, stride: STANCE + 0.12, lunge: 0.06, level: true }),
+  through: cutPose({ upper: 1.58, fore: 1.65, blade: 1.6, out: 0, bend: 0.45, twist: 0.45, crouch: 0.48, guard: 0.1, stride: STANCE + 0.12, lunge: 0.06, level: true }),
+};
+const STAB = {
+  wind: cutPose({ upper: 2.0, fore: 3.25, blade: 1.85, out: 0.55, bend: -0.15, twist: -0.35, crouch: 0.3, guard: 0.4, level: true }),
+  hit: cutPose({ upper: 1.85, fore: 1.95, blade: 1.25, out: 0.05, bend: 0.55, twist: 0.3, crouch: 0.5, guard: 0.05, stride: STANCE + 0.1, lunge: 0.05, level: true }),
+  through: cutPose({ upper: 1.8, fore: 1.85, blade: 1.15, out: 0.05, bend: 0.58, twist: 0.32, crouch: 0.52, guard: 0.05, stride: STANCE + 0.1, lunge: 0.05, level: true }),
+};
 // When a figure's next blow lands at or after `t` (seconds), its exchange
 // begun at `from` (where it starts in its round: `beat`): each lands as
 // its round is 0.55 through (blows).
@@ -188,15 +213,17 @@ export const nextBlow = (t: number, from: number, beat: number): number => {
 // The blows of a figure `sec` seconds into its exchange (a round of BOUT
 // seconds; `beat` where it starts in it). Its foe is half a round apart:
 // each of its blows lands as this one is winding up, and it flinches.
-// (`cut`: a sword or a club, it cuts; else it thrusts (a spear, a pike) or now and then strikes down.)
-function blows(sec: number, beat: number, now: number, phase: number, cut = false): Pose {
+// (`arms`: a sword or a club, it cuts; a spear, a pike or a lance, it
+// thrusts (or now and then stabs from above); anything else (a bayonet, a
+// bow laid about it) it thrusts or strikes down as of old.)
+function blows(sec: number, beat: number, now: number, phase: number, arms: Arms = 'other'): Pose {
   const x = sec / BOUT + beat, n = Math.floor(x), u = frac(x), r = frac(Math.sin(n * 12.9898 + beat * 78.233) * 43758.5453);
-  const rest = ready(now, phase, cut);
+  const rest = ready(now, phase, arms);
   let pose: Pose;
-  if (cut) {
-    // (Wound up, slowly, and held a beat; the cut, fast (chain); carried on
+  if (arms !== 'other') {
+    // (Wound up, slowly, and held a beat; the blow, fast (chain); carried on
     // through, slowing; back to the guard.)
-    const kind = r < 0.25 ? OVERHAND : n % 2 ? BACKHAND : FOREHAND;
+    const kind = arms === 'thrust' ? (r < 0.75 ? JAB : STAB) : r < 0.25 ? OVERHAND : n % 2 ? BACKHAND : FOREHAND;
     pose = u < 0.36 ? mix(rest, kind.wind, smooth(u / 0.36)) : u < 0.41 ? kind.wind : u < 0.55 ? chain(kind.wind, kind.hit, (u - 0.41) / 0.14)
       : u < 0.68 ? mix(kind.hit, kind.through, 1 - (1 - (u - 0.55) / 0.13) ** 2) : mix(kind.through, rest, smooth((u - 0.68) / 0.32));
   } else {
@@ -207,7 +234,8 @@ function blows(sec: number, beat: number, now: number, phase: number, cut = fals
   const f = u < 0.16 ? Math.sin((u / 0.16) * Math.PI) : 0;
   // (The foe's blow landing: the body knocked back and turned at the hips, the knees sagging.)
   // (Shield raised against it, if it has one: the knock taken on the shield.)
-  if (f > 0) pose = add(pose, { bend: -0.38 * f, twist: (n % 2 ? 0.32 : -0.32) * f, crouch: 0.07 * f, elbow: 0.4 * f, aim: -0.35 * f, guard: 0.6 * f });
+  // (A spear's point kept on the foe, the body knocked back about it.)
+  if (f > 0) pose = add(pose, { bend: -0.38 * f, twist: (n % 2 ? 0.32 : -0.32) * f, crouch: 0.07 * f, elbow: 0.4 * f, aim: (arms === 'thrust' ? 0.3 : -0.35) * f, guard: 0.6 * f });
   return pose;
 }
 // Shooting: drawing (or shouldering) before each shot, loosed (a recoil),
@@ -247,7 +275,8 @@ export interface Cue {
   readonly play: Play; readonly attack: Play; readonly side: 'attacker' | 'defender';
   readonly engaged: boolean; readonly delay: number; readonly fall: number; readonly won: boolean;
   readonly rear?: boolean; // in the rear rank of a firing line: it fires standing, over the kneeling front rank
-  readonly cut?: boolean;  // it fights with a blade or a club: it cuts (else it thrusts)
+  readonly cut?: boolean;  // it fights with a blade or a club: it cuts
+  readonly thrust?: boolean; // it fights with a spear, a pike or a lance: it thrusts
 }
 
 // A figure's pose now: in a fight (its cue), on the march (`walk`), or at
@@ -263,7 +292,8 @@ export function poseOf(c: Cue | null, now: number, phase: number, beat: number, 
   const pose = { ...acted, lean: 0, yaw: 0, bend: acted.bend + acted.lean * 1.5, twist: acted.twist + acted.yaw };
   // (A rider strikes from the saddle: the horse hardly moves.)
   if (!rides) return pose;
-  const rider = { ...P(pose.lunge * 0.4, 0, pose.yaw * 0.5, 0, pose.twist * 0.5, pose.arm, pose.walk, 0, 0, pose.elbow, pose.aim), aimed: pose.aimed, draw: pose.draw, out: pose.out };
+  // (Its body not bent: a spear levelled as it would point from a bent body (cutPose `level`) is levelled from an upright one.)
+  const rider = { ...P(pose.lunge * 0.4, 0, pose.yaw * 0.5, 0, pose.twist * 0.5, pose.arm, pose.walk, 0, 0, pose.elbow, pose.aim + (c?.thrust ? pose.bend : 0)), aimed: pose.aimed, draw: pose.draw, out: pose.out };
   const [ex, left] = c ? exchange(c) : [-1, 0];
   return ex >= 0 ? mix(rider, prance(rider, ex, beat), Math.min(ex, left) / BLEND) : rider;
 }
@@ -277,24 +307,24 @@ function exchange(c: Cue): readonly [number, number] {
   return c.sec >= from && c.sec < to ? [c.sec - from, to - c.sec] : [-1, 0];
 }
 function inFight(c: Cue, now: number, phase: number, beat: number, whirl: boolean): Pose {
-  const { sec, dur, play, attack } = c, s = (share: number) => share * dur, cut = c.cut === true;
+  const { sec, dur, play, attack } = c, s = (share: number) => share * dur, arms: Arms = c.cut ? 'cut' : c.thrust ? 'thrust' : 'other';
   // Over: the winners cheer, the rest stand easy again.
   if (sec >= dur) {
-    const after = sec - dur, done = mix(ready(now, phase, cut), idle(now, phase), after / 0.6);
+    const after = sec - dur, done = mix(ready(now, phase, arms), idle(now, phase), after / 0.6);
     return c.won ? mix(done, cheer(now, phase), smooth(after / BLEND) * (after < CHEER ? 1 : 1 - smooth((after - CHEER) / 0.4))) : done;
   }
-  const into = mix(idle(now, phase), ready(now, phase, cut), sec / BLEND); // (taking its stance as the fight begins)
+  const into = mix(idle(now, phase), ready(now, phase, arms), sec / BLEND); // (taking its stance as the fight begins)
   if (c.side === 'attacker' && attack.close) {
     const go0 = s(play.go[0] + c.delay), met = s(play.go[1] + c.delay), back = s(play.back + c.delay * 0.4), run = play.charge > 1 ? 1.4 : 1;
     // (A volley first, if it fires before it goes in: guns levelled.)
     const opening = play.shots.length ? mix(into, shooting(sec, play.shots.map((x) => s(x.t)), whirl, false, play.shots[0]?.kind === 'bullet'), smooth(sec / 0.12)) : into;
     if (sec < go0) return opening;
-    if (sec < met) return mix(opening, charging(now, phase, run, cut, ((sec - go0) / (met - go0)) * 1.8 - 0.6), (sec - go0) / BLEND);
+    if (sec < met) return mix(opening, charging(now, phase, run, arms, ((sec - go0) / (met - go0)) * 1.8 - 0.6), (sec - go0) / BLEND);
     if (sec < back) {
-      const fight = c.engaged ? blows(sec - met, beat, now, phase, cut) : ready(now, phase, cut);
-      return mix(mix(cut ? CUT_GUARD : pullUp, charging(now, phase, run, cut, 1), 1 - (sec - met) / 0.12), fight, (sec - met) / 0.3);
+      const fight = c.engaged ? blows(sec - met, beat, now, phase, arms) : ready(now, phase, arms);
+      return mix(mix(arms === 'cut' ? CUT_GUARD : arms === 'thrust' ? SPEAR_PULL_UP : pullUp, charging(now, phase, run, arms, 1), 1 - (sec - met) / 0.12), fight, (sec - met) / 0.3);
     }
-    return mix(blows(back - met, beat, now, phase, cut), march(now, phase, 1), (sec - back) / BLEND);
+    return mix(blows(back - met, beat, now, phase, arms), march(now, phase, 1), (sec - back) / BLEND);
   }
   if (c.side === 'defender' && attack.close) {
     const met = s(play.strike[0]), part = s(play.strike[1]);
@@ -302,8 +332,8 @@ function inFight(c: Cue, now: number, phase: number, beat: number, whirl: boolea
     if (play.strike[1] === 0) return mix(into, shooting(sec, play.shots.map((x) => s(x.t)), whirl, false, true), smooth(sec / BLEND));
     const shot = play.shots[0];
     let pose = shot ? mix(into, shooting(sec, [s(shot.t)], whirl, shot.kind === 'bullet'), smooth(sec / BLEND)) : into;
-    if (c.engaged && sec >= met && sec < part) pose = mix(pose, blows(sec - met, beat, now, phase, cut), (sec - met) / BLEND);
-    else if (c.engaged && sec >= part) pose = mix(blows(part - met, beat, now, phase, cut), ready(now, phase, cut), (sec - part) / BLEND);
+    if (c.engaged && sec >= met && sec < part) pose = mix(pose, blows(sec - met, beat, now, phase, arms), (sec - met) / BLEND);
+    else if (c.engaged && sec >= part) pose = mix(blows(part - met, beat, now, phase, arms), ready(now, phase, arms), (sec - part) / BLEND);
     return pose;
   }
   if (c.side === 'defender') {
