@@ -137,7 +137,7 @@ def spine_at(z):
 hip = J['thigh_l'][0].z
 # (Over the chest, no wider than the shoulders' joints: past them is the arm.)
 shoulder = J['upperarm_l'][0].x - 0.02
-levels = [hip - 0.06, hip - 0.025, hip + 0.02, J['spine_01'][0].z, J['spine_02'][0].z, J['spine_03'][0].z + 0.04,
+levels = [hip - 0.06, hip - 0.025, hip + 0.02] + ([J['spine_01'][0].z - 0.012] if DRESS == 'b2' else []) + [ J['spine_01'][0].z, J['spine_02'][0].z, J['spine_03'][0].z + 0.04,
           J['spine_03'][0].z + 0.1, J['spine_03'][1].z + 0.03, J['clavicle_l'][0].z - 0.02, J['neck_01'][0].z - 0.005]
 PART = 'torso'
 torso_rings = []
@@ -145,10 +145,11 @@ for z in levels:
     c = mid_x(spine_at(z)); c.z = z
     PART = 'hips' if z < J['spine_01'][0].z else 'torso'
     # (The cuirass: the torso itself, pushed out over it, from the waist up to the collar.)
-    pad = 0.012 if DRESS == 'b2' and J['spine_01'][0].z - 0.01 < z < J['neck_01'][0].z - 0.02 else 0.0
+    # (Its lower edge standing off, flared: the cuirass ends there, over the tunic.)
+    pad = (0.026 if z < J['spine_01'][0].z else 0.012) if DRESS == 'b2' and J['spine_01'][0].z - 0.015 < z < J['neck_01'][0].z - 0.02 else 0.0
     torso_rings.append(ring(c, UP, 12, last=torso_rings[-1] if torso_rings else None, clamp=shoulder + 0.03 + pad, pad=pad))
 # (The crotch: the bottom drawn down to a point between the legs.)
-crotch = mid_x(spine_at(hip)); crotch.z = hip - 0.085
+crotch = mid_x(spine_at(hip)); crotch.z = hip - 0.07
 # The neck: from the torso's top to the standard ring (under the jaw), round
 # the neck's own middle there (not the bone's: it runs near the throat).
 nb = lerp(J['neck_01'][0], J['neck_01'][1], 0.3)
@@ -192,20 +193,30 @@ def envelope(z, dz, n, last=None):
         if ray is not None: pts.append(o + d * ray); continue
         r = float(rad[near].max()) if near.any() else ((last[k] - Vector((0, cy, z))).length if last else 0.05)
         pts.append(Vector((math.sin(a) * r, cy - math.cos(a) * r, z)))
+    # (No corner sunk well below those either side, out from the middle: where
+    # the face's envelope meets the rays, or a ray found a crease.)
+    c = Vector((0, cy, z))
+    for _ in range(2):
+        for k in range(n):
+            a_, b_ = pts[k - 1] - c, pts[(k + 1) % n] - c
+            want = 0.9 * (a_.length + b_.length) / 2
+            v = pts[k] - c
+            if v.length < want: pts[k] = c + v * (want / v.length)
     return pts
 head_rings = [std]
-ts = (0.13, 0.22, 0.3, 0.37, 0.44, 0.52, 0.6, 0.68, 0.76, 0.83, 0.89, 0.94, 0.975)
+ts = (0.07, 0.13, 0.19, 0.25, 0.31, 0.37, 0.44, 0.52, 0.6, 0.68, 0.76, 0.83, 0.89, 0.94, 0.975)
 for i, t in enumerate(ts):
     z = nz.z + (top - nz.z) * t
-    dz = (top - nz.z) * 0.03
+    dz = (top - nz.z) * (0.015 if t < 0.3 else 0.03)
     head_rings.append(envelope(z, dz, HEAD_SIDES, last=head_rings[-1] if len(head_rings[-1]) == HEAD_SIDES else None))
 crown = Vector((0, sum(p.y for p in head_rings[-1]) / HEAD_SIDES, top + 0.001))
 head = tube('head', head_rings, cap0=False, cap1=crown)
 
 # The limbs: rings square to each bone, through it.
 def limb(name, segs, n, phase=0.0, pads=None):
+    # (A limb's rings meet the whole skin: from inside it, its own is always met first.)
     global PART
-    PART = name
+    PART = None
     rings = []
     for bone, ts in segs:
         h, t = J[bone]
@@ -214,7 +225,7 @@ def limb(name, segs, n, phase=0.0, pads=None):
 for s in 'lr':
     # (The sleeve: the upper arm pushed out over its top half, its hem standing off it.)
     limb(f'upperarm_{s}', [(f'upperarm_{s}', (0.05, 0.3, 0.45, 0.47, 0.6, 0.9, 1.04) if DRESS == 'b2' else (0.05, 0.3, 0.6, 0.9, 1.04))], 8, 0.5,
-         pads=(lambda u: 0.008 if u <= 0.45 else 0.0) if DRESS == 'b2' else None)
+         pads=(lambda u: 0.008 if 0.2 < u <= 0.45 else 0.0) if DRESS == 'b2' else None)
     limb(f'lowerarm_{s}', [(f'lowerarm_{s}', (-0.05, 0.1, 0.4, 0.75, 0.98))], 8, 0.5)
     # (The hand, a mitten: from the wrist to the fingers' middle joints.)
     h0 = J[f'hand_{s}'][0]; tip = J[f'middle_02_{s}'][1]
@@ -222,7 +233,7 @@ for s in 'lr':
     hand_rings = [ring(lerp(h0, tip, u), tip - h0, 6, 0.5) for u in (0.05, 0.4, 0.75, 0.97)]
     tube(f'hand_{s}', hand_rings)
     limb(f'thigh_{s}', [(f'thigh_{s}', (0.04, 0.2, 0.42, 0.68, 0.92, 1.05))], 8, 0.5)
-    limb(f'calf_{s}', [(f'calf_{s}', (-0.04, 0.08, 0.3, 0.6, 0.86, 0.98))], 8, 0.5)
+    limb(f'calf_{s}', [(f'calf_{s}', (-0.07, 0.08, 0.3, 0.6, 0.86, 0.98))], 8, 0.5)
     # (The foot: from the heel to the toes, along the ground.)
     fa, fb = J[f'foot_{s}'][0], J[f'ball_{s}'][1]
     heel = Vector((fa.x, fa.y + 0.05, 0.035)); toe = Vector((fb.x, fb.y - 0.02, 0.03))
@@ -241,6 +252,15 @@ def outer(c, n, z, part, pad, last=None):
         dist = SKIN[part].ray_cast(o, -d, 0.5)[3]
         r = (0.5 - dist) if dist is not None else ((last[k] - Vector((c.x, c.y, z))).length if last else 0.1)
         pts.append(Vector((c.x, c.y, z)) + d * (r + pad))
+    # (Hanging across any hollow (between the legs): no corner in from the line
+    # between those either side of it.)
+    o = Vector((c.x, c.y, z))
+    for _ in range(3):
+        for k in range(n):
+            a_, b_ = pts[k - 1] - o, pts[(k + 1) % n] - o
+            want = (a_.length + b_.length) / 2 * math.cos(math.pi / n)
+            v = pts[k] - o
+            if v.length < want: pts[k] = o + v * (want / v.length)
     return pts
 if DRESS == 'b2':
     # The tunic's skirt: from the waist, round the hips and both thighs, flaring a
@@ -250,7 +270,7 @@ if DRESS == 'b2':
     for i in range(5):
         t = i / 4; z = top_z + (hem_z - top_z) * t
         c = mid_x(spine_at(max(z, spine[0].z)))
-        sk.append(outer(c, 16, z, 'hips', 0.02 + 0.025 * t * t, last=sk[-1] if sk else None))
+        sk.append(outer(c, 16, z, 'hips', 0.025 + 0.012 * t * t, last=sk[-1] if sk else None))
     # (Its hem a little wider still, and level all round.)
     skirt = tube('skirt', sk, cap0=False, cap1=False)
     # The helmet: a shell over the head from the brow up (standing off it), its
@@ -258,14 +278,14 @@ if DRESS == 'b2':
     # front to back over the crown.
     helm_rings = []
     for i, r in enumerate(head_rings):
-        if r[0].z < nz.z + (top - nz.z) * 0.5: continue
+        if r[0].z < nz.z + (top - nz.z) * 0.6: continue
         cy_ = sum(p.y for p in r) / len(r)
         helm_rings.append([Vector((p.x * 1.0, cy_ + (p.y - cy_), p.z)) + (Vector((p.x, p.y - cy_, 0)).normalized() * 0.012) for p in r])
     # (Down the sides and back: the guards, from the brow's ring down to the jaw, open at the face.)
     helm = tube('helmet', helm_rings, cap0=False, cap1=Vector((0, sum(p.y for p in helm_rings[-1]) / len(helm_rings[-1]), top + 0.014)))
     hm = helm.data; bm = bmesh.new(); bm.from_mesh(hm)
     lowest = helm_rings[0]; n = len(lowest)
-    guard_depth = (top - nz.z) * 0.32
+    guard_depth = (top - nz.z) * 0.36
     # (Guards: the lowest ring's corners round the sides and back, pulled down.)
     ext = []
     vs_low = [v for v in bm.verts if abs(v.co.z - lowest[0].z) < 1e-5]
@@ -278,14 +298,16 @@ if DRESS == 'b2':
     ret = bmesh.ops.extrude_edge_only(bm, edges=edges)
     for v in [g for g in ret['geom'] if isinstance(g, bmesh.types.BMVert)]:
         v.co.z -= guard_depth
+        # (The cheek guards curving in over the cheeks, towards the front.)
+        if v.co.y < 0: v.co.y -= 0.01; v.co.x *= 0.9
     # The crest: a ridge from the brow over the crown to the back, standing up.
-    crest_h, crest_w = 0.05, 0.012
+    crest_h, crest_w = 0.05, 0.02
     path = [p for p in (min(r, key=lambda q: abs(q.x) + (q.y > 0)) for r in helm_rings)]
     front_path = sorted([min(r, key=lambda q: abs(q.x) - q.y * 0) for r in helm_rings], key=lambda p: p.z)
     bm.to_mesh(hm); bm.free()
     # (The crest as its own piece: a fin along the helmet's middle line, front to back over the top.)
     mid = []
-    for a in range(0, 181, 15):
+    for a in range(0, 181, 30):
         t = math.radians(a)
         d = Vector((0, -math.cos(t), math.sin(t)))
         o = Vector((0, sum(p.y for p in helm_rings[0]) / n, helm_rings[0][0].z))
@@ -309,7 +331,14 @@ def export(objs, path):
     bpy.ops.object.select_all(action='DESELECT')
     for o in objs: o.select_set(True)
     bpy.ops.export_scene.gltf(filepath=path, use_selection=True, export_yup=True, export_apply=True)
+# (Each piece unwrapped, for its texture: Meshy paints to these.)
+for o in [o for o in bpy.data.objects if o.type == 'MESH']:
+    bpy.ops.object.select_all(action='DESELECT'); o.select_set(True); bpy.context.view_layer.objects.active = o
+    bpy.ops.object.mode_set(mode='EDIT'); bpy.ops.mesh.select_all(action='SELECT')
+    bpy.ops.uv.smart_project(angle_limit=math.radians(66), island_margin=0.02); bpy.ops.object.mode_set(mode='OBJECT')
 export(body_parts, os.path.join(out, 'body.glb'))
+# (And all of it as one figure, to upload for texturing.)
+export([o for o in bpy.data.objects if o.type == 'MESH'], os.path.join(out, 'figure.glb'))
 export([head], os.path.join(out, 'head.glb'))
 if DRESS == 'b2': export([bpy.data.objects['helmet'], bpy.data.objects['crest']], os.path.join(out, 'helmet.glb'))
 
