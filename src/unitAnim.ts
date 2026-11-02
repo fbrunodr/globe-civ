@@ -273,8 +273,8 @@ function shooting(sec: number, shots: readonly number[], whirl = false, kneel = 
   for (const ts of shots) {
     const d = sec - ts;
     // (A bow drawn a little above level, for its arrow to arc; a gun levelled, kicking up as it fires.)
-    const drawn = whirl ? P(0, 0, 0, -0.08, -0.2, 1.75, 0, 0.35, 0.2, 0.6, sec * 26) : { ...P(0, 0, 0, -0.06, longGun ? across : 0.2, 1.0, 0, 0.35, 0.2, 0.15, gun ? 1.55 : 1.35), draw: gun ? 0 : 1 };
-    const loosed = whirl ? P(0, 0, 0, 0.3, 0.3, 0.9, 0, 0.45, 0.3, 0.1, 1.6) : P(0, 0, 0, -0.14, longGun ? across + 0.06 : 0.14, 0.85, 0, 0.35, 0.2, 0.3, gun ? 1.4 : 1.3);
+    const drawn = whirl ? P(0, 0, 0, -0.08, -0.2, 1.75, 0, 0.35, 0.2, 0.6, sec * 26) : { ...P(0, 0, 0, -0.06, across, 1.0, 0, 0.35, 0.2, 0.15, gun ? 1.55 : 1.35), draw: gun ? 0 : 1 };
+    const loosed = whirl ? P(0, 0, 0, 0.3, 0.3, 0.9, 0, 0.45, 0.3, 0.1, 1.6) : P(0, 0, 0, -0.14, across + (longGun ? 0.06 : 0), 0.85, 0, 0.35, 0.2, 0.3, gun ? 1.4 : 1.3);
     if (d > -0.45 && d <= 0) pose = mix(pose, low(drawn), smooth((d + 0.45) / 0.3));
     else if (d > 0 && d < 0.55) pose = mix(low(loosed), low(AT_EASE(whirl)), smooth(d / 0.55));
   }
