@@ -28,6 +28,7 @@ export interface HullOpts {
   readonly faces?: boolean; // paint per face (default per vertex)
   readonly lumps?: number;  // swell each point by up to this share (a hash of its place): fleece, rock
   readonly skip?: (j: number) => boolean; // leave out the faces after the ring's j-th point
+  readonly push?: (i: number, v: THREE.Vector3, c: THREE.Vector3) => void; // move a point of ring i (its middle c) where it is: a tilt, a feature
 }
 
 // A hull of `radial` points a ring. A 4-point ring is a box's section (its
@@ -51,6 +52,7 @@ export function hull(rings: readonly Ring[], radial: number, paint: LpPaint, o: 
       const th = turn + (j / radial) * Math.PI * 2;
       const v = P[i]!.clone().addScaledVector(U, Math.cos(th) * r.a * k).addScaledVector(Sd, Math.sin(th) * r.b * k);
       if (o.lumps) v.sub(P[i]!).multiplyScalar(1 + o.lumps * hash(v)).add(P[i]!);
+      o.push?.(i, v, P[i]!);
       ring.push(v);
     }
     pts.push(ring);
