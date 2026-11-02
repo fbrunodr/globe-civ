@@ -3,7 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { part, seg, tf, V, type Tf } from './propCatalog.ts';
 import { person, riderBody, handAt, elbowAt, hairShapes, headShell, HAIR_STYLE_KEYS, HIP, SHOULDER, HEAD_Y, HANG, HOLD, RAISE, SHIELD, GRIP2, GUN_R, GUN_L, type ArmPose, type Dress, type Part, type HairStyleKey } from './people.ts';
 import { horseParts } from './creatures.ts';
-import { importedPerson, HEAD_NAMES, type BodyName, type HeadName } from './importedBody.ts';
+import { importedPerson, HEAD_NAMES, HEADED_BODIES, type BodyName, type HeadName } from './importedBody.ts';
 import { gem, hull, plate, R, type V3 } from './lowpoly.ts';
 import type { ArchCiv } from './architecture.ts';
 import type { UnitKey } from './rules.ts';
@@ -244,7 +244,7 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
   };
   // (An imported body, on trial: its own hands hold the weapons; its texture goes with the model.)
   const bodyName = FINE ? importedBodyOf(TYPE) : null;
-  const body = bodyName ? importedPerson(bodyName, bodyName === 'wanderer' ? null : headOf(CIV), dress, armL, armR, swing) : null;
+  const body = bodyName ? importedPerson(bodyName, HEADED_BODIES.includes(bodyName) ? headOf(CIV) : null, dress, armL, armR, swing) : null;
   const out = tagged(body ? body.parts : person(dress, armL, armR, swing));
   if (body?.texture) out[0]!.userData['texture'] = body.texture;
   const hR = body ? body.hand(-1) : handAt(-1, armR, f), hL = body ? body.hand(1) : handAt(1, armL, f), eR = body ? body.elbow(-1) : elbowAt(-1, armR, f), eL = body ? body.elbow(1) : elbowAt(1, armL, f);

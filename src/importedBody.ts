@@ -36,6 +36,8 @@ interface BodyData {
 // (scripts/rigBody.mjs) from the shape: B1, a tribal warrior; B2, an ancient soldier.
 export type BodyName = 'wanderer' | 'tribal' | 'ancient';
 const BODIES: Record<BodyName, BodyData> = { wanderer: wanderer as BodyData, tribal: tribal as BodyData, ancient: ancient as BodyData };
+// (Those whose heads are taken off for others: all but the pilot.)
+export const HEADED_BODIES: readonly BodyName[] = ['tribal', 'ancient'];
 
 const TRIM = 0x6e6e6e, SHOE = 0x3a2a1e, BELT = 0x4a3424, HAIR = 0x5a4632;
 type Piece = 'torso' | 'skirt' | 'legs' | 'shoe' | 'forearm' | 'belt';
@@ -65,7 +67,7 @@ export const HEAD_NAMES = Object.keys(heads) as HeadName[];
 // its crown where the body's is, over its own (the skull's middle); and how high the body's own is cut
 // off: up under the new one's jaw, its neck there inside the new one's (the
 // two overlap: no gap under the chin).
-const HEAD = 0.133;
+export const HEAD = 0.133;
 function headFit(b: BodyData, h: HeadData): { s: number; base: THREE.Vector3; cut: number; axis: number } {
   const axis = b.joints['Head']![2]!;
   const own = b.verts.filter((p) => p[1]! > 0.9 && Math.hypot(p[0]!, p[2]! - axis) < 0.1);
@@ -73,6 +75,127 @@ function headFit(b: BodyData, h: HeadData): { s: number; base: THREE.Vector3; cu
   const s = HEAD / (1 - h.chin);
   return { s, base: new THREE.Vector3(0, top - s, axis), cut: top - s * 0.7, axis };
 }
+// The edges of some triangles (their corners' indices) that only one of
+// them has: where they are open.
+function openEdges(tris: readonly number[]): [number, number][] {
+  const n = new Map<string, [number, number, number]>();
+  for (let t = 0; t < tris.length; t += 3) for (let k = 0; k < 3; k++) {
+    const a = tris[t + k]!, b = tris[t + ((k + 1) % 3)]!, key = a < b ? `${a}|${b}` : `${b}|${a}`;
+    const e = n.get(key);
+    if (e) e[2]++; else n.set(key, [a, b, 1]);
+  }
+  return [...n.values()].filter((e) => e[2] === 1).map(([a, b]) => [a, b]);
+}
+// A head set on a body, both fitted where they meet (cached, for each pair):
+//   - the new head's open neck foot: how high it comes down round the neck;
+//   - the body's own head left off: each triangle above the cut, over the
+//     neck, wholly above the new head's neck foot there (what reaches down
+//     below it is kept: the neck there, which the new one does not cover);
+//   - the new head's neck fitted to the body's: each corner moved out from
+//     the neck's line or in towards it, onto the body's neck just outside it
+//     (NECK_GAP), all the way at its foot, less and less up to its chin;
+//   - what is kept of the body above that foot drawn in, wherever it would
+//     show through the new head, to just inside it.
+// So the two necks meet all round, nothing to see through between them,
+// nothing of the old head showing (test/heads.test.ts).
+const NECK_GAP = 0.0015;
+// (A head's neck foot: its open edge in the lowest third of it, under the jaw.)
+const RIM = 0.35;
+interface Fitted { readonly head: THREE.Vector3[]; readonly verts: number[][]; readonly axis: number; off(i0: number, i1: number, i2: number): boolean }
+const FITTED = new Map<string, Fitted>();
+function fitHead(b: BodyData, name: string, h: HeadData, headName: string): Fitted {
+  const key = `${name}|${headName}`, done = FITTED.get(key);
+  if (done) return done;
+  const fit = headFit(b, h);
+  // (Round the neck: about its own middle, the middle of the new head's neck
+  // foot (behind the skull's: a neck is set back under the face).)
+  const foot = [...new Set(openEdges(h.tris).flat())].filter((i) => h.verts[i]![1]! < RIM);
+  const local = foot.reduce((s, i) => s + h.verts[i]![2]!, 0) / Math.max(1, foot.length), axis = fit.base.z + local * fit.s;
+  const angle = (x: number, z: number) => Math.atan2(z - axis, x);
+  const radius = (x: number, z: number) => Math.hypot(x, z - axis);
+  const rim = foot.map((i) => ({ a: Math.atan2(h.verts[i]![2]! - local, h.verts[i]![0]!), y: h.verts[i]![1]! }));
+  // (Its height (or anything else of it) at an angle round the neck: between its corners either side.)
+  const between = <K extends 'y' | 'r'>(cs: readonly ({ a: number } & Record<K, number>)[], k: K, a: number): number => {
+    const by = cs.map((c) => ({ v: c[k], d: Math.atan2(Math.sin(c.a - a), Math.cos(c.a - a)) }));
+    const lo = by.filter((c) => c.d <= 0).sort((u, w) => w.d - u.d)[0], hi = by.filter((c) => c.d >= 0).sort((u, w) => u.d - w.d)[0];
+    if (!lo || !hi) return (lo ?? hi)?.v ?? 0;
+    return hi.d - lo.d < 1e-9 ? lo.v : lo.v + ((hi.v - lo.v) * -lo.d) / (hi.d - lo.d);
+  };
+  const rimAt = (a: number) => between(rim, 'y', a);
+  const footAt = (x: number, z: number) => fit.base.y + rimAt(angle(x, z)) * fit.s;
+  const off = (i0: number, i1: number, i2: number): boolean => {
+    const [p, q, r] = [b.verts[i0]!, b.verts[i1]!, b.verts[i2]!], mx = (p[0]! + q[0]! + r[0]!) / 3, mz = (p[2]! + q[2]! + r[2]!) / 3;
+    return (p[1]! + q[1]! + r[1]!) / 3 > fit.cut && radius(mx, mz) < 0.085 && [p, q, r].every((c) => c[1]! > footAt(c[0]!, c[2]!) + 0.01);
+  };
+  const meshOf = (pos: number[]) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); return new THREE.Mesh(g, new THREE.MeshBasicMaterial({ side: THREE.DoubleSide })); };
+  const ray = new THREE.Raycaster(), out = (y: number, d: THREE.Vector3, m: THREE.Mesh) => { ray.set(new THREE.Vector3(0, y, axis), d); return ray.intersectObject(m)[0]?.distance; };
+  const place = (q: readonly number[]) => new THREE.Vector3(fit.base.x + q[0]! * fit.s, fit.base.y + q[1]! * fit.s, fit.base.z + q[2]! * fit.s);
+  // What is kept of the body above the head's neck foot (and by it) drawn in, to just inside the head.
+  const kept = new Set<number>();
+  for (let k = 0; k < b.tris.length; k += 3) if (!off(b.tris[k]!, b.tris[k + 1]!, b.tris[k + 2]!)) for (let c = 0; c < 3; c++) kept.add(b.tris[k + c]!);
+  const verts = b.verts.map((p) => [...p]);
+  // (Where nothing of the head is beside a corner, level (under its jaw): drawn in inside its neck foot.)
+  const drawIn = (shell: THREE.Mesh, at: (i: number) => THREE.Vector3) => {
+    const ring = foot.map((i) => { const p = at(i); return { a: angle(p.x, p.z), r: radius(p.x, p.z) }; });
+    for (const i of kept) {
+      const p = verts[i]!, r = radius(p[0]!, p[2]!);
+      if (r > 0.1 || r < 1e-6 || p[1]! <= footAt(p[0]!, p[2]!)) continue;
+      const d = new THREE.Vector3(p[0]!, 0, p[2]! - axis).normalize(), hit = out(p[1]!, d, shell) ?? between(ring, 'r', angle(p[0]!, p[2]!));
+      if (r < hit - 4 * NECK_GAP) continue;
+      const r1 = Math.max(0.002, hit - 4 * NECK_GAP);
+      p[0] = d.x * r1; p[2] = axis + d.z * r1;
+    }
+  };
+  drawIn(meshOf(h.tris.flatMap((i) => place(h.verts[i]!).toArray())), (i) => place(h.verts[i]!));
+  // Then the head's neck onto the body's (as drawn in): the body kept round the neck.
+  const neckPos: number[] = [];
+  for (let k = 0; k < b.tris.length; k += 3) {
+    const tri = [b.tris[k]!, b.tris[k + 1]!, b.tris[k + 2]!] as const;
+    if (off(...tri)) continue;
+    const c = tri.map((i) => verts[i]!);
+    if (c.some((p) => p[1]! > fit.base.y - 0.05 && radius(p[0]!, p[2]!) < 0.2)) for (const p of c) neckPos.push(p[0]!, p[1]!, p[2]!);
+  }
+  const neck = meshOf(neckPos), neckTris: THREE.Triangle[] = [];
+  for (let k = 0; k < neckPos.length; k += 9) neckTris.push(new THREE.Triangle(new THREE.Vector3(...neckPos.slice(k, k + 3)), new THREE.Vector3(...neckPos.slice(k + 3, k + 6)), new THREE.Vector3(...neckPos.slice(k + 6, k + 9))));
+  const onRim = new Set(foot), q0 = new THREE.Vector3();
+  const head = h.verts.map((q, i) => {
+    const p = place(q);
+    const low = rimAt(Math.atan2(q[2]! - local, q[0]!)), top = Math.max(h.chin, low + 0.05), w = onRim.has(i) ? 1 : 1 - Math.min(1, Math.max(0, (q[1]! - low) / (top - low)));
+    const d = new THREE.Vector3(p.x, 0, p.z - axis), r = d.length();
+    if (w <= 0 || r < 1e-6) return p;
+    d.normalize();
+    const hit = out(p.y, d, neck);
+    if (hit !== undefined) { const r1 = r + (hit + NECK_GAP - r) * w * w * (3 - 2 * w); return new THREE.Vector3(d.x * r1, p.y, axis + d.z * r1); }
+    // (A corner of the foot with no neck beside it, level: onto the nearest point of it.)
+    if (!onRim.has(i) || !neckTris.length) return p;
+    const c = neckTris.reduce((best, t) => { t.closestPointToPoint(p, q0); return q0.distanceTo(p) < best.distanceTo(p) ? q0.clone() : best; }, new THREE.Vector3(Infinity, Infinity, Infinity));
+    return c.addScaledVector(new THREE.Vector3(c.x, 0, c.z - axis).normalize(), NECK_GAP);
+  });
+  // (And again inside the head as fitted: its neck drawn in to the body's may pass inside some of it.)
+  // (Then its foot set again on the body as drawn in: the two stay together.)
+  drawIn(meshOf(h.tris.flatMap((i) => head[i]!.toArray())), (i) => head[i]!);
+  const final: number[] = [];
+  for (let k = 0; k < b.tris.length; k += 3) {
+    const t = [b.tris[k]!, b.tris[k + 1]!, b.tris[k + 2]!] as const;
+    if (off(...t)) continue;
+    const c = t.map((i) => verts[i]!);
+    if (c.some((p) => p[1]! > fit.base.y - 0.05 && radius(p[0]!, p[2]!) < 0.2)) for (const p of c) final.push(p[0]!, p[1]!, p[2]!);
+  }
+  const body = meshOf(final);
+  for (const i of foot) {
+    const p = head[i]!, d = new THREE.Vector3(p.x, 0, p.z - axis);
+    if (d.lengthSq() < 1e-12) continue;
+    d.normalize();
+    const hit = out(p.y, d, body);
+    if (hit !== undefined) head[i] = new THREE.Vector3(d.x * (hit + NECK_GAP), p.y, axis + d.z * (hit + NECK_GAP));
+  }
+  const fitted = { head, verts, axis, off };
+  FITTED.set(key, fitted);
+  return fitted;
+}
+
+// The line a head is fitted round on a body (x 0, this z): its neck's middle.
+export const neckLine = (name: BodyName, head: HeadName): number => fitHead(BODIES[name], name, HEADS[head], head).axis;
 
 const v = (a: readonly number[]) => new THREE.Vector3(a[0], a[1], a[2]);
 
@@ -81,6 +204,8 @@ export interface ImportedBody { readonly parts: Part[]; readonly texture?: strin
 // posed; `swing`, as person()'s: how its legs and arms move.
 export function importedPerson(name: BodyName, newHead: HeadName | null, d: Dress, armL: ArmPose, armR: ArmPose, swing: { legs: (side: number) => readonly [number, number, number]; arms: (side: number) => readonly [number, number, number] | undefined }): ImportedBody {
   const b = BODIES[name], J = b.joints;
+  // (With another head: it and the body fitted where they meet.)
+  const pair = newHead ? fitHead(b, name, HEADS[newHead], newHead) : null;
   const L = Object.fromEntries(b.limbs.map((limb, i) => [limb, i])) as Record<string, number>;
   const PIECE = PIECES.get(b) ?? PIECES.set(b, pieces(b)).get(b)!;
   // The arms posed: for each side, the upper arm turned about the shoulder
@@ -99,7 +224,7 @@ export function importedPerson(name: BodyName, newHead: HeadName | null, d: Dres
     return { side, sh, el, el1, wr1, grip: wr1.clone().addScaledVector(F, 0.04), r1, r12: r2.clone().multiply(r1) };
   });
   const [left, right] = turns as [typeof turns[0], typeof turns[0]];
-  const moved = b.verts.map((p0, i) => {
+  const moved = (pair ? pair.verts : b.verts).map((p0, i) => {
     const p = v(p0), w = b.weights[i]!, out = new THREE.Vector3();
     let rest = 1;
     for (const t of turns) {
@@ -179,15 +304,9 @@ export function importedPerson(name: BodyName, newHead: HeadName | null, d: Dres
   const groups = new Map<string, { pos: number[]; col: number[]; uv: number[]; blend: number[]; tag: PartTag; limb: number; skirt: boolean }>();
   const a = new THREE.Vector3(), bb = new THREE.Vector3(), c = new THREE.Vector3(), nrm = new THREE.Vector3(), col = new THREE.Color();
   // (With another head: the body's own left off, above where the new one's neck goes in.)
-  const fitted = newHead ? headFit(b, HEADS[newHead]) : null;
-  const offHead = (i0: number, i1: number, i2: number): boolean => {
-    if (!fitted) return false;
-    const [p, q, r] = [b.verts[i0]!, b.verts[i1]!, b.verts[i2]!];
-    return (p[1]! + q[1]! + r[1]!) / 3 > fitted.cut && Math.hypot((p[0]! + q[0]! + r[0]!) / 3, (p[2]! + q[2]! + r[2]!) / 3 - fitted.axis) < 0.085;
-  };
   for (let t = 0; t < b.tris.length; t += 3) {
     const [i0, i1, i2] = [b.tris[t]!, b.tris[t + 1]!, b.tris[t + 2]!];
-    if (offHead(i0, i1, i2)) continue;
+    if (pair?.off(i0, i1, i2)) continue;
     a.copy(moved[i0]!); bb.copy(moved[i1]!); c.copy(moved[i2]!);
     nrm.copy(bb).sub(a).cross(c.clone().sub(a)).normalize();
     const piece = PIECE[b.part[i0]!]!, mid = a.clone().add(bb).add(c).divideScalar(3);
@@ -207,11 +326,12 @@ export function importedPerson(name: BodyName, newHead: HeadName | null, d: Dres
     });
   }
   // The new head: on the body's neck, with the body (not with a limb).
-  if (newHead && fitted) {
+  if (newHead && pair) {
     const h = HEADS[newHead], gr = { pos: [] as number[], col: [] as number[], uv: [] as number[], blend: [] as number[], tag: 'plain' as PartTag, limb: -1, skirt: false };
+    const at = pair.head;
     h.tris.forEach((i, k) => {
-      const p = h.verts[i]!;
-      gr.pos.push(fitted.base.x + p[0]! * fitted.s, fitted.base.y + p[1]! * fitted.s, fitted.base.z + p[2]! * fitted.s);
+      const p = at[i]!;
+      gr.pos.push(p.x, p.y, p.z);
       gr.col.push(1, 1, 1); gr.uv.push(h.uv[k * 2]!, h.uv[k * 2 + 1]!);
     });
     groups.set('head', gr);
