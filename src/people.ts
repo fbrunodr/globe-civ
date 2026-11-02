@@ -67,6 +67,8 @@ const reachTo = (target: readonly [number, number, number]): ArmPose => {
 };
 export const GUN_R: ArmPose = reachTo([-0.035, 0.565, 0.175]);
 export const GUN_L: ArmPose = reachTo([-0.03, 0.665, 0.215]); // (a pose mirrors to the left arm: its hand at x +0.03)
+// How far across to the figure's left a long gun through both hands points (radians, as it is levelled: unitAnim.ts turns the body to aim it true).
+export const GUN_ACROSS = Math.atan2(0.03 + 0.035, Math.hypot(0.665 - 0.565, 0.215 - 0.175));
 const v3 = (p: THREE.Vector3): V3 => [p.x, p.y, p.z];
 // (The head's and hair's rings: five points, one forward.)
 const FIVE = { turn: Math.PI / 2 } as const;

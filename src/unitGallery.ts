@@ -27,7 +27,7 @@ import { FORTIFY_BONUS, combatStrength, fightRounds, matchup, statOf } from './g
 import { HAIR_STYLES, UNIT_LOOK, colsOf, formationSlots, hairModel, headOffset, isMachine, rides, unitModel, variantOf, whirls, bowman, cuts, thrusts, draws, bayonets, womenShare } from './unitModels.ts';
 import { FIGHT, PLAYS, UnitView, Volleys, durOf, defendPlay, falls, figureLooks, makeUnitMaterial, playAt, playOf, prepareUnitGeometry, type Play, type ShownUnit } from './unitView.ts';
 import type { P2 } from './duel.ts';
-import { AFTER, armOf, dropOf, legsOf, poseOf, poseTurn, rearShift, type Cue } from './unitAnim.ts';
+import { AFTER, armOf, dropOf, flingOf, legsOf, poseOf, poseTurn, rearShift, type Cue } from './unitAnim.ts';
 import { UNIT_CLASS, attackBlock, attackStyle, canAssault, canAttackType, canShoot, defaultMode, siegeStyle, type AttackMode } from './unitClasses.ts';
 import { WorldLabel, disposeLabels } from './worldLabel.ts';
 import { triangles } from './lowpoly.ts';
@@ -321,7 +321,8 @@ function pose(now: number): void {
     m.multiply(turn.makeRotationY((c.facing === 1 ? 0 : Math.PI) + (st?.back ? Math.PI : 0)));
     // (People and horses posed as they act (unitAnim.ts).)
     const moving = marching || st?.moving ? (play && play.charge > 1 ? 1.4 : 1) : 0;
-    let legs = moving, arm = st?.strike ?? 0, bends: readonly [number, number, number, number, number, number, number, number, number] = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+    // (An engine's throwing arm flung as it looses its shot (unitAnim.ts flingOf); cocked until then.)
+    let legs = moving, arm = flingOf(play?.shots[0] ? sec - play.shots[0].t * dur : -1), bends: readonly [number, number, number, number, number, number, number, number, number] = [0, 0, 0, 0, 0, 0, 0, 0, 0];
     if (falls(c.type)) {
       const cue: Cue | null = fight && c.play && c.attack ? { sec, dur, play: c.play, attack: c.attack, side: c.side, engaged: c.attack.close === true, delay: 0, fall: Infinity, won: false, cut: cuts(c.type), thrust: thrusts(c.type), bow: draws(c.type), bayonet: bayonets(c.type) } : null;
       const pz = poseOf(cue, now, p.phase, s.beat, moving, s.rides, whirls(c.type), false, bowman(c.type));
