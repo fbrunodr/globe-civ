@@ -15,6 +15,8 @@
 import * as THREE from 'three';
 import { KNEE, SKIN_PAINT, CLOTH_PAINT, type ArmPose, type Dress, type Part, type PartTag } from './people.ts';
 import wanderer from './bodies/wanderer.json';
+import tribal from './bodies/tribal.json';
+import ancient from './bodies/ancient.json';
 
 interface BodyData {
   readonly uv?: readonly number[]; // (each triangle's corners, in order: textured bodies)
@@ -25,8 +27,14 @@ interface BodyData {
   readonly weights: readonly (readonly number[])[];
   readonly part: readonly number[];
   readonly tris: readonly number[];
+  // (Its owner's colour keyed in its texture (scripts/rigBody.mjs): marked
+  // in the texture's alpha, painted pixel by pixel, not by triangle.)
+  readonly key?: 'magenta';
 }
-const BODY = wanderer as BodyData;
+// The bodies, by name: the pilot (rigged by Mixamo), and those rigged here
+// (scripts/rigBody.mjs) from the shape: B1, a tribal warrior; B2, an ancient soldier.
+export type BodyName = 'wanderer' | 'tribal' | 'ancient';
+const BODIES: Record<BodyName, BodyData> = { wanderer: wanderer as BodyData, tribal: tribal as BodyData, ancient: ancient as BodyData };
 
 const TRIM = 0x6e6e6e, SHOE = 0x3a2a1e, BELT = 0x4a3424, HAIR = 0x5a4632;
 type Piece = 'torso' | 'skirt' | 'legs' | 'shoe' | 'forearm' | 'belt';
@@ -41,19 +49,17 @@ function pieces(b: BodyData): Piece[] {
   }
   return out;
 }
-const PIECES = pieces(BODY);
+const PIECES = new Map<BodyData, Piece[]>();
 
 const v = (a: readonly number[]) => new THREE.Vector3(a[0], a[1], a[2]);
-const L = Object.fromEntries(BODY.limbs.map((name, i) => [name, i])) as Record<string, number>;
 
 export interface ImportedBody { readonly parts: Part[]; readonly texture?: string; hand(side: 1 | -1): THREE.Vector3; elbow(side: 1 | -1): THREE.Vector3 }
-// The body's texture (public/), if it has one.
-export const BODY_TEXTURE = 'bodies/wanderer.png';
-
-// The body, dressed (`d`: its legs bare or trousered, its skirt) and its arms
+// The body, `name`, dressed (`d`: its legs bare or trousered, its skirt) and its arms
 // posed; `swing`, as person()'s: how its legs and arms move.
-export function importedPerson(d: Dress, armL: ArmPose, armR: ArmPose, swing: { legs: (side: number) => readonly [number, number, number]; arms: (side: number) => readonly [number, number, number] | undefined }): ImportedBody {
-  const b = BODY, J = b.joints;
+export function importedPerson(name: BodyName, d: Dress, armL: ArmPose, armR: ArmPose, swing: { legs: (side: number) => readonly [number, number, number]; arms: (side: number) => readonly [number, number, number] | undefined }): ImportedBody {
+  const b = BODIES[name], J = b.joints;
+  const L = Object.fromEntries(b.limbs.map((limb, i) => [limb, i])) as Record<string, number>;
+  const PIECE = PIECES.get(b) ?? PIECES.set(b, pieces(b)).get(b)!;
   // The arms posed: for each side, the upper arm turned about the shoulder
   // to point along the pose, then the forearm about the (moved) elbow.
   const turns = ([1, -1] as const).map((side) => {
@@ -90,7 +96,7 @@ export function importedPerson(d: Dress, armL: ArmPose, armR: ArmPose, swing: { 
   const CHAINS = [['thighL', 'shinL'], ['thighR', 'shinR'], ['armL', 'foreL'], ['armR', 'foreR']].map(([u, l]) => [L[u!]!, L[l!]!] as const);
   const chainOf = (i: number): { chain: number; on: number; lower: number } => {
     const w = b.weights[i]!;
-    if (PIECES[b.part[i]!] === 'forearm') return { chain: b.verts[i]![0]! > 0 ? 2 : 3, on: 1, lower: 1 };
+    if (PIECE[b.part[i]!] === 'forearm') return { chain: b.verts[i]![0]! > 0 ? 2 : 3, on: 1, lower: 1 };
     let best = -1, on = 0;
     CHAINS.forEach(([u, l], k) => { const x = w[u]! + w[l]!; if (x > on) { on = x; best = k; } });
     if (best < 0 || on < 0.02) return { chain: -1, on: 0, lower: 0 };
@@ -99,11 +105,11 @@ export function importedPerson(d: Dress, armL: ArmPose, armR: ArmPose, swing: { 
   };
   // The tunic's skirt, down to its hem.
   let hem = Infinity;
-  b.verts.forEach((p, i) => { if (PIECES[b.part[i]!] === 'skirt') hem = Math.min(hem, p[1]!); });
+  b.verts.forEach((p, i) => { if (PIECE[b.part[i]!] === 'skirt') hem = Math.min(hem, p[1]!); });
   // (The trousers under the skirt drawn in towards each leg's line, so they
   // never poke out through it: down to the hem, easing back to their own below.)
   if (hem < Infinity) b.verts.forEach((_, i) => {
-    if (PIECES[b.part[i]!] !== 'legs') return;
+    if (PIECE[b.part[i]!] !== 'legs') return;
     const p = moved[i]!, k = Math.max(0, Math.min(1, (p.y - (hem - 0.03)) / 0.05));
     if (k === 0) return;
     const s = p.x >= 0 ? 'Left' : 'Right', hip = v(J[`${s}UpLeg`]!), knee = v(J[`${s}Leg`]!);
@@ -119,6 +125,8 @@ export function importedPerson(d: Dress, armL: ArmPose, armR: ArmPose, swing: { 
     // (Textured: the texture's own colours (white paint); the tunic in the owner's colour over it.)
     // (Textured: what the texture paints in the team garment's off-white (scripts/importBody.mjs), not on the legs or feet.)
     // (Low on the torso, well below any beard or hair, all of it is the tunic, however shaded.)
+    // (Keyed: the texture marks the owner's colour itself.)
+    if (b.key) return [0xffffff, 'plain'];
     if (textured) return [0xffffff, (team || (piece === 'torso' && p.y < 0.72) || piece === 'skirt') && piece !== 'legs' && piece !== 'shoe' ? 'team' : 'plain'];
     switch (piece) {
       case 'torso': return p.y < neck + 0.01 ? [CLOTH_PAINT, 'team'] : n.z > 0.35 && p.y < head.y + 0.11 && p.z > head.z ? [SKIN_PAINT, 'skin'] : [HAIR, 'plain'];
@@ -151,7 +159,7 @@ export function importedPerson(d: Dress, armL: ArmPose, armR: ArmPose, swing: { 
     const [i0, i1, i2] = [b.tris[t]!, b.tris[t + 1]!, b.tris[t + 2]!];
     a.copy(moved[i0]!); bb.copy(moved[i1]!); c.copy(moved[i2]!);
     nrm.copy(bb).sub(a).cross(c.clone().sub(a)).normalize();
-    const piece = PIECES[b.part[i0]!]!, mid = a.clone().add(bb).add(c).divideScalar(3);
+    const piece = PIECE[b.part[i0]!]!, mid = a.clone().add(bb).add(c).divideScalar(3);
     const [paint, tag] = paintOf(piece, mid, nrm, b.team?.[t / 3] === 1);
     // (The skirt hangs from the hips and follows the legs, as people.ts's does.)
     const skirt = piece === 'skirt', cs = [i0, i1, i2].map(chainOf);
@@ -180,5 +188,5 @@ export function importedPerson(d: Dress, armL: ArmPose, armR: ArmPose, swing: { 
     const m = gr.skirt ? { limb: swing.legs(1) } : motion(gr.limb);
     parts.push({ geo, tag: gr.tag, ...(m.limb ? { limb: m.limb } : {}), ...(m.joint ? { joint: m.joint } : {}), ...(gr.skirt ? { skirt: hem } : {}) });
   }
-  return { parts, ...(textured ? { texture: BODY_TEXTURE } : {}), hand: (side) => (side === 1 ? left : right).grip.clone(), elbow: (side) => (side === 1 ? left : right).el1.clone() };
+  return { parts, ...(textured ? { texture: `bodies/${name}.png` } : {}), hand: (side) => (side === 1 ? left : right).grip.clone(), elbow: (side) => (side === 1 ? left : right).el1.clone() };
 }

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { ArchCiv } from './architecture.ts';
 import { unitDef, domainOf, type UnitKey } from './rules.ts';
 import { firesAtClose, returnFire, type AttackStyle, type Projectile } from './unitClasses.ts';
-import { UNIT_LOOK, figuresFor, formationSlots, unitModel, variantOf, rides, headOffset, hairModel, transportModel, wearsHelmet, womenShare, isMachine, colsOf, GEAR, HAIR_BY, HAIR_STYLES, STRIKE, GUARD, DRAW, whirls, bowman, cuts, IMPORTED_BODY } from './unitModels.ts';
+import { UNIT_LOOK, figuresFor, formationSlots, unitModel, variantOf, rides, headOffset, hairModel, transportModel, wearsHelmet, womenShare, isMachine, colsOf, GEAR, HAIR_BY, HAIR_STYLES, STRIKE, GUARD, DRAW, whirls, bowman, cuts, importedBodyOf } from './unitModels.ts';
 import { mulberry32 } from './rng.ts';
 import { HIP } from './people.ts';
 import { pairUp, type P2 } from './duel.ts';
@@ -363,7 +363,7 @@ export function makeUnitMaterial(time: { value: number }, texture?: string): THR
   mat.onBeforeCompile = (shader) => {
     shader.uniforms['uTime'] = time;
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', `#include <common>\n${UNIT_VERTEX_DECL}`)
+      .replace('#include <common>', `#include <common>\n${UNIT_VERTEX_DECL}\nvarying vec3 vTeam;`)
       .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>\n${UNIT_NORMAL}`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>\n${UNIT_VERTEX}`)
       .replace('#include <color_vertex>', `#include <color_vertex>
@@ -371,10 +371,15 @@ export function makeUnitMaterial(time: { value: number }, texture?: string): THR
           vec2 isTeamV = vec2(mod(aLimb.w, 2.0), mod(floor(aLimb.w / 2.0), 2.0)); // (team, skin: the flags)
           vColor.rgb = mix(mix(color.rgb, aSkinTone.rgb, isTeamV.y), color.rgb * instanceColor.rgb, isTeamV.x);
           vColor.rgb *= 1.0 - 0.78 * aMore.z; // (burnt: a wreck)
+          vTeam = instanceColor.rgb;
+        #else
+          vTeam = vec3(1.0);
         #endif`);
-    if (texture) shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', `
+    // (A keyed texture (scripts/rigBody.mjs) marks the owner's colour in its
+    // alpha: 0 there, its grey shading painted in that colour.)
+    if (texture) shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vTeam;').replace('#include <map_fragment>', `
       #ifdef USE_MAP
-        if (vMapUv.x >= 0.0) diffuseColor *= texture2D(map, vMapUv);
+        if (vMapUv.x >= 0.0) { vec4 tex = texture2D(map, vMapUv); diffuseColor.rgb *= mix(tex.rgb * vTeam, tex.rgb, tex.a); }
       #endif`);
   };
   mat.customProgramCacheKey = () => (texture ? 'unit-figure-textured' : 'unit-figure');
@@ -1196,7 +1201,7 @@ export function figureLooks(type: UnitKey, civ: ArchCiv, women: number, rand: ()
   // (Machines: no one shows.)
   const none = isMachine(type) || (style === 'bald' && helmet);
   // (An imported body has its own hair.)
-  return { female: female && !isMachine(type), skin: new THREE.Color(pick(g.skin)), hair: none || (IMPORTED_BODY && !rides(type, 0)) ? -1 : HAIR_STYLES.indexOf(style), hairColor: new THREE.Color(pick(g.hair)) };
+  return { female: female && !isMachine(type), skin: new THREE.Color(pick(g.skin)), hair: none || (importedBodyOf(type) !== null && !rides(type, 0)) ? -1 : HAIR_STYLES.indexOf(style), hairColor: new THREE.Color(pick(g.hair)) };
 }
 
 // Arrows in flight: each volley a dozen, from the archers to around the
