@@ -62,7 +62,6 @@ export const RELIEFS = {
   mountains: { name: 'Mountains', bonus: y(0, 0, 0), override: y(0, 1, 0), move: 3, defense: 1.0 },
 } satisfies Record<string, ReliefDef>;
 export type ReliefKey = keyof typeof RELIEFS;
-export const reliefDef = (k: ReliefKey): ReliefDef => RELIEFS[k];
 
 export interface FeatureDef {
   readonly name: string;

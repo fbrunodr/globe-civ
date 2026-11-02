@@ -303,8 +303,3 @@ export function creature(sp: Species): THREE.BufferGeometry[] {
     case 'fox': return fox();
   }
 }
-// A creature in tile steps (scaled by CREATURE_SCALE, times `s`).
-export function creatureModel(sp: Species, s = 1): THREE.BufferGeometry[] {
-  const m = new THREE.Matrix4().makeScale(CREATURE_SCALE * s, CREATURE_SCALE * s, CREATURE_SCALE * s);
-  return creature(sp).map((g) => g.applyMatrix4(m));
-}

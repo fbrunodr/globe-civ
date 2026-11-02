@@ -8,10 +8,6 @@ export const latLon = (p: THREE.Vector3): [number, number] => [
   (Math.asin(Math.max(-1, Math.min(1, p.y))) * 180) / Math.PI,
   (Math.atan2(-p.z, p.x) * 180) / Math.PI,
 ];
-export const fromLatLon = (lat: number, lon: number): THREE.Vector3 => {
-  const a = (lat * Math.PI) / 180, b = (lon * Math.PI) / 180;
-  return new THREE.Vector3(Math.cos(a) * Math.cos(b), Math.sin(a), -Math.cos(a) * Math.sin(b));
-};
 
 // The tile whose center is nearest the point: walking from `from` toward
 // it (tiles are convex, so the walk ends at the nearest), or searching all.
@@ -29,4 +25,3 @@ export function nearestTile(globe: Globe, p: THREE.Vector3, from = -1): number {
     cur = next;
   }
 }
-export const tileAt = (globe: Globe, lat: number, lon: number, from = -1): number => nearestTile(globe, fromLatLon(lat, lon), from);

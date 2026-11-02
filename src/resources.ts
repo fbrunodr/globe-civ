@@ -103,7 +103,6 @@ export const RESOURCE_IMPROVEMENT: Record<ResourceKey, ImprovementKey> = {
 };
 export const LUXURY_KEYS = RESOURCE_KEYS.filter((k) => RESOURCES[k].kind === 'luxury');
 export type StrategicKey = 'horses' | 'iron' | 'niter' | 'coal' | 'oil';
-export const STRATEGIC_KEYS: readonly StrategicKey[] = ['horses', 'iron', 'niter', 'coal', 'oil'];
 // A luxury's empire bonus, by its civ's era (so it keeps mattering).
 export const LUXURY_ERA_SCALE = [1, 1.5, 2, 3, 4, 5, 6] as const;
 export const empireBonus = (k: ResourceKey, era: number): Output => {

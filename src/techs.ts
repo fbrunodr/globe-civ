@@ -156,7 +156,6 @@ export const TECHS: Record<TechKey, TechDef> = {
   globalization:   t('Globalization', 6, 300, ['telecommunications', 'computers'], { effects: [yieldPct('gold', 10), yieldPct('culture', 10), yieldPct('cohesion', 10)] }),
 };
 export const techDef = (k: TechKey): TechDef => TECHS[k];
-export const isTechKey = (s: string): s is TechKey => (TECH_KEYS as readonly string[]).includes(s);
 
 // The techs to research, in an order that works, to reach `goal` (it last),
 // skipping those already known.

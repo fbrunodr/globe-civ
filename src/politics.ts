@@ -250,7 +250,6 @@ export const POLITICS: Record<PoliticsKey, PoliticsDef> = {
   defenseDoctrine:   c('Defense Doctrine', 5, 290, ['mobilization'], { policies: ['defenseInDepth'] }),
 };
 export const politicsDef = (k: PoliticsKey): PoliticsDef => POLITICS[k];
-export const isPoliticsKey = (s: string): s is PoliticsKey => (POLITICS_KEYS as readonly string[]).includes(s);
 
 export function politicsPath(goal: PoliticsKey, known: ReadonlySet<PoliticsKey>): PoliticsKey[] {
   const out: PoliticsKey[] = [];

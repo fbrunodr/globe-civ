@@ -65,7 +65,6 @@ export function toFan(k: Sides, p: Pt): { j: number; wa: number; wb: number } {
 
 export const sub = (a: Pt, b: Pt): Pt => ({ x: a.x - b.x, y: a.y - b.y });
 export const add = (a: Pt, b: Pt): Pt => ({ x: a.x + b.x, y: a.y + b.y });
-export const mul = (a: Pt, s: number): Pt => ({ x: a.x * s, y: a.y * s });
 export const len = (a: Pt) => Math.hypot(a.x, a.y);
 export const lerp = (a: Pt, b: Pt, t: number): Pt => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
 
