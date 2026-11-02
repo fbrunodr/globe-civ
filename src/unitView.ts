@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { ArchCiv } from './architecture.ts';
 import { unitDef, domainOf, type UnitKey } from './rules.ts';
 import { firesAtClose, returnFire, type AttackStyle, type Projectile } from './unitClasses.ts';
-import { UNIT_LOOK, figuresFor, formationSlots, unitModel, variantOf, rides, headOffset, hairModel, transportModel, wearsHelmet, womenShare, isMachine, colsOf, GEAR, HAIR_BY, HAIR_STYLES, STRIKE, GUARD, DRAW, whirls, bowman } from './unitModels.ts';
+import { UNIT_LOOK, figuresFor, formationSlots, unitModel, variantOf, rides, headOffset, hairModel, transportModel, wearsHelmet, womenShare, isMachine, colsOf, GEAR, HAIR_BY, HAIR_STYLES, STRIKE, GUARD, DRAW, whirls, bowman, cuts } from './unitModels.ts';
 import { mulberry32 } from './rng.ts';
 import { HIP } from './people.ts';
 import { pairUp, type P2 } from './duel.ts';
@@ -54,6 +54,8 @@ const DUSTY = 3;
 // (radians a second): longer and quicker strides as it speeds up.
 const walkOf = (speed: number): number => (speed < 0.35 ? 0 : Math.min(1.4, 0.5 + 0.13 * speed));
 const cadenceOf = (speed: number): number => 8 + 1.2 * Math.min(speed, 7);
+// How far out to its side a figure's right shoulder is (model units: people.ts), where its striking arm turns out.
+const SHOULDER_X = 0.128;
 // The flag's height over the ground (figure heights).
 const FLAG_LIFT = 1.7;
 // A figure stands on dry ground: the water there no deeper than this (world units).
@@ -162,9 +164,9 @@ const figuresOf = (u: ShownUnit): number => {
   return u.embarked ? 1 : look.party === 'formation' ? figuresFor(u.hp, look.count) : look.count;
 };
 
-const FLAT = [0, 0, 0, 0, 0, 0, 0, 0] as const;
-// (The shader's aPose, then the aim and how far aimed (aAnim.w, aSkinTone.w), the guard and draw (aMore.xy): bend, twist, crouch, elbow; aim, aimed; guard, draw.)
-type Bends = readonly [number, number, number, number, number, number, number, number];
+const FLAT = [0, 0, 0, 0, 0, 0, 0, 0, 0] as const;
+// (The shader's aPose, then the aim and how far aimed (aAnim.w, aSkinTone.w), the guard and draw (aMore.xy), the striking arm out (aMore.w): bend, twist, crouch, elbow; aim, aimed; guard, draw; out.)
+type Bends = readonly [number, number, number, number, number, number, number, number, number];
 
 export interface ShownUnit {
   readonly id: number;
@@ -254,7 +256,7 @@ const UNIT_VERTEX_DECL = /* glsl */ `
   attribute vec4 aAnim;     // per figure: its legs' beat (radians), its legs, its striking arm (unitAnim.ts legsOf, armOf); how its weapon points (radians from upright, forward)
   attribute vec4 aSkinTone; // per figure: its skin; how far its weapon is aimed (0: as it is made and carried)
   attribute vec4 aPose;     // per figure: its body above the hips bent forward, turned; its crouch; its striking elbow bent (radians)
-  attribute vec4 aMore;     // per figure: its shield raised, its bowstring drawn, how burnt (0..1); (spare)
+  attribute vec4 aMore;     // per figure: its shield raised, its bowstring drawn, how burnt (0..1); its striking arm carried out to its side (radians; - across it)
   uniform float uTime;
   // (A point or direction turned with the body above the hips.)
   vec3 bodyBend(vec3 p, float c1, float s1, float c2, float s2) {
@@ -298,6 +300,8 @@ const UNIT_LIMB = /* glsl */ `
     limbA = aRig.y * (aRig.x * swing * aLimb.x + (1.0 - aRig.x) * (position.z >= 0.0 ? -abs(swing) : 1.4 * abs(swing)) - aPose.z);
   }
   float limbC = cos(limbA), limbS = sin(limbA);
+  // (The striking arm carried out to its side, or across the body, about its shoulder: a cut on a slant.)
+  float outA = isStrike ? -aMore.w : 0.0, outC = cos(outA), outS = sin(outA);
   float gripA = isGrip > 0.5 ? aSkinTone.w * (aAnim.w - aRest - limbA - jointA) : 0.0, gripC = cos(gripA), gripS = sin(gripA);
   // (Above the hips, not a leg: the body, its arms, head and hair.)
   bool upper = position.y > ${(HIP - 0.02).toFixed(2)} && !isLeg;
@@ -309,6 +313,7 @@ const UNIT_NORMAL = /* glsl */ `
   if (spinX > 0.5) objectNormal.yz = vec2(spinC * objectNormal.y - spinS * objectNormal.z, spinS * objectNormal.y + spinC * objectNormal.z);
   objectNormal.yz = vec2(gripC * objectNormal.y - gripS * objectNormal.z, gripS * objectNormal.y + gripC * objectNormal.z);
   objectNormal.yz = vec2(jointC * objectNormal.y - jointS * objectNormal.z, jointS * objectNormal.y + jointC * objectNormal.z);
+  objectNormal.xy = vec2(outC * objectNormal.x - outS * objectNormal.y, outS * objectNormal.x + outC * objectNormal.y);
   objectNormal.yz = vec2(limbC * objectNormal.y - limbS * objectNormal.z, limbS * objectNormal.y + limbC * objectNormal.z);
   objectNormal = bodyBend(objectNormal, twC, twS, bnC, bnS);`;
 const UNIT_VERTEX = /* glsl */ `
@@ -320,6 +325,8 @@ const UNIT_VERTEX = /* glsl */ `
     if (isGrip > 0.5) transformed.yz = aRig.zw + vec2(gripC * gyz.x - gripS * gyz.y, gripS * gyz.x + gripC * gyz.y);
     vec2 jyz = transformed.yz - aRig.xy;
     if (isLower > 0.5) transformed.yz = aRig.xy + vec2(jointC * jyz.x - jointS * jyz.y, jointS * jyz.x + jointC * jyz.y);
+    vec2 oxy = transformed.xy - vec2(${(-SHOULDER_X).toFixed(3)}, aLimb.y);
+    transformed.xy = vec2(${(-SHOULDER_X).toFixed(3)}, aLimb.y) + vec2(outC * oxy.x - outS * oxy.y, outS * oxy.x + outC * oxy.y);
     vec2 yz = transformed.yz - vec2(aLimb.y, 0.0);
     transformed.yz = vec2(aLimb.y, 0.0) + vec2(limbC * yz.x - limbS * yz.y, limbS * yz.x + limbC * yz.y);
     transformed = bodyBend(transformed - vec3(0.0, ${HIP.toFixed(2)}, 0.0), twC, twS, bnC, bnS) + vec3(0.0, ${HIP.toFixed(2)}, 0.0);
@@ -586,7 +593,7 @@ export class UnitView {
       (mesh.geometry.getAttribute('aAnim') as THREE.InstancedBufferAttribute).setXYZW(i, f.gait, walk, strike, body[4]);
       (mesh.geometry.getAttribute('aSkinTone') as THREE.InstancedBufferAttribute).setXYZW(i, f.skin.r, f.skin.g, f.skin.b, body[5]);
       (mesh.geometry.getAttribute('aPose') as THREE.InstancedBufferAttribute).setXYZW(i, body[0], body[1], body[2], body[3]);
-      (mesh.geometry.getAttribute('aMore') as THREE.InstancedBufferAttribute).setXYZ(i, body[6], body[7], char);
+      (mesh.geometry.getAttribute('aMore') as THREE.InstancedBufferAttribute).setXYZW(i, body[6], body[7], char, body[8]);
     };
     for (const s of drawn) {
       const { strike } = this.pose(s, now), wreck = wreckOf(s.unit);
@@ -605,7 +612,7 @@ export class UnitView {
         if (body && now > f.fall) {
           turned.multiply(deathTurn(tip, now - f.fall, beat, horse));
           const fold = deathBend(now - f.fall, beat);
-          legs = deathLegs(now - f.fall, horse); arm = 3 + fold.arm; bends = horse ? FLAT : [fold.bend, 0, fold.crouch, 0.6, fold.aim, 1, 0.4, 0];
+          legs = deathLegs(now - f.fall, horse); arm = 3 + fold.arm; bends = horse ? FLAT : [fold.bend, 0, fold.crouch, 0.6, fold.aim, 1, 0.4, 0, 0];
           if (!horse) at = stepped.copy(f.pos).addScaledVector(f.up, -dropOf(fold.crouch) * this.size);
         } else if (body) {
           const p = poseOf(this.cue(s, f, now), now, f.phase, beat, walk, horse, whirls(s.unit.type), s.unit.fortified === true && !s.march, bowman(s.unit.type));
@@ -614,7 +621,7 @@ export class UnitView {
           const [ry, rz] = rearShift(p);
           at = stepped.copy(f.pos).addScaledVector(z, (p.lunge + rz) * this.size).addScaledVector(f.up, (p.rise + ry - dropOf(p.crouch)) * this.size);
           // (Walking to its place while it acts: its legs walk.)
-          legs = p.walk === 0 && walk > 0.3 ? walk : legsOf(p); arm = armOf(p); bends = horse ? [0, 0, 0, p.elbow, p.aim, p.aimed, p.guard, p.draw] : [p.bend, p.twist, p.crouch, p.elbow, p.aim, p.aimed, p.guard, p.draw];
+          legs = p.walk === 0 && walk > 0.3 ? walk : legsOf(p); arm = armOf(p); bends = horse ? [0, 0, 0, p.elbow, p.aim, p.aimed, p.guard, p.draw, p.out] : [p.bend, p.twist, p.crouch, p.elbow, p.aim, p.aimed, p.guard, p.draw, p.out];
         } else if (wreck) {
           // (A machine: its recoil, the swell or the ground under it; struck, a burning wreck.)
           const mp = machinePose(wreck === 'sea', now - f.shot, now, f.phase, f.speed, now > f.fall ? now - f.fall : -1);
@@ -649,7 +656,7 @@ export class UnitView {
         if (this.gone(c, now) < 0.5) c.smoke = this.volleys.burn(at, now, c.smoke, c.wreck === 'sea', c.phase);
         continue;
       }
-      const at = stepped.copy(c.pos).addScaledVector(c.up, -0.5 * this.size * sunk(since)), bends: Bends = c.horse ? FLAT : [fold.bend, 0, fold.crouch, 0.6, fold.aim, 1, 0.4, 0];
+      const at = stepped.copy(c.pos).addScaledVector(c.up, -0.5 * this.size * sunk(since)), bends: Bends = c.horse ? FLAT : [fold.bend, 0, fold.crouch, 0.6, fold.aim, 1, 0.4, 0, 0];
       const g = { gait: c.phase, skin: c.skin };
       put(c.key, at, c.color, g, deathLegs(since, c.horse), 3 + fold.arm, bends);
       if (c.hair >= 0) put(`hair|${c.hair}`, head.copy(at).add(lift3.set(0, c.lift[0] * this.size, c.lift[1] * this.size).applyQuaternion(turned)), c.hairColor, g, 3, 0, bends);
@@ -822,7 +829,7 @@ export class UnitView {
     // (Its foe struck down and no other to turn to: it stands ready.)
     const engaged = f.foeFig ? f.foeFig.fall + 0.35 > now : f.goal !== null || f.foe !== null;
     const rear = s.order === 'line' && (orderSlots(s.unit.type, s.figures.length, 'line')[f.slot]?.[1] ?? 0) < 0;
-    return { rear, sec, dur, play: c.play, attack: c.attack, side: c.side, engaged, delay: f.delay, fall: f.fall - c.t0, won: c.won };
+    return { rear, cut: cuts(s.unit.type), sec, dur, play: c.play, attack: c.attack, side: c.side, engaged, delay: f.delay, fall: f.fall - c.t0, won: c.won };
   }
   // How far a corpse has sunk away (0..1): the dead after a while, wrecks
   // when they have burnt out.

@@ -22,7 +22,7 @@ import { CIVS, UNITS, domainOf, type UnitKey } from './rules.ts';
 import { TECHS, TECH_KEYS } from './techs.ts';
 import { POLITICS } from './politics.ts';
 import { FORTIFY_BONUS, combatStrength, fightRounds, matchup, statOf } from './game.ts';
-import { HAIR_STYLES, UNIT_LOOK, colsOf, formationSlots, hairModel, headOffset, isMachine, rides, unitModel, variantOf, whirls, bowman, womenShare } from './unitModels.ts';
+import { HAIR_STYLES, UNIT_LOOK, colsOf, formationSlots, hairModel, headOffset, isMachine, rides, unitModel, variantOf, whirls, bowman, cuts, womenShare } from './unitModels.ts';
 import { FIGHT, PLAYS, UnitView, Volleys, durOf, defendPlay, falls, figureLooks, makeUnitMaterial, playAt, playOf, prepareUnitGeometry, type Play, type ShownUnit } from './unitView.ts';
 import type { P2 } from './duel.ts';
 import { AFTER, armOf, dropOf, legsOf, poseOf, poseTurn, rearShift, type Cue } from './unitAnim.ts';
@@ -302,21 +302,21 @@ function pose(now: number): void {
     m.multiply(turn.makeRotationY((c.facing === 1 ? 0 : Math.PI) + (st?.back ? Math.PI : 0)));
     // (People and horses posed as they act (unitAnim.ts).)
     const moving = marching || st?.moving ? (play && play.charge > 1 ? 1.4 : 1) : 0;
-    let legs = moving, arm = st?.strike ?? 0, bends: readonly [number, number, number, number, number, number, number, number] = [0, 0, 0, 0, 0, 0, 0, 0];
+    let legs = moving, arm = st?.strike ?? 0, bends: readonly [number, number, number, number, number, number, number, number, number] = [0, 0, 0, 0, 0, 0, 0, 0, 0];
     if (falls(c.type)) {
-      const cue: Cue | null = fight && c.play && c.attack ? { sec, dur, play: c.play, attack: c.attack, side: c.side, engaged: c.attack.close === true, delay: 0, fall: Infinity, won: false } : null;
+      const cue: Cue | null = fight && c.play && c.attack ? { sec, dur, play: c.play, attack: c.attack, side: c.side, engaged: c.attack.close === true, delay: 0, fall: Infinity, won: false, cut: cuts(c.type) } : null;
       const pz = poseOf(cue, now, p.phase, s.beat, moving, s.rides, whirls(c.type));
       // (Crouched, lower: the legs fold under it.)
       const [ry, rz] = rearShift(pz);
       m.multiply(turn.makeTranslation(0, pz.rise + ry - (s.rides ? 0 : dropOf(pz.crouch)), pz.lunge + rz)).multiply(turn.makeRotationFromQuaternion(poseTurn(tip, pz)));
-      legs = legsOf(pz); arm = armOf(pz); bends = s.rides ? [0, 0, 0, pz.elbow, pz.aim, pz.aimed, pz.guard, pz.draw] : [pz.bend, pz.twist, pz.crouch, pz.elbow, pz.aim, pz.aimed, pz.guard, pz.draw];
+      legs = legsOf(pz); arm = armOf(pz); bends = s.rides ? [0, 0, 0, pz.elbow, pz.aim, pz.aimed, pz.guard, pz.draw, pz.out] : [pz.bend, pz.twist, pz.crouch, pz.elbow, pz.aim, pz.aimed, pz.guard, pz.draw, pz.out];
     }
     if (p.lift[0] || p.lift[1]) m.multiply(turn.makeTranslation(0, p.lift[0], p.lift[1]));
     p.mesh.setMatrixAt(p.i, m);
     (p.mesh.geometry.getAttribute('aAnim') as THREE.InstancedBufferAttribute).setXYZW(p.i, (p.phase + now * 9) % (Math.PI * 2), legs, arm, bends[4]); // (the legs' beat: unitView.ts)
     (p.mesh.geometry.getAttribute('aSkinTone') as THREE.InstancedBufferAttribute).setW(p.i, bends[5]);
     (p.mesh.geometry.getAttribute('aPose') as THREE.InstancedBufferAttribute).setXYZW(p.i, bends[0], bends[1], bends[2], bends[3]);
-    (p.mesh.geometry.getAttribute('aMore') as THREE.InstancedBufferAttribute).setXY(p.i, bends[6], bends[7]);
+    (p.mesh.geometry.getAttribute('aMore') as THREE.InstancedBufferAttribute).setXYZW(p.i, bends[6], bends[7], 0, bends[8]);
   }
   for (const mesh of new Set(placed.map((p) => p.mesh))) { mesh.instanceMatrix.needsUpdate = true; mesh.geometry.getAttribute('aAnim').needsUpdate = true; mesh.geometry.getAttribute('aPose').needsUpdate = true; mesh.geometry.getAttribute('aMore').needsUpdate = true; mesh.geometry.getAttribute('aSkinTone').needsUpdate = true; }
   // The shots, each on time (from where the unit stands now).
