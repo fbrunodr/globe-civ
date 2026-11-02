@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { Play } from './unitView.ts';
-import { HOLD } from './people.ts';
-import { REACH } from './unitModels.ts';
+import { HOLD, RAISE } from './people.ts';
+import { BOW_REACH, REACH } from './unitModels.ts';
 
 // How a figure moves, as a small machine of acts, blended one into the
 // next (unitView.ts and the Units page draw it). Out of a fight a figure
@@ -244,7 +244,8 @@ function blows(sec: number, beat: number, now: number, phase: number, arms: Arms
 // from down low.
 // (Between shots: the weapon lowered, a bow's arrow down at the ground before it, a sling hanging.)
 const AT_EASE = (whirl: boolean) => ({ ...P(0, 0, 0, 0.06, 0, whirl ? 0.2 : 0.4, 0, 0.3, 0.15, 0.5, whirl ? Math.PI : 0.9) });
-function shooting(sec: number, shots: readonly number[], whirl = false, kneel = false, gun = kneel): Pose {
+function shooting(sec: number, shots: readonly number[], whirl = false, kneel = false, gun = kneel, bow = false): Pose {
+  if (bow && !whirl && !gun) return archery(sec, shots);
   const low = (p: Pose): Pose => (kneel ? { ...p, crouch: p.crouch + 0.6, bend: p.bend + 0.08, stride: p.stride + 0.2 } : p);
   let pose = low(AT_EASE(whirl));
   for (const ts of shots) {
@@ -254,6 +255,38 @@ function shooting(sec: number, shots: readonly number[], whirl = false, kneel = 
     const loosed = whirl ? P(0, 0, 0, 0.3, 0.3, 0.9, 0, 0.45, 0.3, 0.1, 1.6) : P(0, 0, 0, -0.14, 0.14, 0.85, 0, 0.35, 0.2, 0.3, gun ? 1.4 : 1.3);
     if (d > -0.45 && d <= 0) pose = mix(pose, low(drawn), smooth((d + 0.45) / 0.3));
     else if (d > 0 && d < 0.55) pose = mix(low(loosed), low(AT_EASE(whirl)), smooth(d / 0.55));
+  }
+  return pose;
+}
+// An archer's shot, as archers are coached to make it: between shots the
+// bow held low, its arrow nocked and pointing at the ground before it;
+// then set up (the bow raised to the mark, the string hooked, the body
+// turned side-on), drawn back to the cheek and held a moment at anchor;
+// loosed, the string hand flying back (the shoulders opening with it)
+// while the bow arm stays on the mark (followed through); then the bow let down again.
+// (The bow arm, the rig's as made (people.ts RAISE), swung BOW_REACH from
+// the shoulder per unit of `arm`, posed by where its parts point as a
+// cutting arm is (cutArm); the arrow points `arrow` from straight down.)
+const BOW_UPPER0 = Math.atan2(RAISE.upper[2], -RAISE.upper[1]), BOW_FORE0 = Math.atan2(RAISE.fore[2], -RAISE.fore[1]);
+const bowPose = (c: { upper: number; fore: number; arrow: number; draw: number; bend: number; twist: number; crouch: number }): Pose =>
+  ({ ...P(0, 0, 0, c.bend, c.twist, (c.upper - BOW_UPPER0) / BOW_REACH, 0, 0.3, c.crouch, c.fore - BOW_FORE0 - (c.upper - BOW_UPPER0), Math.PI - c.arrow), draw: c.draw });
+const BOW_EASE = bowPose({ upper: 0.75, fore: 1.3, arrow: 0.85, draw: 0, bend: 0.06, twist: 0, crouch: 0.15 });
+const BOW_SET = bowPose({ upper: 1.6, fore: 1.72, arrow: 1.7, draw: 0.15, bend: -0.03, twist: -0.08, crouch: 0.18 });
+const BOW_DRAWN = bowPose({ upper: 1.65, fore: 1.7, arrow: 1.72, draw: 1, bend: -0.04, twist: -0.12, crouch: 0.2 });
+const BOW_LOOSED = bowPose({ upper: 1.62, fore: 1.66, arrow: 1.64, draw: 1.07, bend: -0.03, twist: -0.2, crouch: 0.2 });
+// (Seconds from the shot: set up from, drawing from, at anchor from; loosed until, let down until.)
+const SET_UP = -0.65, DRAWING = -0.4, ANCHOR = -0.12, FOLLOW = 0.35, LET_DOWN = 0.75;
+function archery(sec: number, shots: readonly number[]): Pose {
+  let pose = BOW_EASE;
+  // (Shots close together: the next set up from wherever the last left it.)
+  for (const t of shots) {
+    const d = sec - t;
+    if (d <= SET_UP || d >= LET_DOWN) continue;
+    pose = d < DRAWING ? mix(pose, BOW_SET, smooth((d - SET_UP) / (DRAWING - SET_UP)))
+      : d < ANCHOR ? mix(BOW_SET, BOW_DRAWN, smooth((d - DRAWING) / (ANCHOR - DRAWING)))
+      : d < 0 ? BOW_DRAWN
+      : d < 0.08 ? mix(BOW_DRAWN, BOW_LOOSED, d / 0.08)
+      : d < FOLLOW ? BOW_LOOSED : mix(BOW_LOOSED, BOW_EASE, smooth((d - FOLLOW) / (LET_DOWN - FOLLOW)));
   }
   return pose;
 }
@@ -277,6 +310,7 @@ export interface Cue {
   readonly rear?: boolean; // in the rear rank of a firing line: it fires standing, over the kneeling front rank
   readonly cut?: boolean;  // it fights with a blade or a club: it cuts
   readonly thrust?: boolean; // it fights with a spear, a pike or a lance: it thrusts
+  readonly bow?: boolean;  // it shoots a bow on foot, drawn to the cheek
 }
 
 // A figure's pose now: in a fight (its cue), on the march (`walk`), or at
@@ -307,7 +341,7 @@ function exchange(c: Cue): readonly [number, number] {
   return c.sec >= from && c.sec < to ? [c.sec - from, to - c.sec] : [-1, 0];
 }
 function inFight(c: Cue, now: number, phase: number, beat: number, whirl: boolean): Pose {
-  const { sec, dur, play, attack } = c, s = (share: number) => share * dur, arms: Arms = c.cut ? 'cut' : c.thrust ? 'thrust' : 'other';
+  const { sec, dur, play, attack } = c, s = (share: number) => share * dur, bow = c.bow === true, arms: Arms = c.cut ? 'cut' : c.thrust ? 'thrust' : 'other';
   // Over: the winners cheer, the rest stand easy again.
   if (sec >= dur) {
     const after = sec - dur, done = mix(ready(now, phase, arms), idle(now, phase), after / 0.6);
@@ -317,7 +351,7 @@ function inFight(c: Cue, now: number, phase: number, beat: number, whirl: boolea
   if (c.side === 'attacker' && attack.close) {
     const go0 = s(play.go[0] + c.delay), met = s(play.go[1] + c.delay), back = s(play.back + c.delay * 0.4), run = play.charge > 1 ? 1.4 : 1;
     // (A volley first, if it fires before it goes in: guns levelled.)
-    const opening = play.shots.length ? mix(into, shooting(sec, play.shots.map((x) => s(x.t)), whirl, false, play.shots[0]?.kind === 'bullet'), smooth(sec / 0.12)) : into;
+    const opening = play.shots.length ? mix(into, shooting(sec, play.shots.map((x) => s(x.t)), whirl, false, play.shots[0]?.kind === 'bullet', bow), smooth(sec / 0.12)) : into;
     if (sec < go0) return opening;
     if (sec < met) return mix(opening, charging(now, phase, run, arms, ((sec - go0) / (met - go0)) * 1.8 - 0.6), (sec - go0) / BLEND);
     if (sec < back) {
@@ -329,9 +363,9 @@ function inFight(c: Cue, now: number, phase: number, beat: number, whirl: boolea
   if (c.side === 'defender' && attack.close) {
     const met = s(play.strike[0]), part = s(play.strike[1]);
     // (Gunmen strike no blows: they fire, again and again, standing (kneeling only in a line's front rank, far off).)
-    if (play.strike[1] === 0) return mix(into, shooting(sec, play.shots.map((x) => s(x.t)), whirl, false, true), smooth(sec / BLEND));
+    if (play.strike[1] === 0) return mix(into, shooting(sec, play.shots.map((x) => s(x.t)), whirl, false, true, bow), smooth(sec / BLEND));
     const shot = play.shots[0];
-    let pose = shot ? mix(into, shooting(sec, [s(shot.t)], whirl, shot.kind === 'bullet'), smooth(sec / BLEND)) : into;
+    let pose = shot ? mix(into, shooting(sec, [s(shot.t)], whirl, shot.kind === 'bullet', shot.kind === 'bullet', bow), smooth(sec / BLEND)) : into;
     if (c.engaged && sec >= met && sec < part) pose = mix(pose, blows(sec - met, beat, now, phase, arms), (sec - met) / BLEND);
     else if (c.engaged && sec >= part) pose = mix(blows(part - met, beat, now, phase, arms), ready(now, phase, arms), (sec - part) / BLEND);
     return pose;
@@ -340,7 +374,7 @@ function inFight(c: Cue, now: number, phase: number, beat: number, whirl: boolea
     // Shot at: cowering from the first shot until a little after the last.
     const t0 = s(attack.shots[0]?.t ?? 0.3), t1 = s(attack.shots[attack.shots.length - 1]?.t ?? 0.6) + 0.5;
     const shots = play.shots.map((x) => s(x.t));
-    const base = shots.length ? shooting(sec, shots, whirl, play.shots[0]?.kind === 'bullet' && !c.rear, play.shots[0]?.kind === 'bullet') : into;
+    const base = shots.length ? shooting(sec, shots, whirl, play.shots[0]?.kind === 'bullet' && !c.rear, play.shots[0]?.kind === 'bullet', bow) : into;
     // (Rising from its cover to take its own shots: none while it draws, looses and lowers.)
     const firing = Math.max(0, ...shots.map((t) => (sec > t - 0.6 && sec < t + 0.7 ? Math.min(1, (sec - t + 0.6) / 0.2, (t + 0.7 - sec) / 0.2) : 0)));
     return sec < t0 ? mix(into, base, sec / BLEND) : mix(base, cower(now, phase), smooth((sec - t0 + 0.15) / BLEND) * (sec < t1 ? 1 : 1 - smooth((sec - t1) / 0.3)) * (1 - firing));
@@ -348,7 +382,7 @@ function inFight(c: Cue, now: number, phase: number, beat: number, whirl: boolea
   // An attacker shooting (or rolling in: machines aren't posed): kneeling
   // in its line's front rank if it stands; walking forward (an advance), on its feet.
   const gun = play.shots[0]?.kind === 'bullet';
-  return mix(into, shooting(sec, play.shots.map((x) => s(x.t)), whirl, gun && !c.rear && play.charge === 0, gun), sec / BLEND);
+  return mix(into, shooting(sec, play.shots.map((x) => s(x.t)), whirl, gun && !c.rear && play.charge === 0, gun, bow), sec / BLEND);
 }
 
 // ---- struck down ----

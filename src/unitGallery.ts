@@ -24,7 +24,7 @@ import { CIVS, UNITS, domainOf, type UnitKey } from './rules.ts';
 import { TECHS, TECH_KEYS } from './techs.ts';
 import { POLITICS } from './politics.ts';
 import { FORTIFY_BONUS, combatStrength, fightRounds, matchup, statOf } from './game.ts';
-import { HAIR_STYLES, UNIT_LOOK, colsOf, formationSlots, hairModel, headOffset, isMachine, rides, unitModel, variantOf, whirls, bowman, cuts, thrusts, womenShare } from './unitModels.ts';
+import { HAIR_STYLES, UNIT_LOOK, colsOf, formationSlots, hairModel, headOffset, isMachine, rides, unitModel, variantOf, whirls, bowman, cuts, thrusts, draws, womenShare } from './unitModels.ts';
 import { FIGHT, PLAYS, UnitView, Volleys, durOf, defendPlay, falls, figureLooks, makeUnitMaterial, playAt, playOf, prepareUnitGeometry, type Play, type ShownUnit } from './unitView.ts';
 import type { P2 } from './duel.ts';
 import { AFTER, armOf, dropOf, legsOf, poseOf, poseTurn, rearShift, type Cue } from './unitAnim.ts';
@@ -323,8 +323,8 @@ function pose(now: number): void {
     const moving = marching || st?.moving ? (play && play.charge > 1 ? 1.4 : 1) : 0;
     let legs = moving, arm = st?.strike ?? 0, bends: readonly [number, number, number, number, number, number, number, number, number] = [0, 0, 0, 0, 0, 0, 0, 0, 0];
     if (falls(c.type)) {
-      const cue: Cue | null = fight && c.play && c.attack ? { sec, dur, play: c.play, attack: c.attack, side: c.side, engaged: c.attack.close === true, delay: 0, fall: Infinity, won: false, cut: cuts(c.type), thrust: thrusts(c.type) } : null;
-      const pz = poseOf(cue, now, p.phase, s.beat, moving, s.rides, whirls(c.type));
+      const cue: Cue | null = fight && c.play && c.attack ? { sec, dur, play: c.play, attack: c.attack, side: c.side, engaged: c.attack.close === true, delay: 0, fall: Infinity, won: false, cut: cuts(c.type), thrust: thrusts(c.type), bow: draws(c.type) } : null;
+      const pz = poseOf(cue, now, p.phase, s.beat, moving, s.rides, whirls(c.type), false, bowman(c.type));
       // (Crouched, lower: the legs fold under it.)
       const [ry, rz] = rearShift(pz);
       m.multiply(turn.makeTranslation(0, pz.rise + ry - (s.rides ? 0 : dropOf(pz.crouch)), pz.lunge + rz)).multiply(turn.makeRotationFromQuaternion(poseTurn(tip, pz)));

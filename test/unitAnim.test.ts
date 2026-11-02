@@ -70,3 +70,23 @@ describe('A2: a thrust with a spear', () => {
     }
   });
 });
+
+describe('A3: an archer shooting a volley', () => {
+  // (Two arrows, a third of the way through the fight and two thirds: unitView.ts PLAYS.volley.)
+  const VOLLEY: Play = { charge: 0, go: [0, 0], back: 1, strike: [0, 0], aim: true, shots: [{ t: 1 / 3, kind: 'arrow' }, { t: 2 / 3, kind: 'arrow' }] };
+  const at = (sec: number) => poseOf({ sec, dur: 4.2, play: VOLLEY, attack: VOLLEY, side: 'attacker', engaged: false, delay: 0, fall: Infinity, won: false, bow: true }, 100 + sec, 1.3, 0, 0, false);
+  it('is drawn to the cheek and held on the mark as each arrow is loosed', () => {
+    for (const t of [1.4, 2.8]) {
+      const p = at(t - 0.01);
+      expect(p.draw).toBeCloseTo(1, 2);
+      // (The arrow level or a little up: from upright, forward.)
+      expect(p.aim).toBeGreaterThan(1.2);
+      expect(p.aim).toBeLessThan(1.6);
+    }
+  });
+  it('lets the bow down between shots, the arrow at the ground', () => {
+    const p = at(2.1);
+    expect(p.draw).toBeLessThan(0.1);
+    expect(p.aim).toBeGreaterThan(2);
+  });
+});

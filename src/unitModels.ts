@@ -151,6 +151,8 @@ const HIT = (pivot: number, amp: number) => [STRIKE, pivot, amp] as const;
 // In a fight: the shield arm raises its shield to ward off a blow (or arrows) about the shoulder.
 export const GUARD = 3;
 const GUARD_ARM = [GUARD, SHOULDER, 1.25] as const;
+// How far an archer's bow arm swings from the shoulder, per unit of its pose's arm (unitAnim.ts bowPose).
+export const BOW_REACH = 0.4;
 // An archer's string hand drawing back to the cheek (raised from the shoulder, bent at the elbow).
 export const DRAW = 4;
 const DRAW_ARM = [DRAW, SHOULDER, 1.45] as const;
@@ -164,6 +166,8 @@ export const cuts = (type: UnitKey): boolean => CUTTERS.has(type);
 const THRUSTERS: ReadonlySet<UnitKey> = new Set<UnitKey>(['spearman', 'pikeman', 'horseman', 'knight', 'lancer']);
 export const thrusts = (type: UnitKey): boolean => THRUSTERS.has(type);
 export const bowman = (type: UnitKey): boolean => type === 'archer' || type === 'compositeBowman' || type === 'horseArcher';
+// Whether a type's figures draw a bow on foot, the string to the cheek (unitAnim.ts: a horse archer's bow is drawn as it rides).
+export const draws = (type: UnitKey): boolean => type === 'archer' || type === 'compositeBowman';
 
 type Hold = 'spear' | 'pike' | 'club' | 'sword' | 'longsword' | 'bow' | 'recurve' | 'sling' | 'crossbow' | 'musket' | 'rifle' | 'mg' | 'staff' | 'banner' | 'none';
 
@@ -227,7 +231,7 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
   const armL: ArmPose = shield ? SHIELD : bow ? RAISE : hold === 'longsword' ? GRIP2 : longGun ? GUN_L : twoHands ? HOLD : HANG;
   const strike = hold === 'sling' ? HIT(SHOULDER, 1.4) : hold === 'spear' || hold === 'pike' || hold === 'club' || hold === 'sword' || hold === 'longsword' ? HIT(SHOULDER, REACH)
     : hold === 'mg' ? HIT(SHOULDER, 0.4) : twoHands ? HIT(SHOULDER, 0.9) : null;
-  const bowUp = HIT(SHOULDER, 0.4); // (an archer raises his bow to loose: from where he holds it forward)
+  const bowUp = HIT(SHOULDER, BOW_REACH); // (an archer raises his bow to loose: from where he holds it forward)
   const freeL = !shield && !bow && !twoHands;
   const swing = {
     legs: (side: number) => (opts.still ? [0, HIP, 0] as const : LEG(side)),
