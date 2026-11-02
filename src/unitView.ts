@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { ArchCiv } from './architecture.ts';
 import { unitDef, domainOf, type UnitKey } from './rules.ts';
 import { firesAtClose, returnFire, type AttackStyle, type Projectile } from './unitClasses.ts';
-import { UNIT_LOOK, figuresFor, formationSlots, unitModel, variantOf, rides, headOffset, hairModel, transportModel, wearsHelmet, womenShare, isMachine, colsOf, GEAR, HAIR_BY, HAIR_STYLES, STRIKE, GUARD, DRAW, whirls, bowman, cuts, importedBodyOf } from './unitModels.ts';
+import { UNIT_LOOK, figuresFor, formationSlots, unitModel, variantOf, rides, headOffset, hairModel, transportModel, wearsHelmet, womenShare, isMachine, colsOf, GEAR, HAIR_BY, HAIR_STYLES, STRIKE, GUARD, DRAW, whirls, bowman, cuts } from './unitModels.ts';
 import { mulberry32 } from './rng.ts';
 import { HIP } from './people.ts';
 import { pairUp, type P2 } from './duel.ts';
@@ -345,8 +345,8 @@ const UNIT_VERTEX = /* glsl */ `
 // The figures' material: the props' look (smooth-shaded, painted), the
 // owner's colour on the team parts (the instance colour), each figure's
 // skin, and the limbs swinging on the march (`time`: seconds).
-// (`texture`: a textured body's (public/ path): sampled where a corner has
-// texture coordinates (an imported body), not where it has none (-1: what it holds).)
+// (`texture`: a painted texture (public/ path): sampled where a corner has
+// texture coordinates, not where it has none (-1).)
 const textures = new Map<string, THREE.Texture>();
 const textureOf = (path: string): THREE.Texture => {
   let map = textures.get(path);
@@ -361,13 +361,10 @@ const textureOf = (path: string): THREE.Texture => {
 export function makeUnitMaterial(time: { value: number }, texture?: string): THREE.MeshStandardMaterial {
   const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, side: THREE.DoubleSide });
   if (texture) mat.map = textureOf(texture);
-  // (And the heads set on them (importedBody.ts), their texture beside it: u from 1 to 2.)
-  const headMap = texture ? textureOf('bodies/heads.png') : null;
   mat.onBeforeCompile = (shader) => {
     shader.uniforms['uTime'] = time;
-    if (headMap) shader.uniforms['headMap'] = { value: headMap };
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', `#include <common>\n${UNIT_VERTEX_DECL}\nvarying vec3 vTeam;`)
+      .replace('#include <common>', `#include <common>\n${UNIT_VERTEX_DECL}`)
       .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>\n${UNIT_NORMAL}`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>\n${UNIT_VERTEX}`)
       .replace('#include <color_vertex>', `#include <color_vertex>
@@ -375,15 +372,10 @@ export function makeUnitMaterial(time: { value: number }, texture?: string): THR
           vec2 isTeamV = vec2(mod(aLimb.w, 2.0), mod(floor(aLimb.w / 2.0), 2.0)); // (team, skin: the flags)
           vColor.rgb = mix(mix(color.rgb, aSkinTone.rgb, isTeamV.y), color.rgb * instanceColor.rgb, isTeamV.x);
           vColor.rgb *= 1.0 - 0.78 * aMore.z; // (burnt: a wreck)
-          vTeam = instanceColor.rgb;
-        #else
-          vTeam = vec3(1.0);
         #endif`);
-    // (A keyed texture (scripts/rigBody.mjs) marks the owner's colour in its
-    // alpha: 0 there, its grey shading painted in that colour.)
-    if (texture) shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vTeam;\nuniform sampler2D headMap;').replace('#include <map_fragment>', `
+    if (texture) shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', `
       #ifdef USE_MAP
-        if (vMapUv.x >= 0.0) { vec4 tex = vMapUv.x >= 1.0 ? texture2D(headMap, vec2(vMapUv.x - 1.0, vMapUv.y)) : texture2D(map, vMapUv); diffuseColor.rgb *= mix(tex.rgb * vTeam, tex.rgb, tex.a); }
+        if (vMapUv.x >= 0.0) diffuseColor *= texture2D(map, vMapUv);
       #endif`);
   };
   mat.customProgramCacheKey = () => (texture ? 'unit-figure-textured' : 'unit-figure');
@@ -1205,7 +1197,7 @@ export function figureLooks(type: UnitKey, civ: ArchCiv, women: number, rand: ()
   // (Machines: no one shows.)
   const none = isMachine(type) || (style === 'bald' && helmet);
   // (An imported body has its own hair.)
-  return { female: female && !isMachine(type), skin: new THREE.Color(pick(g.skin)), hair: none || (importedBodyOf(type) !== null && !rides(type, 0)) ? -1 : HAIR_STYLES.indexOf(style), hairColor: new THREE.Color(pick(g.hair)) };
+  return { female: female && !isMachine(type), skin: new THREE.Color(pick(g.skin)), hair: none ? -1 : HAIR_STYLES.indexOf(style), hairColor: new THREE.Color(pick(g.hair)) };
 }
 
 // Arrows in flight: each volley a dozen, from the archers to around the
