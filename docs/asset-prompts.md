@@ -1,140 +1,395 @@
 # Asset prompts (Meshy: image first, then image to 3D)
 
-These are the bodies, heads, headgear, props and horse for every land unit.
-The prompts follow the one that worked for the pilot body:
+Every prompt below is complete; copy the block as it is. These are notes for generating them; the prompts already include them.
+- Download **bodies (B) rigged (Mixamo) + textured** (FBX + PNG); everything else textured only.
+- Put each one in its own folder named by its id, for example `assets/ai/B2/`.
+- Target triangles: bodies ~800, heads ~300, headgear 150–200, weapons ~150, shields ~120, horse ~1,200.
+- **Solid magenta** marks the owner's colour. Bodies come bald-ish and clean-shaven; the head is swapped for an H/F head and the body's skin recoloured to match. Helmets are separate.
 
-> low poly skyrim-style ancient Briton warrior, realistic proportions, bare head, fair hair,
-> plain light grey knee-length tunic, brown trousers, leather shoes, no weapon, A-pose
+**Pilot first:** B2, H3, H7, G1, P3, S1. Then ancient/medieval (B1, B3–B5, H*, G2–G8, P1–P11, S*, M*), then gunpowder/modern (B6–B9, G9–G12, P12–P14), then civilians (B10–B13, F*, G13–G15, P15).
 
-## Rules for every prompt
-
-- **Team colour key: solid magenta cloth.** The importer turns it into the owner's colour.
-  - Light grey worked for the pilot, but it can't tell cloth from steel. Mail, plate and breastplates are grey too, and would turn team-coloured.
-  - Nothing historical is magenta, so it is a clean key. The importer will read magenta, and the old grey key keeps working for the pilot.
-- **Bodies have no head of their own that matters.**
-  - Use: `short cropped hair, clean-shaven, medium skin tone, no helmet`.
-  - The head is cut off at the neck and replaced by a head from the ethnicity list (H/F). Bare skin on the body (hands, bare chest, legs) is recoloured to match that head.
-  - Long hair or a coif would be left behind on the shoulders, so avoid them.
-- **Helmets and hats are separate props** (G list), placed on whichever head is in use.
-- **Image stage:** finish with `full body, front view, plain white background, even lighting`. Make sure the feet are visible and the hands are open and empty.
-- **Downloads:**
-  - Bodies: **rigged (Mixamo skeleton) FBX + textured FBX + texture PNG**.
-  - Everything else: textured only (FBX or GLB plus PNG).
-  - Put each one in its own folder named by its id: `assets/ai/B2/`, `assets/ai/H3/`, `assets/ai/P4/`, and so on.
-- **Target triangle counts:** bodies about 800, heads about 300, headgear 150–200, weapons about 150, shields about 120, horse about 1,200.
 
 ## Bodies (rigged + textured)
 
-Every body prompt starts with
-`low poly skyrim-style <subject>, realistic proportions, short cropped hair, clean-shaven, medium skin tone, no helmet,`
-and ends with
-`no weapon, empty open hands, A-pose, full body, front view, plain white background`.
-The middle part is:
+**B1** · warrior, slinger
+```
+low poly skyrim-style tribal warrior, realistic proportions, short cropped hair, clean-shaven, medium skin tone, no helmet, bare chest, fur pelt over one shoulder, leather wrist wraps, knee-length loincloth and wide waist sash in solid magenta cloth, bare legs, leather foot wraps, no weapon, empty open hands, A-pose, full body, front view, plain white background
+```
 
-| id | used by | middle of the prompt |
-|---|---|---|
-| B1 | warrior, slinger | *tribal warrior:* bare chest, fur pelt over one shoulder, leather wrist wraps, knee-length loincloth and wide waist sash in solid magenta cloth, bare legs, leather foot wraps |
-| B2 | spearman, archer, horseman, chariot archer | *ancient soldier:* knee-length linen tunic in solid magenta, brown leather cuirass with shoulder flaps, leather belt, bare legs, leather sandals with ankle straps |
-| B3 | swordsman, composite bowman | *classical legionary:* segmented steel plate armour on chest and shoulders, short-sleeved knee-length tunic in solid magenta below the armour, leather strip skirt, bare legs, hobnailed sandals |
-| B4 | man-at-arms, longswordsman, knight | *medieval knight:* long-sleeved chainmail hauberk to the knees, sleeveless belted surcoat in solid magenta to the knees, chainmail leggings, leather boots, no coif |
-| B5 | pikeman, crossbowman | *medieval levy:* thick quilted padded gambeson to mid-thigh in solid magenta, leather belt, brown wool hose, leather ankle boots |
-| B6 | musketman, lancer | *renaissance soldier:* puffed slashed doublet sleeves and short puffed breeches in solid magenta, steel breastplate over the chest, small white collar, dark stockings, leather shoes |
-| B7 | rifleman, cavalry | *napoleonic infantryman:* short-tailed military coatee in solid magenta with white crossbelts and brass buttons, high collar, white trousers, black gaiters, black shoes |
-| B8 | great war infantry, machine gun | *world war one infantryman:* long khaki wool greatcoat, solid magenta collar tabs and a wide solid magenta armband on the left upper arm, ammunition pouch belt, puttees wound on the shins, leather boots |
-| B9 | infantry, marine, paratrooper, special forces | *modern soldier:* camouflage combat fatigues, tactical vest with pouches, solid magenta shoulder patches and a solid magenta armband, knee pads, combat boots |
-| B10 | settler | *medieval peasant man:* belted brown wool tunic to the knees, shoulder cloak in solid magenta with the hood down, brown trousers, rope belt with a pouch, leather shoes |
-| B11 | settler (women) | *medieval peasant woman* (use `hair tied in a bun` instead of short hair and clean-shaven): ankle-length dress in solid magenta, plain brown apron, undyed linen shoulder shawl, leather shoes |
-| B12 | scout, explorer | *explorer:* travel cloak in solid magenta from the shoulders to the calves, leather jerkin over a linen shirt, satchel on a strap across the chest, trousers tucked into tall boots |
-| B13 | commander | *noble officer:* long dark navy coat with gold trim and buttons, shoulder cape in solid magenta, white gloves, tall black riding boots |
+**B2** · spearman, archer, horseman, chariot archer
+```
+low poly skyrim-style ancient soldier, realistic proportions, short cropped hair, clean-shaven, medium skin tone, no helmet, knee-length linen tunic in solid magenta, brown leather cuirass with shoulder flaps, leather belt, bare legs, leather sandals with ankle straps, no weapon, empty open hands, A-pose, full body, front view, plain white background
+```
 
-## Heads (textured only)
+**B3** · swordsman, composite bowman
+```
+low poly skyrim-style classical legionary, realistic proportions, short cropped hair, clean-shaven, medium skin tone, no helmet, segmented steel plate armour on chest and shoulders, short-sleeved knee-length tunic in solid magenta below the armour, leather strip skirt, bare legs, hobnailed sandals, no weapon, empty open hands, A-pose, full body, front view, plain white background
+```
 
-Template:
-`low poly skyrim-style head and neck bust of a <who>, realistic proportions, <skin>, <hair>, <facial hair>, neutral expression, looking straight ahead, neck cut at the collarbone, no shoulders, no helmet, no hat, front view, plain white background`
+**B4** · man-at-arms, longswordsman, knight
+```
+low poly skyrim-style medieval knight, realistic proportions, short cropped hair, clean-shaven, medium skin tone, no helmet, long-sleeved chainmail hauberk to the knees, sleeveless belted surcoat in solid magenta to the knees, chainmail leggings, leather boots, no coif, no weapon, empty open hands, A-pose, full body, front view, plain white background
+```
 
-Hair must not reach the shoulders; tie it back or keep it short.
+**B5** · pikeman, crossbowman
+```
+low poly skyrim-style medieval levy, realistic proportions, short cropped hair, clean-shaven, medium skin tone, no helmet, thick quilted padded gambeson to mid-thigh in solid magenta, leather belt, brown wool hose, leather ankle boots, no weapon, empty open hands, A-pose, full body, front view, plain white background
+```
 
-| id | civs | who · skin · hair · facial hair |
-|---|---|---|
-| H1 | English, French, Germans, Russians | northern European man · fair skin · short light brown hair · short beard |
-| H2 | Vikings | Scandinavian man · very fair skin · blond hair tied back · full braided blond beard |
-| H3 | Romans, Greeks, Spanish | Mediterranean man · olive skin · short dark brown curly hair · clean-shaven |
-| H4 | Babylonians, Persians, Hebrews | West Asian man · light brown skin · black hair · full curled black beard |
-| H5 | Egyptians | ancient Egyptian man · brown skin · short black hair · clean-shaven |
-| H6 | Indians | South Asian man · brown skin · black hair · moustache |
-| H7 | Ethiopians | Ethiopian man · dark brown skin · short black curly hair · short beard |
-| H8 | Chinese, Japanese | East Asian man · light tan skin · black hair in a topknot · thin moustache |
-| H9 | Mongols | Mongolian steppe man · weathered tan skin · black hair in braids behind the ears · thin long moustache |
-| H10 | Aztecs | Mesoamerican man · copper-brown skin · straight black hair cut at the neck with a fringe · clean-shaven |
-| F1–F10 | same civs as H1–H10 | the same people as women · same skin · hair tied back in a bun · no facial hair |
+**B6** · musketman, lancer
+```
+low poly skyrim-style renaissance soldier, realistic proportions, short cropped hair, clean-shaven, medium skin tone, no helmet, puffed slashed doublet sleeves and short puffed breeches in solid magenta, steel breastplate over the chest, small white collar, dark stockings, leather shoes, no weapon, empty open hands, A-pose, full body, front view, plain white background
+```
 
-Hair colour and skin shade still vary a little per figure (the shader already does this), so ten heads stretch across 18 civs.
+**B7** · rifleman, cavalry
+```
+low poly skyrim-style napoleonic infantryman, realistic proportions, short cropped hair, clean-shaven, medium skin tone, no helmet, short-tailed military coatee in solid magenta with white crossbelts and brass buttons, high collar, white trousers, black gaiters, black shoes, no weapon, empty open hands, A-pose, full body, front view, plain white background
+```
 
-## Headgear (textured only, placed on the head)
+**B8** · great war infantry, machine gun
+```
+low poly skyrim-style world war one infantryman, realistic proportions, short cropped hair, clean-shaven, medium skin tone, no helmet, long khaki wool greatcoat, solid magenta collar tabs and a wide solid magenta armband on the left upper arm, ammunition pouch belt, puttees wound on the shins, leather boots, no weapon, empty open hands, A-pose, full body, front view, plain white background
+```
 
-Template:
-`low poly skyrim-style <item>, single object, no head inside, front three-quarter view, plain white background`
+**B9** · infantry, marine, paratrooper, special forces
+```
+low poly skyrim-style modern soldier, realistic proportions, short cropped hair, clean-shaven, medium skin tone, no helmet, camouflage combat fatigues, tactical vest with pouches, solid magenta shoulder patches and a solid magenta armband, knee pads, combat boots, no weapon, empty open hands, A-pose, full body, front view, plain white background
+```
 
-| id | worn by | item |
-|---|---|---|
-| G1 | Romans, Greeks (ancient) | bronze crested helmet with cheek guards and a horsehair crest in solid magenta |
-| G2 | B3 legionary | Roman imperial helmet with neck guard, cheek guards and a transverse crest in solid magenta |
-| G3 | Egyptians, Hebrews, Germans | simple rounded bronze skull cap helmet |
-| G4 | English, Russians, Vikings, Babylonians, Mongols | conical steel helmet with nasal guard |
-| G5 | Persians, Indians | wrapped cloth turban in solid magenta |
-| G6 | Chinese, Japanese | wide conical lacquered war hat with chin cord |
-| G7 | Aztecs | feathered warrior headdress, feathers in solid magenta |
-| G8 | French, Spanish, B5 levy | steel kettle hat with a wide brim |
-| G9 | B6 | steel morion helmet with a curved brim and a comb |
-| G10 | B7 | tall black shako with a brass plate and a solid magenta plume |
-| G11 | B8 | world war one steel helmet with a wide brim |
-| G12 | B9 | modern combat helmet with a cloth cover |
-| G13 | B12 | wide-brimmed leather traveller's hat |
-| G14 | B13 | black bicorne hat with a solid magenta cockade |
-| G15 | B11 | simple linen headscarf tied under the chin |
+**B10** · settler
+```
+low poly skyrim-style medieval peasant man, realistic proportions, short cropped hair, clean-shaven, medium skin tone, no helmet, belted brown wool tunic to the knees, shoulder cloak in solid magenta with the hood down, brown trousers, rope belt with a pouch, leather shoes, no weapon, empty open hands, A-pose, full body, front view, plain white background
+```
 
-## Weapons and shields (textured only, placed in the hand)
+**B11** · settler (women)
+```
+low poly skyrim-style medieval peasant woman, realistic proportions, hair tied in a bun, medium skin tone, no helmet, ankle-length dress in solid magenta, plain brown apron, undyed linen shoulder shawl, leather shoes, no weapon, empty open hands, A-pose, full body, front view, plain white background
+```
 
-Template:
-`low poly skyrim-style <item>, single object, upright, side view, plain white background, no hands`
-Shields: `front view, face painted solid magenta`, with rim and boss in metal or wood.
+**B12** · scout, explorer
+```
+low poly skyrim-style explorer, realistic proportions, short cropped hair, clean-shaven, medium skin tone, no helmet, travel cloak in solid magenta from the shoulders to the calves, leather jerkin over a linen shirt, satchel on a strap across the chest, trousers tucked into tall boots, no weapon, empty open hands, A-pose, full body, front view, plain white background
+```
 
-| id | used by | item |
-|---|---|---|
-| P1 | warrior | wooden war club with a knotted head |
-| P2 | slinger | leather sling with a stone pouch |
-| P3 | spearman, horseman | wooden spear with a leaf-shaped bronze head |
-| P4 | swordsman | short Roman sword (gladius) |
-| P5 | longswordsman, man-at-arms | medieval longsword with a cross guard |
-| P6 | pikeman | very long wooden pike with a steel head |
-| P7 | knight, lancer | wooden cavalry lance with a steel tip |
-| P8 | cavalry, commander | curved cavalry sabre with a hand guard |
-| P9 | archer | simple wooden longbow, strung |
-| P10 | composite bowman, chariot archer, horse archer | recurve composite bow, strung |
-| P11 | crossbowman | medieval crossbow |
-| P12 | musketman | matchlock musket |
-| P13 | rifleman, great war infantry | bolt-action rifle with a bayonet |
-| P14 | modern infantry | modern assault rifle |
-| P15 | scout | wooden walking staff |
-| P16 | archers (on the back) | leather quiver with arrows |
-| S1 | round | round wooden shield with a metal boss |
-| S2 | big round | large round Greek hoplite shield with a bronze rim |
-| S3 | kite | Norman kite shield |
-| S4 | oval | oval wooden shield |
-| S5 | scutum | curved rectangular Roman scutum with a boss |
-| S6 | pavise | tall rectangular pavise shield |
-| S7 | small | small round buckler |
+**B13** · commander
+```
+low poly skyrim-style noble officer, realistic proportions, short cropped hair, clean-shaven, medium skin tone, no helmet, long dark navy coat with gold trim and buttons, shoulder cape in solid magenta, white gloves, tall black riding boots, no weapon, empty open hands, A-pose, full body, front view, plain white background
+```
 
-## Horse (textured; rigged only if Meshy offers a quadruped rig, otherwise I rig it)
 
-- **M1:** `low poly skyrim-style brown riding horse, realistic proportions, simple leather saddle and bridle, saddle blanket in solid magenta, no rider, standing square, side view, plain white background`
-- **M2:** the same horse with `long cloth caparison in solid magenta covering the body` (knights)
+## Heads: men (textured)
 
-## Order
+**H1** · English, French, Germans, Russians
+```
+low poly skyrim-style head and neck bust of a northern European man, realistic proportions, fair skin, short light brown hair, short beard, neutral expression, looking straight ahead, neck cut at the collarbone, no shoulders, no helmet, no hat, front view, plain white background
+```
 
-1. **Pilot:** B2 + H3 + H7 + G1 + P3 + S1. It proves the head swap, the skin recolour, the magenta key and helmets on two very different heads.
-2. **Ancient and medieval:** B1, B3, B4, B5, the other male heads, G2–G8, P1–P11, S2–S7, M1, M2.
-3. **Gunpowder and modern:** B6–B9, G9–G12, P12–P14.
-4. **Civilians:** B10–B13, F1–F10, G13–G15, P15.
+**H2** · Vikings
+```
+low poly skyrim-style head and neck bust of a Scandinavian man, realistic proportions, very fair skin, blond hair tied back, full braided blond beard, neutral expression, looking straight ahead, neck cut at the collarbone, no shoulders, no helmet, no hat, front view, plain white background
+```
 
-In all: 13 bodies, 20 heads, 15 headgear, 23 weapons and shields, and 2 horses (about 73 generations).
+**H3** · Romans, Greeks, Spanish
+```
+low poly skyrim-style head and neck bust of a Mediterranean man, realistic proportions, olive skin, short dark brown curly hair, clean-shaven, neutral expression, looking straight ahead, neck cut at the collarbone, no shoulders, no helmet, no hat, front view, plain white background
+```
+
+**H4** · Babylonians, Persians, Hebrews
+```
+low poly skyrim-style head and neck bust of a West Asian man, realistic proportions, light brown skin, black hair, full curled black beard, neutral expression, looking straight ahead, neck cut at the collarbone, no shoulders, no helmet, no hat, front view, plain white background
+```
+
+**H5** · Egyptians
+```
+low poly skyrim-style head and neck bust of an ancient Egyptian man, realistic proportions, brown skin, short black hair, clean-shaven, neutral expression, looking straight ahead, neck cut at the collarbone, no shoulders, no helmet, no hat, front view, plain white background
+```
+
+**H6** · Indians
+```
+low poly skyrim-style head and neck bust of a South Asian man, realistic proportions, brown skin, black hair, moustache, neutral expression, looking straight ahead, neck cut at the collarbone, no shoulders, no helmet, no hat, front view, plain white background
+```
+
+**H7** · Ethiopians
+```
+low poly skyrim-style head and neck bust of an Ethiopian man, realistic proportions, dark brown skin, short black curly hair, short beard, neutral expression, looking straight ahead, neck cut at the collarbone, no shoulders, no helmet, no hat, front view, plain white background
+```
+
+**H8** · Chinese, Japanese
+```
+low poly skyrim-style head and neck bust of an East Asian man, realistic proportions, light tan skin, black hair in a topknot, thin moustache, neutral expression, looking straight ahead, neck cut at the collarbone, no shoulders, no helmet, no hat, front view, plain white background
+```
+
+**H9** · Mongols
+```
+low poly skyrim-style head and neck bust of a Mongolian steppe man, realistic proportions, weathered tan skin, black hair in braids behind the ears, thin long moustache, neutral expression, looking straight ahead, neck cut at the collarbone, no shoulders, no helmet, no hat, front view, plain white background
+```
+
+**H10** · Aztecs
+```
+low poly skyrim-style head and neck bust of a Mesoamerican man, realistic proportions, copper-brown skin, straight black hair cut at the neck with a fringe, clean-shaven, neutral expression, looking straight ahead, neck cut at the collarbone, no shoulders, no helmet, no hat, front view, plain white background
+```
+
+
+## Heads: women (textured)
+
+**F1** · English, French, Germans, Russians
+```
+low poly skyrim-style head and neck bust of a northern European woman, realistic proportions, fair skin, hair tied back in a bun, no facial hair, neutral expression, looking straight ahead, neck cut at the collarbone, no shoulders, no helmet, no hat, front view, plain white background
+```
+
+**F2** · Vikings
+```
+low poly skyrim-style head and neck bust of a Scandinavian woman, realistic proportions, very fair skin, blond hair tied back, no facial hair, neutral expression, looking straight ahead, neck cut at the collarbone, no shoulders, no helmet, no hat, front view, plain white background
+```
+
+**F3** · Romans, Greeks, Spanish
+```
+low poly skyrim-style head and neck bust of a Mediterranean woman, realistic proportions, olive skin, hair tied back in a bun, no facial hair, neutral expression, looking straight ahead, neck cut at the collarbone, no shoulders, no helmet, no hat, front view, plain white background
+```
+
+**F4** · Babylonians, Persians, Hebrews
+```
+low poly skyrim-style head and neck bust of a West Asian woman, realistic proportions, light brown skin, hair tied back in a bun, no facial hair, neutral expression, looking straight ahead, neck cut at the collarbone, no shoulders, no helmet, no hat, front view, plain white background
+```
+
+**F5** · Egyptians
+```
+low poly skyrim-style head and neck bust of an ancient Egyptian woman, realistic proportions, brown skin, hair tied back in a bun, no facial hair, neutral expression, looking straight ahead, neck cut at the collarbone, no shoulders, no helmet, no hat, front view, plain white background
+```
+
+**F6** · Indians
+```
+low poly skyrim-style head and neck bust of a South Asian woman, realistic proportions, brown skin, hair tied back in a bun, no facial hair, neutral expression, looking straight ahead, neck cut at the collarbone, no shoulders, no helmet, no hat, front view, plain white background
+```
+
+**F7** · Ethiopians
+```
+low poly skyrim-style head and neck bust of an Ethiopian woman, realistic proportions, dark brown skin, hair tied back in a bun, no facial hair, neutral expression, looking straight ahead, neck cut at the collarbone, no shoulders, no helmet, no hat, front view, plain white background
+```
+
+**F8** · Chinese, Japanese
+```
+low poly skyrim-style head and neck bust of an East Asian woman, realistic proportions, light tan skin, hair tied back in a bun, no facial hair, neutral expression, looking straight ahead, neck cut at the collarbone, no shoulders, no helmet, no hat, front view, plain white background
+```
+
+**F9** · Mongols
+```
+low poly skyrim-style head and neck bust of a Mongolian steppe woman, realistic proportions, weathered tan skin, hair tied back in a bun, no facial hair, neutral expression, looking straight ahead, neck cut at the collarbone, no shoulders, no helmet, no hat, front view, plain white background
+```
+
+**F10** · Aztecs
+```
+low poly skyrim-style head and neck bust of a Mesoamerican woman, realistic proportions, copper-brown skin, hair tied back in a bun, no facial hair, neutral expression, looking straight ahead, neck cut at the collarbone, no shoulders, no helmet, no hat, front view, plain white background
+```
+
+
+## Headgear (textured)
+
+**G1** · Romans, Greeks (ancient)
+```
+low poly skyrim-style bronze crested helmet with cheek guards and a horsehair crest in solid magenta, single object, no head inside, front three-quarter view, plain white background
+```
+
+**G2** · B3 legionary
+```
+low poly skyrim-style Roman imperial helmet with neck guard, cheek guards and a transverse crest in solid magenta, single object, no head inside, front three-quarter view, plain white background
+```
+
+**G3** · Egyptians, Hebrews, Germans
+```
+low poly skyrim-style simple rounded bronze skull cap helmet, single object, no head inside, front three-quarter view, plain white background
+```
+
+**G4** · English, Russians, Vikings, Babylonians, Mongols
+```
+low poly skyrim-style conical steel helmet with nasal guard, single object, no head inside, front three-quarter view, plain white background
+```
+
+**G5** · Persians, Indians
+```
+low poly skyrim-style wrapped cloth turban in solid magenta, single object, no head inside, front three-quarter view, plain white background
+```
+
+**G6** · Chinese, Japanese
+```
+low poly skyrim-style wide conical lacquered war hat with chin cord, single object, no head inside, front three-quarter view, plain white background
+```
+
+**G7** · Aztecs
+```
+low poly skyrim-style feathered warrior headdress, feathers in solid magenta, single object, no head inside, front three-quarter view, plain white background
+```
+
+**G8** · French, Spanish, B5 levy
+```
+low poly skyrim-style steel kettle hat with a wide brim, single object, no head inside, front three-quarter view, plain white background
+```
+
+**G9** · B6
+```
+low poly skyrim-style steel morion helmet with a curved brim and a comb, single object, no head inside, front three-quarter view, plain white background
+```
+
+**G10** · B7
+```
+low poly skyrim-style tall black shako with a brass plate and a solid magenta plume, single object, no head inside, front three-quarter view, plain white background
+```
+
+**G11** · B8
+```
+low poly skyrim-style world war one steel helmet with a wide brim, single object, no head inside, front three-quarter view, plain white background
+```
+
+**G12** · B9
+```
+low poly skyrim-style modern combat helmet with a cloth cover, single object, no head inside, front three-quarter view, plain white background
+```
+
+**G13** · B12
+```
+low poly skyrim-style wide-brimmed leather traveller's hat, single object, no head inside, front three-quarter view, plain white background
+```
+
+**G14** · B13
+```
+low poly skyrim-style black bicorne hat with a solid magenta cockade, single object, no head inside, front three-quarter view, plain white background
+```
+
+**G15** · B11
+```
+low poly skyrim-style simple linen headscarf tied under the chin, single object, no head inside, front three-quarter view, plain white background
+```
+
+
+## Weapons (textured)
+
+**P1** · warrior
+```
+low poly skyrim-style wooden war club with a knotted head, single object, upright, side view, plain white background, no hands
+```
+
+**P2** · slinger
+```
+low poly skyrim-style leather sling with a stone pouch, single object, upright, side view, plain white background, no hands
+```
+
+**P3** · spearman, horseman
+```
+low poly skyrim-style wooden spear with a leaf-shaped bronze head, single object, upright, side view, plain white background, no hands
+```
+
+**P4** · swordsman
+```
+low poly skyrim-style short Roman sword (gladius), single object, upright, side view, plain white background, no hands
+```
+
+**P5** · longswordsman, man-at-arms
+```
+low poly skyrim-style medieval longsword with a cross guard, single object, upright, side view, plain white background, no hands
+```
+
+**P6** · pikeman
+```
+low poly skyrim-style very long wooden pike with a steel head, single object, upright, side view, plain white background, no hands
+```
+
+**P7** · knight, lancer
+```
+low poly skyrim-style wooden cavalry lance with a steel tip, single object, upright, side view, plain white background, no hands
+```
+
+**P8** · cavalry, commander
+```
+low poly skyrim-style curved cavalry sabre with a hand guard, single object, upright, side view, plain white background, no hands
+```
+
+**P9** · archer
+```
+low poly skyrim-style simple wooden longbow, strung, single object, upright, side view, plain white background, no hands
+```
+
+**P10** · composite bowman, chariot archer, horse archer
+```
+low poly skyrim-style recurve composite bow, strung, single object, upright, side view, plain white background, no hands
+```
+
+**P11** · crossbowman
+```
+low poly skyrim-style medieval crossbow, single object, upright, side view, plain white background, no hands
+```
+
+**P12** · musketman
+```
+low poly skyrim-style matchlock musket, single object, upright, side view, plain white background, no hands
+```
+
+**P13** · rifleman, great war infantry
+```
+low poly skyrim-style bolt-action rifle with a bayonet, single object, upright, side view, plain white background, no hands
+```
+
+**P14** · modern infantry
+```
+low poly skyrim-style modern assault rifle, single object, upright, side view, plain white background, no hands
+```
+
+**P15** · scout
+```
+low poly skyrim-style wooden walking staff, single object, upright, side view, plain white background, no hands
+```
+
+**P16** · archers (on the back)
+```
+low poly skyrim-style leather quiver with arrows, single object, upright, side view, plain white background, no hands
+```
+
+
+## Shields (textured)
+
+**S1** · round
+```
+low poly skyrim-style round wooden shield with a metal rim and boss, face painted solid magenta, single object, front view, plain white background
+```
+
+**S2** · big round
+```
+low poly skyrim-style large round Greek hoplite shield with a bronze rim, face painted solid magenta, single object, front view, plain white background
+```
+
+**S3** · kite
+```
+low poly skyrim-style Norman kite shield with a metal rim, face painted solid magenta, single object, front view, plain white background
+```
+
+**S4** · oval
+```
+low poly skyrim-style oval wooden shield with a metal boss, face painted solid magenta, single object, front view, plain white background
+```
+
+**S5** · scutum
+```
+low poly skyrim-style curved rectangular Roman scutum with a metal boss, face painted solid magenta, single object, front view, plain white background
+```
+
+**S6** · pavise
+```
+low poly skyrim-style tall rectangular pavise shield with a wooden rim, face painted solid magenta, single object, front view, plain white background
+```
+
+**S7** · small
+```
+low poly skyrim-style small round steel buckler, face painted solid magenta, single object, front view, plain white background
+```
+
+
+## Horses (textured; rigged too if Meshy offers a quadruped rig)
+
+**M1** · horseman, chariot, cavalry
+```
+low poly skyrim-style brown riding horse, realistic proportions, simple leather saddle and bridle, saddle blanket in solid magenta, no rider, standing square, side view, plain white background
+```
+
+**M2** · knight, lancer
+```
+low poly skyrim-style brown riding horse, realistic proportions, leather saddle and bridle, long cloth caparison in solid magenta covering the body, no rider, standing square, side view, plain white background
+```
