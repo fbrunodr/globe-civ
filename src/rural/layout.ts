@@ -19,7 +19,7 @@ import { CROP_HEIGHT, CROP_PALETTE, CROP_STAND_SATURATION, PLOT_SIZES, MAX_STAGE
 import { SCATTER_GAP, scatterIn, type AreaLook, type CropRegion, type Fill } from './look.ts';
 import { stageLook, plotStage, pastureFences, herdSize } from './stages.ts';
 import { kitBoost, FIGURES, FENCE_BOOST } from './kit.ts';
-import { ruralGeometry, ruralModelKind, type RuralModel } from './models.ts';
+import { ruralGeometry, ruralModelKind, roamOf, type RuralModel } from './models.ts';
 
 export interface RuralItem {
   readonly model: RuralModel;
@@ -75,6 +75,8 @@ export function planFarm(inp: RuralInput, site: RuralSite): Farm | null {
   return work ? paintFarm({ work, axis: inp.axis, density: stageLook(inp.imp, inp.stage, inp.res).density, seed: inp.seed, free: (p) => site.free(p) && site.depth(p) <= 0 }) : null;
 }
 
+// How far a walker's loop takes it from where it stands (tile steps, at its size `s`).
+const walkOf = (m: RuralModel, s: number): number => 2 * roamOf(m) * s;
 // How far a model reaches from its middle (tile steps, at its size `s`).
 const reach = new Map<RuralModel, number>();
 function radiusOf(m: RuralModel, s: number): number {
@@ -123,7 +125,13 @@ export function layoutRural(inp: RuralInput, farm: Farm, site: RuralSite, keep: 
   // it has them: round the farm, across it into paddocks).
   if (look.herd) {
     const unit = CREATURE_SCALE * FENCE_BOOST; // (a fence run's model length, tile steps)
-    if (look.fence) for (const line of pastureFences(stage, inp.axis)) line.slice(0, -1).forEach((a, i) => {
+    const fences = look.fence ? pastureFences(stage, inp.axis) : [];
+    // (How near p comes to a fence: a beast's walk keeps off them all, the paddocks' too.)
+    const toFence = (p: Pt) => Math.min(Infinity, ...fences.flatMap((line) => line.slice(0, -1).map((a, i) => {
+      const b = line[i + 1]!, dx = b.x - a.x, dy = b.y - a.y, t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1)));
+      return Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy);
+    })));
+    for (const line of fences) line.slice(0, -1).forEach((a, i) => {
       const b = line[i + 1]!, len = d2(a, b), n = Math.max(1, Math.round(len / (unit * 3)));
       for (let k = 0; k < n; k++) {
         const p = { x: a.x + ((k + 0.5) / n) * (b.x - a.x), y: a.y + ((k + 0.5) / n) * (b.y - a.y) };
@@ -133,9 +141,10 @@ export function layoutRural(inp: RuralInput, farm: Farm, site: RuralSite, keep: 
     const r = mulberry32(inp.seed + 0x6e), want = herdSize(stage);
     for (let n = 0, tries = 0; n < want && tries < want * 10; tries++) {
       const p = { x: (r() - 0.5) * 1.1, y: (r() - 0.5) * 1.1 };
-      if (rhoOf(6, p) > SAFE_RHO - 0.12 || d2(p, farm.home) < 0.1 || inYard(p) || !site.free(p) || !dry(p) || kept(p)) continue;
-      const m = look.herd.models[n % look.herd.models.length]!;
-      add(m, p, r() * 6.28, kitBoost(m) * (0.9 + 0.2 * r()), look.herd.colors[n % look.herd.colors.length]!);
+      const m = look.herd.models[n % look.herd.models.length]!, s = kitBoost(m) * (0.9 + 0.2 * r()), walk = walkOf(m, s);
+      if (rhoOf(6, p) > SAFE_RHO - 0.1 - walk || toFence(p) < walk + radiusOf(m, s) * 0.6 || d2(p, farm.home) < 0.1 || inYard(p) || !site.free(p) || !dry(p) || kept(p, walk) || taken.some((q) => d2(p, q.p) < q.r + walk)) continue;
+      add(m, p, r() * 6.28, s, look.herd.colors[n % look.herd.colors.length]!);
+      taken.push({ p, r: walk });
       n++;
     }
   }
@@ -203,7 +212,8 @@ export function layoutRural(inp: RuralInput, farm: Farm, site: RuralSite, keep: 
   const r = mulberry32(inp.seed + 0x7f);
   for (const th of look.things) for (let n = 0; n < th.n; n++) {
     const m = th.model, fig = FIGURES.has(m), s = kitBoost(m) * (0.9 + 0.2 * r());
-    const rad = radiusOf(m, s) * (fig ? 0.5 : 1), gap = fig ? 0.004 : GAP;
+    // (A walker keeps its whole walk clear, not just where it stands.)
+    const rad = radiusOf(m, s) * (fig ? 0.5 : 1) + walkOf(m, s), gap = fig ? 0.004 : GAP;
     const leaf = th.colors ? th.colors[Math.floor(r() * th.colors.length)]! : 0xffffff;
     for (let tries = 0; tries < 40; tries++) {
       let p: Pt;

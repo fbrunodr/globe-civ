@@ -222,18 +222,22 @@ export const CARD_TEXEL = `
 // uRoamTime: seconds.
 const ROAM_DECL = `
   attribute float roam;
+  attribute vec2 gait;
   uniform float uRoamTime;
-  // (The angle walked so far, signed by which way round, and the loop's offset.)
-  float roamAngle(out vec3 off) {
-    off = vec3(0.0);
+  // (The angle walked so far, signed by which way round; the loop's offset;
+  // and the legs' swing now: 0 at rest, ±1 mid-stride.)
+  float roamAngle(out vec3 off, out float swing) {
+    off = vec3(0.0); swing = 0.0;
     #ifdef USE_INSTANCING
       if (roam <= 0.0) return 0.0;
       vec3 o = instanceMatrix[3].xyz;
       float h = fract(sin(dot(o, vec3(12.9898, 78.233, 37.719)) * 1e4) * 43758.5453);
       float side = h < 0.5 ? -1.0 : 1.0;
       float k = uRoamTime / (5.0 + 4.0 * h) + h * 17.0;
-      float th = (floor(k) + smoothstep(0.55, 1.0, fract(k))) * 0.8;
+      float s = smoothstep(0.55, 1.0, fract(k)), th = (floor(k) + s) * 0.8;
       off = vec3(roam * sin(th), 0.0, side * roam * (1.0 - cos(th)));
+      // (A stride is half the walk's radius: the legs swing once a stride, only while walking.)
+      swing = sin(th * 2.0 * 3.14159265) * 4.0 * s * (1.0 - s) * step(0.001, fract(k) - 0.55);
       return side * th;
     #else
       return 0.0;
@@ -241,9 +245,12 @@ const ROAM_DECL = `
   }
   vec3 roamTurn(vec3 v, float a) { float c = cos(a), s = sin(a); return vec3(v.x * c - v.z * s, v.y, v.x * s + v.z * c); }`;
 const ROAM_NORMAL = `
-  { vec3 off; float ra = roamAngle(off); objectNormal = roamTurn(objectNormal, ra); }`;
+  { vec3 off; float sw; float ra = roamAngle(off, sw); objectNormal = roamTurn(objectNormal, ra); }`;
+// (The legs swing forward and back from the hips, alternately, then the walker turns and moves along its loop.)
 const ROAM_VERTEX = `
-  { vec3 off; float ra = roamAngle(off); transformed = roamTurn(transformed, ra) + off; }`;
+  { vec3 off; float sw; float ra = roamAngle(off, sw);
+    transformed.x += gait.y * gait.x * 0.55 * sw;
+    transformed = roamTurn(transformed, ra) + off; }`;
 // The roaming models' depth, for their shadows to walk with them.
 export function makeRoamDepthMaterial(time: { value: number }): THREE.MeshDepthMaterial {
   const mat = new THREE.MeshDepthMaterial();

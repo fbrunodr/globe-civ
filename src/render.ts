@@ -19,7 +19,7 @@ import { buildPropGeometry, catalogEntry, CATALOG, CATALOG_KINDS, type CatalogKi
 import { BUILDING_KINDS, buildBuildingGeometry, type BuildingKind } from './buildingCatalog.ts';
 import { houseGeometry, isHouseKind, type HouseKind } from './houses.ts';
 import { isWonderModelKind, wonderGeometry, type WonderModelKind } from './wonderModels.ts';
-import { isFloraRural, isCropRural, isSmoothRural, isRuralModelKind, ruralGeometry, ruralModelKind, type RuralModelKind } from './rural/models.ts';
+import { isFloraRural, isCropRural, isSmoothRural, roamOf, isRuralModelKind, ruralGeometry, ruralModelKind, type RuralModelKind } from './rural/models.ts';
 import { CityProps, tileFrame, SUMMIT_HOUSES, type CitySpot } from './cityProps.ts';
 import { CITY_CELL } from './cityPainter.ts';
 import { RESOURCE_WILD, RESOURCE_WORKED, resourceLayout } from './rural/resourceModels.ts';
@@ -922,6 +922,21 @@ export class GlobeRenderer {
       // Rows of the lattice per fan: enough spots for the densest look nearby.
       const m = Math.max(1, Math.ceil((Math.sqrt(8 * (most / k) + 1) - 1) / 2));
       const spots = (k * m * (m + 1)) / 2;
+      // (A tile's walking beasts, where they stand and how far their walk takes them, world units.)
+      const near = new Map<number, { at: THREE.Vector3; r: number }[]>();
+      const walkers = (u: number) => {
+        let l = near.get(u);
+        if (!l) {
+          const k = tileFrame(g, u).k;
+          l = this.resourceProps(u).flatMap((p) => {
+            const m = p.kind.slice('rural|'.length), at = new THREE.Vector3().setFromMatrixPosition(p.matrix);
+            const s = new THREE.Vector3().setFromMatrixColumn(p.matrix, 0).length() / k;
+            return roamOf(m) > 0 ? [{ at: at.normalize(), r: (2 * roamOf(m) * s + 0.02) * k }] : [];
+          });
+          near.set(u, l);
+        }
+        return l;
+      };
       const env: SpotEnv = { t, i: 0, r: 0, u: t, dir: new THREE.Vector3(), ground: 0, water: 0, slope: 0, bank: 0, coast: 0, inland: new THREE.Vector3() };
       for (let i = 0; i < k; i++) {
         for (let a = 0; a < m; a++) {
@@ -941,6 +956,8 @@ export class GlobeRenderer {
             let u = fan.ids[0], acc = 0;
             for (let c = 0; c < 4; c++) { acc += ps.w[c]; if (pick < acc) { u = fan.ids[c]; break; } }
             if (veg.maxDensity(u) === 0) continue;
+            // (Clear of the walks of a resource's beasts: they never walk into a tree.)
+            if (walkers(u).some((w) => w.at.distanceTo(d) < w.r)) continue;
             // The ground here.
             const lv = this.terrain.at(t, i, wa, wb);
             topo.sample(t, i, wa, wb, smp);

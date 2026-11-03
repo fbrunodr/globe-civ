@@ -217,11 +217,30 @@ export const isCropRural = (k: RuralModelKind): boolean => k === 'rural|crop' ||
 const KIT_SET: ReadonlySet<string> = new Set(KIT_MODELS);
 export const isSmoothRural = (k: RuralModelKind): boolean => KIT_SET.has(k.slice('rural|'.length));
 
-// The beasts walk a loop ROAM_BEAST metres across, the people a smaller one
-// (model units); the plough team and the haycart about the fields as the
-// beasts do; all else stands still.
+// The beasts walk a loop of ROAM_BEAST metres' radius, the people a smaller
+// one (model units); all else stands still (a cart or a plough team would
+// drive through what stands by it). Their whole loop lies within twice
+// that of where they stand: rural/layout.ts keeps that clear.
 const ROAM_BEAST = 1.1 * CREATURE_SCALE, ROAM_PERSON = 0.6 * CREATURE_SCALE;
-const roamOf = (m: string): number => (SPECIES_OF[m as KitModel] || m === 'ploughTeam' || m === 'haycart' ? ROAM_BEAST : FIGURES.has(m as KitModel) ? ROAM_PERSON : 0);
+export const roamOf = (m: string): number => (SPECIES_OF[m as KitModel] ? ROAM_BEAST : FIGURES.has(m as KitModel) && m !== 'ploughTeam' && m !== 'haycart' ? ROAM_PERSON : 0);
+// How a walker's legs swing (the material's `gait`: per vertex, how far
+// below the hips, model units, and which leg: +1 or -1). A person's legs
+// are its two sides; a beast's go in diagonal pairs, as at a walk.
+function gaitOf(g: THREE.BufferGeometry, m: string): Float32Array {
+  const pos = g.getAttribute('position'), out = new Float32Array(pos.count * 2);
+  if (!roamOf(m)) return out;
+  g.computeBoundingBox();
+  const b = g.boundingBox!, beast = !!SPECIES_OF[m as KitModel];
+  const hip = b.min.y + (b.max.y - b.min.y) * (beast ? 0.42 : 0.5), mx = (b.min.x + b.max.x) / 2, half = (b.max.x - b.min.x) / 2;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+    // (A beast's head, down to graze, swings not: only what is under its body.)
+    if (y >= hip || (beast && Math.abs(x - mx) > half * 0.7)) continue;
+    out[i * 2] = hip - y;
+    out[i * 2 + 1] = (z >= 0 ? 1 : -1) * (beast ? (x >= mx ? 1 : -1) : 1);
+  }
+  return out;
+}
 const cache = new Map<RuralModelKind, THREE.BufferGeometry>();
 export function ruralGeometry(kind: RuralModelKind): THREE.BufferGeometry {
   let g = cache.get(kind);
@@ -253,6 +272,9 @@ export function ruralGeometry(kind: RuralModelKind): THREE.BufferGeometry {
     cache.set(kind, g);
   }
   // (How far it roams: its walk's radius, the material's `roam`.)
-  if (!g.getAttribute('roam')) g.setAttribute('roam', new THREE.Float32BufferAttribute(new Float32Array(g.getAttribute('position').count).fill(roamOf(m)), 1));
+  if (!g.getAttribute('roam')) {
+    g.setAttribute('roam', new THREE.Float32BufferAttribute(new Float32Array(g.getAttribute('position').count).fill(roamOf(m)), 1));
+    g.setAttribute('gait', new THREE.Float32BufferAttribute(gaitOf(g, m), 2));
+  }
   return g;
 }
