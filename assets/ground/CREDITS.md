@@ -15,3 +15,4 @@ array the game loads, `public/ground/ground.ktx2`. The terrain shader
 | litter | [forest_leaves_02](https://polyhaven.com/a/forest_leaves_02) |
 | moss | [mossy_rock](https://polyhaven.com/a/mossy_rock) |
 | rock | [cliff_side](https://polyhaven.com/a/cliff_side) |
+| furrows | [farm_furrows](https://polyhaven.com/a/farm_furrows) (Amal Kumar) |

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
 
 // Ground materials: small tileable close-up textures of what the ground is
-// made of (grass, dry grass, soil, sand, litter, moss, rock, snow). The
+// made of (grass, dry grass, soil, sand, litter, moss, rock, snow, ploughed furrows). The
 // terrain shader (terrainMaterial.ts) lays them over the painting, so the
 // ground has the same fine detail as the props on it, and catches the same sun.
 //
@@ -15,7 +15,8 @@ import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
 // Brightness only: the colors come from the tile (look.ts GroundLook), so
 // the same grass is green on a prairie and khaki on a steppe.
 
-export const GROUND_LAYERS = ['grass', 'dry', 'soil', 'sand', 'litter', 'moss', 'rock', 'snow'] as const;
+// (furrows: a ploughed field's, for farms' bare plots: terrainMaterial.ts.)
+export const GROUND_LAYERS = ['grass', 'dry', 'soil', 'sand', 'litter', 'moss', 'rock', 'snow', 'furrows'] as const;
 export type GroundLayer = typeof GROUND_LAYERS[number];
 export const GROUND_LAYER = Object.fromEntries(GROUND_LAYERS.map((k, i) => [k, i])) as Record<GroundLayer, number>;
 

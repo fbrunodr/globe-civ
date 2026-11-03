@@ -69,7 +69,8 @@ function scanned(layer: GroundLayer, tmp: string): Uint8Array {
   const nor = decode(join(SRC, `${layer}_normal.webp`), tmp).slice();
   const raw = new Float32Array(N * N);
   for (let i = 0; i < N * N; i++) raw[i] = col[i * 3]! * 0.3 + col[i * 3 + 1]! * 0.55 + col[i * 3 + 2]! * 0.15;
-  const lum = flatten(raw);
+  // (A ploughed field's furrows are its large-scale pattern: only its broadest unevenness is evened out.)
+  const lum = flatten(raw, layer === 'furrows' ? 160 : 40);
   let mean = 0;
   for (let i = 0; i < N * N; i++) mean += lum[i]!;
   mean /= N * N;

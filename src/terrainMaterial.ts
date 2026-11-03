@@ -5,6 +5,8 @@ import type { CropRegion } from './rural/look.ts';
 import { CROP_INDEX_GLSL, CROP_PALETTE, CROP_SATURATION, PLOTS_GLSL, MAX_STAGE, PLANT_ROW_W } from './rural/plots.ts';
 import { SAFE_RHO } from './town/geometry.ts';
 import { GROUND_LAYER, GROUND_TEX, groundUniform } from './groundTextures.ts';
+// One repeat of the furrows' scan on a farm's ploughed plots (tile steps).
+const FURROW_REPEAT = 0.07;
 
 // The terrain material: three's MeshStandardMaterial with extra shader code.
 // The look comes from the basics (the painting, the relief, the props); the
@@ -277,7 +279,6 @@ export interface PaintUniforms {
   r0: number;       // tile inner radius (radians)
   fine: number;     // fine wiggle amplitude (radians)
   fineFreq: number; // fine wiggle frequency (noise cells per radian)
-  cropFar?: { value: number }; // where the crops are gone (world units): the fields' colours painted from there out
 }
 
 // A float RGBA texture TEX_W wide holding `texels` texels, read with texelFetch.
@@ -350,7 +351,6 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
     shader.uniforms['uGrid'] = uGrid;
     shader.uniforms['uView'] = uView;
     shader.uniforms['uGround'] = groundUniform();
-    shader.uniforms['uCropFar'] = paint.cropFar ?? { value: 1e9 };
     // (One repeat of a ground texture: a third of a tile across.)
     shader.uniforms['uGroundScale'] = { value: 1 / (0.3 * paint.r0) };
     shader.vertexShader = shader.vertexShader
@@ -394,7 +394,6 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
         uniform float uView;
         uniform highp sampler2DArray uGround;
         uniform float uGroundScale;
-        uniform float uCropFar;
         varying vec4 vPc0;
         varying vec2 vPc1;
         varying float vRing;
@@ -602,20 +601,28 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               if (stage >= 2 && stage <= 3) hedge = max(hedge, smoothstep(${(SAFE_RHO - 0.025).toFixed(3)}, ${(SAFE_RHO - 0.025).toFixed(3)} + ringW, vRing));
               vec3 hedgeC = stage <= 1 ? vec3(0.32, 0.4, 0.2) : stage == 4 ? vec3(0.42, 0.38, 0.3) : vec3(0.2, 0.25, 0.15);
               crop = mix(crop, hedgeC, hedge * (stage <= 1 ? 0.6 : 0.7));
-              // Up close the crops themselves show the fields (cityProps.ts):
-              // the ground keeps its own look, but for the ploughed plots, the
-              // soil's texture furrowed along the farm. The fields' colours
-              // come in only from afar, as the crops shrink away (uCropFar).
-              float farPaint = smoothstep(0.5, 0.85, distance(cameraPosition, P) / uCropFar);
-              float plough = cropIndex(h, stage) == 3 && region != ${CROP_CODE.paddy} ? 1.0 - hedge : 0.0;
-              vec3 nearC = crop;
-              if (plough > 0.0 && farPaint < 1.0) {
-                vec3 soilN;
-                vec4 soilT = gSample(${GROUND_LAYER.soil}.0, soilN, 1.0);
-                nearC = gTone(cropColor(region, h, stage), soilT.r) * (1.0 + 0.14 * sin(uv.y * 1500.0) * tFade(1500.0 / tile));
-                gN = mix(gN, soilN, plough * farm * (1.0 - farPaint));
+              // Each plot in its crop's colour on a scan of what it is: a
+              // ploughed one furrowed (the scan laid along the farm, its
+              // furrows down the plots), grain on dry grass, green crops and
+              // fallow on grass, peat on bare soil; the scans' own light and
+              // relief (gN) over it.
+              int ci = cropIndex(h, stage);
+              vec3 tn = vec3(0.0);
+              vec4 tex;
+              if (ci == 3 && region != ${CROP_CODE.paddy}) {
+                // (In the farm's frame: u across the plots, v along them; a repeat FURROW_REPEAT tile steps.)
+                vec2 q = uv / ${FURROW_REPEAT};
+                tex = texture(uGround, vec3(q, ${GROUND_LAYER.furrows}.0));
+                vec3 tu = normalize(ca * fr1.xyz + sa * fr2.xyz), tv = normalize(-sa * fr1.xyz + ca * fr2.xyz);
+                tn = (tex.b - 0.5) * tu + (tex.a - 0.5) * tv;
+                float coarse = smoothstep(12.0, 32.0, tLod / ${FURROW_REPEAT} / tile * ${GROUND_TEX}.0);
+                tex = mix(tex, vec4(0.5), coarse); tn *= 1.0 - coarse;
+              } else {
+                float layer = region == ${CROP_CODE.peat} ? ${GROUND_LAYER.soil}.0 : crop.g > crop.r * 1.04 || ci == 2 ? ${GROUND_LAYER.grass}.0 : ${GROUND_LAYER.dry}.0;
+                tex = gSample(layer, tn, 1.0);
               }
-              diffuseColor.rgb = mix(diffuseColor.rgb, mix(nearC, crop, farPaint) * vShade, farm * 0.9 * mix(plough, 1.0, farPaint));
+              gN = mix(gN, tn, farm * (1.0 - hedge * 0.5));
+              diffuseColor.rgb = mix(diffuseColor.rgb, gTone(crop, tex.r) * vShade, farm * 0.92);
             }
             if (quarryS > 0.02) {
               // Open pits: a couple of irregular hollows per tile, cut in

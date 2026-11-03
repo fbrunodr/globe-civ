@@ -12,7 +12,7 @@
 
 import * as THREE from 'three';
 import type { Game, City } from './game.ts';
-import { USE, wonderBeside, isWonderKey, type ImprovementKey, type EraIndex } from './cities.ts';
+import { USE, BORDER_MAX, wonderBeside, isWonderKey, type ImprovementKey, type EraIndex } from './cities.ts';
 import { ROOFS, buildingEntry, isFloraModel, isLotModel, placedGeometry, waterRule, type BuildingKind, type LotModelKind, type PlacedKind } from './buildingCatalog.ts';
 import { ON_BARE_GROUND, isWonderModelKind, wonderModelKind, type SiteModel } from './wonderModels.ts';
 import type { CatalogKind } from './propCatalog.ts';
@@ -161,7 +161,8 @@ export class CityProps {
   // Its improved tiles with drawings.
   private farmland(city: City): number[] {
     const g = this.game;
-    return g.tilesWithin(city.tile, city.ring).filter((t) => g.tileCity[t] === city.id && isFarmland(g, t));
+    // (Every tile it owns, out to its widest border: its ring may lag what it holds.)
+    return g.tilesWithin(city.tile, Math.max(city.ring, BORDER_MAX)).filter((t) => g.tileCity[t] === city.id && isFarmland(g, t));
   }
 
   // Everything the town's layout depends on.
