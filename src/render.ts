@@ -467,7 +467,7 @@ export class GlobeRenderer {
 
     this.terrainMat = makeTerrainMaterial({
       tileTex: this.tileTex, fanTex,
-      r0: params.r0, fine: FINE_MAX * params.r0, fineFreq: 1 / (FINE_WAVELENGTH * params.r0),
+      r0: params.r0, fine: FINE_MAX * params.r0, fineFreq: 1 / (FINE_WAVELENGTH * params.r0), cropFar: this.cropFar,
     });
     // The globe in chunks (props, ground and water alike), spread evenly
     // over the sphere (a golden-angle spiral); each tile goes to the

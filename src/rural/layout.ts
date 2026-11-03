@@ -55,7 +55,7 @@ export interface RuralPlan {
 export const CROP_ROW = 0.017, CROP_STEP = 0.0125, CROP_WIDTH = 0.017;
 const CROP_EDGE = 0.007, CROP_MARGIN = 0.03, CROP_HOME_GAP = 0.06;
 // A paddy's rice stands in its water, up to this share of its height.
-export const PADDY_DEPTH = 0.45;
+export const PADDY_DEPTH = 0.85;
 // A plantation's tufts: this far apart along every other row, this wide.
 const PLANT_STEP = 0.011, PLANT_WIDTH = 0.015;
 // The homestead's footprint (radius, tile steps), the barn's, and the gap
@@ -160,14 +160,15 @@ export function layoutRural(inp: RuralInput, farm: Farm, site: RuralSite, keep: 
       return (c(r) << 16) | (c(g) << 8) | c(b);
     });
     const rand = mulberry32(inp.seed + 0xc4);
-    // (A first farm is patchy, a ruin's mostly gone to weed.)
-    const thin = stage === 0 ? 0.7 : stage === 1 ? 0.2 : 0;
+    // (A first farm is patchy, a ruin's mostly gone to weed; a paddy is planted
+    // all over its water, every plot, to the edges.)
+    const thin = stage === 0 ? 0.7 : stage === 1 && !paddy ? 0.2 : 0;
     for (let x = -0.45; x <= 0.45; x += CROP_ROW) for (let y = -0.45; y <= 0.45; y += CROP_STEP) {
       const pu = x + (rand() - 0.5) * CROP_ROW * 0.3, pv = y + (rand() - 0.5) * CROP_STEP * 0.8, turn = rand() * Math.PI, shade = 0.9 + 0.2 * rand(), grow = 0.9 + 0.2 * rand();
       const p = { x: pu * u.x + pv * v.x, y: pu * u.y + pv * v.y };
       if (rand() < thin || off(p)) continue;
-      const plot = plotAt(pu, pv, inp.salt, ps), k = cropIndex(plot.h, ps), h = CROP_HEIGHT[k] * grow;
-      if (h === 0 || plot.edge < CROP_EDGE) continue;
+      const plot = plotAt(pu, pv, inp.salt, ps), k = paddy ? 0 : cropIndex(plot.h, ps), h = CROP_HEIGHT[k] * grow;
+      if (h === 0 || (!paddy && plot.edge < CROP_EDGE)) continue;
       const wet = site.depth(p);
       if (paddy ? wet <= 0 || wet > PADDY_DEPTH * h : wet > 0) continue;
       add('crop', p, turn, [CROP_WIDTH, h, CROP_WIDTH], tint[k]!, shade);

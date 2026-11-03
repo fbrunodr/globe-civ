@@ -380,8 +380,9 @@ export class CityProps {
         yard: (i) => areaLook(imp, g.biome[t]!, g.feature[t] ?? null, g.map.temperature[t]!, i, t) };
       const site: RuralSite = {
         free: (p) => (!ko || len2(sub2(p, ko.p)) > ko.r) && clear.free([toT(p)]),
-        depth: (p) => { const smp = this.sampleDir(toT(p)); return (smp.water - smp.ground - DRY) / D; },
-        wade: (0.0004 * this.scale + DRY) / D,
+        // (Water over the ground itself: a floodplain's or a marsh's water table just under it is dry land to a crop.)
+        depth: (p) => { const smp = this.sampleDir(toT(p)); return (smp.water - smp.ground) / D; },
+        wade: (0.0004 * this.scale) / D,
       };
       const farm = planFarm(inp, site);
       if (!farm) continue;

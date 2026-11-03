@@ -277,6 +277,7 @@ export interface PaintUniforms {
   r0: number;       // tile inner radius (radians)
   fine: number;     // fine wiggle amplitude (radians)
   fineFreq: number; // fine wiggle frequency (noise cells per radian)
+  cropFar?: { value: number }; // where the crops are gone (world units): the fields' colours painted from there out
 }
 
 // A float RGBA texture TEX_W wide holding `texels` texels, read with texelFetch.
@@ -349,6 +350,7 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
     shader.uniforms['uGrid'] = uGrid;
     shader.uniforms['uView'] = uView;
     shader.uniforms['uGround'] = groundUniform();
+    shader.uniforms['uCropFar'] = paint.cropFar ?? { value: 1e9 };
     // (One repeat of a ground texture: a third of a tile across.)
     shader.uniforms['uGroundScale'] = { value: 1 / (0.3 * paint.r0) };
     shader.vertexShader = shader.vertexShader
@@ -392,6 +394,7 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
         uniform float uView;
         uniform highp sampler2DArray uGround;
         uniform float uGroundScale;
+        uniform float uCropFar;
         varying vec4 vPc0;
         varying vec2 vPc1;
         varying float vRing;
@@ -599,7 +602,20 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               if (stage >= 2 && stage <= 3) hedge = max(hedge, smoothstep(${(SAFE_RHO - 0.025).toFixed(3)}, ${(SAFE_RHO - 0.025).toFixed(3)} + ringW, vRing));
               vec3 hedgeC = stage <= 1 ? vec3(0.32, 0.4, 0.2) : stage == 4 ? vec3(0.42, 0.38, 0.3) : vec3(0.2, 0.25, 0.15);
               crop = mix(crop, hedgeC, hedge * (stage <= 1 ? 0.6 : 0.7));
-              diffuseColor.rgb = mix(diffuseColor.rgb, crop * vShade, farm * 0.9);
+              // Up close the crops themselves show the fields (cityProps.ts):
+              // the ground keeps its own look, but for the ploughed plots, the
+              // soil's texture furrowed along the farm. The fields' colours
+              // come in only from afar, as the crops shrink away (uCropFar).
+              float farPaint = smoothstep(0.5, 0.85, distance(cameraPosition, P) / uCropFar);
+              float plough = cropIndex(h, stage) == 3 && region != ${CROP_CODE.paddy} ? 1.0 - hedge : 0.0;
+              vec3 nearC = crop;
+              if (plough > 0.0 && farPaint < 1.0) {
+                vec3 soilN;
+                vec4 soilT = gSample(${GROUND_LAYER.soil}.0, soilN, 1.0);
+                nearC = gTone(cropColor(region, h, stage), soilT.r) * (1.0 + 0.14 * sin(uv.y * 1500.0) * tFade(1500.0 / tile));
+                gN = mix(gN, soilN, plough * farm * (1.0 - farPaint));
+              }
+              diffuseColor.rgb = mix(diffuseColor.rgb, mix(nearC, crop, farPaint) * vShade, farm * 0.9 * mix(plough, 1.0, farPaint));
             }
             if (quarryS > 0.02) {
               // Open pits: a couple of irregular hollows per tile, cut in
