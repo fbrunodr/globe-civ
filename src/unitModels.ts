@@ -188,12 +188,12 @@ export const bowman = (type: UnitKey): boolean => type === 'archer' || type === 
 // Whether a type's figures draw a bow on foot, the string to the cheek (unitAnim.ts: a horse archer's bow is drawn as it rides).
 export const draws = (type: UnitKey): boolean => type === 'archer' || type === 'compositeBowman';
 
-type Hold = 'spear' | 'pike' | 'club' | 'sword' | 'longsword' | 'bow' | 'recurve' | 'sling' | 'crossbow' | 'musket' | 'rifle' | 'mg' | 'staff' | 'banner' | 'none';
+type Hold = 'spear' | 'pike' | 'club' | 'sword' | 'longsword' | 'bow' | 'recurve' | 'sling' | 'crossbow' | 'musket' | 'rifle' | 'mg' | 'staff' | 'hoe' | 'banner' | 'none';
 
 // How far forward of upright each weapon is made to point (radians): a
 // spear upright, a sword a little forward, a crossbow or a machine gun level.
 const REST_PITCH: Record<Hold, number> = {
-  spear: 0, pike: 0, club: 0.23, sword: 0.25, longsword: 0.31, bow: 0, recurve: 0, sling: Math.PI, crossbow: 1.4, musket: 0.4, rifle: 0.4, mg: 1.35, staff: 0, banner: 0, none: 0,
+  spear: 0, pike: 0, club: 0.23, sword: 0.25, longsword: 0.31, bow: 0, recurve: 0, sling: Math.PI, crossbow: 1.4, musket: 0.4, rifle: 0.4, mg: 1.35, staff: 0, hoe: 0, banner: 0, none: 0,
 };
 // A body (people.ts) tagged for the units' shader.
 // (A skirt follows the legs (RIG.skirt; the shader: unitView.ts): each
@@ -289,6 +289,8 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
   // (A sling hanging from the hand: its cords and the stone's pouch.)
   if (hold === 'sling') out.push(rod(v3(hR), v3(hR).add(V(0.01, -0.21, 0.02)), 0.004, 0.004, 3, 0xb8a888, w), ball(0.025, 0x8a7a62, { x: hR.x + 0.01, y: hR.y - 0.23, z: hR.z + 0.02 }, w));
   if (hold === 'staff') out.push(rod(up(-0.42), up(0.6), 0.013, 0.011, 5, WOOD, { limb: STILL_ARM }));
+  // (A worker's hoe: its shaft upright in the hand, the iron blade at its top, bent forward.)
+  if (hold === 'hoe') out.push(rod(up(-0.42), up(0.62), 0.013, 0.011, 5, WOOD, { limb: STILL_ARM }), box(0.07, 0.016, 0.1, IRON, { x: hR.x, y: hR.y + 0.6, z: hR.z + 0.05 }, { limb: STILL_ARM }));
   // (A long gun, one straight piece, carried muzzle up and a little
   // forward (REST_PITCH) in front of the body, between the hands: the
   // stock gripped by the right hand, the barrel on up; a rifle's with a
@@ -831,6 +833,7 @@ export const UNIT_LOOK: Record<UnitKey, UnitLook> = {
   crossbowman: { party: 'formation', count: FULL_FORMATION, spacing: [0.55, 0.6] },
   knight: { party: 'formation', count: HORSE_COUNT, cols: 3, spacing: [0.62, 1.1] },
   settler:  { party: 'group', count: 4, spacing: [0.55, 0.55] },
+  worker:   { party: 'group', count: 2, spacing: [0.55, 0.5] },
   musketman: { party: 'formation', count: FULL_FORMATION, spacing: [0.52, 0.58] },
   rifleman:  { party: 'formation', count: FULL_FORMATION, spacing: [0.52, 0.58] },
   infantry:  { party: 'formation', count: FULL_FORMATION, spacing: [0.6, 0.62] },
@@ -960,6 +963,7 @@ export function unitModel(type: UnitKey, civ: ArchCiv, variant = 0, female = fal
       case 'stealthFighter': case 'stealthBomber': case 'attackHelicopter': case 'drone': case 'guidedMissile': case 'atomicBomb': case 'nuclearMissile': return aircraft(type);
       case 'scout': return figure(gear, 'staff', false, { helmet: false, pack: true, female, civilian: true });
       case 'settler': return figure(gear, variant % 2 ? 'staff' : 'none', false, { pack: variant % 2 === 0, female, civilian: true });
+      case 'worker': return figure(gear, 'hoe', false, { female, civilian: true });
       // (Its two figures: the commander mounted, and the standard-bearer.)
       case 'swordsman': return figure(gear, 'sword', true, { helmet: true, female });
       case 'pikeman': return figure(gear, 'pike', false, { helmet: true, female });

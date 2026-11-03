@@ -23,7 +23,7 @@ export type UnitClass =
   | 'fighter' | 'bomber' | 'helicopter' | 'antiAir';
 
 export const UNIT_CLASS: Record<UnitKey, UnitClass> = {
-  settler: 'civilian', scout: 'recon', commander: 'leader',
+  settler: 'civilian', worker: 'civilian', scout: 'recon', commander: 'leader',
   warrior: 'melee', swordsman: 'melee', longswordsman: 'melee',
   spearman: 'antiCav', pikeman: 'antiCav',
   musketman: 'gunline', rifleman: 'gunline', infantry: 'gunline',

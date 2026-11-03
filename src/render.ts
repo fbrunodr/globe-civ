@@ -291,6 +291,7 @@ export class GlobeRenderer {
   private readonly bridgeMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
   private roadsKey = '';
   private readonly prevUse: Uint8Array;
+  private readonly prevBuilt: Int8Array; // (the improvement each tile had: drawn where built)
   // City ground (terraform.ts): the surface's layers, the heights as built,
   // the vertices reshaped so far, what they were reshaped for.
   private readonly layers: SurfaceLayers;
@@ -523,6 +524,7 @@ export class GlobeRenderer {
     this.scene.add(this.craters);
     for (const kind of BUILDING_KINDS) this.propGeo.set(kind, buildBuildingGeometry(kind).scale(s * 1.5 * PROP_SIZE, s * 1.5 * PROP_SIZE, s * 1.5 * PROP_SIZE));
     this.prevUse = new Uint8Array(N);
+    this.prevBuilt = new Int8Array(N).fill(-1);
     let hint = 0;
     this.cityProps = new CityProps(g, (t, i, wa, wb) => this.citySpot(t, i, wa, wb), (d) => {
       const l = locate(g.globe, d, hint);
@@ -601,8 +603,9 @@ export class GlobeRenderer {
     const g = this.game;
     let useChanged = false;
     for (let t = 0; t < g.N; t++) {
-      if (g.use[t] === this.prevUse[t]) continue;
+      if (g.use[t] === this.prevUse[t] && g.improved[t] === this.prevBuilt[t]) continue;
       this.prevUse[t] = g.use[t];
+      this.prevBuilt[t] = g.improved[t]!;
       useChanged = true;
       for (const x of [t, ...g.tiles[t].neighbors]) { this.propCache.delete(x); dirty.add(this.tileChunk[x]!); }
     }
@@ -781,7 +784,7 @@ export class GlobeRenderer {
     td[o + 21] = this.paint.group[t];
     // The tile's own frame (cityProps.onTile), its crops and its farm's axis.
     const f = tileFrame(g, t);
-    td.set([f.c.x, f.c.y, f.c.z, f.k, f.e1.x, f.e1.y, f.e1.z, CROP_CODE[cropRegion(g.improvementAt(t), g.biome[t]!, g.feature[t] ?? null, g.map.temperature[t]!)], f.e2.x, f.e2.y, f.e2.z, farmAxis(t)], o + 28);
+    td.set([f.c.x, f.c.y, f.c.z, f.k, f.e1.x, f.e1.y, f.e1.z, CROP_CODE[cropRegion(g.builtAt(t) ?? g.improvementAt(t), g.biome[t]!, g.feature[t] ?? null, g.map.temperature[t]!)], f.e2.x, f.e2.y, f.e2.z, farmAxis(t)], o + 28);
     // What the ground is made of: the soil's color and the main cover
     // material (the largest share), alone: the shader shows one material
     // per tile, fading into its neighbours' across borders.
@@ -960,13 +963,13 @@ export class GlobeRenderer {
             // (What grows in the water, mangroves and reeds, stays: no house stands there.)
             // (Not in a worked wetland: its paddies and peat beds are cleared.)
             const inWater = env.water - env.ground > 0 && catalogEntry(prop.kind).water !== undefined
-              && !(use === USE.rural && g.improvementAt(u) === 'wetland');
+              && !(g.builtAt(u) === 'wetland' && g.ownerOf(u) >= 0);
             // On built ground the tile's own flora stays where it stands clear of
             // the buildings and streets (a town keeps its trees, never adds any).
             // A rural tile keeps a share of it (fields keep hedgerow trees),
             // and that clear of what stands on the farm too.
-            if (use === USE.rural && !inWater) {
-              const imp = g.improvementAt(u);
+            if (use !== USE.center && g.builtAt(u) && g.ownerOf(u) >= 0 && !inWater) {
+              const imp = g.builtAt(u);
               if (rand() >= FLORA_KEEP[imp ?? 'urban'][CATALOG[prop.kind].layer]) continue;
             }
             if (this.cityProps.keepsFloraClear(u) && !inWater) {
@@ -1045,7 +1048,7 @@ export class GlobeRenderer {
   private resourceProps(t: number): PlacedProp[] {
     const g = this.game, r = g.resourceFor(t, HUMAN);
     if (!r || g.use[t] === USE.center) return [];
-    const worked = g.use[t] === USE.rural && g.improvementAt(t) === RESOURCE_IMPROVEMENT[r] && !g.pillaged[t];
+    const worked = g.ownerOf(t) >= 0 && g.builtAt(t) === RESOURCE_IMPROVEMENT[r] && !g.pillaged[t];
     const key = `${r}|${worked}`;
     const hit = this.resourceCache.get(t);
     if (hit && hit.key === key) return hit.items;
@@ -1394,7 +1397,7 @@ export class GlobeRenderer {
     for (let t = 0; t < g.N; t++) {
       const o = t * TILE_ROWS * 4 + 20;
       const u = g.use[t];
-      const imp = u === USE.rural ? g.improvementAt(t) : null;
+      const imp = u !== USE.center && g.ownerOf(t) >= 0 ? g.builtAt(t) : null;
       td[o] = u === USE.center ? 1 : 0;
       td[o + 2] = g.pillaged[t] ? BURNT_CODE : imp ? IMPROVEMENT_CODE[imp] : IMPROVEMENT_CODE.none;
       td[o + 3] = u === USE.center ? 1 : 0;

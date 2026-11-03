@@ -154,7 +154,7 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
   }
 
   // (Units packed in an army march with their commander: no orders of their own.)
-  const needsOrders = (u: Unit) => u.owner === HUMAN && u.packedIn === null && u.moves > 0 && !u.fortified && !u.skipped && u.goal == null;
+  const needsOrders = (u: Unit) => u.owner === HUMAN && u.packedIn === null && u.moves > 0 && !u.fortified && !u.skipped && u.goal == null && u.work === null;
 
   function hint(): string {
     if (game.over) return '';
@@ -209,6 +209,9 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
           const city = game.foundCity(unit);
           if (city) selectNextUnit();
         }
+        break;
+      case 'improve':
+        if (unit && game.improve(unit)) afterUnitAction(unit);
         break;
       case 'fortify':
         if (unit && !unitDef(unit.type).civilian) { unit.fortified = true; unit.goal = null; afterUnitAction(unit); }
@@ -345,7 +348,7 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
   addEventListener('keydown', (e) => {
     if (e.target instanceof HTMLInputElement) return;
     const keyActions: Record<string, Action> = {
-      Enter: { type: 'endTurn' }, ' ': { type: 'skip' }, f: { type: 'fortify' }, b: { type: 'found' }, p: { type: 'pillage' },
+      Enter: { type: 'endTurn' }, ' ': { type: 'skip' }, f: { type: 'fortify' }, b: { type: 'found' }, i: { type: 'improve' }, p: { type: 'pillage' },
       r: { type: 'rally' }, u: { type: 'deploy' },
     };
     const a = keyActions[e.key];

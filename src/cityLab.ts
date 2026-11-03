@@ -16,7 +16,7 @@ import {
   specialistYield, wonderBeside, type BuildingKey, type WonderKey, type EraIndex, type FocusKey, type Output, type SpecialistKind,
 } from './cities.ts';
 import { specialistName } from './ui.ts';
-import { buildPresets, foundCity, grow, shrink, setEra, addBuilding, addWonder } from './sandbox.ts';
+import { buildPresets, foundCity, grow, shrink, setEra, addBuilding, addWonder, improveWorked } from './sandbox.ts';
 
 const isMapSize = (s: string): s is MapSizeKey => s in MAP_SIZES;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -79,7 +79,7 @@ function modeTiles(): number[] {
   switch (mode.kind) {
     case 'grow': return game.growthOptions(c).flatMap((o) => (o.kind === 'rural' ? [o.tile] : []));
     case 'wonder': return game.wonderSpots(c, mode.key);
-    case 'pillage': return game.cityTiles(c, USE.rural);
+    case 'pillage': return game.cityTiles(c, USE.rural).filter((t) => game.builtAt(t));
   }
 }
 
@@ -182,9 +182,9 @@ function renderTile(): void {
   const c = game.cityById.get(game.tileCity[t]!);
   if (c) {
     const u = game.use[t];
-    const k = game.improvementAt(t);
+    const k = game.builtAt(t);
     const ws = game.wondersAt(t);
-    const what = u === USE.center ? esc(c.name) : `${u === USE.rural && k ? `${IMPROVEMENTS[k].name}${game.pillaged[t] ? ' (burnt)' : ''}` : 'Wild'} of ${esc(c.name)}`;
+    const what = u === USE.center ? esc(c.name) : `${k ? `${IMPROVEMENTS[k].name}${game.pillaged[t] ? ' (burnt)' : ''}` : 'Wild'}${u === USE.rural ? ' (worked)' : ''} of ${esc(c.name)}`;
     lines.push(`${what} ${u !== USE.wild || ws.length ? `<small>${yieldsStr(game.tileOutput(t))}</small>` : ''}`);
     if (ws.length) lines.push(ws.map((w) => `★ ${WONDERS[w].name}`).join(', '));
     if (u === USE.center) {
@@ -213,7 +213,7 @@ function apply(t: number): boolean {
   switch (mode.kind) {
     case 'grow': {
       const o = game.growthOptions(c).find((x) => x.kind === 'rural' && x.tile === t);
-      if (o) { c.growth = 1; game.placeGrowth(c, o); }
+      if (o) { c.growth = 1; game.placeGrowth(c, o); improveWorked(game, c); }
       if (!game.growthOptions(c).some((x) => x.kind === 'rural')) mode = null;
       break;
     }

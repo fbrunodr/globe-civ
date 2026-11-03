@@ -3,13 +3,17 @@
 // there: cityPainter.ts), and the land around it. Every tile it owns is in
 // one of three uses:
 //   center  the city
-//   rural   an improvement the terrain decides (farm, mine, camp, ...)
-//   wild    owned but untouched; yields nothing
+//   rural   worked by one of its citizens: its terrain's yields
+//   wild    owned but not worked; yields nothing
 // One citizen, one tile: a city's population is its center plus its rural
 // tiles plus its specialists. Each new citizen is a growth placement the
-// player (or the city's governor) makes: a rural tile, or a specialist in
-// a slot one of the city's buildings has (a Library's scientist, a
-// Market's merchant, ...). There are no workers.
+// player (or the city's governor) makes: a tile, or a specialist in a slot
+// one of the city's buildings has (a Library's scientist, a Market's
+// merchant, ...). Workers (Civ V's) improve the land, worked or not: the
+// improvement the terrain decides (farm, mine, camp, ...), once their civ
+// knows its first tech (techs.ts STAGE_TECHS), a few turns on the tile
+// (IMPROVE_TURNS); a worked tile adds its improvement's yield to its
+// terrain's.
 //
 // Buildings, as in Civ V: one of each per city, each with its own yields,
 // percentage bonuses to the city's output, specialist slots, the building
@@ -72,6 +76,9 @@ export const IMPROVEMENTS = {
   well:    { name: 'Oil well',        bonus: out({ prod: 2 }) },
 } satisfies Record<string, ImprovementDef>;
 export type ImprovementKey = keyof typeof IMPROVEMENTS;
+export const IMPROVEMENT_KEYS = Object.keys(IMPROVEMENTS) as ImprovementKey[];
+// Turns a worker spends building each.
+export const IMPROVE_TURNS: Record<ImprovementKey, number> = { farm: 5, pasture: 5, camp: 5, plantation: 6, quarry: 6, mine: 6, wetland: 6, boats: 4, well: 8 };
 
 // A peat bog is not farmed as it is: worked, it is drained (game.ts), and
 // is then its land (tundra, taiga, forest, prairie) with that land's
@@ -142,12 +149,11 @@ export function centerYield(t: TileTerrain, river: boolean): Output {
   return withRiver({ ...b, food: Math.max(CENTER_MIN.food, b.food), prod: Math.max(CENTER_MIN.prod, b.prod), gold: Math.max(CENTER_MIN.gold, b.gold) }, river);
 }
 
-// A worked tile's yield: its terrain, its improvement and what the owner's
-// techs and traits add to that improvement (`extra`, effects.ts tileBonus).
-export function ruralYield(t0: TileTerrain, river: boolean, extra: (k: ImprovementKey) => Output = () => ZERO, onResource: ImprovementKey | null = null): Output {
-  const t = drained(t0), k = improvementFor(t, onResource);
+// A worked tile's yield: its terrain, and its improvement (`built`, if any)
+// with what the owner's techs and traits add to it (`extra`, effects.ts tileBonus).
+export function ruralYield(t: TileTerrain, river: boolean, built: ImprovementKey | null, extra: (k: ImprovementKey) => Output = () => ZERO): Output {
   const base = fromYields(terrainYield(t));
-  return withRiver(k ? addOut(addOut(base, IMPROVEMENTS[k].bonus), extra(k)) : base, river);
+  return withRiver(built ? addOut(addOut(base, IMPROVEMENTS[built].bonus), extra(built)) : base, river);
 }
 
 // ---------- specialists ----------
@@ -330,7 +336,7 @@ export type EraIndex = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 // ---------- growth placements ----------
 
 export type GrowthOption =
-  | { readonly kind: 'rural'; readonly tile: number; readonly improvement: ImprovementKey }
+  | { readonly kind: 'rural'; readonly tile: number; readonly improvement: ImprovementKey | null } // (null: unimproved)
   | { readonly kind: 'specialist'; readonly specialist: SpecialistKind };
 export type GrowthKind = GrowthOption['kind'];
 

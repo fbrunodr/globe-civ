@@ -60,7 +60,7 @@ describe('WR1: a city falls only when its walls are down and a melee unit enters
 });
 
 describe('WR2: pillage and repair', () => {
-  it('a pillaged rural tile yields nothing until repaired; the raider takes gold', () => {
+  it('a pillaged tile loses its improvement\'s yield until repaired; the raider takes gold', () => {
     const { g, city } = setup();
     city.growth = 1;
     g.autoPlace(city);
@@ -72,6 +72,7 @@ describe('WR2: pillage and repair', () => {
       g.placeGrowth(city, o);
       farm = o.tile;
     }
+    g.build(farm, g.improvementAt(farm)!);
     const before = g.tileOutput(farm);
     expect(before.food + before.prod + before.gold).toBeGreaterThan(0);
     const raider = g.createUnit('warrior', 1, farm);
@@ -79,8 +80,9 @@ describe('WR2: pillage and repair', () => {
     const gold = g.players[1]!.gold;
     expect(g.pillage(raider)).toBe(true);
     expect(g.players[1]!.gold).toBe(gold + PILLAGE_GOLD);
+    // (Its land still yields, worked: only what the improvement added is lost.)
     const burnt = g.tileOutput(farm);
-    expect(burnt.food + burnt.prod + burnt.gold).toBe(0);
+    expect(burnt.food + burnt.prod + burnt.gold).toBeLessThan(before.food + before.prod + before.gold);
     // No repair while the raider stands there. (A store of food: the burnt
     // farm must not starve the city, which would leave the tile wild.)
     city.food = 200;

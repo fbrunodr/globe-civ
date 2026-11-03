@@ -12,7 +12,7 @@ import { unitModel, unitVariants, fullCount } from '../src/unitModels.ts';
 // how they play (unitClasses.ts).
 
 const KEYS = Object.keys(UNITS) as UnitKey[];
-const STARTING: readonly UnitKey[] = ['warrior', 'slinger', 'scout', 'settler'];
+const STARTING: readonly UnitKey[] = ['warrior', 'slinger', 'scout', 'settler', 'worker'];
 // The era a unit comes in (the tech or civic unlocking it; 0 at the start).
 const unlockers = (k: UnitKey) => [
   ...TECH_KEYS.filter((t) => TECHS[t].units?.includes(k)).map((t) => TECHS[t].era as number),

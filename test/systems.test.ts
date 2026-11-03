@@ -38,7 +38,7 @@ describe('S1: the trees hold together', () => {
     expect(TRAIT_KEYS.length).toBeGreaterThanOrEqual(80);
   });
   it('everything buildable is unlocked by exactly one tech or politics item, or from the start', () => {
-    const start = new Set<BuildKey>(['warrior', 'slinger', 'scout', 'settler', 'monument']);
+    const start = new Set<BuildKey>(['warrior', 'slinger', 'scout', 'settler', 'worker', 'monument']);
     const count = new Map<string, number>();
     const add = (ks: readonly string[] | undefined) => { for (const k of ks ?? []) count.set(k, (count.get(k) ?? 0) + 1); };
     for (const k of TECH_KEYS) { const d = techDef(k); add(d.units); add(d.buildings); add(d.wonders); }
@@ -213,6 +213,7 @@ describe('S4: borders and upkeep', () => {
     const c = settle(g, HUMAN);
     const farm = g.tilesWithin(c.tile, 1).find((t) => g.tileCity[t] === c.id && t !== c.tile && g.optionYield({ kind: 'rural', tile: t, improvement: 'farm' }, HUMAN) && !g.isWater(t) && g.relief[t] === 'flat' && !g.feature[t] && ['prairie', 'steppe', 'mediterranean', 'savanna'].includes(g.biome[t]!));
     if (farm === undefined) return;
+    g.build(farm, 'farm');
     const before = g.workedYield(farm, HUMAN).food;
     p.techs.add('plough');
     expect(g.workedYield(farm, HUMAN).food).toBe(before + 1);
@@ -247,7 +248,8 @@ describe('S7: luxuries and trade', () => {
     g.met[0]![1] = g.met[1]![0] = 1;
     g.players[1]!.isHuman = false;
     for (let t = 0; t < g.N; t++) if (g.tileCity[t] >= 0) g.resources[t] = null;
-    const plant = (c: typeof a, r: ResourceKey, n: number) => g.tilesWithin(c.tile, 2).filter((t) => g.tileCity[t] === c.id && t !== c.tile).slice(0, n).forEach((t) => { g.resources[t] = r; });
+    // (Each improved for it: a resource counts once its improvement is built.)
+    const plant = (c: typeof a, r: ResourceKey, n: number) => g.tilesWithin(c.tile, 2).filter((t) => g.tileCity[t] === c.id && t !== c.tile).slice(0, n).forEach((t) => { g.resources[t] = r; g.build(t, RESOURCE_IMPROVEMENT[r]); });
     plant(a, mine, 2);
     plant(b, theirs, 2);
     return g;
@@ -327,8 +329,9 @@ describe('S8: worked land: each resource its improvement; techs take it on a sta
     if (t === undefined) return;
     g.resources[t] = 'cattle';
     expect(g.improvementAt(t)).toBe('pasture');
+    // (A citizen may work it before a worker improves it.)
     const option = g.growthOptions(c).find((o) => o.kind === 'rural' && o.tile === t);
-    if (option?.kind === 'rural') expect(option.improvement).toBe('pasture');
+    if (option?.kind === 'rural') expect(option.improvement).toBeNull();
     // (A strategic its owner has not revealed works as its land.)
     g.resources[t] = 'horses';
     expect(g.improvementAt(t)).toBe('farm');
@@ -346,6 +349,7 @@ describe('S8: worked land: each resource its improvement; techs take it on a sta
     const t = g.tilesWithin(c.tile, 1).find((x) => x !== c.tile && !g.isWater(x) && g.relief[x] === 'flat' && g.improvementAt(x) === 'farm');
     if (t === undefined) return;
     g.resources[t] = 'cattle';
+    g.build(t, 'pasture');
     const before = g.workedYield(t, HUMAN), s0 = g.stageAt(t, HUMAN);
     g.players[HUMAN]!.techs.add('animalHusbandry');
     expect(g.stageAt(t, HUMAN)).toBe(s0 + 1);
