@@ -4,7 +4,7 @@ import { unitDef, domainOf, type UnitKey } from './rules.ts';
 import { firesAtClose, returnFire, type AttackStyle, type Projectile } from './unitClasses.ts';
 import { UNIT_LOOK, figuresFor, formationSlots, unitModel, variantOf, rides, headOffset, hairModel, transportModel, wearsHelmet, womenShare, isMachine, colsOf, GEAR, HAIR_BY, HAIR_STYLES, STRIKE, GUARD, DRAW, whirls, bowman, cuts, thrusts, draws, bayonets } from './unitModels.ts';
 import { mulberry32 } from './rng.ts';
-import { HIP } from './people.ts';
+import { HIP, GUN_L, GUN_R, elbowAt, handAt } from './people.ts';
 import { pairUp, type P2 } from './duel.ts';
 import { orderSlots, reforms, type Order } from './formation.ts';
 import { AFTER, SINK, WRECK, armOf, deathBend, deathLegs, deathTurn, dropOf, flingOf, legsOf, machinePose, nextBlow, poseOf, poseTurn, rearShift, sunk, type Cue } from './unitAnim.ts';
@@ -250,6 +250,15 @@ interface Shown {
   seen: boolean;
 }
 
+// A long gun's other hand (RIG.support): where the gun arms are made (the
+// right hand on the stock, the left under the barrel, their elbows alike:
+// people.ts GUN_R, GUN_L), the gun's pitch as made (as unitModels.ts
+// rests it), and where along the gun (from the right hand, in its turning
+// plane) the left hand holds it: out at its middle, as a musket is aimed.
+const GUN_HAND_R = handAt(-1, GUN_R), GUN_HAND_L = handAt(1, GUN_L), GUN_ELBOW = elbowAt(1, GUN_L);
+const GUN_REST = Math.atan2(GUN_HAND_L.z - GUN_HAND_R.z, GUN_HAND_L.y - GUN_HAND_R.y), GUN_HANDS = Math.hypot(GUN_HAND_L.y - GUN_HAND_R.y, GUN_HAND_L.z - GUN_HAND_R.z);
+const GUN_HOLD = 0.2;
+const f3 = (x: number) => x.toFixed(4);
 const UNIT_VERTEX_DECL = /* glsl */ `
   attribute vec4 aLimb;     // (side, pivot, amplitude; flags: unitModels.ts RIG)
   attribute vec4 aRig;      // a lower piece's middle joint (knee, elbow) at y, z; a weapon's grip at y, z
@@ -259,6 +268,7 @@ const UNIT_VERTEX_DECL = /* glsl */ `
   attribute vec4 aPose;     // per figure: its body above the hips bent forward, turned; its crouch; its striking elbow bent (radians)
   attribute vec4 aMore;     // per figure: its shield raised, its bowstring drawn, how burnt (0..1); its striking arm carried out to its side (radians; - across it)
   uniform float uTime;
+  vec2 rot2(vec2 v, float a) { float c = cos(a), s = sin(a); return vec2(c * v.x - s * v.y, s * v.x + c * v.y); }
   // (A point or direction turned with the body above the hips.)
   vec3 bodyBend(vec3 p, float c1, float s1, float c2, float s2) {
     p = vec3(c1 * p.x + s1 * p.z, p.y, -s1 * p.x + c1 * p.z);
@@ -309,6 +319,34 @@ const UNIT_LIMB = /* glsl */ `
   // (The striking arm carried out to its side, or across the body, about its shoulder: a cut on a slant.)
   float outA = isStrike ? -aMore.w * blendOn : 0.0, outC = cos(outA), outS = sin(outA);
   float gripA = isGrip > 0.5 ? aSkinTone.w * (aAnim.w - aRest - limbA - jointA) : 0.0, gripC = cos(gripA), gripS = sin(gripA);
+  // (A long gun's other arm (RIG.support): its hand put on the gun, out
+  // along it, wherever the gun arm and the gun now are; the shoulder and
+  // the elbow (kept down) turned to reach it. In the plane the arms turn
+  // in (y, z: .x, .y here); the gun lies across the body, so the forearm
+  // is moved over to it too (UNIT_VERTEX).)
+  // (Out at the gun's middle if it can reach so far; else as far out as it
+  // reaches (the gun low, at the hip): the hand slid back along it.)
+  bool isSupport = mod(floor(rigFlags / 512.0), 2.0) > 0.5 && aLimb.z > 0.0;
+  float supportAt = ${f3(GUN_HANDS)};
+  if (isSupport) {
+    float limbR = -hit * aLimb.z, jointR = -aPose.w;
+    vec2 S = vec2(aLimb.y, 0.0), E0 = vec2(${f3(GUN_ELBOW.y)}, ${f3(GUN_ELBOW.z)}), G = vec2(${f3(GUN_HAND_R.y)}, ${f3(GUN_HAND_R.z)}), H0 = vec2(${f3(GUN_HAND_L.y)}, ${f3(GUN_HAND_L.z)});
+    vec2 Gnow = S + rot2(E0 + rot2(G - E0, jointR) - S, limbR);
+    float gunA = ${f3(GUN_REST)} + aSkinTone.w * (aAnim.w - ${f3(GUN_REST)} - limbR - jointR) + jointR + limbR;
+    float l1 = length(E0 - S), l2 = length(H0 - E0);
+    vec2 v = vec2(cos(gunA), sin(gunA)), P = Gnow - S;
+    float pv = dot(P, v), reach = 0.98 * (l1 + l2), disc = pv * pv - dot(P, P) + reach * reach;
+    supportAt = disc > 0.0 ? clamp(-pv + sqrt(disc), ${f3(GUN_HANDS * 0.5)}, ${f3(GUN_HOLD)}) : ${f3(GUN_HANDS)};
+    vec2 T = Gnow + supportAt * v, ST = T - S;
+    float d = clamp(length(ST), abs(l1 - l2) + 0.0001, l1 + l2 - 0.0001);
+    float bend = acos(clamp((l1 * l1 + d * d - l2 * l2) / (2.0 * l1 * d), -1.0, 1.0)), toT = atan(ST.y, ST.x);
+    vec2 Ea = S + l1 * vec2(cos(toT + bend), sin(toT + bend)), Eb = S + l1 * vec2(cos(toT - bend), sin(toT - bend));
+    vec2 E1 = Ea.x < Eb.x ? Ea : Eb;
+    float ls = atan(E1.y - S.y, E1.x - S.x) - atan(E0.y - S.y, E0.x - S.x);
+    limbA = ls;
+    jointA = (atan(T.y - E1.y, T.x - E1.x) - atan(H0.y - E0.y, H0.x - E0.x) - ls) * isLower * (blended ? aRig.z : 1.0);
+    limbC = cos(limbA); limbS = sin(limbA); jointC = cos(jointA); jointS = sin(jointA);
+  }
   // (Above the hips, not a leg: the body, its arms, head and hair.)
   // (Eased in across the waist, not cut there: a body in one piece (an
   // imported one: its tunic and skirt run past the hips) stretches, not tears.)
@@ -331,6 +369,8 @@ const UNIT_NORMAL = /* glsl */ `
   objectNormal = bodyBend(objectNormal, twC, twS, bnC, bnS);`;
 const UNIT_VERTEX = /* glsl */ `
   {
+    // (A long gun's other forearm moved across to where it holds the gun: RIG.support.)
+    if (isSupport) transformed.x += isLower * (blended ? aRig.z : 1.0) * (supportAt - ${f3(GUN_HANDS)}) * ${f3((GUN_HAND_L.x - GUN_HAND_R.x) / GUN_HANDS)};
     vec2 sp = spinY > 0.5 ? transformed.xz - aRig.zw : spinX > 0.5 ? transformed.yz - aRig.zw : transformed.xy - aRig.zw;
     sp = vec2(spinC * sp.x - spinS * sp.y, spinS * sp.x + spinC * sp.y) + aRig.zw;
     if (spinY > 0.5) transformed.xz = sp; else if (spinZ > 0.5) transformed.xy = sp; else if (spinX > 0.5) transformed.yz = sp;

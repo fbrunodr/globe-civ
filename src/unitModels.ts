@@ -88,13 +88,13 @@ const HORSE = [0x6a4a32, 0x8a6a4a, 0x4a3a2e, 0xb8a888] as const;
 // propeller about the fore-and-aft line through its hub at (x, y), a wheel
 // about the axle through its hub at (y, z): the hub kept where the grip is
 // (aRig.zw).)
-type Tag = { team?: boolean; skin?: boolean; limb?: readonly [number, number, number]; joint?: readonly [number, number]; grip?: readonly [number, number, number]; spin?: { readonly axis: 'x' | 'y' | 'z'; readonly at: readonly [number, number] } };
-export const RIG = { team: 1, skin: 2, joint: 4, grip: 8, spinY: 16, spinZ: 32, spinX: 64, skirt: 128, blend: 256 } as const;
+type Tag = { support?: boolean; team?: boolean; skin?: boolean; limb?: readonly [number, number, number]; joint?: readonly [number, number]; grip?: readonly [number, number, number]; spin?: { readonly axis: 'x' | 'y' | 'z'; readonly at: readonly [number, number] } };
+export const RIG = { team: 1, skin: 2, joint: 4, grip: 8, spinY: 16, spinZ: 32, spinX: 64, skirt: 128, blend: 256, support: 512 } as const;
 const wheelSpin = (y: number, z = 0): Tag => ({ spin: { axis: 'x', at: [y, z] } });
 function tag(g: THREE.BufferGeometry, t: Tag = {}): THREE.BufferGeometry {
   if (g.getAttribute('leafMask')) g.deleteAttribute('leafMask');
   const n = g.getAttribute('position').count;
-  const flags = (t.team ? RIG.team : 0) + (t.skin ? RIG.skin : 0) + (t.joint ? RIG.joint : 0) + (t.grip ? RIG.grip : 0) + (t.spin ? RIG[t.spin.axis === 'x' ? 'spinX' : t.spin.axis === 'y' ? 'spinY' : 'spinZ'] : 0);
+  const flags = (t.team ? RIG.team : 0) + (t.skin ? RIG.skin : 0) + (t.joint ? RIG.joint : 0) + (t.grip ? RIG.grip : 0) + (t.support ? RIG.support : 0) + (t.spin ? RIG[t.spin.axis === 'x' ? 'spinX' : t.spin.axis === 'y' ? 'spinY' : 'spinZ'] : 0);
   const limb = new Float32Array(n * 4), rig = new Float32Array(n * 4), rest = new Float32Array(n).fill(t.grip?.[2] ?? 0);
   const [s, pivot, amp] = t.limb ?? [0, 0, 0], [jy, jz] = t.joint ?? [0, 0], [gy, gz] = t.spin?.at ?? t.grip ?? [0, 0];
   for (let i = 0; i < n; i++) { limb.set([s, pivot, amp, flags], i * 4); rig.set([jy, jz, gy, gz], i * 4); }
@@ -161,6 +161,10 @@ export const GUARD = 3;
 const GUARD_ARM = [GUARD, SHOULDER, 1.25] as const;
 // How far a long gun's arms (both, together) swing from the shoulders, per unit of its pose's arm (unitAnim.ts LUNGE).
 export const GUN_REACH = 0.9;
+// A long gun's other arm, its hand under the barrel: swung as the gun
+// arm is, then bent to hold the gun wherever it points (RIG.support: the
+// units' shader reaches it there, unitView.ts).
+const SUPPORT_ARM = [STRIKE, SHOULDER, GUN_REACH] as const;
 // How far an archer's bow arm swings from the shoulder, per unit of its pose's arm (unitAnim.ts bowPose).
 export const BOW_REACH = 0.4;
 // An archer's string hand drawing back to the cheek (raised from the shoulder, bent at the elbow).
@@ -198,7 +202,7 @@ const REST_PITCH: Record<Hold, number> = {
 // all of it crouched with the thighs. So it spreads with the stride, and no
 // leg gets past it.)
 const tagged = (parts: readonly Part[]): THREE.BufferGeometry[] => parts.map((p) => {
-  const g = tag(p.geo, { team: p.tag === 'team', skin: p.tag === 'skin', ...(p.limb ? { limb: p.limb } : {}), ...(p.joint ? { joint: p.joint } : {}) });
+  const g = tag(p.geo, { team: p.tag === 'team', skin: p.tag === 'skin', ...(p.limb ? { limb: p.limb } : {}), ...(p.joint ? { joint: p.joint } : {}), ...(p.limb === SUPPORT_ARM ? { support: true } : {}) });
   if (p.skirt !== undefined && p.limb && p.limb[2] > 0) {
     const pos = g.getAttribute('position') as THREE.BufferAttribute, limb = g.getAttribute('aLimb') as THREE.BufferAttribute, rig = g.getAttribute('aRig') as THREE.BufferAttribute;
     for (let i = 0; i < pos.count; i++) {
@@ -248,7 +252,7 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
   const freeL = !shield && !bow && !twoHands;
   const swing = {
     legs: (side: number) => (opts.still ? [0, HIP, 0] as const : LEG(side)),
-    arms: (side: number) => (side === -1 ? (hold === 'none' ? ARM(-1) : bow ? DRAW_ARM : strike ?? STILL_ARM) : shield ? GUARD_ARM : freeL ? ARM(1) : bow ? bowUp : hold === 'longsword' || hold === 'mg' || longGun ? strike ?? STILL_ARM : STILL_ARM),
+    arms: (side: number) => (side === -1 ? (hold === 'none' ? ARM(-1) : bow ? DRAW_ARM : strike ?? STILL_ARM) : shield ? GUARD_ARM : freeL ? ARM(1) : bow ? bowUp : hold === 'longsword' || hold === 'mg' ? strike ?? STILL_ARM : longGun ? SUPPORT_ARM : STILL_ARM),
   };
   const out = tagged(person(dress, armL, armR, swing));
   const hR = handAt(-1, armR, f), hL = handAt(1, armL, f), eR = elbowAt(-1, armR, f), eL = elbowAt(1, armL, f);
