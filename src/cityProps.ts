@@ -186,7 +186,7 @@ export class CityProps {
   constructor(private readonly game: Game, private readonly sample: SpotSampler, private readonly sampleDir: DirSampler,
     private readonly scale: number) {}
 
-  // A farm's fields on tile t: the largest rectangle along its axis in its
+  // A pasture's field on tile t (its fence round it): the largest rectangle along its axis in its
   // painted land, padded (FIELD_PAD, BEACH; dry, but for a wetland's
   // paddies), in the farm's frame. Fixed with the painting: cached.
   private readonly fields = new Map<number, FieldRect | null>();
@@ -446,7 +446,7 @@ export class CityProps {
         inner: imp === 'pasture' ? innerMask(toT, (d) => this.sampleDir(d), (s) => (s.owner === undefined || s.owner === t) && s.water - s.ground <= DRY) : () => false,
         // (A paddy's water is its own pools: not a river running by, nor the sea.)
         pool: (p) => { const s = this.sampleDir(toT(p)); return (s.bank ?? 0) < 0.05 && (s.coast ?? 1) > 0.3; },
-        field: this.farmRect(t),
+        field: imp === 'pasture' ? this.farmRect(t) : null,
       };
       const farm = planFarm(inp, site);
       if (!farm) continue;

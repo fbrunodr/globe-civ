@@ -289,12 +289,11 @@ function farmGround(imp: ImprovementKey, region: CropRegion, stage: number, salt
   cv.width = cv.height = N;
   const ctx = cv.getContext('2d')!, img = ctx.createImageData(N, N), half = 0.62;
   const pal = CROP_PALETTE[region].map((h) => new THREE.Color(h)), bg = new THREE.Color(base), ps = plotStage(imp, stage);
-  // (Its fields, as the game's: the largest rectangle in the hex, rural/layout.ts.)
-  const F = largestRect((u, v) => rhoOf(6, { x: u, y: v }) <= 0.92);
   for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
     const x = (i / N - 0.5) * 2 * half, y = (j / N - 0.5) * 2 * half;
     let c = bg.clone();
-    if (imp !== 'pasture' && F && x >= F.u0 && x <= F.u1 && y >= F.v0 && y <= F.v1) {
+    // (The gallery's patch is the hex itself: its farm fills it, a little in from its sides.)
+    if (imp !== 'pasture' && rhoOf(6, { x, y }) < 0.92) {
       const pl = plotAt(x, y, salt, ps), k = cropIndex(pl.h, ps);
       c = pal[k]!.clone().multiplyScalar(0.94 + 0.12 * ((pl.h * 7.3) % 1));
       if (imp === 'plantation' && ps >= 2 && ((pl.f[0] * PLOT_SIZES[ps]![0] / PLANT_ROW_W) % 1) < 0.45) c.lerp(new THREE.Color(0.36, 0.29, 0.2), 0.7);
@@ -337,7 +336,7 @@ function workedItems(imp: ImprovementKey, stage: number, res: ResourceKey | null
   }
   const inp: RuralInput = { imp, stage, res, region, axis: 0, salt: seed, seed, yard: (i) => areaLook(imp, land, null, 15, i, seed) };
   // (A paddy's homestead on a dry knoll in the middle of it.)
-  const site: RuralSite = { free: () => true, depth: (p) => (region === 'paddy' && Math.hypot(p.x, p.y) > 0.13 ? 0.004 : -1), wade: PADDY_WATER, ours: (p) => rhoOf(6, p) <= 1, inner: (p) => rhoOf(6, p) <= 0.85, pool: () => true, field: largestRect((u, v) => rhoOf(6, { x: u, y: v }) <= 0.92) };
+  const site: RuralSite = { free: () => true, depth: (p) => (region === 'paddy' && Math.hypot(p.x, p.y) > 0.13 ? 0.004 : -1), wade: PADDY_WATER, ours: (p) => rhoOf(6, p) <= 1, inner: (p) => rhoOf(6, p) <= 0.85, pool: () => true, field: imp === 'pasture' ? largestRect((u, v) => rhoOf(6, { x: u, y: v }) <= 0.92) : null };
   const farm = planFarm(inp, site);
   if (!farm) return out;
   const plan = layoutRural(inp, farm, site);

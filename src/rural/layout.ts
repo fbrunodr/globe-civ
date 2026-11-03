@@ -37,7 +37,7 @@ export interface RuralSite {
   readonly ours: (p: Pt) => boolean;  // the land painted as this tile's (its fields fill it)
   readonly inner: (p: Pt) => boolean; // that, with some room all round (a fence keeps to it)
   readonly pool: (p: Pt) => boolean;  // its water a wetland's own pools, not a river or the sea
-  readonly field: FieldRect | null;   // its fields: the largest rectangle in its padded land (largestRect), in the farm's frame
+  readonly field: FieldRect | null;   // a pasture's: the largest rectangle in its padded land (largestRect), in the farm's frame
 }
 // A rectangle in the farm's frame (u along its axis, v across: tile steps).
 export interface FieldRect { readonly u0: number; readonly v0: number; readonly u1: number; readonly v1: number }
@@ -64,7 +64,7 @@ export function largestRect(ok: (u: number, v: number) => boolean): FieldRect | 
   }
   return rect;
 }
-const inField = (r: FieldRect | null, pu: number, pv: number) => r !== null && pu >= r.u0 && pu <= r.u1 && pv >= r.v0 && pv <= r.v1;
+
 export interface RuralInput {
   readonly imp: ImprovementKey;
   readonly stage: number;
@@ -84,7 +84,7 @@ export interface RuralPlan {
 // A farm's crops: tufts in rows this far apart, this far along them, this
 // wide; kept off the plots' edges, the hex's rim, the homestead.
 export const CROP_ROW = 0.017, CROP_STEP = 0.0125, CROP_WIDTH = 0.017;
-const CROP_EDGE = 0.007, CROP_HOME_GAP = 0.06;
+const CROP_EDGE = 0.007, CROP_REACH = 1.3, CROP_HOME_GAP = 0.06;
 // A paddy's rice stands in its water, up to this share of its height.
 export const PADDY_DEPTH = 0.85;
 // A plantation's tufts: this far apart along every other row, this wide.
@@ -192,12 +192,10 @@ export function layoutRural(inp: RuralInput, farm: Farm, site: RuralSite, keep: 
     }
   }
 
-  // (The field: where crops and plants stand; none without one.)
-  const F = site.field ?? { u0: 0, v0: 0, u1: -1, v1: -1 };
   // Crops: farms, and rice paddies (in their water: peat is only cut).
   const ps = plotStage(imp, stage);
   // (The fields fill the tile as its land is painted, past its hex's sides where its painting goes.)
-  const off = (p: Pt) => !inField(site.field, p.x * u.x + p.y * u.y, p.x * v.x + p.y * v.y) || d2(p, farm.home) < CROP_HOME_GAP || inYard(p) || kept(p) || !site.free(p);
+  const off = (p: Pt) => rhoOf(6, p) > CROP_REACH || !site.ours(p) || d2(p, farm.home) < CROP_HOME_GAP || inYard(p) || kept(p) || !site.free(p);
   if (imp === 'farm' || (imp === 'wetland' && inp.region === 'paddy')) {
     const paddy = inp.region === 'paddy';
     const tint = CROP_PALETTE[inp.region].map((h) => {
@@ -209,7 +207,7 @@ export function layoutRural(inp: RuralInput, farm: Farm, site: RuralSite, keep: 
     // (A first farm is patchy, a ruin's mostly gone to weed; a paddy is planted
     // all over its pools, every plot, to the edges, half as thick.)
     const thin = stage === 0 ? 0.7 : paddy ? 0.5 : stage === 1 ? 0.2 : 0;
-    for (let x = F.u0; x <= F.u1; x += CROP_ROW) for (let y = F.v0; y <= F.v1; y += CROP_STEP) {
+    for (let x = -0.7; x <= 0.7; x += CROP_ROW) for (let y = -0.7; y <= 0.7; y += CROP_STEP) {
       const pu = x + (rand() - 0.5) * CROP_ROW * 0.3, pv = y + (rand() - 0.5) * CROP_STEP * 0.8, turn = rand() * Math.PI, shade = 0.9 + 0.2 * rand(), grow = 0.9 + 0.2 * rand();
       const p = { x: pu * u.x + pv * v.x, y: pu * u.y + pv * v.y };
       if (rand() < thin || off(p)) continue;
@@ -229,9 +227,9 @@ export function layoutRural(inp: RuralInput, farm: Farm, site: RuralSite, keep: 
     const spots: { p: Pt; heading: number }[] = [];
     if (pl.rows) {
       const sx = PLOT_SIZES[Math.min(ps, MAX_STAGE)]![0];
-      for (let y = F.v0; y <= F.v1; y += PLANT_STEP) {
+      for (let y = -0.7; y <= 0.7; y += PLANT_STEP) {
         let last = '';
-        for (let x = F.u0; x <= F.u1; x += 0.001) {
+        for (let x = -0.7; x <= 0.7; x += 0.001) {
           const plot = plotAt(x, y, inp.salt, ps), row = (plot.f[0] * sx) / PLANT_ROW_W, id = `${plot.h}|${Math.floor(row)}`;
           if (Math.floor(row) % 2 || row % 1 < 0.72 || id === last) continue;
           last = id;
@@ -240,7 +238,7 @@ export function layoutRural(inp: RuralInput, farm: Farm, site: RuralSite, keep: 
       }
     } else {
       // (A first plantation fills its patches loosely, a ruin's thinly.)
-      for (let x = F.u0; x <= F.u1; x += 0.017) for (let y = F.v0; y <= F.v1; y += 0.015) {
+      for (let x = -0.7; x <= 0.7; x += 0.017) for (let y = -0.7; y <= 0.7; y += 0.015) {
         const pu = x + (rand() - 0.5) * 0.008, pv = y + (rand() - 0.5) * 0.008, plot = plotAt(pu, pv, inp.salt, ps);
         if (rand() < (worn ? 0.75 : 0.3) || plot.edge < CROP_EDGE || cropIndex(plot.h, ps) === 3) continue;
         spots.push({ p: { x: pu * u.x + pv * v.x, y: pu * u.y + pv * v.y }, heading: rand() * Math.PI });
