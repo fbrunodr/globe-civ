@@ -148,7 +148,8 @@ export function layoutRural(inp: RuralInput, farm: Farm, site: RuralSite, keep: 
     items.push({ model, p, heading, size: typeof s === 'number' ? [s, s, s] : s, leaf, shade });
 
   // The homestead: a house in the owner's style and its barn (none on a ruin), facing along the grid.
-  const house = worn ? null : { p: { x: farm.home.x - 0.012 * HOMESTEAD_SCALE * v.x, y: farm.home.y - 0.012 * HOMESTEAD_SCALE * v.y }, floors: houseFloors(imp, stage) };
+  // (A camp's house is its lodge, or sawmill: rural/stages.ts.)
+  const house = worn || imp === 'camp' ? null : { p: { x: farm.home.x - 0.012 * HOMESTEAD_SCALE * v.x, y: farm.home.y - 0.012 * HOMESTEAD_SCALE * v.y }, floors: houseFloors(imp, stage) };
   const barn = !worn && look.density !== 'low' && imp !== 'camp' && imp !== 'mine' ? { x: farm.home.x + 0.03 * HOMESTEAD_SCALE * v.x, y: farm.home.y + 0.03 * HOMESTEAD_SCALE * v.y } : null;
   const taken: { p: Pt; r: number }[] = [...keep];
   if (house) taken.push({ p: house.p, r: HOUSE_R });
