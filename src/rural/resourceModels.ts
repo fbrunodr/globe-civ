@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import { cone, cyl, part, tf, type Tf } from '../propCatalog.ts';
 import type { ResourceKey } from '../resources.ts';
 import type { RuralModel } from './models.ts';
-import { KIT, kitBoost, type KitModel } from './kit.ts';
+import { KIT, kitBoost, PLANT_BOOST, type KitModel } from './kit.ts';
 
 export const LEAF = 0x010203;
 const TIMBER = 0x7a5f45, TRUNK = 0x6a5038, STRAW = 0xd2b46a, DEEP = 0x3a6128, WHITE = 0xece6da;
@@ -158,12 +158,12 @@ type Shown = RuralModel;
 export interface ResourceLook { readonly parts: readonly { readonly model: Shown; readonly n: number; readonly colors?: readonly number[] }[]; readonly water?: true }
 const L = (...parts: ResourceLook['parts']): ResourceLook => ({ parts });
 const W = (...parts: ResourceLook['parts']): ResourceLook => ({ parts, water: true });
-const ORE = { copper: [0x3a9a7a, 0x4aa88a], iron: [0x9a4a2a, 0x8a3f24], gold: [0xe8c040, 0xd8b030], gems: [0x9a5ad0, 0x3ab0b0, 0xd04a7a], coal: [0x1e1c1a, 0x2a2826] } as const;
+const ORE = { copper: [0x3a9a7a, 0x4aa88a], iron: [0x9a4a2a, 0x8a3f24], gold: [0xe8c040, 0xd8b030], gems: [0x9a5ad0, 0x3ab0b0, 0xd04a7a], coal: [0x0e0d0c, 0x161412] } as const;
 export const RESOURCE_WILD: Record<ResourceKey, ResourceLook> = {
-  wheat: L({ model: 'wildGrain', n: 8 }),
+  wheat: L({ model: 'grainPatch', n: 6, colors: [0xc8a446, 0xbf9c40, 0xd0ac52] }),
   rice: L({ model: 'wildRice', n: 7 }),
-  maize: L({ model: 'teosinte', n: 5 }),
-  bananas: L({ model: 'bananaPlant', n: 3 }),
+  maize: L({ model: 'tallPatch', n: 5, colors: [0x6f9238, 0x7a9a40, 0x668a34] }),
+  bananas: L({ model: 'bananaPlant', n: 7 }),
   cattle: L({ model: 'ox', n: 3, colors: [0x2a2018, 0x3a2a1e, 0x5a3a24] }),
   sheep: L({ model: 'mouflon', n: 4, colors: [0x8a5a34, 0x7a4a2a, 0x9a6a40, 0x8a5a34] }),
   deer: L({ model: 'stag', n: 1, colors: [0x8a5a34] }, { model: 'deer', n: 3, colors: [0x9a6a40, 0x8a5e38] }),
@@ -173,21 +173,21 @@ export const RESOURCE_WILD: Record<ResourceKey, ResourceLook> = {
   wine: L({ model: 'wildVine', n: 3 }),
   incense: L({ model: 'incenseTree', n: 3 }),
   silk: L({ model: 'mulberryBush', n: 3 }),
-  spices: L({ model: 'pepperPole', n: 2 }, { model: 'bushes', n: 2 }),
+  spices: L({ model: 'spiceShrub', n: 5, colors: [0x3f6a2c, 0x4a7432] }),
   furs: L({ model: 'fox', n: 3, colors: [0xc8642a, 0xb85a24, 0xd0703a] }),
   ivory: L({ model: 'elephant', n: 2, colors: [0x8c8680, 0x7e7872] }),
   dyes: L({ model: 'indigoBush', n: 4 }),
   gold: L({ model: 'outcrop', n: 2, colors: ORE.gold }),
-  gems: L({ model: 'outcrop', n: 1, colors: [0x9a5ad0] }, { model: 'crystals', n: 3, colors: ORE.gems }),
+  gems: L({ model: 'crystals', n: 4, colors: ORE.gems }),
   pearls: W({ model: 'oysters', n: 2 }),
   salt: L({ model: 'crust', n: 4 }),
   cotton: L({ model: 'cottonBush', n: 5 }),
-  tea: L({ model: 'teaBush', n: 5 }),
+  tea: L({ model: 'teaShrub', n: 6, colors: [0x3f6a2a, 0x4a7a32, 0x456e2c] }),
   amber: L({ model: 'resinPine', n: 2 }),
   horses: L({ model: 'horse', n: 4, colors: [0xb08a5a, 0x7a4a2a, 0xa08868, 0x5a3a24] }),
-  iron: L({ model: 'outcrop', n: 2, colors: ORE.iron }),
+  iron: L({ model: 'oreRock', n: 2, colors: ORE.iron }),
   niter: L({ model: 'crust', n: 3 }),
-  coal: L({ model: 'outcrop', n: 2, colors: ORE.coal }),
+  coal: L({ model: 'oreRock', n: 2, colors: ORE.coal }),
   oil: L({ model: 'oilPool', n: 2 }),
 };
 export const RESOURCE_WORKED: Partial<Record<ResourceKey, ResourceLook>> = {
@@ -215,7 +215,7 @@ export const RESOURCE_LOOKS = RESOURCE_WILD;
 // random tries, away from those taken (positions in tile steps from the
 // patch's middle, x and y along its frame; s: the model's scale, a little
 // larger than life so it reads beside the flora).
-export const RESOURCE_PATCH = 0.17, RESOURCE_SCALE = 6.5;
+export const RESOURCE_PATCH = 0.17, RESOURCE_SCALE = 6.5, PATCH_SIZE = 0.075, SHRUB_BOOST = PLANT_BOOST * 3;
 export interface ResourceSpot { readonly model: Shown; readonly color: number | undefined; readonly x: number; readonly y: number; readonly yaw: number; readonly s: number }
 export function resourceLayout(r: ResourceKey, rand: () => number, look: ResourceLook = RESOURCE_WILD[r]): ResourceSpot[] {
   const models = look.parts.flatMap((pt) => Array.from({ length: pt.n }, (_, i) => ({ model: pt.model, color: pt.colors?.[i % pt.colors.length] })));
@@ -229,7 +229,10 @@ export function resourceLayout(r: ResourceKey, rand: () => number, look: Resourc
       if (d > bestD) { bestD = d; best = [x, y]; }
     }
     taken.push(best);
-    // (The kit's models are true to size: drawn a little larger than life, kitBoost.)
-    return { ...m, x: best[0], y: best[1], yaw: rand() * Math.PI * 2, s: (m.model in KIT ? kitBoost(m.model as KitModel) : RESOURCE_SCALE) * (0.9 + 0.2 * rand()) };
+    // (The kit's models are true to size: drawn a little larger than life,
+    // kitBoost; a stand of grain a unit across, PATCH_SIZE; a shrub as a
+    // plantation's plants were.)
+    const s0 = m.model in KIT ? kitBoost(m.model as KitModel) : m.model === 'grainPatch' || m.model === 'tallPatch' ? PATCH_SIZE : m.model === 'teaShrub' || m.model === 'spiceShrub' ? SHRUB_BOOST : RESOURCE_SCALE;
+    return { ...m, x: best[0], y: best[1], yaw: rand() * Math.PI * 2, s: s0 * (0.9 + 0.2 * rand()) };
   });
 }

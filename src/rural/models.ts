@@ -9,11 +9,15 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { cone, cyl, part, tf, type Tf } from '../propCatalog.ts';
+import { buildModel, burst, cone, cyl, oct, part, tf, type Tf } from '../propCatalog.ts';
+import { FENCE_BANDS } from '../propMaterial.ts';
+import { CREATURE_SCALE } from '../creatures.ts';
 import { RESOURCE_MODELS, RESOURCE_MODEL_KEYS } from './resourceModels.ts';
 import { kitModel, KIT_MODELS, type KitModel } from './kit.ts';
 
-export const RURAL_MODELS = ['crop', 'heap', 'block', 'logs', 'stump', 'haystack', 'rack', 'incaHouse', 'incaHall', ...RESOURCE_MODEL_KEYS, ...KIT_MODELS] as const;
+// (The flora-drawn ones first: cards, as the trees' crowns are.)
+export const FLORA_RURAL = ['crop', 'plant', 'grainPatch', 'tallPatch', 'teaShrub', 'spiceShrub', ...FENCE_BANDS] as const;
+export const RURAL_MODELS = [...FLORA_RURAL, 'heap', 'block', 'logs', 'stump', 'haystack', 'rack', 'incaHouse', 'incaHall', ...RESOURCE_MODEL_KEYS, ...KIT_MODELS] as const;
 export type RuralModel = (typeof RURAL_MODELS)[number];
 export type RuralModelKind = `rural|${RuralModel}`;
 export const ruralModelKind = (m: RuralModel): RuralModelKind => `rural|${m}`;
@@ -90,7 +94,7 @@ function incaBuilding(w: number, d: number, h: number, gh: number, doorInGable: 
 const incaHouse = (): THREE.BufferGeometry[] => incaBuilding(0.020, 0.0135, 0.0098, 0.0072, false);
 const incaHall = (): THREE.BufferGeometry[] => incaBuilding(0.023, 0.0125, 0.0106, 0.0068, true);
 
-const MODELS: Record<Exclude<RuralModel, 'crop'>, () => THREE.BufferGeometry[]> = {
+const MODELS: Record<Exclude<RuralModel, FloraRural>, () => THREE.BufferGeometry[]> = {
   ...RESOURCE_MODELS, incaHouse, incaHall,
   ...(Object.fromEntries(KIT_MODELS.map((k) => [k, () => kitModel(k)])) as Record<KitModel, () => THREE.BufferGeometry[]>),
   heap: () => [cone(0.018, 0.015, 7, LEAF), cone(0.009, 0.008, 6, LEAF, { x: 0.012, z: 0.006 })],
@@ -101,28 +105,84 @@ const MODELS: Record<Exclude<RuralModel, 'crop'>, () => THREE.BufferGeometry[]> 
   rack: () => [box(0.001, 0.009, 0.001, TIMBER, { x: -0.006 }), box(0.001, 0.009, 0.001, TIMBER, { x: 0.006 }), box(0.0135, 0.0008, 0.0008, TIMBER, { y: 0.0085 }), box(0.011, 0.005, 0.0004, WHITE, { y: 0.003 })],
 };
 
-// A tuft of a crop: three crossed cards (a unit tall and across, stretched
+// A tuft of a crop: two crossed cards (a unit tall and across, stretched
 // per instance) showing slim stalks (propMaterial.ts: cardUv z 2, the blade
 // texture), lit from above on both sides as a lawn is, all leaf (the
-// instance's colour), swaying in the wind. Drawn with the flora.
-const TUFT_LEAN = 0.35; // (a share of its height)
-function cropTuft(): THREE.BufferGeometry {
+// instance's colour), swaying in the wind. Drawn with the flora. A
+// plantation's (`lean` small) stand up straighter, in tidier rows.
+type FloraRural = (typeof FLORA_RURAL)[number];
+function tuft(lean: number, at: readonly [number, number] = [0, 0], size = 1, height = 1, turn = 0): { pos: number[]; uv: number[] } {
   const pos: number[] = [], uv: number[] = [];
-  for (let k = 0; k < 3; k++) {
+  for (let k = 0; k < 2; k++) {
     // (Each card leans out a little, alternately, as a tuft splays: seen
     // from above it still covers its ground.)
-    const a = (k * Math.PI) / 3, cx = Math.cos(a) / 2, cz = Math.sin(a) / 2, lean = (k % 2 ? 1 : -1) * TUFT_LEAN;
-    for (const [s, t] of [[-1, 0], [1, 0], [1, 1], [-1, 0], [1, 1], [-1, 1]] as const) { pos.push(s * cx - t * lean * Math.sin(a), t, s * cz + t * lean * Math.cos(a)); uv.push((s + 1) / 2, t, 2); }
+    const a = turn + (k * Math.PI) / 2, cx = Math.cos(a) / 2, cz = Math.sin(a) / 2, l = (k % 2 ? 1 : -1) * lean;
+    for (const [s, t] of [[-1, 0], [1, 0], [1, 1], [-1, 0], [1, 1], [-1, 1]] as const) {
+      pos.push(at[0] + size * (s * cx - t * l * Math.sin(a)), t * height, at[1] + size * (s * cz + t * l * Math.cos(a)));
+      uv.push((s + 1) / 2, t, 2);
+    }
   }
+  return { pos, uv };
+}
+// A card geometry: all leaf, lit from above, its cards' coordinates.
+function cards(pos: number[], uv: number[], leaf = 1): THREE.BufferGeometry {
   const n = pos.length / 3, g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('normal', new THREE.Float32BufferAttribute(Array.from({ length: n }, () => [0, 1, 0]).flat(), 3));
   g.setAttribute('color', new THREE.Float32BufferAttribute(new Array<number>(n * 3).fill(1), 3));
-  g.setAttribute('leafMask', new THREE.Float32BufferAttribute(new Array<number>(n).fill(1), 1));
+  g.setAttribute('leafMask', new THREE.Float32BufferAttribute(new Array<number>(n).fill(leaf), 1));
   g.setAttribute('cardUv', new THREE.Float32BufferAttribute(uv, 3));
+  g.setAttribute('leafShade', new THREE.Float32BufferAttribute(new Array<number>(n).fill(0), 1));
   return g;
 }
-export const isFloraRural = (k: RuralModelKind): boolean => k === 'rural|crop';
+// A wild stand of grain (the resource, unworked): a patch of tufts as a
+// farm's (a unit across, its tufts PATCH_TUFT of it, `tall` high), lower
+// toward its edge.
+const PATCH_TUFT = 0.22;
+function patch(n: number, salt: number, tall: number): THREE.BufferGeometry {
+  let h = salt;
+  const rand = () => { h = (Math.imul(h ^ (h >>> 15), 0x2c1b3c6d) + 0x6d2b79f5) >>> 0; return (h >>> 8) / 16777216; };
+  const pos: number[] = [], uv: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const a = i * 2.39996, r = 0.5 * Math.sqrt((i + 0.5) / n), t = tuft(0.3, [Math.cos(a) * r, Math.sin(a) * r], PATCH_TUFT * (0.85 + 0.3 * rand()), tall * (1 - 0.35 * (r / 0.5) ** 2) * (0.85 + 0.3 * rand()), rand() * Math.PI);
+    pos.push(...t.pos); uv.push(...t.uv);
+  }
+  return cards(pos, uv);
+}
+// A run of fence along x, a unit long (instances stretch it), 1.2 m tall:
+// one card, its posts and rails or wattle drawn on it (propMaterial.ts
+// fenceTexture, z 5), the wood's colour; three units of the texture to a
+// run (as long as fenceAlong makes them).
+function fenceCard(kind: (typeof FENCE_BANDS)[number]): THREE.BufferGeometry {
+  const b = FENCE_BANDS.indexOf(kind), v0 = (b * 42) / 128, v1 = ((b + 1) * 42 - 1) / 128, h = 1.2 * CREATURE_SCALE, w = 0.5 * CREATURE_SCALE;
+  const pos: number[] = [], uv: number[] = [];
+  for (const [s, t] of [[-1, 0], [1, 0], [1, 1], [-1, 0], [1, 1], [-1, 1]] as const) { pos.push(s * w, t * h, 0); uv.push(((s + 1) / 2) * 3, t ? v1 : v0, 5); }
+  const g = cards(pos, uv, 0), col = g.getAttribute('color') as THREE.BufferAttribute, c = new THREE.Color(kind === 'wire' ? 0x7a6a58 : kind === 'rails' ? 0x7a5f45 : 0x8a7048);
+  for (let i = 0; i < col.count; i++) col.setXYZ(i, c.r, c.g, c.b);
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(Array.from({ length: pos.length / 3 }, () => [0, 0, 1]).flat(), 3));
+  return g;
+}
+// Shrubs of leaf cards (the trees' crowns' way: propCatalog.ts), metres, in
+// tile steps: a tea bush, round and clipped; a spice bush, its berries in
+// red bursts. Leaves the instance's colour.
+const shrub = (name: string, build: (leaf: number) => THREE.BufferGeometry[]): THREE.BufferGeometry =>
+  buildModel({ layer: 'Understory', leaf: 0xffffff, build: (p) => build(p.leaf) }, name).scale(CREATURE_SCALE, CREATURE_SCALE, CREATURE_SCALE);
+const teaShrub = () => shrub('teaShrub', (leaf) => [cyl(0.05, 0.04, 0.3, 4, 0x5a4632),
+  oct(0.55, leaf, { y: 0.6, sy: 0.62 }), oct(0.4, leaf, { x: 0.42, y: 0.5, z: 0.15, sy: 0.6, ry: 0.5 }), oct(0.38, leaf, { x: -0.36, y: 0.48, z: -0.2, sy: 0.6, ry: 1.1 })]);
+const spiceShrub = () => shrub('spiceShrub', (leaf) => [cyl(0.04, 0.03, 0.5, 4, 0x5a4632),
+  oct(0.5, leaf, { y: 0.85, sy: 0.85 }), oct(0.36, leaf, { x: 0.32, y: 0.62, z: 0.2, sy: 0.8, ry: 0.4 }),
+  ...[[0.38, 0.95, 0.12], [-0.3, 1.05, 0.22], [0.08, 1.22, -0.3], [-0.18, 0.7, -0.36], [0.28, 0.72, 0.38]].map(([x, y, z]) => burst(0.12, 0xb8402a, { x, y, z }))]);
+const FLORA_MODELS: Record<FloraRural, () => THREE.BufferGeometry> = {
+  crop: () => { const t = tuft(0.35); return cards(t.pos, t.uv); },
+  plant: () => { const t = tuft(0.1); return cards(t.pos, t.uv); },
+  grainPatch: () => patch(18, 0x9a1, 0.4), tallPatch: () => patch(12, 0x7a3, 0.62),
+  teaShrub, spiceShrub,
+  wattle: () => fenceCard('wattle'), rails: () => fenceCard('rails'), wire: () => fenceCard('wire'),
+};
+const FLORA_SET: ReadonlySet<string> = new Set(FLORA_RURAL);
+export const isFloraRural = (k: RuralModelKind): boolean => FLORA_SET.has(k.slice('rural|'.length));
+// (Of those, the stalks: crops, plantations' plants, wild grain. They shrink away from afar.)
+export const isCropRural = (k: RuralModelKind): boolean => k === 'rural|crop' || k === 'rural|plant' || k === 'rural|grainPatch' || k === 'rural|tallPatch';
 // The kit's models are round (people, animals, plants): smooth-shaded.
 const KIT_SET: ReadonlySet<string> = new Set(KIT_MODELS);
 export const isSmoothRural = (k: RuralModelKind): boolean => KIT_SET.has(k.slice('rural|'.length));
@@ -130,13 +190,14 @@ export const isSmoothRural = (k: RuralModelKind): boolean => KIT_SET.has(k.slice
 const cache = new Map<RuralModelKind, THREE.BufferGeometry>();
 export function ruralGeometry(kind: RuralModelKind): THREE.BufferGeometry {
   let g = cache.get(kind);
-  if (!g && kind === 'rural|crop') { g = cropTuft(); cache.set(kind, g); }
+  const m = kind.slice('rural|'.length);
+  if (!g && FLORA_SET.has(m)) { g = FLORA_MODELS[m as FloraRural](); cache.set(kind, g); }
   if (!g) {
     // Each part unindexed, with its normals (a round part keeps its smooth
     // ones) and its leaf mask: given (the kit's), or the parts painted LEAF,
     // which then turn white (the instance's colour shows through).
     const probe = new THREE.Color(LEAF);
-    const parts = MODELS[kind.slice('rural|'.length) as Exclude<RuralModel, 'crop'>]().map((p0) => {
+    const parts = MODELS[m as Exclude<RuralModel, FloraRural>]().map((p0) => {
       const p = p0.index ? p0.toNonIndexed() : p0;
       if (p.getAttribute('uv')) p.deleteAttribute('uv');
       if (!p.getAttribute('normal')) p.computeVertexNormals();

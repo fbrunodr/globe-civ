@@ -5,8 +5,13 @@
 // combines; open herding, then wattle, rail and wire fences; hunters with
 // bows in hide tents, then a lodge, then muskets, then a steam sawmill; an
 // adit, a timber headframe, a smelter, a steam headframe; canoes, sailing
-// boats, a trawler; a derrick, pumpjacks, tanks. Pure data (cityProps.ts
+// boats, a trawler; a derrick, pumpjacks, tanks. Pure data (rural/layout.ts
 // places it on the farm's layout, farmPainter.ts).
+//
+// Stage 0 is an improvement held by a civ that couldn't have made it (a
+// worker needs its first tech: taken with a city): one look for all of
+// them, gone to ruin: a shack, a broken cart, the fields gone to weed, a
+// few beasts loose, no one working.
 //
 // A resource's tile is worked its own way (resources.ts
 // RESOURCE_IMPROVEMENT): a pasture holds that resource's animals, a
@@ -26,7 +31,8 @@ export interface StageLook {
   readonly density: RuralDensity;          // how many yards, a barn
   readonly fence?: 'wattle' | 'rails' | 'wire'; // a pasture's (pastureFences)
   readonly herd?: { readonly models: readonly KitModel[]; readonly colors: readonly number[] }; // a pasture's animals (herdSize of them)
-  readonly plants?: { readonly model: KitModel; readonly rows: boolean }; // a plantation's
+  readonly plants?: PlantTufts & { readonly rows: boolean }; // a plantation's (tufts, in rows from its second stage)
+  readonly worn?: true;                     // stage 0 (no house, its fields weedy and thin)
   readonly adits: number;                   // a mine's adits into its slopes
   readonly things: readonly Placed[];
 }
@@ -41,14 +47,31 @@ const HERDS: Partial<Record<ResourceKey, { models: readonly KitModel[]; colors: 
   sheep: { models: ['sheep'], colors: [0xece6da, 0xdcd4c4, 0xf2ece0, 0x4a4440] },
   horses: { models: ['horse'], colors: [0x7a4a2a, 0x3a2a20, 0xb08a5a, 0xe2dccf, 0x8a5a34, 0x5a3a24] },
 };
-// A plantation's plants by its resource.
-const PLANTS: Partial<Record<ResourceKey, KitModel>> = {
-  wine: 'vine', tea: 'teaBush', cotton: 'cottonBush', bananas: 'bananaPlant', silk: 'mulberryBush', spices: 'pepperPole', incense: 'incenseTree', dyes: 'indigoBush',
+// A plantation's plants by its resource: tufts (rural/models.ts plant)
+// standing straighter than a crop's, its colours, how tall (tile steps).
+export interface PlantTufts { readonly colors: readonly number[]; readonly height: number }
+const PLANTS: Partial<Record<ResourceKey, PlantTufts>> = {
+  wine: { colors: [0x5a7a34, 0x4e6e2e, 0x5a6a3a], height: 0.017 },
+  tea: { colors: [0x3f6a2a, 0x4a7a32], height: 0.012 },
+  cotton: { colors: [0xb4b89c, 0x9aa680, 0xc8c8b4], height: 0.015 },
+  bananas: { colors: [0x6fa83a, 0x5e9a32, 0x78b040], height: 0.032 },
+  silk: { colors: [0x557a3a, 0x4e7034], height: 0.026 },
+  spices: { colors: [0x3a6a2a, 0x5a6a2a, 0x6a5a2a], height: 0.02 },
+  incense: { colors: [0x7a8a5a, 0x6f8250], height: 0.026 },
+  dyes: { colors: [0x3a5a4a, 0x4a4a7a], height: 0.015 },
 };
+const PLANTS_DEFAULT = PLANTS.wine!;
+// The ruin's things.
+const WORN: readonly Placed[] = [at('shack', 1, 'home'), at('brokenCart', 1, 'yard')];
 const HUNTED: ReadonlySet<ResourceKey> = new Set<ResourceKey>(['deer', 'furs', 'ivory', 'amber']);
 
 export function stageLook(imp: ImprovementKey, stage: number, res: ResourceKey | null): StageLook {
   const w = (model: KitModel, n: number, where: Where = 'field') => at(model, n, where, CLOTHES);
+  if (stage === 0 && imp !== 'boats' && imp !== 'well') {
+    const base = { density: 'low', adits: imp === 'mine' ? 1 : 0, worn: true, things: WORN } as const;
+    return imp === 'pasture' ? { ...base, herd: HERDS[res ?? 'cattle'] ?? HERDS.cattle! }
+      : imp === 'plantation' ? { ...base, plants: { ...(PLANTS[res ?? 'wine'] ?? PLANTS_DEFAULT), rows: false } } : base;
+  }
   switch (imp) {
     case 'farm': switch (Math.min(stage, 4)) {
       case 0: return { density: 'low', adits: 0, things: [w('farmer', 2), w('farmerB', 1), at('stooks', 2, 'yard')] };
@@ -69,11 +92,10 @@ export function stageLook(imp: ImprovementKey, stage: number, res: ResourceKey |
         : { density: 'high', adits: 0, fence: 'wire', herd, things: [at('windpump', 1, 'home'), at('trough', 2, 'yard'), at('shelter', 1, 'home'), w('herder', 1)] };
     }
     case 'plantation': {
-      const model = PLANTS[res ?? 'wine'] ?? 'vine';
-      return stage === 0 ? { density: 'low', adits: 0, plants: { model, rows: false }, things: [w('picker', 1), w('pickerB', 1)] }
-        : stage === 1 ? { density: 'low', adits: 0, plants: { model, rows: true }, things: [w('picker', 2), w('pickerB', 1)] }
-        : stage === 2 ? { density: 'medium', adits: 0, plants: { model, rows: true }, things: [w('picker', 2), w('pickerB', 2), at('shelter', 1, 'home'), at('haycart', 1, 'home')] }
-        : { density: 'high', adits: 0, plants: { model, rows: true }, things: [w('picker', 1), w('pickerB', 1), at('shelter', 1, 'home'), at('tractor', 1, 'field', MACHINE)] };
+      const tufts = PLANTS[res ?? 'wine'] ?? PLANTS_DEFAULT;
+      return stage === 1 ? { density: 'low', adits: 0, plants: { ...tufts, rows: false }, things: [w('picker', 2), w('pickerB', 1)] }
+        : stage === 2 ? { density: 'medium', adits: 0, plants: { ...tufts, rows: true }, things: [w('picker', 2), w('pickerB', 2), at('shelter', 1, 'home'), at('haycart', 1, 'home')] }
+        : { density: 'high', adits: 0, plants: { ...tufts, rows: true }, things: [w('picker', 1), w('pickerB', 1), at('shelter', 1, 'home'), at('tractor', 1, 'field', MACHINE)] };
     }
     case 'camp': {
       if (res && HUNTED.has(res)) return stage === 0 ? { density: 'low', adits: 0, things: [at('tent', 3, 'home'), at('campfire', 1, 'home'), at('hideRack', 2, 'yard'), w('hunter', 3)] }
@@ -117,7 +139,7 @@ const clip = (l: Pt[]): Pt[] => {
   return [{ x: a.x + (b.x - a.x) * t0, y: a.y + (b.y - a.y) * t0 }, { x: a.x + (b.x - a.x) * t1, y: a.y + (b.y - a.y) * t1 }];
 };
 // How many animals a pasture grazes, by stage (more as it is managed better).
-export const herdSize = (stage: number): number => [8, 10, 12, 14][Math.min(stage, 3)]!;
+export const herdSize = (stage: number): number => [4, 10, 12, 14][Math.min(stage, 3)]!;
 
 // The stage the ground's plots are painted at (terrainMaterial.ts): a
 // pasture's meadows are large from the first fences (no plough strips).

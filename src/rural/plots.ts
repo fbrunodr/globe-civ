@@ -12,15 +12,16 @@
 import type { CropRegion } from './look.ts';
 
 // A plot's size (tile steps: across, along), by the farm's stage (its
-// owner's farming techs, techs.ts improvementStage): a first farm's small
-// patches, the plough's long strips, enclosed fields, larger fields, the
-// machine age's great ones.
-export const PLOT_SIZES = [[0.075, 0.11], [0.055, 0.3], [0.11, 0.24], [0.15, 0.3], [0.22, 0.42]] as const;
+// owner's techs that improve it, techs.ts improvementStage): a first
+// farm's patches (PATCH across, of no set shape: patchAt), enclosed
+// fields, larger fields, the machine age's great ones. (Stage 0, a farm
+// held by a civ that couldn't have made it, keeps the first farm's
+// patches, gone to weed.)
+export const PATCH = 0.085;
+export const PLOT_SIZES = [[PATCH, PATCH], [PATCH, PATCH], [0.11, 0.24], [0.15, 0.3], [0.22, 0.42]] as const;
 export const MAX_STAGE = PLOT_SIZES.length - 1;
 // A plantation's rows across a plot, this far apart (tile steps; its plants on every other).
 export const PLANT_ROW_W = 0.016;
-// A first farm's plots wander (no surveyor yet): the frame bent by this much.
-export const PLOT_WARP = 0.02;
 
 // The integer hash of a cell and a salt, in [0, 1) (24 bits).
 export function plotHash(x: number, y: number, salt: number): number {
@@ -33,16 +34,41 @@ export function plotHash(x: number, y: number, salt: number): number {
 
 export interface Plot {
   readonly h: number;    // the plot's hash: what grows there (cropIndex)
-  readonly f: readonly [number, number]; // the position in it (0..1)
+  readonly f: readonly [number, number]; // the position in it (0..1 across a plot; a patch's run a little past)
   readonly edge: number; // the distance to its border (tile steps)
 }
 
+// A first farm's patch: whatever shape the ground gave it (the cells round
+// points scattered on a grid PATCH apart, most joined in pairs along a
+// row: one field, no balk between), its furrows each its own way.
+const patchOf = (cx: number, cy: number, salt: number): number => Math.floor((cx + (plotHash(0, cy, salt * 4 + 6) < 0.5 ? 1 : 0)) / 2);
+function patchAt(u: number, v: number, salt: number): Plot {
+  const gx = Math.floor(u / PATCH), gy = Math.floor(v / PATCH);
+  const pts: [number, number, number, number][] = [];
+  let best = 0, bestD = Infinity;
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+    const cx = gx + dx, cy = gy + dy;
+    const x = (cx + 0.1 + 0.8 * plotHash(cx, cy, salt * 4 + 1)) * PATCH, y = (cy + 0.1 + 0.8 * plotHash(cx, cy, salt * 4 + 2)) * PATCH;
+    const d = (u - x) ** 2 + (v - y) ** 2;
+    if (d < bestD) { bestD = d; best = pts.length; }
+    pts.push([x, y, cx, cy]);
+  }
+  const [px, py, bx, by] = pts[best]!, id = patchOf(bx, by, salt);
+  let edge = Infinity;
+  for (const [x, y, cx, cy] of pts) {
+    if ((x === px && y === py) || (cy === by && patchOf(cx, cy, salt) === id)) continue;
+    const nx = x - px, ny = y - py, l = Math.hypot(nx, ny);
+    edge = Math.min(edge, (((px + x) / 2 - u) * nx + ((py + y) / 2 - v) * ny) / l);
+  }
+  const a = plotHash(id, by, salt * 4) * Math.PI, c = Math.cos(a), s = Math.sin(a);
+  return { h: plotHash(id, by, salt * 4 + 3), f: [(c * (u - px) + s * (v - py)) / PATCH + 0.5, (-s * (u - px) + c * (v - py)) / PATCH + 0.5], edge };
+}
+
 // The plot at uv (tile steps, in the farm's turned frame) of tile `salt`, at `stage`.
-export function plotAt(u0: number, v0: number, salt: number, stage = 2): Plot {
+export function plotAt(u: number, v: number, salt: number, stage = 2): Plot {
   const st = Math.max(0, Math.min(MAX_STAGE, stage));
+  if (st <= 1) return patchAt(u, v, salt);
   let [sx, sy]: [number, number] = [PLOT_SIZES[st]![0], PLOT_SIZES[st]![1]];
-  const w = st === 0 ? PLOT_WARP : 0;
-  const u = u0 + w * Math.sin(v0 * 31 + salt * 0.37), v = v0 + w * Math.sin(u0 * 27 + salt * 0.53);
   const cx = u / sx;
   const cy = v / sy + plotHash(Math.floor(cx), 0, salt * 4 + 1) * 3;
   let ix = Math.floor(cx), iy = Math.floor(cy);
@@ -68,10 +94,35 @@ float plotHash(int x, int y, int salt) {
   return float(h >> 8u) / 16777216.0;
 }
 const vec2 PLOT_SIZES[${PLOT_SIZES.length}] = vec2[](${PLOT_SIZES.map(([a, b]) => `vec2(${a}, ${b})`).join(', ')});
-float plotAt(vec2 uv0, int salt, int stage, out vec2 f, out float edge) {
+int patchOf(ivec2 c, int salt) { return (c.x + (plotHash(0, c.y, salt * 4 + 6) < 0.5 ? 1 : 0)) >> 1; }
+float patchAt(vec2 uv, int salt, out vec2 f, out float edge) {
+  ivec2 g = ivec2(floor(uv / ${PATCH}));
+  vec2 pts[9]; ivec2 ids[9];
+  int best = 0; float bestD = 1e9;
+  for (int k = 0; k < 9; k++) {
+    ivec2 c = g + ivec2(k % 3 - 1, k / 3 - 1);
+    vec2 p = (vec2(c) + 0.1 + 0.8 * vec2(plotHash(c.x, c.y, salt * 4 + 1), plotHash(c.x, c.y, salt * 4 + 2))) * ${PATCH};
+    pts[k] = p; ids[k] = c;
+    float d = dot(uv - p, uv - p);
+    if (d < bestD) { bestD = d; best = k; }
+  }
+  vec2 p = pts[best];
+  int id = patchOf(ids[best], salt);
+  edge = 1e9;
+  for (int k = 0; k < 9; k++) {
+    if (k == best || (ids[k].y == ids[best].y && patchOf(ids[k], salt) == id)) continue;
+    vec2 n = pts[k] - p;
+    edge = min(edge, dot((p + pts[k]) * 0.5 - uv, n) / length(n));
+  }
+  ivec2 b = ids[best];
+  float a = plotHash(id, b.y, salt * 4) * 3.14159265, c = cos(a), s = sin(a);
+  vec2 q = uv - p;
+  f = vec2(c * q.x + s * q.y, -s * q.x + c * q.y) / ${PATCH} + 0.5;
+  return plotHash(id, b.y, salt * 4 + 3);
+}
+float plotAt(vec2 uv, int salt, int stage, out vec2 f, out float edge) {
+  if (stage <= 1) return patchAt(uv, salt, f, edge);
   vec2 sz = PLOT_SIZES[clamp(stage, 0, ${MAX_STAGE})];
-  float w = stage == 0 ? ${PLOT_WARP} : 0.0;
-  vec2 uv = uv0 + w * vec2(sin(uv0.y * 31.0 + float(salt) * 0.37), sin(uv0.x * 27.0 + float(salt) * 0.53));
   float cx = uv.x / sz.x;
   float cy = uv.y / sz.y + plotHash(int(floor(cx)), 0, salt * 4 + 1) * 3.0;
   int ix = int(floor(cx)), iy = int(floor(cy));
@@ -91,14 +142,18 @@ float plotAt(vec2 uv0, int salt, int stage, out vec2 f, out float edge) {
 
 // What grows on a plot, by its hash: grain, a second crop, pasture,
 // ploughed earth (bare), a fourth crop. (A first farm leaves more of its
-// land fallow: grass and bare earth.)
+// land fallow: grass and bare earth; a neglected one, most of it.)
 export type CropIndex = 0 | 1 | 2 | 3 | 4;
 export const cropIndex = (h: number, stage = 2): CropIndex => stage === 0
-  ? (h < 0.28 ? 0 : h < 0.42 ? 1 : h < 0.74 ? 2 : h < 0.86 ? 3 : 4)
-  : (h < 0.3 ? 0 : h < 0.55 ? 1 : h < 0.72 ? 2 : h < 0.86 ? 3 : 4);
+  ? (h < 0.14 ? 0 : h < 0.2 ? 1 : h < 0.82 ? 2 : h < 0.9 ? 3 : 4)
+  : stage === 1
+    ? (h < 0.28 ? 0 : h < 0.42 ? 1 : h < 0.74 ? 2 : h < 0.86 ? 3 : 4)
+    : (h < 0.3 ? 0 : h < 0.55 ? 1 : h < 0.72 ? 2 : h < 0.86 ? 3 : 4);
 export const CROP_INDEX_GLSL = `int cropIndex(float h, int stage) { return stage == 0
-  ? (h < 0.28 ? 0 : h < 0.42 ? 1 : h < 0.74 ? 2 : h < 0.86 ? 3 : 4)
-  : (h < 0.3 ? 0 : h < 0.55 ? 1 : h < 0.72 ? 2 : h < 0.86 ? 3 : 4); }`;
+  ? (h < 0.14 ? 0 : h < 0.2 ? 1 : h < 0.82 ? 2 : h < 0.9 ? 3 : 4)
+  : stage == 1
+    ? (h < 0.28 ? 0 : h < 0.42 ? 1 : h < 0.74 ? 2 : h < 0.86 ? 3 : 4)
+    : (h < 0.3 ? 0 : h < 0.55 ? 1 : h < 0.72 ? 2 : h < 0.86 ? 3 : 4); }`;
 
 // How much of their saturation the crops keep (fields read as fields, not a quilt).
 export const CROP_SATURATION = 0.5;

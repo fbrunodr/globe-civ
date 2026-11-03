@@ -101,6 +101,32 @@ function bladeTexture(): THREE.DataTexture {
 // The leaves on a leaf card (propCatalog.ts, clumpCards): a cloud of small
 // leaves, denser toward the middle, in shades of white (the instance's leaf
 // color shows through), transparent between them. Made once, in code.
+// A fence's card (rural/models.ts fenceCard): three kinds in bands up the
+// texture (v: a third each, from the foot): woven wattle hurdles on stakes,
+// posts and two rails, posts and three strands of wire; two posts to a
+// unit of u (the texture repeats along a run).
+let fenceTex: THREE.DataTexture | null = null;
+export const FENCE_BANDS = ['wattle', 'rails', 'wire'] as const;
+function fenceTexture(): THREE.DataTexture {
+  if (fenceTex) return fenceTex;
+  const W = 128, B = 42, H = 128;
+  fenceTex = drawnTexture(W, H, 0xfe4ce, (rand, stroke) => {
+    // (Each band: its foot at y0, B texels tall, a post every W/2.)
+    const posts = (y0: number, top: number, w: number, shade: number) => { for (const x of [W * 0.25, W * 0.75]) stroke(x + (rand() - 0.5) * 3, y0, x + (rand() - 0.5) * 3, y0 + top, w, shade); };
+    // Wattle: stakes, rods woven between them, close set.
+    posts(0, B * 0.92, 4, 0.55);
+    for (let y = 4; y < B * 0.85; y += 3.2) stroke(0, y + (rand() - 0.5), W, y + (rand() - 0.5), 2.6, 0.62 + 0.25 * rand());
+    // Rails: posts, two rails.
+    posts(B, B * 0.95, 5, 0.6);
+    for (const y of [B * 0.42, B * 0.78]) stroke(0, B + y, W, B + y + (rand() - 0.5) * 2, 3.5, 0.82);
+    // Wire: posts, three strands.
+    posts(2 * B, B * 0.95, 4, 0.55);
+    for (const y of [B * 0.33, B * 0.6, B * 0.86]) stroke(0, 2 * B + y, W, 2 * B + y, 1.2, 0.9);
+  });
+  fenceTex.wrapS = THREE.RepeatWrapping;
+  return fenceTex;
+}
+
 const LEAF_TEX = 128, LEAVES = 420;
 let leafTex: THREE.DataTexture | null = null;
 function leafTexture(): THREE.DataTexture {
@@ -169,18 +195,19 @@ const FLORA_VERTEX = `
   #endif`;
 // The card textures (uLeaves, uBlades, uFronds, uNeedles), for CARD_TEXEL.
 export const cardTextures = (): Record<string, THREE.IUniform> => ({
-  uLeaves: { value: leafTexture() }, uBlades: { value: bladeTexture() }, uFronds: { value: frondTexture() }, uNeedles: { value: needleTexture() },
+  uLeaves: { value: leafTexture() }, uBlades: { value: bladeTexture() }, uFronds: { value: frondTexture() }, uNeedles: { value: needleTexture() }, uFences: { value: fenceTexture() },
 });
 const floraUniforms = (f: FloraUniforms): Record<string, THREE.IUniform> => ({
   uTime: f.time, uCropFar: f.cropFar ?? { value: 1e9 }, uEye: f.eye ?? { value: new THREE.Vector3() }, ...cardTextures(),
 });
-// A card's texel: a conifer's needles (z 4), a palm's frond (z 3), a crop's
-// stalks (z 2, rural/models.ts) or a crown's leaves;
+// A card's texel: a fence (z 5, rural/models.ts), a conifer's needles (z
+// 4), a palm's frond (z 3), a crop's stalks (z 2, rural/models.ts) or a
+// crown's leaves;
 // far off, its leaves are kept from fading away in the blurred mipmaps.
 export const CARD_TEXEL = `
-  uniform sampler2D uLeaves; uniform sampler2D uBlades; uniform sampler2D uFronds; uniform sampler2D uNeedles;
+  uniform sampler2D uLeaves; uniform sampler2D uBlades; uniform sampler2D uFronds; uniform sampler2D uNeedles; uniform sampler2D uFences;
   vec4 cardTexel(vec3 card) {
-    vec4 lt = card.z > 3.5 ? texture2D(uNeedles, card.xy) : card.z > 2.5 ? texture2D(uFronds, card.xy) : card.z > 1.5 ? texture2D(uBlades, card.xy) : texture2D(uLeaves, card.xy);
+    vec4 lt = card.z > 4.5 ? texture2D(uFences, card.xy) : card.z > 3.5 ? texture2D(uNeedles, card.xy) : card.z > 2.5 ? texture2D(uFronds, card.xy) : card.z > 1.5 ? texture2D(uBlades, card.xy) : texture2D(uLeaves, card.xy);
     vec2 dx = dFdx(card.xy) * ${LEAF_TEX}.0, dy = dFdy(card.xy) * ${LEAF_TEX}.0;
     lt.a *= 1.0 + 0.3 * max(0.5 * log2(max(dot(dx, dx), dot(dy, dy))), 0.0);
     return lt;

@@ -19,7 +19,7 @@ import { buildPropGeometry, catalogEntry, CATALOG, CATALOG_KINDS, type CatalogKi
 import { BUILDING_KINDS, buildBuildingGeometry, type BuildingKind } from './buildingCatalog.ts';
 import { houseGeometry, isHouseKind, type HouseKind } from './houses.ts';
 import { isWonderModelKind, wonderGeometry, type WonderModelKind } from './wonderModels.ts';
-import { isFloraRural, isSmoothRural, isRuralModelKind, ruralGeometry, ruralModelKind, type RuralModelKind } from './rural/models.ts';
+import { isFloraRural, isCropRural, isSmoothRural, isRuralModelKind, ruralGeometry, ruralModelKind, type RuralModelKind } from './rural/models.ts';
 import { CityProps, tileFrame, SUMMIT_HOUSES, type CitySpot } from './cityProps.ts';
 import { CITY_CELL } from './cityPainter.ts';
 import { RESOURCE_WILD, RESOURCE_WORKED, resourceLayout } from './rural/resourceModels.ts';
@@ -1105,8 +1105,9 @@ export class GlobeRenderer {
           if (items.length === 0) { chunk.meshes.delete(kind); continue; }
           const cap = Math.ceil(items.length * 1.3) + 8;
           // (A farm's crops are drawn with the flora, and hide from high up as its understory does.)
-          const crop = isRuralModelKind(kind) && isFloraRural(kind);
-          mesh = new THREE.InstancedMesh(instanceGeometry(this.geometryOf(kind), cap), isFloraKind(kind) || crop ? this.propMat : isRuralModelKind(kind) && isSmoothRural(kind) ? this.smoothMat : this.buildingMat, cap);
+          // (Shrubs and fences of cards are drawn with it too, casting their shadows as trees do.)
+          const cards = isRuralModelKind(kind) && isFloraRural(kind), crop = cards && isCropRural(kind);
+          mesh = new THREE.InstancedMesh(instanceGeometry(this.geometryOf(kind), cap), isFloraKind(kind) || cards ? this.propMat : isRuralModelKind(kind) && isSmoothRural(kind) ? this.smoothMat : this.buildingMat, cap);
           mesh.userData['hideAbove'] = isFloraKind(kind) ? HIDE_ABOVE[CATALOG[kind].layer] : Infinity;
           // (Crops hide once the camera is higher than they reach, cullProps.)
           if (crop) mesh.userData['crop'] = true;
@@ -1116,7 +1117,7 @@ export class GlobeRenderer {
           // them.
           mesh.castShadow = !crop;
           mesh.receiveShadow = true;
-          if (isFloraKind(kind)) mesh.customDepthMaterial = this.floraDepth;
+          if (isFloraKind(kind) || cards) mesh.customDepthMaterial = this.floraDepth;
           mesh.userData['stat'] = statOf(kind);
           chunk.meshes.set(kind, mesh);
           this.scene.add(mesh);

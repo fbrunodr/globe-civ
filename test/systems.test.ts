@@ -358,7 +358,7 @@ describe('S8: worked land: each resource its improvement; techs take it on a sta
           const look = stageLook(imp, st, res);
           for (const th of look.things) expect(KIT_MODELS, `${imp} ${st} ${th.model}`).toContain(th.model);
           for (const m of look.herd?.models ?? []) expect(KIT_MODELS).toContain(m);
-          if (look.plants) expect(KIT_MODELS).toContain(look.plants.model);
+          if (look.plants) expect(look.plants.colors.length).toBeGreaterThan(0);
         }
       }
     }

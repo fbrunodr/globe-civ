@@ -70,7 +70,9 @@ const blob = (g: THREE.BufferGeometry, cards: number) => { g.userData['cards'] =
 // (Ground cover's blobs stay solid, unless made of cards outright: heather.)
 const groundCards = (g: THREE.BufferGeometry) => { g.userData['groundCards'] = true; return g; };
 const ico = (r: number, color: number, o: Tf = {}) => blob(part(new THREE.IcosahedronGeometry(r, 0), color, tf(o)), 10);
-const oct = (r: number, color: number, o: Tf = {}) => blob(part(new THREE.OctahedronGeometry(r, 0), color, tf(o)), 4);
+export const oct = (r: number, color: number, o: Tf = {}) => blob(part(new THREE.OctahedronGeometry(r, 0), color, tf(o)), 4);
+// (A clump of another colour than the leaves, made of leaf cards too: a bush's berries, in bursts.)
+export const burst = (r: number, color: number, o: Tf = {}) => { const g = oct(r, color, o); g.userData['burst'] = true; return g; };
 const tet = (r: number, color: number, o: Tf = {}) => part(new THREE.TetrahedronGeometry(r, 0), color, tf(o));
 const disc = (r: number, n: number, color: number, o: Tf = {}) => part(new THREE.CircleGeometry(r, n), color, tf(o));
 
@@ -608,9 +610,15 @@ function fluff(g: THREE.BufferGeometry, layer: Layer): void {
 export function buildModel(e: Pick<CatalogEntry, 'leaf' | 'accent' | 'build'> & { layer?: Layer }, name: string, palette?: Partial<Palette>): THREE.BufferGeometry {
   const leafy = e.layer === 'Canopy' || e.layer === 'Understory';
   let seed = [...name].reduce((h, ch) => Math.imul(h ^ ch.charCodeAt(0), 0x01000193), 0x811c9dc5);
+  const burstOf = (g: THREE.BufferGeometry) => g.userData['burst'] === true;
   const parts = e.build({ leaf: LEAF_PROBE.getHex(), accent: palette?.accent ?? e.accent ?? e.leaf })
-    .map((g) => ((leafy || g.userData['groundCards'] === true) && isLeafPart(g) && typeof g.userData['cards'] === 'number' ? clumpCards(g, g.userData['cards'] as number, seed++) : g));
-  if (e.layer) for (const g of parts) if (isLeafPart(g)) fluff(g, e.layer);
+    .map((g) => {
+      if (!(leafy || g.userData['groundCards'] === true) || !(isLeafPart(g) || burstOf(g)) || typeof g.userData['cards'] !== 'number') return g;
+      const c = clumpCards(g, g.userData['cards'] as number, seed++);
+      c.userData['burst'] = burstOf(g);
+      return c;
+    });
+  if (e.layer) for (const g of parts) if (isLeafPart(g) || burstOf(g)) fluff(g, e.layer);
   // (Which vertices are a crown's, in shade underneath: leaf clumps, not flat leaves.)
   const crown = parts.flatMap((g) => Array<boolean>(g.getAttribute('position').count).fill(isLeafPart(g) && g.userData['flat'] !== true));
   // (Every part has card coordinates, so they merge: 0 off the cards, and

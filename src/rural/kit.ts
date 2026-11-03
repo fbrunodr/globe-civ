@@ -28,12 +28,13 @@ const cyl = (r0: number, r1: number, h: number, n: number, c: Paint, o: Tf = {})
 const cone = (r: number, h: number, n: number, c: Paint, o: Tf = {}) => P(new THREE.ConeGeometry(r, h, n).translate(0, h / 2, 0), c, o);
 const beam = (a: V3, b: V3, r: number, c: Paint, n = 6) => tube([a, b], [r, r], c, n, 1);
 const wheel = (r: number, w: number, c: Paint, o: Tf = {}, spokes = 0, hub = 0x3a3028) => {
-  const out = [P(new THREE.TorusGeometry(r - w * 0.3, w * 0.35, 6, 18), c, o)];
+  const out = [P(new THREE.TorusGeometry(r - w * 0.3, w * 0.35, 3, 10), c, o)];
   for (let i = 0; i < spokes; i++) out.push(P(new THREE.BoxGeometry(w * 0.3, r * 1.8, w * 0.3), c, { ...o, rz: (o.rz ?? 0) + (i / spokes) * Math.PI }));
-  if (spokes) out.push(P(new THREE.CylinderGeometry(w * 0.6, w * 0.6, w * 1.2, 8).rotateX(Math.PI / 2), hub, o));
+  if (spokes) out.push(P(new THREE.CylinderGeometry(w * 0.6, w * 0.6, w * 1.2, 5).rotateX(Math.PI / 2), hub, o));
   return out;
 };
-const tyre = (r: number, w: number, o: Tf, rim: Paint) => [P(new THREE.TorusGeometry(r - w * 0.35, w * 0.45, 8, 20), 0x1e1c1a, o), P(new THREE.CylinderGeometry(r * 0.55, r * 0.55, w * 0.8, 14).rotateX(Math.PI / 2), rim, o)];
+// (A tyre: an eight-sided drum, its rim a hexagon proud of it.)
+const tyre = (r: number, w: number, o: Tf, rim: Paint) => [P(new THREE.CylinderGeometry(r, r, w, 8).rotateX(Math.PI / 2), 0x1e1c1a, o), P(new THREE.CylinderGeometry(r * 0.55, r * 0.55, w * 1.04, 6, 1, true).rotateX(Math.PI / 2), rim, o)];
 
 const TIMBER = 0x7a5f45, DARK_WOOD = 0x5a4632, IRON = 0x4a4a4e, STEEL = 0x8a8e92, STRAW = 0xd2b46a, HAY = 0xc8a85a, STONE = 0xa8a090, CANVAS = 0xd8ccb0;
 const SKINS = [0xd8a982, 0xc48c64, 0xe8bf9f, 0x9c6a46, 0xb07a52] as const;
@@ -111,7 +112,7 @@ function ploughTeam(): G[] {
 function haycart(): G[] {
   const out: G[] = [box(2.2, 0.08, 1.3, TIMBER, { y: 0.75 }), ...[-0.66, 0.66].map((z) => box(2.2, 0.35, 0.05, DARK_WOOD, { y: 0.8, z })),
     ...[-0.72, 0.72].flatMap((z) => wheel(0.6, 0.12, DARK_WOOD, { y: 0.6, z }, 8)), beam([1.1, 0.75, 0.45], [3.0, 0.95, 0.45], 0.04, TIMBER), beam([1.1, 0.75, -0.45], [3.0, 0.95, -0.45], 0.04, TIMBER),
-    fleece([0, 1.3, 0], [1.15, 0.55, 0.7], HAY, 0.06, 2)];
+    fleece([0, 1.3, 0], [1.15, 0.55, 0.7], HAY, 0.06, 1)];
   out.push(...creature('horse').map((g) => recolor2(g, 0x7a4a2a).applyMatrix4(new THREE.Matrix4().makeTranslation(2.6, 0, 0))));
   return out;
 }
@@ -124,19 +125,20 @@ const recolor2 = (g: G, c: number): G => {
 // A windpump: a lattice tower of steel, its fan wheel and tail vane on top.
 function windpump(): G[] {
   const h = 9, out: G[] = [];
-  for (const [a, b] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) out.push(beam([a * 1.0, 0, b * 1.0], [a * 0.2, h, b * 0.2], 0.05, STEEL, 5));
-  for (let y = 1.5; y < h; y += 1.8) { const r = 1.0 - (0.8 * y) / h; for (const [a, b, c, d] of [[-1, -1, 1, -1], [1, -1, 1, 1], [1, 1, -1, 1], [-1, 1, -1, -1]] as const) out.push(beam([a * r, y, b * r], [c * r, y, d * r], 0.03, STEEL, 4)); }
+  for (const [a, b] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) out.push(beam([a * 1.0, 0, b * 1.0], [a * 0.2, h, b * 0.2], 0.05, STEEL, 3));
+  for (let y = 1.5; y < h; y += 1.8) { const r = 1.0 - (0.8 * y) / h; for (const [a, b, c, d] of [[-1, -1, 1, -1], [1, -1, 1, 1], [1, 1, -1, 1], [-1, 1, -1, -1]] as const) out.push(beam([a * r, y, b * r], [c * r, y, d * r], 0.03, STEEL, 3)); }
   out.push(box(0.5, 0.5, 0.5, IRON, { y: h }), beam([0, h + 0.25, 0], [-2.4, h + 0.25, 0], 0.05, STEEL), box(1.4, 1.0, 0.04, STEEL, { x: -2.6, y: h - 0.2 }));
-  for (let i = 0; i < 16; i++) { const a = (i / 16) * Math.PI * 2; out.push(box(0.04, 1.3, 0.28, STEEL, { x: 0.4, y: h + 0.25 + Math.cos(a) * 0.85, z: Math.sin(a) * 0.85, rx: -a, ry: 0.3 })); }
+  for (let i = 0; i < 8; i++) { const a = (i / 8) * Math.PI * 2; out.push(box(0.04, 1.3, 0.28, STEEL, { x: 0.4, y: h + 0.25 + Math.cos(a) * 0.85, z: Math.sin(a) * 0.85, rx: -a, ry: 0.3 })); }
   out.push(...wheel(1.5, 0.08, STEEL, { x: 0.4, y: h + 0.25, ry: Math.PI / 2 }), beam([0, 0, 0], [0, h, 0], 0.025, IRON));
   return out;
 }
-// A silo: a tall round store, its domed roof (stone in the industrial age, sheet steel later: `steel`).
+// A silo: a tall store, a hexagonal prism under a pyramid roof (brick
+// in the industrial age, sheet steel later: `steel`), a band or two round it.
 function silo(steel: boolean): G[] {
   const r = steel ? 2.4 : 2.0, h = steel ? 9 : 10, c = steel ? 0xb8bcc0 : 0xa86a4a;
-  const out = [cyl(r, r, h, 16, c), P(new THREE.SphereGeometry(r * 1.02, 16, 6, 0, Math.PI * 2, 0, Math.PI / 2), steel ? 0xc8ccd0 : 0x6a6a6a, { y: h })];
-  for (let y = 1.5; y < h; y += steel ? 0.6 : 1.5) out.push(P(new THREE.TorusGeometry(r + 0.02, steel ? 0.03 : 0.06, 4, 20).rotateX(Math.PI / 2), steel ? 0x9a9ea2 : 0x8a5a3a, { y }));
-  if (steel) out.push(beam([r, 0, 0], [r, h + 1.6, 0], 0.08, STEEL), beam([r, h + 1.6, 0], [0, h + 2.2, 0], 0.08, STEEL));
+  const out = [cyl(r, r, h, 6, c), cone(r * 1.06, r * 0.9, 6, steel ? 0xc8ccd0 : 0x6a6a6a, { y: h })];
+  for (const y of steel ? [h * 0.33, h * 0.66] : [h * 0.5]) out.push(cyl(r * 1.03, r * 1.03, 0.25, 6, steel ? 0x9a9ea2 : 0x8a5a3a, { y }));
+  if (steel) out.push(box(0.12, h + 1.6, 0.12, STEEL, { x: r }), box(r, 0.12, 0.12, STEEL, { x: r / 2, y: h + 1.6 }));
   else out.push(box(0.8, h * 0.9, 0.3, 0x8a5a3a, { x: 0, z: r }));
   return out;
 }
@@ -144,23 +146,15 @@ function silo(steel: boolean): G[] {
 function tractor(): G[] {
   return [box(2.0, 0.9, 1.0, COAT, { x: 0.6, y: 0.75 }), box(1.1, 1.1, 1.2, COAT, { x: -0.5, y: 0.9 }), box(1.1, 1.0, 1.25, 0x2a3034, { x: -0.5, y: 2.0, sx: 0.95 }),
     box(1.2, 0.08, 1.35, COAT, { x: -0.5, y: 3.0 }), ...[[0.5, 0.6], [-0.5, 0.6], [0.5, -0.6], [-0.5, -0.6]].map(([x, z]) => box(0.06, 1.0, 0.06, IRON, { x: -0.5 + x! * 1.0, y: 2.0, z: z! * 1.05 })),
-    cyl(0.07, 0.06, 1.0, 8, IRON, { x: 1.2, y: 1.5 }), box(0.1, 0.5, 0.8, 0x2a2a2a, { x: 1.62, y: 0.85 }),
+    box(0.12, 1.0, 0.12, IRON, { x: 1.2, y: 1.5 }), box(0.1, 0.5, 0.8, 0x2a2a2a, { x: 1.62, y: 0.85 }),
     ...[-0.85, 0.85].flatMap((z) => tyre(0.85, 0.5, { x: -0.6, y: 0.85, z }, 0xd8b030)), ...[-0.6, 0.6].flatMap((z) => tyre(0.48, 0.3, { x: 1.2, y: 0.48, z }, 0xd8b030))];
 }
 // A combine harvester: the body and grain tank, the reel and header in front, the cab, the auger.
 function combine(): G[] {
   return [box(4.5, 2.6, 2.6, COAT, { y: 1.0 }), box(2.2, 1.2, 2.4, COAT, { x: -0.8, y: 3.6 }), box(1.5, 1.4, 1.4, 0x2a3034, { x: 1.4, y: 3.6 }), box(1.6, 0.1, 1.5, COAT, { x: 1.4, y: 5.0 }),
-    box(1.6, 0.9, 6.0, 0x6a6e70, { x: 3.0, y: 0.5 }), P(new THREE.CylinderGeometry(0.55, 0.55, 5.6, 12, 1, true).rotateX(Math.PI / 2), 0xd8b030, { x: 3.4, y: 1.4 }),
-    ...Array.from({ length: 6 }, (_, i) => beam([3.4 + 0.55 * Math.cos(i), 1.4 + 0.55 * Math.sin(i), -2.8], [3.4 + 0.55 * Math.cos(i), 1.4 + 0.55 * Math.sin(i), 2.8], 0.03, 0xd8b030, 4)),
-    beam([-1.5, 3.8, 1.2], [-1.0, 4.2, 4.0], 0.18, COAT, 8), cyl(0.08, 0.07, 1.4, 8, IRON, { x: -1.8, y: 4.2 }),
+    box(1.6, 0.9, 6.0, 0x6a6e70, { x: 3.0, y: 0.5 }), P(new THREE.CylinderGeometry(0.55, 0.55, 5.6, 6, 1, true).rotateX(Math.PI / 2), 0xd8b030, { x: 3.4, y: 1.4 }),
+    beam([-1.5, 3.8, 1.2], [-1.0, 4.2, 4.0], 0.18, COAT, 5), box(0.16, 1.4, 0.16, IRON, { x: -1.8, y: 4.2 }),
     ...[-1.2, 1.2].flatMap((z) => tyre(1.0, 0.6, { x: 0.8, y: 1.0, z }, 0xd8b030)), ...[-1.2, 1.2].flatMap((z) => tyre(0.6, 0.4, { x: -1.6, y: 0.6, z }, 0xd8b030))];
-}
-// A run of fence along x, a unit long (instances stretch it): `wattle`
-// (woven hurdles), `rail` (posts and two rails), `wire` (posts and wire).
-function fence(kind: 'wattle' | 'rail' | 'wire'): G[] {
-  if (kind === 'wattle') return [...[-0.5, 0, 0.5].map((x) => beam([x, 0, 0], [x, 1.05, 0], 0.035, DARK_WOOD, 5)), ...[0.25, 0.5, 0.75].map((y) => P(new THREE.BoxGeometry(1.0, 0.22, 0.06), 0x8a7048, { y }))];
-  if (kind === 'rail') return [...[-0.5, 0, 0.5].map((x) => box(0.09, 1.2, 0.09, DARK_WOOD, { x })), ...[0.5, 0.95].map((y) => box(1.0, 0.09, 0.05, TIMBER, { y }))];
-  return [...[-0.5, 0, 0.5].map((x) => box(0.07, 1.2, 0.07, 0x6a5a48, { x })), ...[0.4, 0.75, 1.05].map((y) => beam([-0.5, y, 0], [0.5, y, 0], 0.008, 0x9a9ea2, 3))];
 }
 // A water trough, and an open shelter (posts and a roof) for the herd.
 function trough(): G[] { return [box(2.4, 0.5, 0.6, DARK_WOOD), box(2.3, 0.04, 0.5, 0x5a7a8a, { y: 0.44 })]; }
@@ -173,9 +167,26 @@ function shelter(): G[] {
 function stooks(): G[] {
   return [0, 1, 2, 3, 4, 5].map((k) => cone(0.28, 1.25, 7, k % 2 ? STRAW : 0xc4a55c, { x: Math.cos(k * 1.05) * 0.16, z: Math.sin(k * 1.05) * 0.16, rx: Math.sin(k * 1.05) * 0.22, rz: -Math.cos(k * 1.05) * 0.22 })).concat([cone(0.2, 0.4, 7, 0xb08f4a, { y: 1.1 })]);
 }
-function rick(): G[] { return [cyl(1.6, 1.7, 2.2, 14, HAY), P(new THREE.SphereGeometry(1.62, 14, 6, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.8, 1), 0xb8984a, { y: 2.2 })]; }
+function rick(): G[] { return [cyl(1.7, 1.6, 2.2, 7, HAY), cone(1.75, 1.5, 7, 0xb8984a, { y: 2.2 })]; }
 // Round bales (the machine age) on stubble.
-function bales(): G[] { return [[0, 0], [1.9, 0.6], [0.6, 1.9]].map(([x, z]) => P(new THREE.CylinderGeometry(0.75, 0.75, 1.2, 14).rotateX(Math.PI / 2), 0xc8a85a, { x: x!, y: 0.75, z: z! })); }
+function bales(): G[] { return [[0, 0], [1.9, 0.6], [0.6, 1.9]].map(([x, z]) => P(new THREE.CylinderGeometry(0.75, 0.75, 1.2, 7).rotateX(Math.PI / 2), 0xc8a85a, { x: x!, y: 0.75, z: z! })); }
+
+// ---- neglect: the improvement of a civ that couldn't have made it ----
+// A shack gone to ruin: grey boards, one wall fallen in, the roof sagging
+// to the ground at one end, a hole in it; a weed or two against it.
+const GREY_WOOD = 0x6e665a, WEED = 0x5a6a32;
+function shack(): G[] {
+  return [box(3.2, 1.9, 0.14, GREY_WOOD, { z: -1.2 }), box(0.14, 1.9, 2.4, GREY_WOOD, { x: 1.6 }), box(0.14, 1.2, 2.4, 0x5e574c, { x: -1.4, y: 0.1, rz: 0.5 }),
+    box(1.6, 0.1, 2.9, 0x5a5248, { x: 0.8, y: 1.9, rz: -0.12 }), box(1.8, 0.1, 2.9, 0x5a5248, { x: -0.8, y: 1.0, rz: 0.55 }),
+    box(1.1, 0.06, 0.25, 0x4e483e, { x: 1.2, y: 0.05, z: 1.6, ry: 0.4 }), box(0.9, 0.06, 0.25, 0x4e483e, { x: -0.4, y: 0.05, z: 1.8, ry: -0.7 }),
+    cone(0.35, 0.7, 4, WEED, { x: 1.9, z: 0.8 }), cone(0.3, 0.55, 4, WEED, { x: -1.9, z: -1.0 })];
+}
+// A cart left to rot: its bed tipped onto the ground on one wheel, the other wheel fallen flat.
+function brokenCart(): G[] {
+  return [box(2.2, 0.08, 1.3, GREY_WOOD, { y: 0.55, z: 0.1, rx: 0.42 }), box(2.2, 0.3, 0.05, 0x5e574c, { y: 0.85, z: 0.72, rx: 0.42 }),
+    ...wheel(0.6, 0.12, 0x5e574c, { y: 0.6, z: -0.72 }, 6), ...wheel(0.6, 0.12, 0x5e574c, { x: 0.4, y: 0.07, z: 1.6, rx: Math.PI / 2 }, 6),
+    beam([1.1, 0.4, 0.4], [2.8, 0.02, 0.6], 0.04, GREY_WOOD, 4), cone(0.3, 0.5, 4, WEED, { x: -1.3, z: -0.4 })];
+}
 
 // ---- the forest, by stage ----
 // A hunters' tent of hides on poles, and a frame of hides drying.
@@ -192,7 +203,7 @@ function hideRack(): G[] {
 // A campfire: a ring of stones, crossed logs, the flames, a spit over it.
 function campfire(): G[] {
   const out: G[] = [];
-  for (let i = 0; i < 9; i++) { const a = (i / 9) * Math.PI * 2; out.push(fleece([Math.cos(a) * 0.55, 0.1, Math.sin(a) * 0.55], [0.14, 0.11, 0.13], 0x6a665e, 0.2, 1)); }
+  for (let i = 0; i < 7; i++) { const a = (i / 7) * Math.PI * 2; out.push(P(new THREE.OctahedronGeometry(0.15, 0).scale(1, 0.75, 0.9), 0x6a665e, { x: Math.cos(a) * 0.55, y: 0.08, z: Math.sin(a) * 0.55, ry: a })); }
   for (let i = 0; i < 4; i++) { const a = (i / 4) * Math.PI; out.push(beam([Math.cos(a) * 0.45, 0.05, Math.sin(a) * 0.45], [-Math.cos(a) * 0.45, 0.2, -Math.sin(a) * 0.45], 0.06, 0x4a3424, 5)); }
   out.push(cone(0.3, 0.7, 7, 0xe8762a, { y: 0.1 }), cone(0.16, 0.5, 6, 0xf8c84a, { y: 0.15 }), beam([-0.7, 0, 0], [-0.7, 0.9, 0], 0.03, TIMBER, 4), beam([0.7, 0, 0], [0.7, 0.9, 0], 0.03, TIMBER, 4), beam([-0.75, 0.88, 0], [0.75, 0.88, 0], 0.025, TIMBER, 4));
   return out;
@@ -200,20 +211,20 @@ function campfire(): G[] {
 // A log cabin (the hunters' lodge, the trading post), logs stacked round it.
 function lodge(): G[] {
   const out: G[] = [], W = 5, D = 3.6;
-  for (let i = 0; i < 9; i++) {
-    const y = 0.15 + i * 0.28;
-    out.push(P(new THREE.CylinderGeometry(0.15, 0.15, W + 0.4, 7).rotateZ(Math.PI / 2), i % 2 ? TIMBER : DARK_WOOD, { y, z: D / 2 }), P(new THREE.CylinderGeometry(0.15, 0.15, W + 0.4, 7).rotateZ(Math.PI / 2), i % 2 ? TIMBER : DARK_WOOD, { y, z: -D / 2 }));
-    out.push(P(new THREE.CylinderGeometry(0.15, 0.15, D + 0.4, 7).rotateX(Math.PI / 2), i % 2 ? DARK_WOOD : TIMBER, { y: y + 0.14, x: W / 2 }), P(new THREE.CylinderGeometry(0.15, 0.15, D + 0.4, 7).rotateX(Math.PI / 2), i % 2 ? DARK_WOOD : TIMBER, { y: y + 0.14, x: -W / 2 }));
+  for (let i = 0; i < 6; i++) {
+    const y = 0.21 + i * 0.42;
+    out.push(P(new THREE.CylinderGeometry(0.21, 0.21, W + 0.4, 5).rotateZ(Math.PI / 2), i % 2 ? TIMBER : DARK_WOOD, { y, z: D / 2 }), P(new THREE.CylinderGeometry(0.21, 0.21, W + 0.4, 5).rotateZ(Math.PI / 2), i % 2 ? TIMBER : DARK_WOOD, { y, z: -D / 2 }));
+    out.push(P(new THREE.CylinderGeometry(0.21, 0.21, D + 0.4, 5).rotateX(Math.PI / 2), i % 2 ? DARK_WOOD : TIMBER, { y: y + 0.14, x: W / 2 }), P(new THREE.CylinderGeometry(0.21, 0.21, D + 0.4, 5).rotateX(Math.PI / 2), i % 2 ? DARK_WOOD : TIMBER, { y: y + 0.14, x: -W / 2 }));
   }
-  const h = 0.15 + 9 * 0.28;
+  const h = 0.21 + 6 * 0.42 - 0.13;
   for (const s of [1, -1]) out.push(box(W + 0.8, 0.12, D / 2 + 0.7, 0x5a4a38, { y: h + 0.75, z: s * (D / 4 + 0.2), rx: s * 0.6 }));
   out.push(box(0.9, 1.7, 0.06, 0x3a2a1e, { y: 0.1, z: D / 2 + 0.16 }), box(0.6, 3.6, 0.6, STONE, { x: -W / 2 - 0.2 }));
   return out;
 }
 // A steam sawmill: a long shed, its boiler house chimney, logs and planks.
 function sawmill(): G[] {
-  return [box(8, 3.2, 4, 0x8a6a48), ...[1, -1].map((s) => box(8.6, 0.12, 2.6, 0x4a4a4e, { y: 3.9, z: s * 1.05, rx: s * 0.55 })), box(2.6, 3.0, 2.6, 0x9a5a40, { x: -5 }), cyl(0.45, 0.35, 8, 10, 0x6a4a3a, { x: -5.3, y: 3 }),
-    ...Array.from({ length: 6 }, (_, i) => P(new THREE.CylinderGeometry(0.3, 0.3, 6, 8).rotateZ(Math.PI / 2), i % 2 ? TIMBER : DARK_WOOD, { x: 2, y: 0.3 + Math.floor(i / 3) * 0.55, z: 4 + (i % 3) * 0.6 })),
+  return [box(8, 3.2, 4, 0x8a6a48), ...[1, -1].map((s) => box(8.6, 0.12, 2.6, 0x4a4a4e, { y: 3.9, z: s * 1.05, rx: s * 0.55 })), box(2.6, 3.0, 2.6, 0x9a5a40, { x: -5 }), cyl(0.45, 0.35, 8, 6, 0x6a4a3a, { x: -5.3, y: 3 }),
+    ...Array.from({ length: 6 }, (_, i) => P(new THREE.CylinderGeometry(0.3, 0.3, 6, 5).rotateZ(Math.PI / 2), i % 2 ? TIMBER : DARK_WOOD, { x: 2, y: 0.3 + Math.floor(i / 3) * 0.55, z: 4 + (i % 3) * 0.6 })),
     ...[0, 1, 2].map((i) => box(4, 0.12, 1.4, 0xc8a878, { x: -1, y: 0.06 + i * 0.13, z: -4 }))];
 }
 
@@ -236,19 +247,19 @@ function steamHeadframe(): G[] {
   for (const [a, b] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) out.push(beam([a * 1.6, 0, b * 1.6], [a * 0.5, 11, b * 0.6], 0.16, 0x5a5e62, 5));
   for (let y = 2; y < 11; y += 2.2) out.push(box(3.2 - y * 0.2, 0.12, 0.12, 0x5a5e62, { y, z: 1.6 - y * 0.1 }), box(3.2 - y * 0.2, 0.12, 0.12, 0x5a5e62, { y, z: -1.6 + y * 0.1 }));
   out.push(...wheel(1.6, 0.2, 0x3a3e42, { y: 11.5, ry: Math.PI / 2 }, 8), beam([-7, 0, 0], [-0.4, 11, 0], 0.2, 0x5a5e62, 5));
-  out.push(box(6, 5, 5, 0x9a4a32, { x: -9 }), box(6.6, 0.3, 5.6, 0x4a4a4e, { x: -9, y: 5 }), cyl(0.7, 0.55, 14, 12, 0x8a3a2a, { x: -11, z: 1.6 }));
+  out.push(box(6, 5, 5, 0x9a4a32, { x: -9 }), box(6.6, 0.3, 5.6, 0x4a4a4e, { x: -9, y: 5 }), cyl(0.7, 0.55, 14, 6, 0x8a3a2a, { x: -11, z: 1.6 }));
   return out;
 }
 // A smelting furnace: its stone stack, the bellows house, ore and charcoal heaps.
 function smelter(): G[] {
-  return [cyl(1.8, 1.0, 5, 10, 0x8a7a68), cyl(1.0, 0.8, 1.2, 10, 0x6a5a48, { y: 5 }), box(3, 2.4, 2.6, 0x7a6a50, { x: -3 }), box(3.4, 0.12, 3, 0x5a4a3a, { x: -3, y: 2.6, rz: 0.25 }),
+  return [cyl(1.8, 1.0, 5, 6, 0x8a7a68), cyl(1.0, 0.8, 1.2, 6, 0x6a5a48, { y: 5 }), box(3, 2.4, 2.6, 0x7a6a50, { x: -3 }), box(3.4, 0.12, 3, 0x5a4a3a, { x: -3, y: 2.6, rz: 0.25 }),
     box(0.8, 0.8, 0.2, 0xd86a2a, { x: 1.7, y: 0.4 }), cone(1.6, 1.4, 9, 0x2a2622, { x: 3.4, z: 2 }), cone(1.4, 1.2, 9, COAT, { x: 3.0, z: -2.2 })];
 }
 // A heap of the ore (leaf: its colour), a cart of it on rails.
-function oreHeap(): G[] { return [fleece([0, 0.5, 0], [1.6, 0.9, 1.3], COAT, 0.18, 2), fleece([1.6, 0.3, 0.7], [0.8, 0.5, 0.7], coat(0.85), 0.2, 1)]; }
+function oreHeap(): G[] { return [rockLp([0, 0.5, 0], [1.6, 0.9, 1.3], COAT, 0.18), fleece([1.6, 0.3, 0.7], [0.8, 0.5, 0.7], coat(0.85), 0.2, 1)]; }
 function oreCart(): G[] {
   return [...[-0.45, 0.45].map((z) => beam([-3, 0.05, z], [3, 0.05, z], 0.04, IRON, 4)), ...[-2, -1, 0, 1, 2].map((x) => box(0.2, 0.08, 1.3, DARK_WOOD, { x })),
-    box(1.6, 0.9, 1.0, 0x5a4a3a, { y: 0.35 }), fleece([0, 1.25, 0], [0.7, 0.2, 0.42], COAT, 0.2, 1), ...[-0.5, 0.5].flatMap((x) => [-0.5, 0.5].map((z) => P(new THREE.CylinderGeometry(0.22, 0.22, 0.08, 10).rotateX(Math.PI / 2), IRON, { x, y: 0.25, z })))];
+    box(1.6, 0.9, 1.0, 0x5a4a3a, { y: 0.35 }), fleece([0, 1.25, 0], [0.7, 0.2, 0.42], COAT, 0.2, 1), ...[-0.5, 0.5].flatMap((x) => [-0.5, 0.5].map((z) => P(new THREE.CylinderGeometry(0.22, 0.22, 0.08, 6).rotateX(Math.PI / 2), IRON, { x, y: 0.25, z })))];
 }
 // A treadwheel crane (the quarry's: men walk the wheel), and a steam crane.
 function treadCrane(): G[] {
@@ -280,7 +291,7 @@ function sailboat(): G[] {
 }
 function trawler(): G[] {
   const hull = loft(smooth([S(-6, 1.4, 0.6, 0.8), S(-5.5, 1.2, 1.4, 2.0), S(0, 1.0, 1.6, 2.4), S(5, 1.3, 1.4, 1.6), S(6.6, 2.0, 0.2, 0.2)], 3), 12, (p) => (p.y < 0.6 ? 0x8a3a2a : 0x2a3a4a));
-  return [hull, box(11, 0.12, 4.2, 0x8a7a68, { y: 2.3 }), box(3.4, 2.6, 2.8, 0xe8e4dc, { x: -1, y: 2.4 }), box(3.8, 0.15, 3.2, 0x4a4a4e, { x: -1, y: 5.0 }), cyl(0.5, 0.45, 3.2, 12, 0x2a2a2a, { x: -2.5, y: 4.4 }),
+  return [hull, box(11, 0.12, 4.2, 0x8a7a68, { y: 2.3 }), box(3.4, 2.6, 2.8, 0xe8e4dc, { x: -1, y: 2.4 }), box(3.8, 0.15, 3.2, 0x4a4a4e, { x: -1, y: 5.0 }), cyl(0.5, 0.45, 3.2, 6, 0x2a2a2a, { x: -2.5, y: 4.4 }),
     cyl(0.12, 0.1, 6, 6, 0x5a5e62, { x: 3, y: 2.4 }), beam([3, 7.5, 0], [-5.5, 2.6, 0], 0.03, 0x3a3a3a, 3), beam([3, 6.5, 0], [6, 2.4, 0], 0.08, 0x5a5e62, 4)];
 }
 
@@ -289,18 +300,18 @@ function derrick(): G[] {
   const h = 12, out: G[] = [box(4, 0.4, 4, TIMBER)];
   for (const [a, b] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) out.push(beam([a * 1.7, 0.4, b * 1.7], [a * 0.35, h, b * 0.35], 0.12, TIMBER, 4));
   for (let y = 2.2; y < h; y += 2.2) { const r = 1.7 - (1.35 * y) / h; out.push(...[[-1, -1, 1, -1], [1, -1, 1, 1], [1, 1, -1, 1], [-1, 1, -1, -1]].map(([a, b, c, d]) => beam([a! * r, y, b! * r], [c! * r, y, d! * r], 0.07, TIMBER, 4))); }
-  out.push(box(1, 0.8, 1, IRON, { y: h }), box(3.4, 2.4, 2.4, 0x6a5a48, { x: 4.2 }), cyl(0.3, 0.25, 4, 8, IRON, { x: 5, y: 2.4 }), P(new THREE.CylinderGeometry(2.6, 2.6, 0.05, 16), 0x141312, { x: -4, y: 0.03, sz: 0.6 }));
+  out.push(box(1, 0.8, 1, IRON, { y: h }), box(3.4, 2.4, 2.4, 0x6a5a48, { x: 4.2 }), cyl(0.3, 0.25, 4, 8, IRON, { x: 5, y: 2.4 }), P(new THREE.CylinderGeometry(2.6, 2.6, 0.05, 8), 0x141312, { x: -4, y: 0.03, sz: 0.6 }));
   return out;
 }
 // A pumpjack: the base, the samson post, the walking beam with its horse's
 // head over the well, the crank and counterweights; paint (leaf).
 function pumpjack(): G[] {
   return [box(7, 0.5, 2, 0x6a6a6a), ...[-0.7, 0.7].map((z) => beam([-1.2, 0.5, z], [0, 4.2, z * 0.2], 0.14, COAT, 5)), ...[-0.7, 0.7].map((z) => beam([1.2, 0.5, z], [0, 4.2, z * 0.2], 0.14, COAT, 5)),
-    box(6.8, 0.5, 0.5, COAT, { x: 0.3, y: 4.2 }), P(new THREE.CylinderGeometry(1.3, 1.3, 0.6, 14, 1, false, -0.6, 1.6).rotateX(Math.PI / 2), COAT, { x: 3.7, y: 3.6 }),
+    box(6.8, 0.5, 0.5, COAT, { x: 0.3, y: 4.2 }), P(new THREE.CylinderGeometry(1.3, 1.3, 0.6, 5, 1, false, -0.6, 1.6).rotateX(Math.PI / 2), COAT, { x: 3.7, y: 3.6 }),
     beam([3.9, 2.4, 0], [3.9, 0.5, 0], 0.04, 0x3a3a3a, 4), cyl(0.3, 0.3, 0.8, 8, IRON, { x: 3.9 }),
     ...[-0.75, 0.75].map((z) => box(1.8, 1.2, 0.3, 0x3a3a3a, { x: -2.6, y: 1.6, z })), box(1.6, 1.6, 1.0, 0x5a5e62, { x: -2.6, y: 0.5 })];
 }
-function oilTank(): G[] { return [cyl(3.2, 3.2, 4.5, 20, 0xdcdcd8), P(new THREE.SphereGeometry(3.25, 20, 4, 0, Math.PI * 2, 0, 0.4), 0xc8c8c4, { y: 4.5 - 0.15 }), ...[1.5, 3].map((y) => P(new THREE.TorusGeometry(3.22, 0.04, 4, 24).rotateX(Math.PI / 2), 0xb8b8b4, { y })), beam([3.2, 0, 0], [3.2, 4.8, 0.6], 0.05, STEEL, 4)]; }
+function oilTank(): G[] { return [cyl(3.2, 3.2, 4.5, 10, 0xdcdcd8), cone(3.25, 0.9, 10, 0xc8c8c4, { y: 4.5 }), cyl(3.24, 3.24, 0.12, 10, 0xb8b8b4, { y: 2.2 }), beam([3.2, 0, 0], [3.2, 4.8, 0.6], 0.05, STEEL, 3)]; }
 
 // ---- plantations: what grows in their rows ----
 const LEAVES = 0x4f7a30;
@@ -358,13 +369,34 @@ function teosinte(): G[] {
   for (let i = 0; i < 6; i++) { const a = i * 1.05, x = Math.cos(a) * 0.25, z = Math.sin(a) * 0.25; out.push(tube([[x, 0, z], [x * 1.2, 0.9, z * 1.2], [x * 1.5, 1.7, z * 1.5]], [0.03, 0.025, 0.015], 0x6f8f3a, 5, 2), tube([[x * 1.1, 0.7, z * 1.1], [x * 2.6, 1.0, z * 2.6], [x * 3.2, 0.85, z * 3.2]], [0.01, 0.05, 0.01], 0x5f8a34, 4, 2, 0.15), ellipsoid([x * 1.55, 1.78, z * 1.55], [0.03, 0.1, 0.03], 0xc8a040, 5)); }
   return out;
 }
-// Rock breaking out of the ground, a vein of its ore (leaf) through it.
-function outcrop(): G[] {
-  const rock = (c: V3, r: V3) => fleece(c, r, (p) => (Math.abs(Math.sin(p.x * 3.1 + p.y * 4.7 + p.z * 2.3)) < 0.18 ? COAT : p.y > c[1] + r[1] * 0.5 ? 0x8a8478 : 0x7a7468), 0.22, 2);
+// Rock breaking out of the ground, a vein of its ore (leaf) through it;
+// faceted, as the land's rocks are. (`whole`: the rock is all ore, coal
+// and iron: the leaf colour throughout, a little lighter on top.)
+function outcrop(whole = false): G[] {
+  const rock = (c: V3, r: V3) => rockLp(c, r, (p) => (whole ? coat(p.y > c[1] + r[1] * 0.4 ? 1.15 : 0.9) : Math.abs(Math.sin(p.x * 3.1 + p.y * 4.7 + p.z * 2.3)) < 0.35 ? COAT : p.y > c[1] + r[1] * 0.5 ? 0x8a8478 : 0x7a7468), 0.2);
   return [rock([0, 0.7, 0], [1.5, 1.1, 1.2]), rock([1.6, 0.4, 0.8], [0.8, 0.6, 0.7]), rock([-1.2, 0.3, -0.9], [0.7, 0.45, 0.6])];
 }
+// A lumpy rock of few facets, each lit flat and painted one colour (not
+// smooth as the animals are): a vein crosses it facet by facet.
+function rockLp(c: V3, r: V3, paint: Paint | ((p: THREE.Vector3) => Paint), lump: number): G {
+  const g = fleece(c, r, 0xffffff, lump, 0);
+  g.deleteAttribute('normal');
+  g.computeVertexNormals();
+  const pos = g.getAttribute('position'), col = g.getAttribute('color') as THREE.BufferAttribute, mask = g.getAttribute('leafMask') as THREE.BufferAttribute;
+  const m = new THREE.Vector3(), k = new THREE.Color();
+  for (let i = 0; i + 2 < pos.count; i += 3) {
+    m.set(0, 0, 0);
+    for (let j = 0; j < 3; j++) m.x += pos.getX(i + j) / 3, m.y += pos.getY(i + j) / 3, m.z += pos.getZ(i + j) / 3;
+    const pt = typeof paint === 'function' ? paint(m) : paint;
+    for (let j = 0; j < 3; j++) {
+      if (typeof pt === 'number') { k.setHex(pt); col.setXYZ(i + j, k.r, k.g, k.b); mask.setX(i + j, 0); }
+      else { col.setXYZ(i + j, pt.coat, pt.coat, pt.coat); mask.setX(i + j, 1); }
+    }
+  }
+  return g;
+}
 // Weathered boulders (stone, not yet cut).
-function boulders(): G[] { return [[0, 0, 1.3, 1.0], [1.8, 0.6, 0.9, 0.7], [-1.0, 1.4, 0.7, 0.55], [0.6, -1.5, 0.6, 0.5]].map(([x, z, r, h]) => fleece([x!, h! * 0.6, z!], [r!, h!, r! * 0.85], (p) => (p.y > h! * 0.9 ? 0xb8b2a4 : 0xa49e90), 0.15, 2)); }
+function boulders(): G[] { return [[0, 0, 1.3, 1.0], [1.8, 0.6, 0.9, 0.7], [-1.0, 1.4, 0.7, 0.55], [0.6, -1.5, 0.6, 0.5]].map(([x, z, r, h]) => rockLp([x!, h! * 0.6, z!], [r!, h!, r! * 0.85], (p) => (p.y > h! * 0.9 ? 0xb8b2a4 : 0xa49e90), 0.15)); }
 // A wild vine climbing over a bush, its grapes hanging.
 function wildVine(): G[] { return [crown([0, 0.9, 0], [1.1, 0.9, 1.0], 0x4a6a2a, 0.3), crown([0.3, 1.5, 0.2], [0.7, 0.5, 0.6], 0x5a7a34, 0.3), ...[[0.9, 1.0, 0.4], [-0.8, 0.8, 0.5], [0.4, 0.7, -0.9], [-0.3, 1.3, 0.85]].map((c) => fleece(v(c), [0.08, 0.14, 0.08], 0x4a2a5a, 0.25, 1))]; }
 // A school of fish breaking the surface, ripples round them.
@@ -403,7 +435,9 @@ export const KIT = {
   hunter: () => workerModel('hunter', 0), gunHunter: () => workerModel('gunHunter', 2), picker: () => workerModel('picker', 1), pickerB: () => workerModel('picker', 3), miner: () => workerModel('miner', 0), woodcutter: () => workerModel('woodcutter', 3),
   // the farm
   plough: () => plough(), ploughTeam, haycart, windpump, stoneSilo: () => silo(false), steelSilo: () => silo(true), tractor, combine,
-  wattle: () => fence('wattle'), rails: () => fence('rail'), wire: () => fence('wire'), trough, shelter, stooks, rick, bales,
+  trough, shelter, stooks, rick, bales,
+  // neglect
+  shack, brokenCart,
   // the forest
   tent, hideRack, lodge, sawmill, campfire,
   // mine and quarry
@@ -413,7 +447,7 @@ export const KIT = {
   // plantations
   vine, teaBush, cottonBush, bananaPlant, mulberryBush, pepperPole, incenseTree, indigoBush,
   // the wild
-  wildGrain, wildRice, teosinte, outcrop, boulders, wildVine, fishSchool, oysters, resinPine,
+  wildGrain, wildRice, teosinte, outcrop: () => outcrop(), oreRock: () => outcrop(true), boulders, wildVine, fishSchool, oysters, resinPine,
   // worked touches
   winePress, cocoonTrays, tuskPile, cottonBales, teaBaskets, saltHeaps,
 } satisfies Record<string, () => G[]>;
@@ -427,10 +461,10 @@ export const SPECIES_OF: Partial<Record<KitModel, Species>> = { horse: 'horse', 
 // and animals most, then machines and small things, plants, and the large
 // works (windpumps, silos, headframes, lodges) least.
 export const FIGURE_BOOST = 6.5, SMALL_BOOST = 4, PLANT_BOOST = 3, KIT_BOOST = 3.2, WILD_BOOST = 5;
-const SMALL: ReadonlySet<KitModel> = new Set<KitModel>(['plough', 'tractor', 'combine', 'wattle', 'rails', 'wire', 'trough', 'stooks', 'rick', 'bales', 'hideRack', 'oreHeap', 'oreCart', 'winePress', 'cocoonTrays', 'tuskPile', 'cottonBales', 'teaBaskets', 'saltHeaps', 'canoe']);
+const SMALL: ReadonlySet<KitModel> = new Set<KitModel>(['plough', 'tractor', 'combine', 'trough', 'brokenCart', 'stooks', 'rick', 'bales', 'hideRack', 'oreHeap', 'oreCart', 'winePress', 'cocoonTrays', 'tuskPile', 'cottonBales', 'teaBaskets', 'saltHeaps', 'canoe']);
 const PLANTS: ReadonlySet<KitModel> = new Set<KitModel>(['vine', 'teaBush', 'cottonBush', 'bananaPlant', 'mulberryBush', 'pepperPole', 'incenseTree', 'indigoBush', 'wildGrain', 'wildRice', 'teosinte', 'wildVine', 'resinPine']);
 // (The wild's rock, shells and fish: drawn as large as the resources' props were.)
-const WILD: ReadonlySet<KitModel> = new Set<KitModel>(['outcrop', 'boulders', 'oysters', 'fishSchool', 'resinPine', 'campfire']);
+const WILD: ReadonlySet<KitModel> = new Set<KitModel>(['outcrop', 'oreRock', 'boulders', 'oysters', 'fishSchool', 'resinPine', 'campfire']);
 export const kitBoost = (k: KitModel): number => (FIGURES.has(k) ? FIGURE_BOOST : WILD.has(k) ? WILD_BOOST : SMALL.has(k) ? SMALL_BOOST : PLANTS.has(k) ? PLANT_BOOST : KIT_BOOST);
 export const FENCE_BOOST = SMALL_BOOST;
 // A kit model in tile steps.

@@ -3,18 +3,18 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { WorldLabel, clickableLabels, disposeLabels, type LabelLine } from './worldLabel.ts';
 import { makePropMaterial, instanceGeometry } from './propMaterial.ts';
-import { ruralGeometry, ruralModelKind, isSmoothRural, type RuralModel } from './rural/models.ts';
+import { ruralGeometry, ruralModelKind, isSmoothRural, isFloraRural, RURAL_MODELS, type RuralModel } from './rural/models.ts';
 import { resourceLayout, RESOURCE_WILD, RESOURCE_WORKED } from './rural/resourceModels.ts';
 import { RESOURCES, RESOURCE_KEYS, RESOURCE_IMPROVEMENT, type ResourceKey } from './resources.ts';
 import { TECHS, TECH_KEYS, STAGE_TECHS } from './techs.ts';
 import { IMPROVEMENTS, type ImprovementKey } from './cities.ts';
-import { stageLook, waterLook, plotStage, pastureFences, herdSize } from './rural/stages.ts';
-import { kitBoost, FIGURES, SPECIES_OF, KIT_BOOST, FENCE_BOOST, PLANT_BOOST, type KitModel } from './rural/kit.ts';
+import { stageLook, waterLook, plotStage } from './rural/stages.ts';
+import { planFarm, layoutRural, type RuralInput, type RuralSite } from './rural/layout.ts';
+import { kitBoost, FIGURES, SPECIES_OF, KIT_BOOST, type KitModel } from './rural/kit.ts';
 import { CREATURE_SCALE } from './creatures.ts';
-import { paintFarm, WORK_OF } from './farmPainter.ts';
-import { plotAt, cropIndex, CROP_PALETTE, CROP_HEIGHT, CROP_STAND_SATURATION, PLOT_SIZES, PLANT_ROW_W } from './rural/plots.ts';
-import { cropRegion, scatterIn, type CropRegion } from './rural/look.ts';
-import { SAFE_RHO, rhoOf, pointInPoly, LOT_SIZE, type Pt } from './town/geometry.ts';
+import { plotAt, cropIndex, CROP_PALETTE, PLOT_SIZES, PLANT_ROW_W } from './rural/plots.ts';
+import { areaLook, cropRegion, type CropRegion } from './rural/look.ts';
+import { SAFE_RHO, rhoOf, type Pt } from './town/geometry.ts';
 import { placedGeometry } from './buildingCatalog.ts';
 import { houseKind } from './houses.ts';
 import { styleOf } from './architecture.ts';
@@ -79,7 +79,7 @@ const propMat = makePropMaterial(0, 1, undefined, { time: { value: 0 } });
 // the smooth one for the kit's people, animals and plants.
 const ruralMat = makePropMaterial(0.32, 0.8);
 const smoothMat = makePropMaterial(0.25, 0.85, undefined, undefined, true);
-const matOf = (m: RuralModel) => (isSmoothRural(ruralModelKind(m)) ? smoothMat : ruralMat);
+const matOf = (m: RuralModel) => (isFloraRural(ruralModelKind(m)) ? propMat : isSmoothRural(ruralModelKind(m)) ? smoothMat : ruralMat);
 // A tile step (center to center) in scene units: resource models are sized in them.
 const STEP = R * Math.sqrt(3);
 const world = new THREE.Group();
@@ -267,19 +267,19 @@ function resourceItems(r: ResourceKey, seed: number): Placed[] {
 }
 
 // ---------- worked land ----------
-// A worked tile as the game shows it at a stage (cityProps.ts, simplified
-// to a flat patch): the ground painted with its plots (rural/plots.ts, as
-// the terrain shader paints them), the farm's homestead and yards
-// (farmPainter.ts), its crops or plants in rows, its herd behind fences,
-// and the stage's people, machines and works (rural/stages.ts). Positions
-// in tile steps (the hex's own frame), the patch's x and z.
-const CROP_ROW = 0.014, CROP_STEP = 0.01, CROP_WIDTH = 0.013;
-function kitItem(m: KitModel | RuralModel, p: Pt, yaw: number, s: number, leaf: number, sc?: THREE.Vector3): Placed {
+// A worked tile as the game shows it at a stage (rural/layout.ts, as
+// cityProps.ts places it, on a flat patch): the ground painted with its
+// plots (rural/plots.ts, as the terrain shader paints them), the farm's
+// homestead, its crops or plants, its herd behind fences, and the stage's
+// people, machines and works. Positions in tile steps (the hex's own
+// frame), the patch's x and z.
+function kitItem(m: KitModel | RuralModel, p: Pt, yaw: number, s: number, leaf: number, sc?: THREE.Vector3, shade = 1): Placed {
   const geo = cached(`r|${m}`, () => ruralGeometry(ruralModelKind(m as RuralModel)));
   const mm = new THREE.Matrix4().compose(new THREE.Vector3(p.x * STEP, 0, p.y * STEP), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw), sc ?? new THREE.Vector3().setScalar(s * STEP));
-  return { key: `r|${m}`, geo, m: mm, c: new THREE.Color(1, 1, 1), leaf: new THREE.Color(leaf), mat: matOf(m as RuralModel) };
+  return { key: `r|${m}`, geo, m: mm, c: new THREE.Color(shade, shade, shade), leaf: new THREE.Color(leaf), mat: matOf(m as RuralModel) };
 }
-// The ground's texture: the hex's plots at the stage, the crop's colours.
+// The ground's texture: the hex's plots at the stage, the crop's colours
+// (none for a pasture: it keeps the land's own grass).
 function farmGround(imp: ImprovementKey, region: CropRegion, stage: number, salt: number, base: number): THREE.CanvasTexture {
   const N = 512, cv = document.createElement('canvas');
   cv.width = cv.height = N;
@@ -289,15 +289,15 @@ function farmGround(imp: ImprovementKey, region: CropRegion, stage: number, salt
     const x = (i / N - 0.5) * 2 * half, y = (j / N - 0.5) * 2 * half;
     let c = bg.clone();
     const rho = rhoOf(6, { x, y });
-    const ragged = ps === 0 ? 0.05 * Math.sin(x * 23 + y * 17) * Math.sin(y * 29 - x * 11) : 0;
-    if (rho < SAFE_RHO + ragged) {
+    const ragged = ps <= 1 ? 0.05 * Math.sin(x * 23 + y * 17) * Math.sin(y * 29 - x * 11) : 0;
+    if (imp !== 'pasture' && rho < SAFE_RHO + ragged) {
       const pl = plotAt(x, y, salt, ps), k = cropIndex(pl.h, ps);
       c = pal[k]!.clone().multiplyScalar(0.94 + 0.12 * ((pl.h * 7.3) % 1));
-      if (imp === 'plantation' && ((pl.f[0] * PLOT_SIZES[ps]![0] / PLANT_ROW_W) % 1) < 0.45) c.lerp(new THREE.Color(0.36, 0.29, 0.2), 0.7);
-      const bw = ps === 0 ? 0 : ps === 1 ? 0.003 : ps === 4 ? 0.0015 : 0.004;
-      if (bw && pl.edge < bw) c.lerp(ps === 1 ? new THREE.Color(0.32, 0.4, 0.2) : new THREE.Color(0.2, 0.25, 0.15), 0.7);
-      if (ps === 0) c.lerp(bg, 0.3 * Math.max(0, Math.sin(x * 61 + y * 37) * Math.sin(y * 53 - x * 41)));
-      if (imp === 'pasture' && stage === 0) c.lerp(bg, 0.45);
+      if (imp === 'plantation' && ps >= 2 && ((pl.f[0] * PLOT_SIZES[ps]![0] / PLANT_ROW_W) % 1) < 0.45) c.lerp(new THREE.Color(0.36, 0.29, 0.2), 0.7);
+      const bw = ps <= 1 ? 0.0022 : ps === 4 ? 0.0015 : 0.004;
+      if (pl.edge < bw) c.lerp(ps <= 1 ? new THREE.Color(0.32, 0.4, 0.2) : new THREE.Color(0.2, 0.25, 0.15), 0.7);
+      // (A neglected farm: dull, gone to weed.)
+      if (ps === 0) { const l = 0.3 * c.r + 0.55 * c.g + 0.15 * c.b; c.lerp(new THREE.Color(l * 1.05, l * 0.95, l * 0.8), 0.5).lerp(bg, 0.6 * Math.max(0, Math.sin(x * 61 + y * 37) * Math.sin(y * 53 - x * 41))); }
     }
     const o = (j * N + i) * 4;
     img.data[o] = Math.round(Math.min(1, c.r) ** (1 / 2.2) * 255); img.data[o + 1] = Math.round(Math.min(1, c.g) ** (1 / 2.2) * 255); img.data[o + 2] = Math.round(Math.min(1, c.b) ** (1 / 2.2) * 255); img.data[o + 3] = 255;
@@ -317,7 +317,9 @@ function groundHex(tex: THREE.Texture, at: THREE.Vector3): THREE.Mesh {
   m.receiveShadow = true;
   return m;
 }
-function workedItems(imp: ImprovementKey, stage: number, res: ResourceKey | null, region: CropRegion, seed: number): Placed[] {
+// (A paddy's patch stands flooded: its water over the whole of it.)
+const PADDY_WATER = 0.006;
+function workedItems(imp: ImprovementKey, stage: number, res: ResourceKey | null, region: CropRegion, seed: number, land: BiomeKey): Placed[] {
   const out: Placed[] = [], rand = mulberry32(seed);
   if (imp === 'boats' || imp === 'well') {
     const at: Pt[] = [];
@@ -329,87 +331,20 @@ function workedItems(imp: ImprovementKey, stage: number, res: ResourceKey | null
     }
     return out;
   }
-  const look = stageLook(imp, stage, res), work = WORK_OF[imp];
-  const farm = work ? paintFarm({ work, axis: 0, density: look.density, seed, free: () => true }) : null;
+  const inp: RuralInput = { imp, stage, res, region, axis: 0, salt: seed, seed, yard: (i) => areaLook(imp, land, null, 15, i, seed) };
+  // (A paddy's homestead on a dry knoll in the middle of it.)
+  const site: RuralSite = { free: () => true, depth: (p) => (region === 'paddy' && Math.hypot(p.x, p.y) > 0.13 ? 0.004 : -1), wade: PADDY_WATER };
+  const farm = planFarm(inp, site);
   if (!farm) return out;
-  const taken: { p: Pt; r: number }[] = [];
-  // The homestead.
-  const camped = imp === 'camp' && stage === 0;
-  if (!camped) {
-    const hk = houseKind(styleOf('Romans', 1), 'b22', 1, seed % 3), [lw, ld] = LOT_SIZE.b22;
-    void lw; void ld;
+  const plan = layoutRural(inp, farm, site);
+  if (plan.house) {
+    const hk = houseKind(styleOf('Romans', plan.house.floors), 'b22', plan.house.floors, seed % 3);
     const geo = cached(`h|${hk}`, () => placedGeometry(hk));
-    out.push({ key: `h|${hk}`, geo, m: new THREE.Matrix4().compose(new THREE.Vector3(farm.home.x * STEP, 0, farm.home.y * STEP), new THREE.Quaternion(), new THREE.Vector3().setScalar(STEP)), c: new THREE.Color(1, 1, 1), leaf: new THREE.Color(0xa8553a), mat: ruralMat });
+    out.push({ key: `h|${hk}`, geo, m: new THREE.Matrix4().compose(new THREE.Vector3(plan.house.p.x * STEP, 0, plan.house.p.y * STEP), new THREE.Quaternion(), new THREE.Vector3().setScalar(STEP)), c: new THREE.Color(1, 1, 1), leaf: new THREE.Color(0xa8553a), mat: ruralMat });
   }
-  // Yards: the harvest; a pasture's herd over the whole tile, inside its fences.
-  for (const poly of farm.yards) if (!look.herd && (imp === 'farm' || imp === 'wetland')) scatterIn(poly, 1.6, seed + 9, 0.012).forEach((p) => out.push(kitItem('haystack', p, rand() * 6.28, 1, 0xc9a85a)));
-  if (look.herd) {
-    if (look.fence) for (const line of pastureFences(stage, 0)) line.slice(0, -1).forEach((a, i) => {
-      const b = line[i + 1]!, len = Math.hypot(b.x - a.x, b.y - a.y), unit = CREATURE_SCALE * FENCE_BOOST, n = Math.max(1, Math.round(len / (unit * 3)));
-      for (let k = 0; k < n; k++) {
-        const p = { x: a.x + ((k + 0.5) / n) * (b.x - a.x), y: a.y + ((k + 0.5) / n) * (b.y - a.y) };
-        out.push(kitItem(look.fence!, p, -Math.atan2(b.y - a.y, b.x - a.x), 0, 0xffffff, new THREE.Vector3((len / n) * STEP / CREATURE_SCALE, FENCE_BOOST * STEP, FENCE_BOOST * STEP)));
-      }
-    });
-    for (let n = 0, tries = 0; n < herdSize(stage) && tries < 200; tries++) {
-      const p = { x: (rand() - 0.5) * 1.1, y: (rand() - 0.5) * 1.1 };
-      if (rhoOf(6, p) > SAFE_RHO - 0.09 || Math.hypot(p.x - farm.home.x, p.y - farm.home.y) < 0.1) continue;
-      const m = look.herd.models[n % look.herd.models.length]!;
-      out.push(kitItem(m, p, rand() * 6.28, kitBoost(m) * (0.85 + 0.25 * rand()), look.herd.colors[Math.floor(rand() * look.herd.colors.length)]!));
-      n++;
-    }
-  }
-  // Crops (tufts on their plots) or plants (in rows, or clumps).
-  const off = (p: Pt) => rhoOf(6, p) > SAFE_RHO - 0.03 || Math.hypot(p.x - farm.home.x, p.y - farm.home.y) < 0.06 || farm.yards.some((poly) => pointInPoly(p, poly));
-  const ps = plotStage(imp, stage);
-  if (imp === 'farm' || (imp === 'wetland' && region === 'paddy')) {
-    const tint = CROP_PALETTE[region].map((h) => { const c = new THREE.Color(h), l = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b; return new THREE.Color(l + (c.r - l) * CROP_STAND_SATURATION, l + (c.g - l) * CROP_STAND_SATURATION, l + (c.b - l) * CROP_STAND_SATURATION); });
-    const geo = cached('r|crop', () => ruralGeometry(ruralModelKind('crop')));
-    for (let x = -0.45; x <= 0.45; x += CROP_ROW) for (let y = -0.45; y <= 0.45; y += CROP_STEP) {
-      const p = { x: x + (rand() - 0.5) * CROP_ROW * 0.3, y: y + (rand() - 0.5) * CROP_STEP * 0.8 };
-      const pl = plotAt(p.x, p.y, seed, ps), k = cropIndex(pl.h, ps), h = CROP_HEIGHT[k];
-      if (h === 0 || pl.edge < 0.007 || off(p) || (ps === 0 && rand() < 0.35)) continue;
-      out.push({ key: 'r|crop', geo, m: new THREE.Matrix4().compose(new THREE.Vector3(p.x * STEP, 0, p.y * STEP), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rand() * Math.PI), new THREE.Vector3(CROP_WIDTH * STEP, h * STEP * (0.9 + 0.2 * rand()), CROP_WIDTH * STEP)), c: new THREE.Color(1, 1, 1), leaf: tint[k]!.clone().multiplyScalar(0.9 + 0.2 * rand()), mat: propMat });
-    }
-  }
-  if (look.plants) {
-    const hedge = look.plants.model === 'vine' || look.plants.model === 'teaBush', step = look.plants.model === 'bananaPlant' || look.plants.model === 'mulberryBush' || look.plants.model === 'incenseTree' ? 0.05 : hedge ? 0.022 : 0.028;
-    const spots: Pt[] = [];
-    if (look.plants.rows) {
-      const sx = PLOT_SIZES[ps]![0];
-      for (let y = -0.45; y <= 0.45; y += step) {
-        let last = '';
-        for (let x = -0.45; x <= 0.45; x += 0.001) {
-          const pl = plotAt(x, y, seed, ps), row = (pl.f[0] * sx) / PLANT_ROW_W, id = `${pl.h}|${Math.floor(row)}`;
-          if (Math.floor(row) % 2 || row % 1 < 0.72 || id === last) continue;
-          last = id;
-          if (pl.edge >= 0.01 && cropIndex(pl.h, ps) !== 3) spots.push({ x, y });
-        }
-      }
-    }
-    else for (let n = 0; n < 9; n++) { const c = { x: (rand() - 0.5) * 0.8, y: (rand() - 0.5) * 0.8 }; for (let k = 0; k < 5; k++) spots.push({ x: c.x + (rand() - 0.5) * 0.12, y: c.y + (rand() - 0.5) * 0.12 }); }
-    for (const p of spots) if (!off(p)) out.push(kitItem(look.plants.model, p, look.plants.rows ? -Math.PI / 2 + (rand() - 0.5) * 0.08 : rand() * 6.28, PLANT_BOOST * 0.9 * (0.85 + 0.3 * rand()), 0xffffff));
-  }
-  // The stage's things.
-  const homeSpots = [[0.07, 0.03], [-0.06, 0.06], [0.06, -0.07], [-0.08, -0.05], [0.11, 0.08]] as const;
-  let slot = 0;
-  for (const th of look.things) for (let n = 0; n < th.n; n++) {
-    const m = th.model, rad = 0.025 * kitBoost(m) * (FIGURES.has(m) ? 0.4 : 1);
-    for (let tries = 0; tries < 40; tries++) {
-      let p: Pt;
-      if (th.where === 'home') { const [a, b] = homeSpots[(slot + tries) % homeSpots.length]!; const f = 1 + Math.floor(tries / 5) * 0.4; p = { x: farm.home.x + a * f, y: farm.home.y + b * f }; }
-      else if (th.where === 'yard' && farm.yards.length) { const poly = farm.yards[Math.floor(rand() * farm.yards.length)]!, xs = poly.map((q) => q.x), ys = poly.map((q) => q.y); p = { x: Math.min(...xs) + rand() * (Math.max(...xs) - Math.min(...xs)), y: Math.min(...ys) + rand() * (Math.max(...ys) - Math.min(...ys)) }; }
-      else p = { x: (rand() - 0.5) * 0.9, y: (rand() - 0.5) * 0.9 };
-      if (rhoOf(6, p) > SAFE_RHO - 0.03 || taken.some((q) => Math.hypot(p.x - q.p.x, p.y - q.p.y) < q.r + rad)) continue;
-      if (th.where === 'field' && (Math.hypot(p.x - farm.home.x, p.y - farm.home.y) < 0.08 || farm.yards.some((poly) => pointInPoly(p, poly)))) continue;
-      if ((m === 'ploughTeam' || m === 'tractor' || m === 'combine') && tries < 35 && cropIndex(plotAt(p.x, p.y, seed, ps).h, ps) !== (m === 'combine' ? 0 : 3)) continue;
-      out.push(kitItem(m, p, th.where === 'field' && (!FIGURES.has(m) || m === 'ploughTeam') ? 0 : rand() * 6.28, kitBoost(m) * (0.9 + 0.2 * rand()), th.colors ? th.colors[Math.floor(rand() * th.colors.length)]! : 0xffffff));
-      taken.push({ p, r: rad });
-      if (th.where === 'home') slot++;
-      break;
-    }
-  }
-  if (imp === 'mine' && look.adits) out.push(kitItem('adit', { x: -0.25, y: 0.2 }, 0.6, KIT_BOOST, 0xffffff));
+  // (The hex's frame is the patch's x and z: a heading a turns the model by -a about y.)
+  for (const it of plan.items) out.push(kitItem(it.model, it.p, -it.heading, 0, it.leaf, new THREE.Vector3(it.size[0] * STEP, it.size[1] * STEP, it.size[2] * STEP), it.shade));
+  if (imp === 'mine' && stageLook(imp, stage, res).adits) out.push(kitItem('adit', { x: -0.25, y: 0.2 }, 0.6, KIT_BOOST, 0xffffff));
   return out;
 }
 // The stage's name: the techs that brought it.
@@ -490,11 +425,12 @@ function buildTerrains(): void {
     for (let st = 0; st <= stages; st++, col++) {
       const center = new THREE.Vector3(col * SPACING, 0, z), seed = o.seed * 977 + ri * 31 + st;
       const region = cropRegion(imp, (land ?? 'prairie') as BiomeKey, null, 15, r);
-      const farmed = imp === 'farm' || imp === 'wetland' || imp === 'pasture' || imp === 'plantation';
+      const farmed = imp === 'farm' || imp === 'wetland' || imp === 'plantation';
       const lift = (items: Placed[]) => (water === undefined ? items : items.map((it) => ({ ...it, m: new THREE.Matrix4().makeTranslation(0, water * SC, 0).multiply(it.m) })));
-      const items = [...(farmed ? [] : floraOf(r, land, seed, imp === 'camp' ? 0.12 : 0.3)), ...lift(workedItems(imp, st, r, region, seed))];
+      const paddy = region === 'paddy';
+      const items = [...(farmed ? [] : floraOf(r, land, seed, imp === 'camp' ? 0.12 : imp === 'pasture' ? 0.45 : 0.3)), ...lift(workedItems(imp, st, r, region, seed, (land ?? 'prairie') as BiomeKey))];
       if (r && RESOURCE_WORKED[r]) items.push(...resourceLayout(r, mulberry32(seed), RESOURCE_WORKED[r]).map((m) => kitItem(m.model, { x: m.x + 0.25, y: m.y - 0.2 }, m.yaw, m.s, m.color ?? 0xffffff)));
-      if (farmed) { world.add(groundHex(farmGround(imp, region, st, seed, set?.ground ?? 0x6a7a40), center)); world.add(rim(center)); }
+      if (farmed) { world.add(groundHex(farmGround(imp, region, st, seed, set?.ground ?? 0x6a7a40), center)); world.add(rim(center)); if (paddy && water === undefined) world.add(waterSheet(center, PADDY_WATER / SC * STEP)); }
       const i = patches.length;
       const tris = addInstances(items, center, world);
       if (!farmed) { world.add(hex(imp === 'mine' ? 0x5a5248 : imp === 'quarry' ? 0xb8b0a0 : set?.ground ?? 0x8a8a70, center)); world.add(rim(center)); if (water !== undefined) world.add(waterSheet(center, water)); }
@@ -570,7 +506,31 @@ function buildCatalog(): void {
       center.clone().add(new THREE.Vector3(0, 0, 4.4)), () => { state.focus = i; refreshFocus(); setCam('close'); });
     patches.push({ center, label: div, mix: '' });
   });
-  info.textContent = `${CATALOG_KINDS.length} props, ${BUILDING_KINDS.length} buildings and ${figures.length} animals and people, enlarged (×N in each label) to be visible. Budget ${BUDGET} triangles · drag move · right-drag or Shift+drag rotate & tilt · WASD move · Q/E rotate · T/G tilt · Z/X zoom`;
+  // Then the rest of the countryside: its works, machines, plants and the
+  // resources' models (rural/models.ts), each fitted to its hex (the label
+  // says how much it was enlarged against the people's scale).
+  const rest = RURAL_MODELS.filter((k) => !FIGURES.has(k as KitModel) || k === 'ploughTeam' || k === 'haycart');
+  rest.forEach((kind, j) => {
+    const i = CATALOG_KINDS.length + BUILDING_KINDS.length + figures.length + j;
+    const center = new THREE.Vector3((i % cols) * gap, 0, Math.floor(i / cols) * rowGap);
+    world.add(hex(0xb9b39a, center, 3.2));
+    const geo = cached(`r|${kind}`, () => ruralGeometry(ruralModelKind(kind)));
+    geo.computeBoundingBox();
+    const size = geo.boundingBox!.getSize(new THREE.Vector3()), fit = 4.5 / Math.max(size.x, size.y, size.z);
+    const mesh = new THREE.InstancedMesh(instanceGeometry(geo, 1), matOf(kind), 1);
+    mesh.setMatrixAt(0, new THREE.Matrix4().compose(center, new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.6), new THREE.Vector3().setScalar(fit)));
+    mesh.setColorAt(0, new THREE.Color(1, 1, 1));
+    // (Leaf parts: a typical colour, as an instance takes in the game.)
+    const leaf = new THREE.Color(isFloraRural(ruralModelKind(kind)) ? 0x6a8a3a : 0xb0a080);
+    (mesh.geometry.getAttribute('leafTint') as THREE.InstancedBufferAttribute).setXYZ(0, leaf.r, leaf.g, leaf.b);
+    mesh.castShadow = true;
+    world.add(mesh);
+    const tris = triangles(geo);
+    const div = label(kind[0]!.toUpperCase() + kind.slice(1), `Countryside ×${(fit / FIG_SCALE).toFixed(1)} · ${tris} tris`,
+      center.clone().add(new THREE.Vector3(0, 0, 4.4)), () => { state.focus = i; refreshFocus(); setCam('close'); });
+    patches.push({ center, label: div, mix: '' });
+  });
+  info.textContent = `${CATALOG_KINDS.length} props, ${BUILDING_KINDS.length} buildings, ${figures.length} animals and people and ${rest.length} countryside models, enlarged (×N in each label) to be visible. Budget ${BUDGET} triangles · drag move · right-drag or Shift+drag rotate & tilt · WASD move · Q/E rotate · T/G tilt · Z/X zoom`;
 }
 
 function refreshFocus(): void {
@@ -724,3 +684,7 @@ renderer.setAnimationLoop((time) => {
 });
 // Dev-only handle for test scripts: focus a patch and frame it.
 if (import.meta.env.DEV) Object.assign(window, { __gallery: { focus: (i: number) => { state.focus = i; refreshFocus(); setCam('close'); }, rows: () => Object.fromEntries(rowStart), names: () => patches.map((p) => p.mix.replace(/<[^>]+>/g, ' ').trim()) } });
+// (Dev: focus the patch whose label starts with `title`, close up: __gallery.focus('Coal: wild').)
+(window as unknown as { __gallery: unknown }).__gallery = {
+  focus: (title: string) => { const i = patches.findIndex((p) => p.label.userData['title'] === title || p.mix.includes(`<h4>${title}`)); if (i >= 0) { state.focus = i; refreshFocus(); setCam('close'); } return i; },
+};

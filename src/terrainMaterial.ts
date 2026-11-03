@@ -556,11 +556,12 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               diffuseColor.rgb = mix(diffuseColor.rgb, trodden, 0.35 * urban);
             }
             float fieldMask = 1.0 - urban;
-            // Farms and wetlands (paddies, peat) follow the grid, not the
-            // painting: each fills its own hex's safe zone (rural/plots.ts),
-            // its plots laid along the hex's sides, a hedge round it.
+            // Farms, plantations and wetlands (paddies, peat) follow the
+            // grid, not the painting: each fills its own hex's safe zone
+            // (rural/plots.ts), its plots laid along the hex's sides, a hedge
+            // round it. (A pasture keeps the land's own grass.)
             int me = int(ids.x), meCode = int(tileRow(me, 5).z + 0.5);
-            if (meCode == 1 || meCode == 5 || meCode == 8 || meCode == 9) {
+            if (meCode == 1 || meCode == 5 || meCode == 9) {
               vec4 fr0 = tileRow(me, 7), fr1 = tileRow(me, 8), fr2 = tileRow(me, 9);
               int region = int(mod(fr1.w + 0.5, ${STAGE_STEP}.0)), stage = int((fr1.w + 0.5) / ${STAGE_STEP}.0);
               // (The inverse of onTile's projection, exactly.)
@@ -569,34 +570,37 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               float ca = cos(fr2.w), sa = sin(fr2.w);
               vec2 uv = vec2(ca * lp.x + sa * lp.y, -sa * lp.x + ca * lp.y);
               float ringW = fwidth(vRing);
-              // (A paddy's plots go on under its water. A first farm's
-              // edge is ragged: it fades into the wild.)
-              float rim = ${SAFE_RHO.toFixed(3)} - (stage == 0 ? 0.06 * (tFbm(P / (0.12 * uR0) + 1.7, 2) - 0.2) : 0.0);
-              float farm = (1.0 - smoothstep(rim, rim + ringW + (stage == 0 ? 0.04 : 0.0), vRing)) * (meCode == 5 ? 1.0 - snowCover : keep);
+              // (A paddy's plots are its flooded ground, under its water, the
+              // dry ground between left wild. A first farm's edge is ragged:
+              // it fades into the wild.)
+              float rim = ${SAFE_RHO.toFixed(3)} - (stage <= 1 ? 0.06 * (tFbm(P / (0.12 * uR0) + 1.7, 2) - 0.2) : 0.0);
+              float farm = (1.0 - smoothstep(rim, rim + ringW + (stage <= 1 ? 0.04 : 0.0), vRing)) * (meCode == 5 ? 1.0 - snowCover : keep);
+              if (region == ${CROP_CODE.paddy}) farm *= smoothstep(-0.00012, 0.00004, vDepth);
               vec2 f; float edge;
               float h = plotAt(uv, me, stage, f, edge);
               vec3 crop = cropColor(region, h, stage);
               crop *= 0.94 + 0.12 * fract(h * 7.3);
               float tile = fr0.w; // world units per tile step
-              if (meCode == 9) {
-                // A plantation: rows of its plants on bare earth, along each plot.
+              if (meCode == 9 && stage >= 2) {
+                // A plantation: rows of its plants on bare earth, along each plot (a first one's patches unrowed).
                 float rows = step(0.45, fract(f.x * PLOT_SIZES[clamp(stage, 0, ${MAX_STAGE})].x / ${PLANT_ROW_W}));
                 crop = mix(vec3(0.36, 0.29, 0.2), crop, mix(0.5, rows, tFade(6.0 / (0.08 * tile))));
               } else {
                 // Furrows along each plot.
                 crop *= 1.0 + 0.05 * sin(f.y * 40.0) * tFade(40.0 / (0.24 * tile));
               }
-              // A first farm: weeds and grass through its patches.
-              if (stage == 0) crop = mix(crop, diffuseColor.rgb / max(vShade, 0.05), 0.35 * smoothstep(0.45, 0.7, tFbm(P / (0.05 * uR0) + 5.3, 2)));
-              // Between the plots: grass balks (the plough's strips), hedges
-              // (enclosed fields, a pasture's), thin ones later, none in the
+              // A neglected farm (stage 0): its crops dull, weeds and grass
+              // over much of it.
+              if (stage == 0) crop = mix(mix(crop, vec3(dot(crop, vec3(0.3, 0.55, 0.15))) * vec3(1.05, 0.95, 0.8), 0.5), diffuseColor.rgb / max(vShade, 0.05), 0.6 * smoothstep(0.35, 0.6, tFbm(P / (0.05 * uR0) + 5.3, 2)));
+              // Between the plots: grass balks (a first farm's patches),
+              // hedges (enclosed fields), thin ones later, none in the
               // machine age; round the farm, a hedge from enclosure on.
-              float bw = stage == 0 ? 0.0 : stage == 1 ? 0.003 : stage == 4 ? 0.0015 : 0.004;
+              float bw = stage <= 1 ? 0.0022 : stage == 4 ? 0.0015 : 0.004;
               float hedge = bw > 0.0 ? (1.0 - smoothstep(bw, bw + 1.5 * fwidth(edge), edge)) * tFade(1.0 / (0.02 * tile)) : 0.0;
               if (stage >= 2 && stage <= 3) hedge = max(hedge, smoothstep(${(SAFE_RHO - 0.025).toFixed(3)}, ${(SAFE_RHO - 0.025).toFixed(3)} + ringW, vRing));
-              vec3 hedgeC = stage == 1 ? vec3(0.32, 0.4, 0.2) : stage == 4 ? vec3(0.42, 0.38, 0.3) : vec3(0.2, 0.25, 0.15);
-              crop = mix(crop, hedgeC, hedge * (stage == 1 ? 0.6 : 0.7));
-              diffuseColor.rgb = mix(diffuseColor.rgb, crop * vShade, farm * (meCode == 8 && stage == 0 ? 0.55 : 0.9));
+              vec3 hedgeC = stage <= 1 ? vec3(0.32, 0.4, 0.2) : stage == 4 ? vec3(0.42, 0.38, 0.3) : vec3(0.2, 0.25, 0.15);
+              crop = mix(crop, hedgeC, hedge * (stage <= 1 ? 0.6 : 0.7));
+              diffuseColor.rgb = mix(diffuseColor.rgb, crop * vShade, farm * 0.9);
             }
             if (quarryS > 0.02) {
               // Open pits: a couple of irregular hollows per tile, cut in

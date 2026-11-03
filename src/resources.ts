@@ -56,7 +56,8 @@ const OPEN: BiomeKey[] = ['prairie', 'steppe', 'savanna', 'mediterranean'];
 export const RESOURCES = {
   // ---- bonus ----
   wheat:   r('Wheat', 'bonus', 'Wh', { food: 2 }, ['prairie', 'steppe', 'mediterranean'], ['flat'], ['floodplain']),
-  rice:    r('Rice', 'bonus', 'Ri', { food: 2 }, ['monsoonForest', 'jungle', 'savanna'], ['flat'], ['marsh', 'floodplain']),
+  // (Rice only in wet ground: grown in paddies, its wetland flooded.)
+  rice:    r('Rice', 'bonus', 'Ri', { food: 2 }, [], ['flat'], ['marsh', 'swamp']),
   maize:   r('Maize', 'bonus', 'Mz', { food: 2 }, ['savanna', 'temperateForest', 'prairie'], ['flat']),
   bananas: r('Bananas', 'bonus', 'Ba', { food: 2 }, WARM_FOREST, ['flat', 'hills']),
   cattle:  r('Cattle', 'bonus', 'Ca', { food: 1, prod: 1 }, OPEN, ['flat']),
