@@ -14,7 +14,7 @@ import { kitBoost, FIGURES, SPECIES_OF, KIT_BOOST, type KitModel } from './rural
 import { CREATURE_SCALE } from './creatures.ts';
 import { plotAt, cropIndex, CROP_PALETTE, PLOT_SIZES, PLANT_ROW_W } from './rural/plots.ts';
 import { areaLook, cropRegion, type CropRegion } from './rural/look.ts';
-import { SAFE_RHO, rhoOf, type Pt } from './town/geometry.ts';
+import { rhoOf, type Pt } from './town/geometry.ts';
 import { placedGeometry } from './buildingCatalog.ts';
 import { houseKind } from './houses.ts';
 import { styleOf } from './architecture.ts';
@@ -293,7 +293,8 @@ function farmGround(imp: ImprovementKey, region: CropRegion, stage: number, salt
     const x = (i / N - 0.5) * 2 * half, y = (j / N - 0.5) * 2 * half;
     let c = bg.clone();
     const rho = rhoOf(6, { x, y });
-    if (imp !== 'pasture' && rho < SAFE_RHO) {
+    // (The gallery's patch is the hex itself: its farm fills it.)
+    if (imp !== 'pasture' && rho < 1) {
       const pl = plotAt(x, y, salt, ps), k = cropIndex(pl.h, ps);
       c = pal[k]!.clone().multiplyScalar(0.94 + 0.12 * ((pl.h * 7.3) % 1));
       if (imp === 'plantation' && ps >= 2 && ((pl.f[0] * PLOT_SIZES[ps]![0] / PLANT_ROW_W) % 1) < 0.45) c.lerp(new THREE.Color(0.36, 0.29, 0.2), 0.7);
@@ -336,7 +337,7 @@ function workedItems(imp: ImprovementKey, stage: number, res: ResourceKey | null
   }
   const inp: RuralInput = { imp, stage, res, region, axis: 0, salt: seed, seed, yard: (i) => areaLook(imp, land, null, 15, i, seed) };
   // (A paddy's homestead on a dry knoll in the middle of it.)
-  const site: RuralSite = { free: () => true, depth: (p) => (region === 'paddy' && Math.hypot(p.x, p.y) > 0.13 ? 0.004 : -1), wade: PADDY_WATER };
+  const site: RuralSite = { free: () => true, depth: (p) => (region === 'paddy' && Math.hypot(p.x, p.y) > 0.13 ? 0.004 : -1), wade: PADDY_WATER, ours: (p) => rhoOf(6, p) <= 1 };
   const farm = planFarm(inp, site);
   if (!farm) return out;
   const plan = layoutRural(inp, farm, site);

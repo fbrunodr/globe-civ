@@ -39,6 +39,7 @@ export interface CitySpot {
   water: number;
   slope: number;
   urban: number;  // soft urban weight of the painting here (0..1)
+  owner?: number; // the tile whose painting it is (where the tiles' paintings wander over their hexes' sides)
 }
 export type SpotSampler = (t: number, i: number, wa: number, wb: number) => CitySpot;
 // The ground under any direction, and the tile it falls in.
@@ -384,6 +385,8 @@ export class CityProps {
         // (Water over the ground itself: a floodplain's or a marsh's water table just under it is dry land to a crop.)
         depth: (p) => { const smp = this.sampleDir(toT(p)); return (smp.water - smp.ground) / D; },
         wade: (0.0004 * this.scale) / D,
+        // (The farm goes where the land is painted as this tile's.)
+        ours: (p) => { const o = this.sampleDir(toT(p)).owner; return o === undefined || o === t; },
       };
       const farm = planFarm(inp, site);
       if (!farm) continue;

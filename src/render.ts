@@ -1801,7 +1801,9 @@ export class GlobeRenderer {
     const fanId = this.paint.fanStart[t] + i;
     const fan = this.paint.fans[fanId];
     fanCoords(this.frames[fanId], fan, warpAt(this.paint.params, dir.x, dir.y, dir.z), dir.x, dir.y, dir.z, this.spotCo);
-    const w = softAt(this.paint, fanId, this.spotCo);
+    const w = softAt(this.paint, fanId, this.spotCo), pw = paintAt(this.paint, fanId, this.spotCo).w;
+    let owner = 0;
+    for (let c = 1; c < 4; c++) if (pw[c]! > pw[owner]!) owner = c;
     let urban = 0;
     for (let c = 0; c < 4; c++) {
       const u = g.use[fan.ids[c]];
@@ -1811,7 +1813,7 @@ export class GlobeRenderer {
     this.terrain.topo.sample(t, i, wa, wb, this.spotSmp);
     let slope = 0;
     for (let c = 0; c < 3; c++) slope += this.spotSmp.w[c] * this.vertSlope[this.spotSmp.v[c]];
-    return { dir, ground: lv.ground - 1, water: lv.water - 1, slope, urban };
+    return { dir, ground: lv.ground - 1, water: lv.water - 1, slope, urban, owner: fan.ids[owner]! };
   }
 
   private ring(t: number, color: number, opacity: number): THREE.Mesh {

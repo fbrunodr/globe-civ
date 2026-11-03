@@ -3,10 +3,9 @@ import { mulberry32 } from './rng.ts';
 import type { ImprovementKey } from './cities.ts';
 import type { CropRegion } from './rural/look.ts';
 import { CROP_INDEX_GLSL, CROP_PALETTE, CROP_SATURATION, PLOTS_GLSL, MAX_STAGE, PLANT_ROW_W } from './rural/plots.ts';
-import { SAFE_RHO } from './town/geometry.ts';
 import { GROUND_LAYER, GROUND_TEX, groundUniform } from './groundTextures.ts';
 // One repeat of the furrows' scan on a farm's ploughed plots (tile steps).
-const FURROW_REPEAT = 0.07;
+const FURROW_REPEAT = 0.045;
 
 // The terrain material: three's MeshStandardMaterial with extra shader code.
 // The look comes from the basics (the painting, the relief, the props); the
@@ -558,11 +557,13 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               diffuseColor.rgb = mix(diffuseColor.rgb, trodden, 0.35 * urban);
             }
             float fieldMask = 1.0 - urban;
-            // Farms, plantations and wetlands (paddies, peat) follow the
-            // grid, not the painting: each fills its own hex's safe zone
-            // (rural/plots.ts), its plots laid along the hex's sides, a hedge
-            // round it. (A pasture keeps the land's own grass.)
-            int me = int(ids.x), meCode = int(tileRow(me, 5).z + 0.5);
+            // Farms, plantations and wetlands (paddies, peat) fill their
+            // tiles as the painting has them, each tile's share of it (w)
+            // with its own plots (rural/plots.ts), laid along its hex's sides.
+            // (A pasture keeps the land's own grass.)
+            for (int k = 0; k < 4; k++) {
+            if (w[k] < 0.001) continue;
+            int me = int(ids[k]), meCode = int(tileRow(me, 5).z + 0.5);
             if (meCode == 1 || meCode == 5 || meCode == 9) {
               vec4 fr0 = tileRow(me, 7), fr1 = tileRow(me, 8), fr2 = tileRow(me, 9);
               int region = int(mod(fr1.w + 0.5, ${STAGE_STEP}.0)), stage = int((fr1.w + 0.5) / ${STAGE_STEP}.0);
@@ -571,11 +572,9 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               vec2 lp = vec2(dot(d, fr1.xyz), dot(d, fr2.xyz)) / (dot(d, fr0.xyz) * fr0.w);
               float ca = cos(fr2.w), sa = sin(fr2.w);
               vec2 uv = vec2(ca * lp.x + sa * lp.y, -sa * lp.x + ca * lp.y);
-              float ringW = fwidth(vRing);
               // (A paddy's plots are its flooded ground, under its water, the
               // dry ground between left wild.)
-              float rim = ${SAFE_RHO.toFixed(3)};
-              float farm = (1.0 - smoothstep(rim, rim + ringW, vRing)) * (meCode == 5 ? 1.0 - snowCover : keep);
+              float farm = w[k] * (meCode == 5 ? 1.0 - snowCover : keep);
               if (region == ${CROP_CODE.paddy}) farm *= smoothstep(-0.00012, 0.00004, vDepth);
               vec2 f; float edge;
               float h = plotAt(uv, me, stage, f, edge);
@@ -595,10 +594,9 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               if (stage == 0) crop = mix(mix(crop, vec3(dot(crop, vec3(0.3, 0.55, 0.15))) * vec3(1.05, 0.95, 0.8), 0.5), diffuseColor.rgb / max(vShade, 0.05), 0.6 * smoothstep(0.35, 0.6, tFbm(P / (0.05 * uR0) + 5.3, 2)));
               // Between the plots: grass balks (a first farm's patches),
               // hedges (enclosed fields), thin ones later, none in the
-              // machine age; round the farm, a hedge from enclosure on.
+              // machine age.
               float bw = stage <= 1 ? 0.0022 : stage == 4 ? 0.0015 : 0.004;
               float hedge = bw > 0.0 ? (1.0 - smoothstep(bw, bw + 1.5 * fwidth(edge), edge)) * tFade(1.0 / (0.02 * tile)) : 0.0;
-              if (stage >= 2 && stage <= 3) hedge = max(hedge, smoothstep(${(SAFE_RHO - 0.025).toFixed(3)}, ${(SAFE_RHO - 0.025).toFixed(3)} + ringW, vRing));
               vec3 hedgeC = stage <= 1 ? vec3(0.32, 0.4, 0.2) : stage == 4 ? vec3(0.42, 0.38, 0.3) : vec3(0.2, 0.25, 0.15);
               crop = mix(crop, hedgeC, hedge * (stage <= 1 ? 0.6 : 0.7));
               // Each plot in its crop's colour on a scan of what it is: a
@@ -610,19 +608,26 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               vec3 tn = vec3(0.0);
               vec4 tex;
               if (ci == 3 && region != ${CROP_CODE.paddy}) {
-                // (In the farm's frame: u across the plots, v along them; a repeat FURROW_REPEAT tile steps.)
+                // (In the farm's frame: u across the plots, v along them; a
+                // repeat FURROW_REPEAT tile steps. Its furrows softened, the
+                // soil's clods through them.)
                 vec2 q = uv / ${FURROW_REPEAT};
                 tex = texture(uGround, vec3(q, ${GROUND_LAYER.furrows}.0));
                 vec3 tu = normalize(ca * fr1.xyz + sa * fr2.xyz), tv = normalize(-sa * fr1.xyz + ca * fr2.xyz);
-                tn = (tex.b - 0.5) * tu + (tex.a - 0.5) * tv;
+                tn = ((tex.b - 0.5) * tu + (tex.a - 0.5) * tv) * 0.6;
                 float coarse = smoothstep(12.0, 32.0, tLod / ${FURROW_REPEAT} / tile * ${GROUND_TEX}.0);
                 tex = mix(tex, vec4(0.5), coarse); tn *= 1.0 - coarse;
+                vec3 sn;
+                vec4 st = gSample(${GROUND_LAYER.soil}.0, sn, 1.0);
+                tex.r = 0.5 + (tex.r - 0.5) * 0.5 + (st.r - 0.5) * 0.6;
+                tn += sn * 0.5;
               } else {
                 float layer = region == ${CROP_CODE.peat} ? ${GROUND_LAYER.soil}.0 : crop.g > crop.r * 1.04 || ci == 2 ? ${GROUND_LAYER.grass}.0 : ${GROUND_LAYER.dry}.0;
                 tex = gSample(layer, tn, 1.0);
               }
               gN = mix(gN, tn, farm * (1.0 - hedge * 0.5));
               diffuseColor.rgb = mix(diffuseColor.rgb, gTone(crop, tex.r) * vShade, farm * 0.92);
+            }
             }
             if (quarryS > 0.02) {
               // Open pits: a couple of irregular hollows per tile, cut in
