@@ -13,7 +13,7 @@ import type { ResourceKey } from '../resources.ts';
 import { STAGE_TECHS } from '../techs.ts';
 import { CREATURE_SCALE } from '../creatures.ts';
 import { mulberry32 } from '../rng.ts';
-import { SAFE_RHO, rhoOf, pointInPoly, type Pt, type Floors } from '../town/geometry.ts';
+import { rhoOf, pointInPoly, type Pt, type Floors } from '../town/geometry.ts';
 import { paintFarm, WORK_OF, type Farm } from '../farmPainter.ts';
 import { CROP_HEIGHT, CROP_PALETTE, CROP_STAND_SATURATION, PLOT_SIZES, MAX_STAGE, PLANT_ROW_W, cropIndex, plotAt } from './plots.ts';
 import { SCATTER_GAP, scatterIn, type AreaLook, type CropRegion, type Fill } from './look.ts';
@@ -73,7 +73,36 @@ export function houseFloors(imp: ImprovementKey, stage: number): Floors {
 // The farm's layout (its homestead, its yards) on the tile's open ground.
 export function planFarm(inp: RuralInput, site: RuralSite): Farm | null {
   const work = WORK_OF[inp.imp];
-  return work ? paintFarm({ work, axis: inp.axis, density: stageLook(inp.imp, inp.stage, inp.res).density, seed: inp.seed, free: (p) => site.free(p) && site.depth(p) <= 0 }) : null;
+  return work ? paintFarm({ work, axis: inp.axis, density: stageLook(inp.imp, inp.stage, inp.res).density, seed: inp.seed, free: (p) => site.free(p) && site.ours(p) && site.depth(p) <= 0 }) : null;
+}
+
+// A pasture's fence round it: six corners, each out along its corner's
+// direction as far as the land is still the tile's (its painting) and
+// inside its hex; then, while a side runs over another's land,
+// its two corners drawn in a little. (Good enough, not the largest such.)
+function fenceRing(site: RuralSite): Pt[] {
+  const inr = 1 / rhoOf(6, { x: 1, y: 0 }), rMax = 0.94 * inr / Math.cos(Math.PI / 6);
+  const dirs = Array.from({ length: 6 }, (_, j) => ({ x: Math.cos(Math.PI / 6 + (j * Math.PI) / 3), y: Math.sin(Math.PI / 6 + (j * Math.PI) / 3) }));
+  const r = dirs.map((d) => {
+    let k = rMax;
+    while (k > rMax * 0.4 && !(site.ours({ x: d.x * k, y: d.y * k }) && site.ours({ x: d.x * k * 0.5, y: d.y * k * 0.5 }))) k -= rMax * 0.03;
+    return k;
+  });
+  const pt = (j: number) => ({ x: dirs[j]!.x * r[j]!, y: dirs[j]!.y * r[j]! });
+  for (let pass = 0; pass < 12; pass++) {
+    let moved = false;
+    for (let j = 0; j < 6; j++) {
+      const a = pt(j), b = pt((j + 1) % 6);
+      for (let n = 1; n < 8; n++) {
+        if (site.ours({ x: a.x + ((b.x - a.x) * n) / 8, y: a.y + ((b.y - a.y) * n) / 8 })) continue;
+        r[j] = Math.max(rMax * 0.4, r[j]! * 0.95); r[(j + 1) % 6] = Math.max(rMax * 0.4, r[(j + 1) % 6]! * 0.95);
+        moved = true;
+        break;
+      }
+    }
+    if (!moved) break;
+  }
+  return [...dirs.map((_, j) => pt(j)), pt(0)];
 }
 
 // How far a walker's loop takes it from where it stands (tile steps, at its size `s`).
@@ -126,7 +155,7 @@ export function layoutRural(inp: RuralInput, farm: Farm, site: RuralSite, keep: 
   // it has them: round the farm, across it into paddocks).
   if (look.herd) {
     const unit = CREATURE_SCALE * FENCE_BOOST; // (a fence run's model length, tile steps)
-    const fences = look.fence ? pastureFences(stage, inp.axis) : [];
+    const ring = fenceRing(site), fences = look.fence ? pastureFences(stage, inp.axis, ring) : [];
     // (How near p comes to a fence: a beast's walk keeps off them all, the paddocks' too.)
     const toFence = (p: Pt) => Math.min(Infinity, ...fences.flatMap((line) => line.slice(0, -1).map((a, i) => {
       const b = line[i + 1]!, dx = b.x - a.x, dy = b.y - a.y, t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1)));
@@ -143,7 +172,7 @@ export function layoutRural(inp: RuralInput, farm: Farm, site: RuralSite, keep: 
     for (let n = 0, tries = 0; n < want && tries < want * 10; tries++) {
       const p = { x: (r() - 0.5) * 1.1, y: (r() - 0.5) * 1.1 };
       const m = look.herd.models[n % look.herd.models.length]!, s = kitBoost(m) * (0.9 + 0.2 * r()), walk = walkOf(m, s);
-      if (rhoOf(6, p) > SAFE_RHO - 0.1 - walk || toFence(p) < walk + radiusOf(m, s) * 0.6 || d2(p, farm.home) < 0.1 || inYard(p) || !site.free(p) || !dry(p) || kept(p, walk) || taken.some((q) => d2(p, q.p) < q.r + walk)) continue;
+      if (!pointInPoly(p, ring) || toFence(p) < walk + radiusOf(m, s) * 0.6 || d2(p, farm.home) < 0.1 || inYard(p) || !site.free(p) || !dry(p) || kept(p, walk) || taken.some((q) => d2(p, q.p) < q.r + walk)) continue;
       add(m, p, r() * 6.28, s, look.herd.colors[n % look.herd.colors.length]!);
       taken.push({ p, r: walk });
       n++;
@@ -228,7 +257,7 @@ export function layoutRural(inp: RuralInput, farm: Farm, site: RuralSite, keep: 
         const poly = farm.yards[Math.floor(r() * farm.yards.length)]!, xs = poly.map((q) => q.x), ys = poly.map((q) => q.y);
         p = { x: Math.min(...xs) + r() * (Math.max(...xs) - Math.min(...xs)), y: Math.min(...ys) + r() * (Math.max(...ys) - Math.min(...ys)) };
       } else p = { x: (r() - 0.5) * 1.0, y: (r() - 0.5) * 1.0 };
-      if (rhoOf(6, p) > SAFE_RHO - 0.03 - rad * 0.5 || !site.free(p) || taken.some((q) => d2(p, q.p) < q.r + rad + gap)) continue;
+      if (rhoOf(6, p) > 0.95 - rad * 0.5 || !site.ours(p) || !site.free(p) || taken.some((q) => d2(p, q.p) < q.r + rad + gap)) continue;
       if (th.where === 'field' && (d2(p, farm.home) < 0.08 || inYard(p))) continue;
       const wet = site.depth(p);
       if (wet > (imp === 'wetland' && fig ? site.wade : 0)) continue;

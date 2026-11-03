@@ -21,7 +21,7 @@ import type { ImprovementKey } from '../cities.ts';
 import type { ResourceKey } from '../resources.ts';
 import type { RuralDensity } from '../farmPainter.ts';
 import type { KitModel } from './kit.ts';
-import { rhoOf, SAFE_RHO, type Pt } from '../town/geometry.ts';
+import { pointInPoly, type Pt } from '../town/geometry.ts';
 
 // Where a thing stands on the farm: by the homestead, in its yards, out in
 // its fields (anywhere it works, off the yards and the homestead).
@@ -117,25 +117,24 @@ export function stageLook(imp: ImprovementKey, stage: number, res: ResourceKey |
   }
 }
 
-// A pasture's fences (once it has them): round the farm, inside its safe
-// zone, and across it into paddocks (two from enclosure on, three with
-// wire), along the farm's axis. Lines of points, tile steps.
-export function pastureFences(stage: number, axis: number): Pt[][] {
+// A pasture's fences (once it has them): round it (`ring`: its six
+// corners, closed, inside its hex and its painted land: rural/layout.ts),
+// and across it into paddocks (two from enclosure on, three with wire),
+// along the farm's axis, clipped to the ring. Lines of points, tile steps.
+export function pastureFences(stage: number, axis: number, ring: readonly Pt[]): Pt[][] {
   if (stage === 0) return [];
-  const inr = 1 / rhoOf(6, { x: 1, y: 0 }), r = (SAFE_RHO - 0.06) * inr / Math.cos(Math.PI / 6);
-  const ring = Array.from({ length: 7 }, (_, j) => ({ x: r * Math.cos(Math.PI / 6 + (j * Math.PI) / 3), y: r * Math.sin(Math.PI / 6 + (j * Math.PI) / 3) }));
-  const u = { x: Math.cos(axis), y: Math.sin(axis) }, v = { x: -u.y, y: u.x }, half = (SAFE_RHO - 0.06) * inr;
-  const across = (o: number): Pt[] => [{ x: o * u.x - half * v.x * 0.98, y: o * u.y - half * v.y * 0.98 }, { x: o * u.x + half * v.x * 0.98, y: o * u.y + half * v.y * 0.98 }];
+  const u = { x: Math.cos(axis), y: Math.sin(axis) }, v = { x: -u.y, y: u.x }, half = 0.6;
+  const across = (o: number): Pt[] => [{ x: o * u.x - half * v.x, y: o * u.y - half * v.y }, { x: o * u.x + half * v.x, y: o * u.y + half * v.y }];
   const cuts = stage === 1 ? [] : stage === 2 ? [0.2] : [-0.21, 0.21]; // (clear of the homestead, near the middle)
-  // (A cross line, clipped to where the ring encloses it.)
-  return [ring, ...cuts.map((o) => clip(across(o)))];
+  return [[...ring], ...cuts.map((o) => clip(across(o), ring)).filter((l) => l.length === 2)];
 }
-const clip = (l: Pt[]): Pt[] => {
-  const [a, b] = l as [Pt, Pt], lim = SAFE_RHO - 0.07;
+// (A cross line, clipped to where the ring encloses it, a little inside.)
+const clip = (l: Pt[], ring: readonly Pt[]): Pt[] => {
+  const [a, b] = l as [Pt, Pt], at = (t: number) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
   let t0 = 0, t1 = 1;
-  while (t0 < 0.5 && rhoOf(6, { x: a.x + (b.x - a.x) * t0, y: a.y + (b.y - a.y) * t0 }) > lim) t0 += 0.01;
-  while (t1 > 0.5 && rhoOf(6, { x: a.x + (b.x - a.x) * t1, y: a.y + (b.y - a.y) * t1 }) > lim) t1 -= 0.01;
-  return [{ x: a.x + (b.x - a.x) * t0, y: a.y + (b.y - a.y) * t0 }, { x: a.x + (b.x - a.x) * t1, y: a.y + (b.y - a.y) * t1 }];
+  while (t0 < 0.5 && !pointInPoly(at(t0 + 0.01), ring)) t0 += 0.01;
+  while (t1 > 0.5 && !pointInPoly(at(t1 - 0.01), ring)) t1 -= 0.01;
+  return t1 - t0 > 0.1 ? [at(t0 + 0.01), at(t1 - 0.01)] : [];
 };
 // How many animals a pasture grazes, by stage (more as it is managed better).
 export const herdSize = (stage: number): number => [4, 10, 12, 14][Math.min(stage, 3)]!;

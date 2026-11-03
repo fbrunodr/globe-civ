@@ -539,8 +539,9 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
                 vec4 r5 = tileRow(int(ids[k]), 5);
                 uS += soft[k] * r5.x; cS += soft[k] * r5.w;
                 int code = int(r5.z + 0.5);
-                // (Mines keep the land's own ground: the models are enough.)
-                if (code == 3) campS += soft[k];
+                // (Mines keep the land's own ground: the models are enough. A
+                // camp's clearings fill its tile as the land is painted.)
+                if (code == 3) campS += w[k];
                 else if (code == 4) quarryS += soft[k];
                 else if (code == ${BURNT_CODE}) burntS += soft[k];
               }
@@ -574,7 +575,8 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               vec2 uv = vec2(ca * lp.x + sa * lp.y, -sa * lp.x + ca * lp.y);
               // (A paddy's plots are its flooded ground, under its water, the
               // dry ground between left wild.)
-              float farm = w[k] * (meCode == 5 ? 1.0 - snowCover : keep);
+              // (Full strength over its share of the painting, crisp where it meets the wild.)
+              float farm = smoothstep(0.35, 0.65, w[k]) * (meCode == 5 ? 1.0 - snowCover : keep);
               if (region == ${CROP_CODE.paddy}) farm *= smoothstep(-0.00012, 0.00004, vDepth);
               vec2 f; float edge;
               float h = plotAt(uv, me, stage, f, edge);
@@ -656,7 +658,7 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               diffuseColor.rgb = mix(diffuseColor.rgb, ash * vShade, burnt * 0.9);
             }
             if (campS > 0.02) {
-              float camp = smoothstep(0.4, 0.55, campS + 0.35 * edgeN) * keep * fieldMask;
+              float camp = smoothstep(0.4, 0.6, campS) * keep * fieldMask;
               float clearing = smoothstep(0.58, 0.7, tFbm(P / (0.2 * uR0) + 3.3, 2));
               diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.5, 0.45, 0.34) * vShade, camp * clearing * 0.55);
             }

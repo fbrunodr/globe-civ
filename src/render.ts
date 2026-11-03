@@ -1078,7 +1078,8 @@ export class GlobeRenderer {
     if (!look) { this.resourceCache.set(t, { key, items: [] }); return []; }
     const rand = mulberry32((t + 11) * 2246822519);
     const tile = g.tiles[t], { e1, k } = tileFrame(g, t);
-    const mid = tile.center.clone().lerp(g.globe.triCenters[tile.corners[2 % tile.corners.length]!]!, 0.4).normalize();
+    // (A land resource over its whole tile; a sea one in a patch toward a corner, under its badge.)
+    const mid = look.water || look.corner ? tile.center.clone().lerp(g.globe.triCenters[tile.corners[2 % tile.corners.length]!]!, 0.4).normalize() : tile.center.clone();
     const u = e1.clone().addScaledVector(mid, -e1.dot(mid)).normalize(), w = mid.clone().cross(u);
     const items: PlacedProp[] = [];
     let hint = t;
