@@ -346,7 +346,12 @@ export function poseOf(c: Cue | null, now: number, phase: number, beat: number, 
   const fought = c ? inFight(c, now, phase, beat, whirl) : walk > 0 ? march(now, phase, walk) : dug ? dugIn(now, phase) : idle(now, phase);
   const acted = bow && c?.attack.close === true && c.engaged ? { ...fought, arm: fought.arm * 2.6 } : fought;
   // (On its feet: whatever lean or turn an act asks of the whole figure is the body's above the hips.)
-  const pose = { ...acted, lean: 0, yaw: 0, bend: acted.bend + acted.lean * 1.5, twist: acted.twist + acted.yaw };
+  const body = { ...acted, lean: 0, yaw: 0, bend: acted.bend + acted.lean * 1.5, twist: acted.twist + acted.yaw };
+  // (A sling hangs straight down from the hand, however the arm moves,
+  // but when it is whirled and slung in a fight; let down as the fight ends.)
+  const hang = !whirl ? 0 : !c ? 1 : c.sec >= c.dur ? smooth((c.sec - c.dur) / 0.6) : 0;
+  const slung = whirl ? Math.PI + (body.aim - Math.PI) * body.aimed : body.aim;
+  const pose = whirl ? { ...body, aim: slung + (Math.PI - slung) * hang, aimed: 1 } : body;
   // (A rider strikes from the saddle: the horse hardly moves.)
   if (!rides) return pose;
   // (Its body not bent: a spear levelled as it would point from a bent body (cutPose `level`) is levelled from an upright one.)
