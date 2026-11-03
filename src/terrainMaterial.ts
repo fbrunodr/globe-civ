@@ -55,7 +55,9 @@ const FURROW_REPEAT = 0.045;
 export const TEX_W = 2048;
 export const TILE_ROWS = 13;
 // A dirt road's colour (render.ts), the farms' trodden borders' too.
-export const ROAD_DIRT = [0.5, 0.4, 0.29] as const;
+export const ROAD_DIRT = [0.66, 0.54, 0.34] as const;
+// (Its grain: the sand scan, fine and stoneless, not the soil's pebbles.)
+export const ROAD_GRAIN = 'sand' as const;
 export const FAN_ROWS = 6;
 const NOISE_SIZE = 64;
 
@@ -667,8 +669,8 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               float pad = owned(w, k) * (1.0 - smoothstep(0.6, 0.65, soft[k])) * keep * (meCode == 5 ? 0.0 : 1.0);
               if (pad > 0.001) {
                 vec3 sn;
-                vec4 st = gSample(${GROUND_LAYER.soil}.0, sn, 1.0);
-                diffuseColor.rgb = mix(diffuseColor.rgb, vec3(${ROAD_DIRT.join(', ')}) * 2.0 * st.r * vShade, pad * 0.9);
+                vec4 st = gSample(${GROUND_LAYER[ROAD_GRAIN]}.0, sn, 1.0);
+                diffuseColor.rgb = mix(diffuseColor.rgb, vec3(${ROAD_DIRT.join(', ')}) * (1.0 + 1.2 * (st.r - 0.5)) * vShade, pad * 0.9);
                 gN = mix(gN, sn, pad);
               }
             }
