@@ -134,10 +134,12 @@ const blade = (a: THREE.Vector3, b: THREE.Vector3, w: number, color: number, t?:
   return lp(hull(rings, 4, color, { side: [0, 0, 1], turn: 0, caps: [true, false] }), {}, t);
 };
 // A sword's hilt at the grip `g`, the blade pointing along `dir`: the
-// crossguard, the grip, the pommel.
+// crossguard (across the edges, as the blade is flat: blade), the grip, the pommel.
 const hilt = (g: THREE.Vector3, dir: THREE.Vector3, len: number, color: number, t?: Tag) => {
+  // (The crossguard across the blade's edges, in its plane: fore and aft, square to the blade.)
   const d = dir.clone().normalize(), guard = g.clone().addScaledVector(d, 0.04), cross = 0.045 * WK, pom = 0.016 * WK;
-  return [rod(guard.clone().add(V(-cross, 0, 0)), guard.clone().add(V(cross, 0, 0)), 0.009, 0.009, 4, color, t), rod(g.clone().addScaledVector(d, -len), guard, 0.011, 0.011, 4, LEATHER, t),
+  const edge = V(0, -d.z, d.y).normalize().multiplyScalar(cross);
+  return [rod(guard.clone().sub(edge), guard.clone().add(edge), 0.009, 0.009, 4, color, t), rod(g.clone().addScaledVector(d, -len), guard, 0.011, 0.011, 4, LEATHER, t),
     lp(gem([g.x - d.x * (len + 0.012), g.y - d.y * (len + 0.012), g.z - d.z * (len + 0.012)], [pom, pom, pom], color, 4), {}, t)];
 };
 
