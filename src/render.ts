@@ -35,7 +35,7 @@ import { farGeometry, makeFloraDepthMaterial, makePropMaterial, makeRoamDepthMat
 import { GpuTimer } from './gpuTimer.ts';
 import { resourceDef } from './resources.ts';
 import { UnitView, type FightResult, type ShownUnit } from './unitView.ts';
-import { loadGroundTextures } from './groundTextures.ts';
+import { loadGroundTextures, groundUniform, GROUND_LAYER } from './groundTextures.ts';
 
 const FOG = new THREE.Color(0x0b0e15);
 
@@ -123,7 +123,7 @@ const FLORA_KEEP: Record<'urban' | ImprovementKey, Record<Layer, number>> = {
 };
 
 // Roads between cities, and streets: dirt, then paving from the Classical era.
-const ROAD_RGB = [0.62, 0.55, 0.43] as const;
+const ROAD_RGB = [0.5, 0.4, 0.29] as const;
 const DIRT_RGB = [0.55, 0.49, 0.39] as const;
 const PAVED_RGB = [0.5, 0.46, 0.41] as const;
 // Road surfaces: points across the width (shares of the half width: edges,
@@ -182,7 +182,8 @@ const BRIDGE_STONE = 0xa49c8c;
 const LEVEL_AT = 0.78, LEVEL_R = 0.42;
 type Ground = (d: THREE.Vector3) => { t: number; ground: number; water: number; land: number };
 interface Bridges { pos: number[]; col: number[] }
-interface Batch { pos: number[]; col: number[] }
+// (roadUv: across the road (-1..1), along it (tile steps), and its kind: 0 dirt, 1 paved, 2 a town's paving.)
+interface Batch { pos: number[]; col: number[]; uv: number[] }
 interface RoadBatches { edge: Batch; top: Batch }
 
 // A tile highlighted in the overlay (growth placement options).
@@ -1466,7 +1467,7 @@ export class GlobeRenderer {
     if (key === this.roadsKey && !force) return;
     this.roadsKey = key;
     const halfW = ROAD_HALF_WIDTH * g.globe.avgEdgeAngle, lift = ROAD_LIFT * this.scale;
-    const batches: RoadBatches = { edge: { pos: [], col: [] }, top: { pos: [], col: [] } };
+    const batches: RoadBatches = { edge: { pos: [], col: [], uv: [] }, top: { pos: [], col: [], uv: [] } };
     let hint = 0;
     const smp = newSample(), pre = this.layers.preRiver;
     const at: Ground = (d: THREE.Vector3) => {
@@ -1485,12 +1486,17 @@ export class GlobeRenderer {
     }
     // Streets and squares inside towns (cityProps.ts lays them out).
     for (const st of this.cityProps.streets()) this.drape(st.points, st.halfWidth, st.paved ? PAVED_RGB : DIRT_RGB, batches, at, lift, bridges, st.paved);
-    for (const pv of this.cityProps.pavings()) this.pave(pv.points, pv.rgb ?? (pv.paved ? PAVED_RGB : DIRT_RGB), at, lift + ROAD_LAYER * this.scale, batches.top.pos, batches.top.col, pv.exact);
+    for (const pv of this.cityProps.pavings()) {
+      const n0 = batches.top.pos.length;
+      this.pave(pv.points, pv.rgb ?? (pv.paved ? PAVED_RGB : DIRT_RGB), at, lift + ROAD_LAYER * this.scale, batches.top.pos, batches.top.col, pv.exact);
+      for (let i = n0; i < batches.top.pos.length; i += 3) batches.top.uv.push(0, 0, 2);
+    }
     for (const grp of [...this.roads, ...(this.bridges ? [this.bridges] : [])]) this.dropChunked(grp);
     this.roads = [batches.edge, batches.top].map((bt, i) => {
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.Float32BufferAttribute(bt.pos, 3));
       geo.setAttribute('color', new THREE.Float32BufferAttribute(bt.col, 3));
+      geo.setAttribute('roadUv', new THREE.Float32BufferAttribute(bt.uv, 3));
       windOutward(geo);
       geo.computeVertexNormals();
       const grp = this.chunkedSoup(geo, this.roadMats[i]!, (m) => {
@@ -1657,29 +1663,36 @@ export class GlobeRenderer {
       const o = center ? here[k]! : at(q);
       return Math.max(o.ground, o.water);
     };
+    // (How far along the road each point is, tile steps: the texture runs along it.)
+    const along: number[] = [0];
+    for (let k = 1; k < n; k++) along.push(along[k - 1]! + pts[k]!.angleTo(pts[k - 1]!) / g.globe.avgEdgeAngle);
+    const kind = rgb === PAVED_RGB ? 1 : 0;
     const layer = (share: number, up: number, color: readonly number[], out: Batch) => {
-      const tri = (p0: THREE.Vector3, p1: THREE.Vector3, p2: THREE.Vector3) => {
+      type UV = readonly [number, number];
+      const tri = (p0: THREE.Vector3, p1: THREE.Vector3, p2: THREE.Vector3, u0: UV, u1: UV, u2: UV) => {
         out.pos.push(p0.x, p0.y, p0.z, p1.x, p1.y, p1.z, p2.x, p2.y, p2.z);
         for (let i = 0; i < 3; i++) out.col.push(color[0]!, color[1]!, color[2]!);
+        out.uv.push(u0[0], u0[1], kind, u1[0], u1[1], kind, u2[0], u2[1], kind);
       };
       const cap = (k: number, row: THREE.Vector3[], dir: number) => {
         // A half disc beyond the end, at the end's height.
         const d = pts[k]!, mid = row[ROAD_MID]!, r = mid.length(), w = hwAt(k) * share;
         const tan = pts[Math.min(n - 1, k + 1)]!.clone().sub(pts[Math.max(0, k - 1)]!).normalize().multiplyScalar(dir * w);
         const side = d.clone().cross(tan).normalize().multiplyScalar(w);
-        const ring: THREE.Vector3[] = [];
+        const ring: THREE.Vector3[] = [], ruv: UV[] = [], wt = w / g.globe.avgEdgeAngle;
         for (let i = 0; i <= 8; i++) {
           const t = (i / 8) * Math.PI;
           ring.push(d.clone().addScaledVector(side, Math.cos(t)).addScaledVector(tan, Math.sin(t)).normalize().multiplyScalar(r));
+          ruv.push([Math.cos(t), along[k]! + dir * Math.sin(t) * wt]);
         }
-        for (let i = 0; i < 8; i++) tri(mid, ring[i]!, ring[i + 1]!);
+        for (let i = 0; i < 8; i++) tri(mid, ring[i]!, ring[i + 1]!, [0, along[k]!], ruv[i]!, ruv[i + 1]!);
       };
-      let prev: THREE.Vector3[] | null = null;
+      let prev: THREE.Vector3[] | null = null, prevK = 0;
       for (let k = 0; k < n; k++) {
         const d = pts[k]!;
         const tan = pts[Math.min(n - 1, k + 1)]!.clone().sub(pts[Math.max(0, k - 1)]!);
         if (tan.lengthSq() < 1e-14) continue;
-        if (!g.explored[here[k]!.t]) { if (prev) cap(k - 1, prev, 1); prev = null; continue; }
+        if (!g.explored[here[k]!.t]) { if (prev) cap(prevK, prev, 1); prev = null; continue; }
         const side = d.clone().cross(tan).normalize().multiplyScalar(hwAt(k) * share);
         const row = ROAD_ACROSS.map((u, j) => {
           const q = d.clone().addScaledVector(side, u).normalize();
@@ -1687,14 +1700,16 @@ export class GlobeRenderer {
         });
         if (!prev) cap(k, row, -1);
         else {
+          const a0 = along[prevK]!, a1 = along[k]!;
           for (let j = 0; j + 1 < row.length; j++) {
-            tri(prev[j]!, prev[j + 1]!, row[j + 1]!);
-            tri(prev[j]!, row[j + 1]!, row[j]!);
+            const ua = ROAD_ACROSS[j]!, ub = ROAD_ACROSS[j + 1]!;
+            tri(prev[j]!, prev[j + 1]!, row[j + 1]!, [ua, a0], [ub, a0], [ub, a1]);
+            tri(prev[j]!, row[j + 1]!, row[j]!, [ua, a0], [ub, a1], [ua, a1]);
           }
         }
-        prev = row;
+        prev = row; prevK = k;
       }
-      if (prev) cap(n - 1, prev, 1);
+      if (prev) cap(prevK, prev, 1);
     };
     layer(1, 0, edgeRgb, roads.edge);
     layer(ROAD_SURFACE, ROAD_LAYER * s, rgb, roads.top);
@@ -2304,15 +2319,14 @@ function slopeAndShore(terrain: TerrainMesh, coast: Float32Array): [Float32Array
 // Walls (no clear outside) are left as they are.
 function windOutward(geo: THREE.BufferGeometry): void {
   const p = geo.getAttribute('position') as THREE.BufferAttribute;
-  const c = geo.getAttribute('color') as THREE.BufferAttribute;
   const a = new THREE.Vector3(), b = new THREE.Vector3(), d = new THREE.Vector3(), n = new THREE.Vector3();
   for (let i = 0; i + 2 < p.count; i += 3) {
     a.fromBufferAttribute(p, i); b.fromBufferAttribute(p, i + 1); d.fromBufferAttribute(p, i + 2);
     n.subVectors(b, a).cross(d.clone().sub(a));
     const up = n.dot(a) / (n.length() * a.length() || 1);
     if (up >= -0.3) continue;
-    // Swap the last two vertices (and their colors).
-    for (const attr of [p, c]) {
+    // Swap the last two vertices (and all they carry).
+    for (const attr of Object.values(geo.attributes) as THREE.BufferAttribute[]) {
       for (let k = 0; k < attr.itemSize; k++) {
         const t = attr.getComponent(i + 1, k);
         attr.setComponent(i + 1, k, attr.getComponent(i + 2, k));
@@ -2322,18 +2336,28 @@ function windOutward(geo: THREE.BufferGeometry): void {
   }
 }
 
-// Road material: vertex colors, with a fine grain from the world position
-// (the same wherever streets overlap, so joins never show); polygon offset
-// keeps it over the ground (the surface layer over the edges).
+// Road material: a dirt road as a cart track is worn (the soil scan along
+// it, groundTextures.ts: two wheel ruts darker and smoother, a lighter
+// crown between them with a little grass, gravel toward the shoulders,
+// the outer edge ragged into the ground), a paved one its stones' grain,
+// a town's paving the grain alone; vertex colors. `top`: the surface
+// layer (its edge ragged too, over the shoulders below). The grain comes
+// from the world position (the same wherever streets overlap, so joins
+// never show); polygon offset keeps it over the ground.
+const ROAD_TEX_REPEAT = 0.05; // the soil scan's repeat along a road (tile steps)
 function makeRoadMaterial(offset: number, depthWrite: boolean): THREE.MeshLambertMaterial {
   const mat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: offset, polygonOffsetUnits: offset, depthWrite });
+  const top = depthWrite;
   mat.onBeforeCompile = (shader) => {
+    shader.uniforms['uGround'] = groundUniform();
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vRoadPos;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvRoadPos = position;');
+      .replace('#include <common>', '#include <common>\nattribute vec3 roadUv;\nvarying vec3 vRoadPos;\nvarying vec3 vRoadUv;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvRoadPos = position; vRoadUv = roadUv;');
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
+        uniform highp sampler2DArray uGround;
         varying vec3 vRoadPos;
+        varying vec3 vRoadUv;
         float roadHash(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
         float roadNoise(vec3 p) {
           vec3 i = floor(p), f = fract(p);
@@ -2342,8 +2366,32 @@ function makeRoadMaterial(offset: number, depthWrite: boolean): THREE.MeshLamber
                      mix(mix(roadHash(i + vec3(0, 0, 1)), roadHash(i + vec3(1, 0, 1)), f.x), mix(roadHash(i + vec3(0, 1, 1)), roadHash(i + vec3(1, 1, 1)), f.x), f.y), f.z);
         }`)
       .replace('#include <color_fragment>', `#include <color_fragment>
-        diffuseColor.rgb *= 0.9 + 0.12 * roadNoise(vRoadPos * 9000.0) + 0.06 * roadNoise(vRoadPos * 1800.0);`);
+        float grain = 0.9 + 0.12 * roadNoise(vRoadPos * 9000.0) + 0.06 * roadNoise(vRoadPos * 1800.0);
+        float kind = vRoadUv.z;
+        if (kind > 1.5) diffuseColor.rgb *= grain;
+        else {
+          float u = vRoadUv.x, a = abs(u);
+          // (The edge ragged: eaten in by the ground, a little more here and there.)
+          float rag = 0.12 + 0.2 * roadNoise(vRoadPos * 2600.0) + 0.08 * roadNoise(vRoadPos * 9000.0);
+          if (a > 1.0 - rag) discard;
+          // (The soil scan, laid along the road: across it by its width, along by its length.)
+          vec4 t = texture(uGround, vec3(vec2(u * ${ROAD_HALF_WIDTH}, vRoadUv.y) / ${ROAD_TEX_REPEAT}, ${GROUND_LAYER.soil}.0));
+          float tone = 2.0 * t.r;
+          if (kind < 0.5) {
+            ${top ? `// Two ruts worn by the wheels, darker and smoother; a crown between, lighter, a little grass on it.
+            float rut = exp(-pow((a - 0.42) / 0.12, 2.0));
+            float crown = 1.0 - smoothstep(0.08, 0.22, a);
+            tone = mix(tone, 1.0, 0.6 * rut) * (1.0 - 0.32 * rut);
+            // (The crown's grass: in tufts, green over the dirt.)
+            float tuft = smoothstep(0.35, 0.7, roadNoise(vRoadPos * 6000.0) * 0.7 + roadNoise(vRoadPos * 20000.0) * 0.3);
+            diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.3, 0.38, 0.16), crown * (0.25 + 0.6 * tuft));`
+            : `// The shoulders: lighter, gravelly, greener toward the edge.
+            diffuseColor.rgb *= 0.92;
+            diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.27, 0.32, 0.15), smoothstep(0.4, 0.9, a) * 0.75 * (0.6 + 0.4 * roadNoise(vRoadPos * 7000.0)));`}
+          } else tone = mix(tone, 1.0, 0.5);
+          diffuseColor.rgb *= tone * grain;
+        }`);
   };
-  mat.customProgramCacheKey = () => 'road';
+  mat.customProgramCacheKey = () => `road-${top}`;
   return mat;
 }
