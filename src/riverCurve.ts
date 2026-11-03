@@ -43,11 +43,16 @@ export function riverCurve(globe: Globe, paint: PaintData, river: River): RiverP
     for (const f of SAMPLES) {
       if (f < lo - 1e-9 || f > hi + 1e-9) continue;
       const x0 = p0.clone().lerp(p1, f).normalize();
-      // On the edge the distance is 0, so the warped distance is the warp
-      // term alone; the painted border sits that far across the edge.
-      warpAt(paint.params, x0.x, x0.y, x0.z, delta);
-      const s = fan.warp[1] * (delta[0] * fr.n[3] + delta[1] * fr.n[4] + delta[2] * fr.n[5]);
-      const dir = x0.clone().addScaledVector(new THREE.Vector3(fr.n[3], fr.n[4], fr.n[5]), -s).normalize();
+      // The painted border: where the warped distance to the edge is 0,
+      // found from the edge point across it (the warp read again where the
+      // point has moved to, until it holds still: the warp varies across).
+      const nB = new THREE.Vector3(fr.n[3], fr.n[4], fr.n[5]), dir = x0.clone();
+      for (let it = 0; it < 6; it++) {
+        warpAt(paint.params, dir.x, dir.y, dir.z, delta);
+        const s = dir.dot(nB) + fan.warp[1] * (delta[0] * nB.x + delta[1] * nB.y + delta[2] * nB.z);
+        if (Math.abs(s) < 1e-7) break;
+        dir.addScaledVector(nB, -s).normalize();
+      }
       pts.push({ dir, tile: a, fan: i, edge: k });
     }
     edges.push(pts);

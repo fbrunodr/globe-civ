@@ -159,6 +159,10 @@ export function paintCity(inp: PaintInput): Painting {
     label++;
   }
   const inLargest = (x0: number, y0: number) => piece[(y0 + H) * N + x0 + H] === largest;
+  // The middle of that stretch (grid units): the town grows out from it.
+  let mx = 0, my = 0;
+  for (let q = 0; q < N * N; q++) if (piece[q] === largest) { mx += (q % N) - H + 0.5; my += Math.floor(q / N) - H + 0.5; }
+  if (largestSize > 0) { mx /= largestSize; my /= largestSize; }
 
   // Taken: every building's square grown by 1 (nothing may stand there: guarantee 1).
   let taken = new Uint8Array(N * N);
@@ -196,7 +200,7 @@ export function paintCity(inp: PaintInput): Painting {
       })();
       for (const [x0, y0] of pool) {
         if (!fits(k, x0, y0, w, h) || !clear(x0, y0, w, h)) continue;
-        const cx = x0 + w / 2, cy = y0 + h / 2, d = Math.hypot(cx, cy) * UNIT;
+        const cx = x0 + w / 2, cy = y0 + h / 2, d = Math.hypot(cx - mx, cy - my) * UNIT;
         // Near the middle (the skyscrapers most), joining more neighbours (the
         // town fills in), and staggered against the ones beside it rather
         // than squared up in rows (a grown town, not a grid).
@@ -303,17 +307,20 @@ export function paintCity(inp: PaintInput): Painting {
 
   // Each building faces the joined neighbour nearest the middle (its road
   // there), or out; its order: how far it stands from the middle, ranked.
+  // (A rectangle's middle, on the grid; and relative to the town's middle, mx my, for facing and ranking.)
   const middle = (p: { x0: number; y0: number; w: number; h: number }) => ({ x: p.x0 + p.w / 2, y: p.y0 + p.h / 2 });
-  const ranked = [...placed].sort((a, b) => Math.hypot(middle(a).x, middle(a).y) - Math.hypot(middle(b).x, middle(b).y));
+  const rel = (p: { x0: number; y0: number; w: number; h: number }) => ({ x: p.x0 + p.w / 2 - mx, y: p.y0 + p.h / 2 - my });
+  const ranked = [...placed].sort((a, b) => Math.hypot(rel(a).x, rel(a).y) - Math.hypot(rel(b).x, rel(b).y));
   const buildings: Painted[] = placed.map((p) => {
     const m = middle(p);
     let face: { x: number; y: number } | null = null, fd = Infinity;
     for (const q of placed) {
       if (q === p || !joined(p.x0, p.y0, p.x0 + p.w, p.y0 + p.h, q.x0, q.y0, q.x0 + q.w, q.y0 + q.h)) continue;
-      const mq = middle(q), d = Math.hypot(mq.x, mq.y);
+      const mq = middle(q), rq = rel(q), d = Math.hypot(rq.x, rq.y);
       if (d < fd) { fd = d; face = { x: Math.abs(mq.x - m.x) > Math.abs(mq.y - m.y) ? Math.sign(mq.x - m.x) : 0, y: Math.abs(mq.x - m.x) > Math.abs(mq.y - m.y) ? 0 : Math.sign(mq.y - m.y) }; }
     }
-    face ??= Math.abs(m.x) > Math.abs(m.y) ? { x: Math.sign(m.x) || 1, y: 0 } : { x: 0, y: Math.sign(m.y) || 1 };
+    const r = rel(p);
+    face ??= Math.abs(r.x) > Math.abs(r.y) ? { x: Math.sign(r.x) || 1, y: 0 } : { x: 0, y: Math.sign(r.y) || 1 };
     const dir = { x: face.x * u.x + face.y * v.x, y: face.x * u.y + face.y * v.y };
     return {
       kind: p.kind, x0: p.x0, y0: p.y0, x1: p.x0 + p.w, y1: p.y0 + p.h,

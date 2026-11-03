@@ -54,6 +54,7 @@ export interface RiverCourse {
   mouth: number;   // index of the point where the drawn course met the coast (or the river it joins)
   fall: number[];  // steepest fall allowed at each point (height per radian)
   tributary: boolean;
+  sides: (readonly [number, number])[]; // the two tiles the river runs between at each point ([-1, -1] past its mouth)
 }
 
 // Layers kept for what is built on the ground later (render.ts): what
@@ -369,9 +370,11 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
     const pts: THREE.Vector3[] = [];
     const flow: number[] = [];
     const size: number[] = []; // the inner radius of the two tiles beside it (mean)
+    const sides: (readonly [number, number])[] = [];
     for (const c of curve) {
       if (pts.length && pts[pts.length - 1].distanceTo(c.dir) < 0.01 * r0) continue;
       pts.push(c.dir.clone());
+      sides.push([c.tile, tiles[c.tile].neighbors[c.fan]!]);
       flow.push(Math.sqrt(r.flow[c.edge] / maxFlow));
       size.push((inr[c.tile] + inr[tiles[c.tile].neighbors[c.fan]]) / 2);
     }
@@ -399,6 +402,7 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
         dirv.addScaledVector(p, -dirv.dot(p)).normalize();
         const next = p.clone().addScaledVector(dirv, step).normalize();
         pts.push(next);
+        sides.push([-1, -1]);
         flow.push(flow[flow.length - 1]);
         size.push(size[size.length - 1]);
         if (inside < 0 && sampleField(wet, next) > 0.9) inside = s;
@@ -415,6 +419,7 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
       }
       if (best && best.dist < 1.5 * r0) {
         pts.push(best.c.pts[best.j].clone());
+        sides.push([-1, -1]);
         flow.push(flow[flow.length - 1]);
         size.push(size[size.length - 1]);
         joinLevel = best.c.level[best.j];
@@ -451,7 +456,7 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
     }
     level[n - 1] = joinLevel; // meets the sea, or the river it joins, at its level
     for (let j = n - 2; j >= 0; j--) level[j] = Math.min(level[j], level[j + 1] + Math.min(fall[j], fall[j + 1]) * pts[j].distanceTo(pts[j + 1]));
-    courses.push({ pts, level, half, depth, ground, mouth, fall, tributary: r.tributary });
+    courses.push({ pts, level, half, depth, ground, mouth, fall, tributary: r.tributary, sides });
   }
 
   // Rivers that come close (a tributary beside the river it joins, two
@@ -517,6 +522,12 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
   });
   const bank = new Float32Array(V);
   const riverGap = new Float32Array(V).fill(Infinity); // distance from the river's water edge
+  // Which side of a river each vertex near one is on: its signed distance
+  // from the river's middle, and the tiles on the positive side and on the
+  // negative (-1 where none): the painting keeps each tile to its side
+  // (terrainMaterial.ts paintWeights, render.ts citySpot).
+  const riverSd = new Float32Array(V), riverP = new Float32Array(V).fill(-1), riverN = new Float32Array(V).fill(-1);
+  const ab = new THREE.Vector3();
   const riverW = new Float32Array(V); // how much the water here is a river's (vs the sea it runs into)
   const flowVec = new Float32Array(V * 3);
   const seg = new THREE.Vector3(), rel = new THREE.Vector3(), tmp = new THREE.Vector3();
@@ -555,6 +566,17 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
     }
     if (carve < Infinity) height[v] = smin(height[v], carve, 0.00025);
     if (bestSeg >= 0) riverGap[v] = bestDist - bestHalf;
+    if (bestSeg >= 0 && bestDist < bestHalf + 0.8 * r0) {
+      const { c, j } = segs[bestSeg];
+      const course = courses[c], side = course.sides[j]!;
+      if (side[0] >= 0) {
+        ab.crossVectors(course.pts[j], course.pts[j + 1]).normalize();
+        riverSd[v] = ab.dot(d);
+        const pos = ab.dot(tiles[side[0]].center) >= 0;
+        riverP[v] = pos ? side[0] : side[1];
+        riverN[v] = pos ? side[1] : side[0];
+      }
+    }
     if (bestSeg >= 0 && bestDist < bestHalf + MARGIN) {
       bank[v] = 1 - smoothstep(bestHalf, bestHalf + 0.3 * r0, bestDist);
       if (bestLevel >= water[v]) {
@@ -699,7 +721,7 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
   return {
     fields: {
       height, water,
-      ground: { bank, shore },
+      ground: { bank, shore, riverSd, riverP, riverN },
       water3d: [{ name: 'tint', itemSize: 4, data: tint }, { name: 'flow', itemSize: 3, data: flowVec },
         { name: 'wsrc', itemSize: 1, data: Float32Array.from(source) }, { name: 'wstep', itemSize: 1, data: waterSteps(topo, height, water, fall) }],
     },

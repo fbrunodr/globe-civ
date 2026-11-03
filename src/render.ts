@@ -1803,6 +1803,20 @@ export class GlobeRenderer {
     const fan = this.paint.fans[fanId];
     fanCoords(this.frames[fanId], fan, warpAt(this.paint.params, dir.x, dir.y, dir.z), dir.x, dir.y, dir.z, this.spotCo);
     const w = softAt(this.paint, fanId, this.spotCo), pw = paintAt(this.paint, fanId, this.spotCo).w;
+    this.terrain.topo.sample(t, i, wa, wb, this.spotSmp);
+    // (Near a river, each tile keeps to its side: as the shader, terrainMaterial.ts keepSide.)
+    {
+      const f = this.terrain.fields.ground, sv = this.spotSmp;
+      let near = 0;
+      for (let c = 1; c < 3; c++) if (sv.w[c] > sv.w[near]) near = c;
+      const P = f['riverP']![sv.v[near]]!, N = f['riverN']![sv.v[near]]!;
+      if (P >= 0) {
+        let sd = 0;
+        for (let c = 0; c < 3; c++) sd += sv.w[c] * f['riverSd']![sv.v[c]]!;
+        const wrong = sd >= 0 ? N : P;
+        for (let c = 0; c < 4; c++) if (fan.ids[c] === wrong) { pw[c] = 0; w[c] = 0; }
+      }
+    }
     let owner = 0;
     for (let c = 1; c < 4; c++) if (pw[c]! > pw[owner]!) owner = c;
     let urban = 0;
@@ -1811,14 +1825,13 @@ export class GlobeRenderer {
       if (u === USE.center) urban += w[c];
     }
     const lv = this.terrain.at(t, i, wa, wb);
-    this.terrain.topo.sample(t, i, wa, wb, this.spotSmp);
     let slope = 0, bank = 0, coast = 0;
     const banks = this.terrain.fields.ground['bank']!;
     for (let c = 0; c < 3; c++) {
       const v = this.spotSmp.v[c], wv = this.spotSmp.w[c];
       slope += wv * this.vertSlope[v]; bank += wv * banks[v]!; coast += wv * this.vertCoast[v];
     }
-    return { dir, ground: lv.ground - 1, water: lv.water - 1, slope, urban, owner: fan.ids[owner]!, bank, coast: coast / this.paint.params.r0 };
+    return { dir, ground: lv.ground - 1, water: lv.water - 1, slope, urban, owner: fan.ids[owner]!, own: w[owner]!, bank, coast: coast / this.paint.params.r0 };
   }
 
   private ring(t: number, color: number, opacity: number): THREE.Mesh {

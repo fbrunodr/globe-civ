@@ -40,6 +40,7 @@ export interface CitySpot {
   slope: number;
   urban: number;  // soft urban weight of the painting here (0..1)
   owner?: number; // the tile whose painting it is (where the tiles' paintings wander over their hexes' sides)
+  own?: number;   // how much of the painting here is the owner's (its soft weight, 0..1: under 1 near its border)
   bank?: number;  // how near a river (render.ts: its banks' greening, 0..1)
   coast?: number; // how far from the sea (tile inner radii)
 }
@@ -115,6 +116,10 @@ const PROP_SCALE = 1.5 * 0.276;
 // land sampled on a grid of MASK_STEP squares over the tile (MASK_HALF of
 // them out from its middle), then worn back INSET.
 const INSET = 0.05, MASK_STEP = 0.02, MASK_HALF = 32;
+// A farm keeps in from its tile's painted border (its soft weight there at
+// least FIELD_PAD: the shader's too, terrainMaterial.ts) and off a beach
+// (BEACH inner radii from the shore).
+const FIELD_PAD = 0.65, BEACH = 0.35;
 // The land of tile t (`ok` at each square's middle) worn back INSET, as a test of a point (tile steps).
 function innerMask(toDir: (p: Pt2) => THREE.Vector3, sample: (d: THREE.Vector3) => CitySpot, ok: (s: CitySpot) => boolean): (p: Pt2) => boolean {
   const S = 2 * MASK_HALF, good = new Uint8Array(S * S), inner = new Uint8Array(S * S), R = Math.ceil(INSET / MASK_STEP);
@@ -412,8 +417,16 @@ export class CityProps {
         // (Water this near under the ground counts as water: a river's banks, under its surface as drawn.)
         depth: (p) => { const smp = this.sampleDir(toT(p)); return (smp.water - smp.ground - DRY) / D; },
         wade: (0.0004 * this.scale) / D,
-        // (The farm goes where the land is painted as this tile's.)
-        ours: (p) => { const o = this.sampleDir(toT(p)).owner; return o === undefined || o === t; },
+        // (The farm goes where the land is painted as this tile's, a little in
+        // from its border (FIELD_PAD), off a beach, and on the tile's side of
+        // a river: no water between it and the tile's middle.)
+        ours: (p) => {
+          const s = this.sampleDir(toT(p));
+          if (s.owner !== undefined && (s.owner !== t || (s.own ?? 1) < FIELD_PAD)) return false;
+          if ((s.coast ?? 9) < BEACH) return false;
+          if ((s.bank ?? 0) > 0.02) for (let k = 1; k < 8; k++) { const q = this.sampleDir(toT({ x: (p.x * k) / 8, y: (p.y * k) / 8 })); if (q.water - q.ground > 0.0003) return false; }
+          return true;
+        },
         // (A fence keeps INSET in from that, and from the water.)
         inner: imp === 'pasture' ? innerMask(toT, (d) => this.sampleDir(d), (s) => (s.owner === undefined || s.owner === t) && s.water - s.ground <= DRY) : () => false,
         // (A paddy's water is its own pools: not a river running by, nor the sea.)

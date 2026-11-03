@@ -105,7 +105,7 @@ float owned(vec4 w, int k) {
 }
 vec4 tileRow(int t, int k) { int i = t * ${TILE_ROWS} + k; return texelFetch(uTileTex, ivec2(i % ${TEX_W}, i / ${TEX_W}), 0); }
 vec4 fanRow(int f, int k) { int i = f * ${FAN_ROWS} + k; return texelFetch(uFanTex, ivec2(i % ${TEX_W}, i / ${TEX_W}), 0); }
-vec4 paintWeights(int fan, vec3 P, vec4 ids, out vec3 sEdge, out vec4 soft) {
+vec4 paintWeights0(int fan, vec3 P, vec4 ids, out vec3 sEdge, out vec4 soft) {
   vec3 s = vPc0.xyz;
   vec4 r1 = fanRow(fan, 1);
   sEdge = s;
@@ -138,6 +138,21 @@ vec4 paintWeights(int fan, vec3 P, vec4 ids, out vec3 sEdge, out vec4 soft) {
   vec4 S2 = S * S;
   vec4 q = w * S2 * S2 * S; // w · S^(SHARPEN-1), SHARPEN = 6
   return q / dot(q, vec4(1.0));
+}
+// Near a river, each tile keeps to its side of the water (surface.ts
+// riverSd, riverP, riverN): the tile across has none of it.
+vec4 keepSide(vec4 w, vec4 ids) {
+  if (vRiverP < 0.0) return w;
+  float wrong = vRiverSd >= 0.0 ? vRiverN : vRiverP;
+  vec4 k = w;
+  for (int j = 0; j < 4; j++) if (abs(ids[j] - wrong) < 0.5) k[j] = 0.0;
+  float t = k.x + k.y + k.z + k.w;
+  return t > 1e-6 ? k / t : w;
+}
+vec4 paintWeights(int fan, vec3 P, vec4 ids, out vec3 sEdge, out vec4 soft) {
+  vec4 w = paintWeights0(fan, P, ids, sEdge, soft);
+  soft = keepSide(soft, ids);
+  return keepSide(w, ids);
 }
 `;
 
@@ -370,6 +385,8 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
         attribute float depth;
         attribute float bank;
         attribute float shore;
+        attribute float riverSd; attribute float riverP; attribute float riverN;
+        varying float vRiverSd; flat varying float vRiverP; flat varying float vRiverN;
         attribute vec4 pc0;
         attribute vec2 pc1;
         varying vec4 vPc0;
@@ -385,7 +402,7 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
         varying vec3 vObjPos;`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
         ${FOG_FLATTEN}
-        vRing = ring; vFog = unexplored; vShade = shade; vSnow = snow; vDepth = depth; vBank = bank; vShore = shore;
+        vRing = ring; vFog = unexplored; vShade = shade; vSnow = snow; vDepth = depth; vBank = bank; vShore = shore; vRiverSd = riverSd; vRiverP = riverP; vRiverN = riverN;
         vPc0 = pc0; vPc1 = pc1;
         vObjPos = position; vObjNormal = normal;`);
 
@@ -411,6 +428,7 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
         varying float vDepth;
         varying float vShore;
         varying float vBank;
+        varying float vRiverSd; flat varying float vRiverP; flat varying float vRiverN;
         varying vec3 vObjPos;
         varying vec3 vObjNormal;
         float tLod;
@@ -586,7 +604,8 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               // dry ground between left wild.)
               // (Wherever the painting is most its tile's, at full strength: its
               // edge the tiles' border, a river's middle where one runs there.)
-              float farm = owned(w, k) * (meCode == 5 ? 1.0 - snowCover : keep);
+              // (A little in from the border: its soft weight at least FIELD_PAD, cityProps.ts.)
+              float farm = owned(w, k) * smoothstep(0.6, 0.65, soft[k]) * (meCode == 5 ? 1.0 - snowCover : keep);
               if (region == ${CROP_CODE.paddy}) farm *= smoothstep(-0.00012, 0.00004, vDepth);
               vec2 f; float edge;
               float h = plotAt(uv, me, stage, f, edge);

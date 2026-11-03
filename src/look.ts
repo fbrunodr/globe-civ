@@ -144,7 +144,8 @@ export const SEA_TINT: Record<'ocean' | 'shallowSea' | 'lake', WaterTint> = {
   shallowSea: { deep: 0x154573, murk: 1 },
   lake:       { deep: 0x124f5c, murk: 1.3 },
 };
-export const RIVER_TINT: WaterTint = { deep: 0x15505e, murk: 2.2 };
+// (Rivers the shallow sea's colour, a little murkier: calm, no waves rolling ashore.)
+export const RIVER_TINT: WaterTint = { deep: 0x154573, murk: 1.3 };
 
 // Bed level of water tiles below sea level (relief.ts / surface.ts). Land
 // tiles count as a shallow bed where the coast blends into the sea.

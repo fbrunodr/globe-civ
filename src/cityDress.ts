@@ -44,9 +44,29 @@ export interface DressedCity {
   readonly wall: readonly Pt[] | null;    // a closed ring (first point repeated)
 }
 
-// A walled city keeps inside its walls (share of the inradius: the walls
-// stand in the safe zone, town/geometry.ts SAFE_RHO).
-export const WALLED_LIMIT = 0.7;
+// A walled city's buildings keep this far inside its walls (tile steps).
+const WALL_ROOM = 0.05;
+// The middle of the city's land (`free`, sampled every WALL_STEP over the
+// tile), and the wall round it: twelve corners, each as far out from that
+// middle as the land goes (closed: the first repeated).
+const WALL_STEP = 0.02;
+function landMiddle(free: (p: Pt) => boolean): Pt {
+  let x = 0, y = 0, n = 0;
+  for (let j = -30; j <= 30; j++) for (let i = -30; i <= 30; i++) { const p = { x: i * WALL_STEP, y: j * WALL_STEP }; if (free(p)) { x += p.x; y += p.y; n++; } }
+  return n ? { x: x / n, y: y / n } : { x: 0, y: 0 };
+}
+function wallRing(free: (p: Pt) => boolean): Pt[] {
+  const m = landMiddle(free);
+  const corner = (i: number) => {
+    const a = (i / 12) * Math.PI * 2, at = (k: number) => ({ x: m.x + k * Math.cos(a), y: m.y + k * Math.sin(a) });
+    let k = 0;
+    while (k < 0.6 && free(at(k + WALL_STEP))) k += WALL_STEP;
+    return at(Math.max(k, 0.08));
+  };
+  const ring = Array.from({ length: 12 }, (_, i) => corner(i));
+  return [...ring, ring[0]!];
+}
+const wallMiddle = (wall: readonly Pt[]): Pt => { const r = wall.slice(0, -1); return { x: r.reduce((a, p) => a + p.x, 0) / r.length, y: r.reduce((a, p) => a + p.y, 0) / r.length }; };
 // The eras a city is dressed for: the game's (Ancient, Classical,
 // Medieval) and the Modern era ahead of it (the City samples preview it).
 export type DressEra = 0 | 1 | 2 | 3;
@@ -90,7 +110,13 @@ export function dressCity(c: CityLook): DressedCity {
   const wonders = c.wonders.slice(0, MAX_WONDERS);
   const total = Math.min(MAX_BUILDINGS, Math.round(4 + 3 * c.pop));
   const skyscrapers = c.era >= 3 && c.pop >= SKYSCRAPER_FROM ? Math.min(total, Math.floor(c.pop / SKYSCRAPER_PER)) : 0;
-  const painting = paintCity({ wonders: wonders.length, skyscrapers, buildings: total - skyscrapers, seed: c.seed, free: c.free, ...(c.walled ? { limit: WALLED_LIMIT } : {}) });
+  // The walls first: round the city's land (`free`), from its middle out to
+  // where it ends in twelve directions; the town then keeps inside them,
+  // WALL_ROOM in from them.
+  const wall = c.walled ? wallRing(c.free) : null;
+  const inner = wall ? wall.slice(0, -1).map((p, i) => { const m = wallMiddle(wall), d = Math.hypot(p.x - m.x, p.y - m.y); return { x: m.x + (p.x - m.x) * Math.max(0, d - WALL_ROOM) / d, y: m.y + (p.y - m.y) * Math.max(0, d - WALL_ROOM) / d, i }; }) : null;
+  const free = inner ? (p: Pt) => c.free(p) && pointInPoly(p, inner) : c.free;
+  const painting = paintCity({ wonders: wonders.length, skyscrapers, buildings: total - skyscrapers, seed: c.seed, free });
   const tall = Math.min(0.8, Math.max(0.15, c.pop / 20));
   const floorsOf = (b: Painted): Floors => {
     if (b.kind === 'skyscraper') return 12;
@@ -114,16 +140,5 @@ export function dressCity(c: CityLook): DressedCity {
     const [hw, hd] = LOT_SIZE[fp];
     return { model, at: b.at, yaw: b.yaw, hw: hw * sx, hd: hd * sz, scale: CITY_CELL / CELL, sx, sz, variant: rand() };
   });
-  // The walls: a ring round the town, inside the safe zone, each of its
-  // corners drawn in to stand on the town's own dry land (`free`: off a
-  // river, off the next tile's land); what the ring leaves outside goes.
-  const R = Math.min(WALLED_LIMIT * 0.5 + 0.02, painting.reach + 0.03);
-  const corner = (i: number) => {
-    const a = (i / 12) * Math.PI * 2, at = (k: number) => ({ x: k * Math.cos(a), y: k * Math.sin(a) });
-    let k = R;
-    while (k > R * 0.45 && !(c.free(at(k)) && c.free(at(k * 0.75)))) k -= R * 0.04;
-    return at(k);
-  };
-  const wall = c.walled ? [...Array.from({ length: 12 }, (_, i) => corner(i)), corner(0)] : null;
-  return { painting, buildings: wall ? buildings.filter((b) => pointInPoly(b.at, wall)) : buildings, roadRgb: ROAD_RGB[c.era], wall };
+  return { painting, buildings, roadRgb: ROAD_RGB[c.era], wall };
 }

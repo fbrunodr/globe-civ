@@ -14,6 +14,8 @@ export interface FanAttribute {
 }
 
 // Per-vertex data of the surface, on the shared (watertight) vertices.
+// Ground fields holding tile ids (taken whole, never blended).
+const ID_FIELDS: ReadonlySet<string> = new Set(['riverP', 'riverN']);
 export interface SurfaceFields {
   height: Float32Array; // ground height above radius 1
   water: Float32Array;  // water level above radius 1 (water shows where water > height)
@@ -288,7 +290,8 @@ export function buildTerrainMesh(globe: Globe, spec: TerrainSpec, coarse: number
     }
     height[v] = Math.hypot(positions[v * 3], positions[v * 3 + 1], positions[v * 3 + 2]) - 1;
     water[v] = Math.hypot(waterPos[v * 3], waterPos[v * 3 + 1], waterPos[v * 3 + 2]) - 1;
-    for (const f of Object.values(fields.ground)) f[v] = f[a] * (1 - j.f) + f[b] * j.f;
+    // (Tile ids, riverP and riverN, are not blended: the nearer end's.)
+    for (const [name, f] of Object.entries(fields.ground)) f[v] = ID_FIELDS.has(name) ? (j.f < 0.5 ? f[a]! : f[b]!) : f[a] * (1 - j.f) + f[b] * j.f;
     for (const f of fields.water3d) for (let c = 0; c < f.itemSize; c++) {
       f.data[v * f.itemSize + c] = f.data[a * f.itemSize + c] * (1 - j.f) + f.data[b * f.itemSize + c] * j.f;
     }
