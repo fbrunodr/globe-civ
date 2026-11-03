@@ -663,16 +663,18 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               gN = mix(gN, tn, farm * (1.0 - hedge * 0.5));
               diffuseColor.rgb = mix(diffuseColor.rgb, gTone(crop, tex.r) * vShade, farm * 0.92);
               // Its border (the padding, its own land outside the fields):
-              // worn-out ground, packed dirt, the land's own colour turned
-              // toward its soil (not round a wetland's paddies).
+              // worn-out ground, packed dirt, the land's own colour turned well
+              // toward a yellow earth (its soil and the roads' dirt: not round
+              // a wetland's paddies).
               float pad = owned(w, k) * (1.0 - smoothstep(0.6, 0.65, soft[k])) * keep * (meCode == 5 ? 0.0 : 1.0);
               if (pad > 0.001) {
                 vec3 sn;
                 vec4 st = gSample(${GROUND_LAYER.soil}.0, sn, 1.0);
                 vec3 land = diffuseColor.rgb / max(vShade, 0.05);
-                vec3 packed = mix(land, tileRow(me, 10).rgb, 0.45 + 0.15 * (tFbm(P / (0.05 * uR0) + 8.1, 2) - 0.5));
+                vec3 earth = mix(tileRow(me, 10).rgb, vec3(${ROAD_DIRT.join(', ')}), 0.65);
+                vec3 packed = mix(land, earth, 0.68 + 0.15 * (tFbm(P / (0.05 * uR0) + 8.1, 2) - 0.5));
                 // (Trodden flat: the soil's grain at half its contrast.)
-                diffuseColor.rgb = mix(diffuseColor.rgb, gTone(packed, 0.5 + 0.5 * (st.r - 0.5)) * vShade, pad * 0.9);
+                diffuseColor.rgb = mix(diffuseColor.rgb, gTone(packed, 0.5 + 0.5 * (st.r - 0.5)) * vShade, pad * 0.95);
                 gN = mix(gN, sn * 0.5, pad);
               }
             }
