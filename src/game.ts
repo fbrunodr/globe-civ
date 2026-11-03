@@ -21,8 +21,8 @@ import {
   buildingsYield, withPercents, wonderBeside, specialistYield, specialistSlots, buildingAllowed, weigh, WONDERS, WONDER_KEYS, ERAS,
   type FocusKey, type GrowthOption, type TileUse, type Output, type SpecialistKind, type WonderKey, type WonderSite, type EraIndex, type ImprovementKey,
 } from './cities.ts';
-import { IMPROVEMENTS, out, OUTPUT_KEYS } from './cities.ts';
-import { techDef, techPath, improvementStage, type TechKey } from './techs.ts';
+import { IMPROVEMENTS, IMPROVEMENT_KEYS, IMPROVE_TURNS, drained, out, OUTPUT_KEYS } from './cities.ts';
+import { techDef, techPath, improvementStage, STAGE_TECHS, TECHS, type TechKey } from './techs.ts';
 import { politicsDef, politicsPath, GOVERNMENTS, governmentDef, policyDef, fits, SLOT_KINDS, type PoliticsKey, type GovernmentKey, type PolicyKey, type PolicySlot } from './politics.ts';
 import { traitDef, traitBlock, traitCost, type TraitKey } from './identity.ts';
 import { religionDef, PRESSURE_REACH, HOLY_PRESSURE, CITY_PRESSURE, BUILDING_PRESSURE, CONVERT_AT, TITHE, type ReligionKey } from './religion.ts';
@@ -115,7 +115,7 @@ export const GOLD_PER_PROD = 3;
 export const FAITH_PER_PROD = 2;
 const FAITH_BUYS: readonly BuildKey[] = ['shrine', 'temple'];
 // What anyone can build from the start (the rest: techs.ts, politics.ts).
-const STARTING: readonly BuildKey[] = ['warrior', 'slinger', 'scout', 'settler', 'monument'];
+const STARTING: readonly BuildKey[] = ['warrior', 'slinger', 'scout', 'settler', 'worker', 'monument'];
 
 // ---- combat (shared with the Units page's battle sandbox) ----
 // Fortified, a unit defends this much better.
@@ -202,6 +202,7 @@ export interface Unit {
   goalMode: AttackMode | null;          // how it attacks at its goal (null: as it does unless told: defaultMode)
   dead: boolean;
   aiTarget: number | null;
+  work: number | null;                  // a worker's: the tile it is improving (it stays there, or by it for boats)
 }
 
 export interface City {
@@ -291,6 +292,9 @@ export class Game {
   readonly cityByTile = new Map<number, City>();
   readonly tileCity: Int32Array; // territory: owning city id, or -1
   readonly use: Uint8Array;         // TileUse of each tile (cities.ts); wild unless a city developed it
+  readonly improved: Int8Array;     // the improvement built on each tile (IMPROVEMENT_KEYS index; -1: none)
+  readonly underway: Int8Array;     // the improvement a worker has begun there (-1: none)
+  readonly buildLeft: Uint8Array;   // turns of work it still needs
   readonly pillaged: Uint8Array;    // turns of repair left on a pillaged rural tile (0 = fine)
   readonly ruins: Uint8Array;       // 1 where a razed city stood
   readonly drained: Uint8Array;     // 1 where a peat bog was drained to be worked (its feature is gone; its ground stays dry)
@@ -324,6 +328,9 @@ export class Game {
     this.rng = mulberry32(seed ^ 0x9e3779b9);
     this.tileCity = new Int32Array(this.N).fill(-1);
     this.use = new Uint8Array(this.N);
+    this.improved = new Int8Array(this.N).fill(-1);
+    this.underway = new Int8Array(this.N).fill(-1);
+    this.buildLeft = new Uint8Array(this.N);
     this.pillaged = new Uint8Array(this.N);
     this.ruins = new Uint8Array(this.N);
     this.drained = new Uint8Array(this.N);
@@ -606,7 +613,7 @@ export class Game {
     tile = this.freeTileNear(type, owner, tile) ?? tile;
     this.record('unitCreated', owner, { unit: type, tile });
     const u: Unit = { id: this.nextId++, type, owner, tile, packedIn: null, moves: this.maxMoves(type, owner), hp: 100,
-      fortified: false, skipped: false, goal: null, goalMode: null, dead: false, aiTarget: null };
+      fortified: false, skipped: false, goal: null, goalMode: null, dead: false, aiTarget: null, work: null };
     this.units.push(u);
     return u;
   }
@@ -729,7 +736,7 @@ export class Game {
       c.hp = 0;
       for (let k = Math.floor(c.pop / 2); k > 0 && c.pop > 1; k--) this.removeCitizen(c);
     }
-    for (const t of [tile, ...zone.keys()]) if (this.use[t] === USE.rural) this.pillaged[t] = FALLOUT;
+    for (const t of [tile, ...zone.keys()]) if (this.builtAt(t)) this.pillaged[t] = FALLOUT;
     this.log(`The ${this.players[u.owner].name} dropped a nuclear weapon (${unitDef(u.type).name}).`);
     this.removeUnit(u);
   }
@@ -790,6 +797,7 @@ export class Game {
     // (A carrier at sea takes its aircraft with it; in port they stay in the city.)
     if (unitDef(u.type).carries && !this.cityByTile.has(u.tile)) for (const v of this.units) if (v.tile === u.tile && v.owner === u.owner && domainOf(unitDef(v.type)) === 'air') v.tile = t;
     u.moves = this.landing(u, u.tile, t) ? 0 : Math.max(0, u.moves - this.stepCost(u, u.tile, t));
+    u.work = null; // (a worker walking off leaves its work where it stands)
     this.onStep?.(u, u.tile, t);
     u.tile = t;
     for (const v of this.armyOf(u)) { this.onStep?.(v, v.tile, t); v.tile = t; }
@@ -982,7 +990,7 @@ export class Game {
   canPillage(u: Unit): boolean {
     if (unitDef(u.type).civilian || u.moves <= 0 || domainOf(unitDef(u.type)) !== 'land') return false;
     const t = u.tile, o = this.ownerOf(t);
-    return o >= 0 && o !== u.owner && this.atWar(u.owner, o) && this.use[t] === USE.rural && this.pillaged[t] === 0;
+    return o >= 0 && o !== u.owner && this.atWar(u.owner, o) && this.builtAt(t) !== null && this.pillaged[t] === 0;
   }
 
   // Burns an enemy rural tile: it yields nothing until repaired; the raider takes gold.
@@ -996,7 +1004,7 @@ export class Game {
     this.useVersion++;
     if (u.owner === HUMAN || victim === HUMAN) {
       const city = this.cityById.get(this.tileCity[t]!);
-      this.log(`${this.players[u.owner].name} pillaged ${city ? `${city.name}'s` : 'a'} ${(() => { const k = this.improvementAt(t); return k ? IMPROVEMENTS[k].name.toLowerCase() : 'land'; })()}.`);
+      this.log(`${this.players[u.owner].name} pillaged ${city ? `${city.name}'s` : 'a'} ${IMPROVEMENTS[this.builtAt(t)!].name.toLowerCase()}.`);
     }
     return true;
   }
@@ -1021,6 +1029,7 @@ export class Game {
       if (this.use[t] === USE.center) this.ruins[t] = 1;
       if (this.use[t] !== USE.wild) this.setUse(t, USE.wild);
       this.pillaged[t] = 0;
+      this.improved[t] = this.underway[t] = -1;
       this.tileCity[t] = -1;
     }
     this.cities.splice(this.cities.indexOf(c), 1);
@@ -1126,7 +1135,7 @@ export class Game {
     let best: number | null = null, bestS = -Infinity;
     for (const t of this.buyableTiles(city)) {
       const k = this.improvementAt(t);
-      const s = k ? weigh(city.focus, this.workedYield(t, city.owner)) : -1;
+      const s = k ? weigh(city.focus, this.improvedYield(t, city.owner)) : -1;
       if (s > bestS) { best = t; bestS = s; }
     }
     return best;
@@ -1187,7 +1196,7 @@ export class Game {
   }
   // The city's rural tiles worked with an improvement.
   private worked(city: City, k: ImprovementKey): number {
-    return this.cityTiles(city, USE.rural).filter((t) => !this.pillaged[t] && this.improvementAt(t) === k).length;
+    return this.cityTiles(city, USE.rural).filter((t) => !this.pillaged[t] && this.builtAt(t) === k).length;
   }
   specialistCount(city: City): number { return SPECIALIST_KINDS.reduce((n, k) => n + city.specialists[k], 0); }
 
@@ -1313,23 +1322,127 @@ export class Game {
     return !need || (owner >= 0 && this.players[owner]!.techs.has(need)) ? r : null;
   }
 
-  // What tile t would yield worked by civ `owner`: its terrain and
-  // improvement, its resource, and what the civ's effects add (effects.ts).
+  // What tile t yields worked by civ `owner`: its terrain, its improvement
+  // if one is built (and not pillaged), its resource, and what the civ's
+  // effects add (effects.ts).
   workedYield(t: number, owner: number): Output {
-    const res = this.resourceFor(t, owner), fx = owner >= 0 ? this.effectsOf(this.players[owner]!) : [];
-    const kind = res ? resourceDef(res).kind : null;
-    return addOut(ruralYield(this.terrainAt(t), this.map.riverTile[t] === 1, (k) => tileBonus(fx, k, kind), res ? RESOURCE_IMPROVEMENT[res] : null), res ? resourceDef(res).yields : ZERO);
+    return this.yieldWith(t, owner, this.pillaged[t] ? null : this.builtAt(t));
   }
-  // The improvement tile t gets worked (by `owner`: the resource it knows
-  // of there decides it; cities.ts improvementFor).
+  // What it would yield worked once improved (its improvement built: a bog drained).
+  improvedYield(t: number, owner: number): Output {
+    return this.yieldWith(t, owner, this.improvementAt(t, owner));
+  }
+  private yieldWith(t: number, owner: number, built: ImprovementKey | null): Output {
+    const res = this.resourceFor(t, owner), fx = owner >= 0 ? this.effectsOf(this.players[owner]!) : [];
+    const kind = res ? resourceDef(res).kind : null, terrain = built ? drained(this.terrainAt(t)) : this.terrainAt(t);
+    return addOut(ruralYield(terrain, this.map.riverTile[t] === 1, built, (k) => tileBonus(fx, k, kind)), res ? resourceDef(res).yields : ZERO);
+  }
+  // The improvement tile t would get (by `owner`: the resource it knows of
+  // there decides it; cities.ts improvementFor).
   improvementAt(t: number, owner: number = this.ownerOf(t)): ImprovementKey | null {
     const res = this.resourceFor(t, owner);
     return improvementFor(this.terrainAt(t), res ? RESOURCE_IMPROVEMENT[res] : null);
   }
-  // How far its owner's techs have taken tile t's improvement (techs.ts improvementStage).
+  // The improvement a worker built on tile t, if any.
+  builtAt(t: number): ImprovementKey | null {
+    const i = this.improved[t]!;
+    return i >= 0 ? IMPROVEMENT_KEYS[i]! : null;
+  }
+  // How far its owner's techs have taken tile t's improvement (techs.ts
+  // improvementStage): the one built, else the one it would get. (0: its
+  // owner knows none of its techs: one taken from a civ that did.)
   stageAt(t: number, owner: number = this.ownerOf(t)): number {
-    const k = this.improvementAt(t, owner);
+    const k = this.builtAt(t) ?? this.improvementAt(t, owner);
     return k && owner >= 0 ? improvementStage(this.players[owner]!.techs, k) : 0;
+  }
+
+  // ---------- workers ----------
+
+  // The tiles a worker could improve: its own, and (fishing boats) the
+  // water next to it.
+  improveTiles(u: Unit): number[] {
+    return this.isWater(u.tile) ? [] : [u.tile, ...this.tiles[u.tile].neighbors.filter((n) => this.isWater(n))];
+  }
+  // Why worker u can't improve tile t now (null: it can). `started`: it is
+  // already at work there (its moves don't matter).
+  improveBlock(u: Unit, t: number, started = false): string | null {
+    if (!unitDef(u.type).improves) return 'Only workers improve the land.';
+    if (u.packedIn !== null || !this.improveTiles(u).includes(t)) return 'Out of reach.';
+    if (!started && u.moves <= 0) return 'No moves left.';
+    if (this.ownerOf(t) !== u.owner) return 'Not your land.';
+    if (this.use[t] === USE.center || this.wondersAt(t).length) return 'Nothing to build here.';
+    const k = this.improvementAt(t, u.owner);
+    if (!k || (t !== u.tile && k !== 'boats')) return 'Nothing to build here.';
+    if (this.builtAt(t) === k) return 'Already improved.';
+    const need = this.improvementTech(u.owner, k);
+    return need ? `Needs ${TECHS[need].name}.` : null;
+  }
+  // The tech civ `owner` still needs to build improvement k (its first: techs.ts STAGE_TECHS), or null.
+  improvementTech(owner: number, k: ImprovementKey): TechKey | null {
+    const need = STAGE_TECHS(k)[0];
+    return need && !this.players[owner]!.techs.has(need) ? need : null;
+  }
+  // How many of its tiles civ `owner` could improve now (land, not improved
+  // yet, its techs knowing how; and `keep` them).
+  openWork(owner: number, keep: (t: number) => boolean = () => true): number {
+    let n = 0;
+    for (let t = 0; t < this.N; t++) {
+      if (this.ownerOf(t) !== owner || this.isWater(t) || this.use[t] === USE.center || !keep(t)) continue;
+      const k = this.improvementAt(t, owner);
+      if (k && k !== 'boats' && this.builtAt(t) !== k && !this.wondersAt(t).length && !this.improvementTech(owner, k)) n++;
+    }
+    return n;
+  }
+  // The tile the worker would improve (its own first), or null.
+  improveTarget(u: Unit): number | null {
+    return this.improveTiles(u).find((t) => this.improveBlock(u, t) === null) ?? null;
+  }
+  // Turns the work on tile t still needs (from scratch, or what is left of work begun).
+  improveTurns(t: number, owner: number = this.ownerOf(t)): number {
+    const k = this.improvementAt(t, owner);
+    if (!k) return 0;
+    return this.underway[t] === IMPROVEMENT_KEYS.indexOf(k) ? this.buildLeft[t]! : IMPROVE_TURNS[k];
+  }
+  // Sets worker u to improving tile t: it stays there until it is done
+  // (each turn's end takes a turn off: advanceWork).
+  improve(u: Unit, t: number = this.improveTarget(u) ?? -1): boolean {
+    if (t < 0 || this.improveBlock(u, t) !== null) return false;
+    const k = this.improvementAt(t, u.owner)!, i = IMPROVEMENT_KEYS.indexOf(k);
+    if (this.underway[t] !== i) { this.underway[t] = i; this.buildLeft[t] = IMPROVE_TURNS[k]; }
+    u.work = t;
+    u.moves = 0;
+    u.goal = null;
+    u.fortified = false;
+    this.record('improve', u.owner, { tile: t, improvement: k });
+    return true;
+  }
+  // A turn of every worker's work; what is finished is built.
+  private advanceWork(): void {
+    for (const u of this.units) {
+      const t = u.work;
+      if (t === null || u.dead) continue;
+      const k = this.improvementAt(t, u.owner);
+      if (this.improveBlock(u, t, true) !== null || !k || this.underway[t] !== IMPROVEMENT_KEYS.indexOf(k)) { u.work = null; continue; }
+      if (this.buildLeft[t]! > 1) { this.buildLeft[t]!--; continue; }
+      this.build(t, k);
+      for (const v of this.units) if (v.work === t) v.work = null;
+      if (u.owner === HUMAN) this.log(`A worker built a ${IMPROVEMENTS[k].name.toLowerCase()}.`);
+    }
+  }
+  // Tile t improved (a peat bog drained for good: it is its land from now
+  // on, cities.ts drained).
+  build(t: number, k: ImprovementKey): void {
+    if (this.feature[t] === 'bog') {
+      this.feature[t] = null;
+      this.drained[t] = 1;
+      const city = this.cityById.get(this.tileCity[t]!);
+      if (city?.owner === HUMAN) this.log(`${city.name} drained a peat bog.`);
+    }
+    this.improved[t] = IMPROVEMENT_KEYS.indexOf(k);
+    this.underway[t] = -1;
+    this.buildLeft[t] = 0;
+    this.pillaged[t] = 0;
+    this.useVersion++;
   }
 
   // What a developed tile adds to its city (wild tiles add nothing).
@@ -1337,7 +1450,7 @@ export class Game {
     const terrain = this.terrainAt(t), river = this.map.riverTile[t] === 1;
     const u = this.use[t], owner = this.ownerOf(t);
     const wonders = this.wondersAt(t).reduce((o, w) => addOut(o, WONDERS[w].yields), ZERO);
-    if (u === USE.rural) return addOut(this.pillaged[t] ? ZERO : this.workedYield(t, owner), wonders);
+    if (u === USE.rural) return addOut(this.workedYield(t, owner), wonders);
     if (u === USE.wild) return wonders; // a wonder beside the city
     // The center: the city, its buildings, wonders and specialists.
     const city = this.cityByTile.get(t);
@@ -1371,14 +1484,16 @@ export class Game {
     return { ...sum, surplus: sum.food - FOOD_PER_CITIZEN * city.pop };
   }
 
-  // Where the city's next citizen may go: a wild tile it owns with an
-  // improvement (rural), or a specialist in one of its buildings with room.
+  // Where the city's next citizen may go: a tile it owns, not worked yet,
+  // land that could be improved (not mountains, ice or the deep ocean) and
+  // yields something, improved or not; or a specialist in one of its
+  // buildings with room.
   growthOptions(city: City): GrowthOption[] {
     const out: GrowthOption[] = [];
     for (const t of this.tilesWithin(city.tile, CITY_REACH)) {
-      if (this.tileCity[t] !== city.id || this.blockedFor(city, t) || this.use[t] !== USE.wild) continue;
-      const improvement = this.improvementAt(t, city.owner);
-      if (improvement) out.push({ kind: 'rural', tile: t, improvement });
+      if (this.tileCity[t] !== city.id || this.blockedFor(city, t) || this.use[t] !== USE.wild || this.wondersAt(t).length || !this.improvementAt(t, city.owner)) continue;
+      const y = this.workedYield(t, city.owner);
+      if (y.food + y.prod + y.gold > 0) out.push({ kind: 'rural', tile: t, improvement: this.builtAt(t) });
     }
     for (const k of SPECIALIST_KINDS) if (this.specialistRoom(city, k) > 0) out.push({ kind: 'specialist', specialist: k });
     return out;
@@ -1417,6 +1532,21 @@ export class Game {
     return true;
   }
 
+  // The governor moves citizens off their worst tiles onto better free ones
+  // (an improvement finished there), a few a turn, for the city's focus.
+  rework(city: City): void {
+    for (let n = 0; n < 3; n++) {
+      const worked = this.cityTiles(city, USE.rural);
+      const free = this.growthOptions(city).flatMap((o) => (o.kind === 'rural' ? [o.tile] : []));
+      if (!worked.length || !free.length) return;
+      const value = (t: number) => weigh(city.focus, this.workedYield(t, city.owner));
+      const worst = worked.reduce((a, b) => (value(b) < value(a) ? b : a)), best = free.reduce((a, b) => (value(b) > value(a) ? b : a));
+      if (value(best) <= value(worst) + 0.5) return;
+      this.setUse(worst, USE.wild);
+      this.setUse(best, USE.rural);
+    }
+  }
+
   // Lets the governor place every pending citizen of the city.
   autoPlace(city: City): void {
     while (city.growth > 0) {
@@ -1443,13 +1573,6 @@ export class Game {
   }
 
   private setUse(t: number, u: TileUse): void {
-    // A bog worked is drained, for good: it is its land from now on (cities.ts drained).
-    if (u === USE.rural && this.feature[t] === 'bog') {
-      this.feature[t] = null;
-      this.drained[t] = 1;
-      const city = this.cityById.get(this.tileCity[t]);
-      if (city) this.log(`${city.name} drained a peat bog.`);
-    }
     this.use[t] = u;
     this.useVersion++;
   }
@@ -1617,13 +1740,19 @@ export class Game {
 
   // ---------- resources ----------
 
+  // The resource on tile t civ `owner` has the use of: on its land, its
+  // improvement built there (Civ V's: a mine on the iron), not pillaged.
+  private connected(t: number, owner: number): ResourceKey | null {
+    if (!this.resources[t] || this.ownerOf(t) !== owner || this.pillaged[t]) return null;
+    const r = this.resourceFor(t, owner);
+    return r && this.builtAt(t) === RESOURCE_IMPROVEMENT[r] ? r : null;
+  }
   // The resources on tiles a civ owns, by kind (each counted once; a
   // strategic one once the civ has revealed it).
   ownedResources(owner: number): Set<ResourceKey> {
     const out = new Set<ResourceKey>();
     for (let t = 0; t < this.N; t++) {
-      if (!this.resources[t] || this.ownerOf(t) !== owner || this.pillaged[t]) continue;
-      const r = this.resourceFor(t, owner);
+      const r = this.connected(t, owner);
       if (r) out.add(r);
     }
     return out;
@@ -1632,8 +1761,7 @@ export class Game {
   resourceCopies(owner: number): Map<ResourceKey, number> {
     const out = new Map<ResourceKey, number>();
     for (let t = 0; t < this.N; t++) {
-      if (!this.resources[t] || this.ownerOf(t) !== owner || this.pillaged[t]) continue;
-      const r = this.resourceFor(t, owner);
+      const r = this.connected(t, owner);
       if (r) out.set(r, (out.get(r) ?? 0) + 1);
     }
     return out;
@@ -2096,6 +2224,7 @@ export class Game {
     for (const p of this.players) {
       if (!p.isHuman && p.alive) aiTurn(this, p);
     }
+    this.advanceWork();
     this.turnIncome = [];
     this.turnLuxuries = [];
     for (const city of [...this.cities]) this.processCity(city);
@@ -2113,7 +2242,7 @@ export class Game {
     for (let t = 0; t < this.N; t++) {
       if (!this.pillaged[t]) continue;
       const o = this.ownerOf(t);
-      if (o < 0 || this.use[t] !== USE.rural) { this.pillaged[t] = 0; this.useVersion++; continue; }
+      if (o < 0 || !this.builtAt(t)) { this.pillaged[t] = 0; this.useVersion++; continue; }
       if (this.units.some((u) => u.tile === t && u.owner !== o)) continue;
       if (--this.pillaged[t] === 0) this.useVersion++;
     }

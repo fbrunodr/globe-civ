@@ -1,5 +1,5 @@
 import { unitDef, buildDef, domainOf, UNITS, type BuildKey, type UnitKey, type UnitDef } from './rules.ts';
-import { BUILDING_KEYS, BUILDINGS, WONDER_KEYS, weigh, addOut, OUTPUT_KEYS, type BuildingKey } from './cities.ts';
+import { BUILDING_KEYS, BUILDINGS, WONDER_KEYS, USE, CITY_REACH, weigh, addOut, OUTPUT_KEYS, type BuildingKey } from './cities.ts';
 import { resourceDef, empireBonus, type ResourceKey } from './resources.ts';
 import { flat } from './effects.ts';
 import { buildingUpkeep } from './economy.ts';
@@ -10,13 +10,15 @@ import { mulberry32 } from './rng.ts';
 import { canAttackType, canShoot } from './unitClasses.ts';
 import { MIN_WAR, type Game, type Player, type Unit, type City, type DealSide } from './game.ts';
 
-// Deliberately simple AI: expand with settlers, keep a garrison in every
+// Deliberately simple AI: expand with settlers, improve the land with
+// workers (about one for every WORKER_POP citizens), keep a garrison in every
 // city, attack adjacent enemies when the odds are good and, at war with a
 // few spare units, march on the nearest enemy city. Each civ has a bent
 // (warlike or builder: its id and the seed) that steers its research,
 // politics, government and policies, and how readily it goes to war; and
 // its own taste in identity paths (pathTaste), so no two are alike.
 const warlike = (g: Game, p: Player): boolean => (g.seed + p.id * 7) % 3 === 0;
+const WORKER_POP = 3;
 
 export function aiTurn(g: Game, p: Player): void {
   if (!p.research) { const t = aiPickTech(g, p); if (t) g.setResearch(p, t); }
@@ -34,7 +36,15 @@ export function aiTurn(g: Game, p: Player): void {
   const military = units.filter(isMilitary).length;
   p.offensive = spare >= 3 && g.players.some((o) => g.atWar(p.id, o.id));
 
+  // (A worker for every WORKER_POP citizens, one at least once a city has
+  // grown; no more than there is work for: a tile each, of those its techs
+  // let it improve.)
+  const open = g.openWork(p.id, (t) => usefulWork(g, p.id, t));
+  const wantWorkers = Math.min(open, cities.reduce((n, c) => n + (c.pop >= 2 ? Math.max(1, Math.floor(c.pop / WORKER_POP)) : 0), 0));
+  let workers = units.filter((u) => u.type === 'worker').length + cities.filter((c) => c.building === 'worker').length;
   for (const c of cities) {
+    g.rework(c);
+    if (!c.building && garrisoned(c) && workers < wantWorkers && c.pop >= 2) { c.building = 'worker'; workers++; }
     if (!c.building) c.building = chooseBuild(g, c, cities.length + settlers, garrisoned(c), military >= 2 + 2 * cities.length);
     // A full treasury buys: what a city builds, when it costs under a third
     // of the gold (half, when the treasury overflows).
@@ -56,6 +66,7 @@ export function aiTurn(g: Game, p: Player): void {
   for (const u of units) {
     if (u.dead) continue;
     if (u.type === 'settler') settlerTurn(g, u);
+    else if (u.type === 'worker') workerTurn(g, u);
     else if (domainOf(unitDef(u.type)) === 'air') airTurn(g, u);
     else if (domainOf(unitDef(u.type)) === 'sea') seaTurn(g, u);
     else militaryTurn(g, u, p, cities, garrisoned);
@@ -156,6 +167,39 @@ function settlerTurn(g: Game, u: Unit): void {
   }
   if (u.tile !== u.aiTarget) g.goTo(u, u.aiTarget);
   if (!u.dead && u.tile === u.aiTarget) g.foundCity(u);
+}
+
+// Where a worker's work serves: within its city's reach, or on a resource
+// (which counts wherever it is).
+const usefulWork = (g: Game, owner: number, t: number): boolean => {
+  const c = g.cityById.get(g.tileCity[t]!);
+  return !!g.resourceFor(t, owner) || (!!c && g.tilesWithin(c.tile, CITY_REACH).includes(t));
+};
+
+// A worker at work stays at it; else it goes to the best tile of its civ
+// to improve (worked tiles first, then resources, then what it yields
+// improved, nearer the better) and starts there. (Only where it serves:
+// within its city's reach, or on a resource, which counts wherever it is.)
+function workerTurn(g: Game, u: Unit): void {
+  if (u.work !== null) return;
+  const useful = (t: number) => usefulWork(g, u.owner, t);
+  const here = g.improveTarget(u);
+  if (here !== null && useful(here) && (u.aiTarget === null || u.aiTarget === here)) { g.improve(u, here); u.aiTarget = null; return; }
+  const ok = (t: number) => g.ownerOf(t) === u.owner && !g.isWater(t) && g.improveBlock({ ...u, tile: t, moves: 1 }, t) === null && useful(t)
+    && !g.units.some((v) => v !== u && v.owner === u.owner && (v.work === t || (v.type === 'worker' && v.aiTarget === t)));
+  if (u.aiTarget === null || !ok(u.aiTarget)) {
+    let best: number | null = null, bestS = -Infinity;
+    for (const [t, d] of g.tilesWithinMap(u.tile, 8)) {
+      if (!ok(t)) continue;
+      const res = g.resourceFor(t, u.owner);
+      const s = (g.use[t] === USE.rural ? 6 : 0) + (res ? 4 : 0) + weigh('balanced', g.improvedYield(t, u.owner)) - weigh('balanced', g.workedYield(t, u.owner)) - 0.7 * d;
+      if (s > bestS) { best = t; bestS = s; }
+    }
+    u.aiTarget = best;
+  }
+  if (u.aiTarget === null) { u.fortified = true; return; }
+  if (u.tile !== u.aiTarget) g.goTo(u, u.aiTarget);
+  if (!u.dead && u.tile === u.aiTarget && u.moves > 0 && g.improve(u, u.tile)) u.aiTarget = null;
 }
 
 // An aircraft strikes the best target in its range it is likely to win

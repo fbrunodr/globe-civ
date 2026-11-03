@@ -85,13 +85,14 @@ function checkCities(g: Game): string[] {
   for (let t = 0; t < g.N; t++) {
     const u = g.use[t];
     if (g.drained[t] && g.feature[t] === 'bog') out.push(`C3 tile ${t}: drained but still a bog`);
+    // (A bog is drained when a worker improves it: no improved tile is still a bog.)
+    if (g.builtAt(t) && g.feature[t] === 'bog') out.push(`C3 tile ${t}: an improved bog not drained`);
+    if (g.builtAt(t) && g.tileCity[t] < 0) out.push(`C3 tile ${t}: improved but owned by no city`);
     if (u === USE.wild) continue;
     const city = g.cityById.get(g.tileCity[t]);
     if (!city) { out.push(`C3 tile ${t}: developed but owned by no city`); continue; }
     if (u === USE.center) { centers.set(city.id, (centers.get(city.id) ?? 0) + 1); if (city.tile !== t) out.push(`C3 tile ${t}: a center that is not ${city.name}'s`); }
     if (u === USE.rural && !improvementFor(g.terrainAt(t))) out.push(`C3 tile ${t}: rural on wild-only terrain`);
-    // (A bog is drained when worked: no worked tile is still a bog, and every drained one was worked.)
-    if (u === USE.rural && g.feature[t] === 'bog') out.push(`C3 tile ${t}: a worked bog not drained`);
   }
   // Wonders: once in the world, in its city (on the center, meeting its
   // need), or beside it: Machu Picchu on a wild mountain, the Great

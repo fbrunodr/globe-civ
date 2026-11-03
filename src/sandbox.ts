@@ -31,7 +31,17 @@ export function grow(g: Game, c: City, n: number): number {
     if (c.growth > 0) { c.growth = 0; break; }
     added++;
   }
+  improveWorked(g, c);
   return added;
+}
+
+// Its worked tiles improved, as its workers would have (where its civ
+// knows how: techs.ts STAGE_TECHS).
+export function improveWorked(g: Game, c: City): void {
+  for (const t of g.cityTiles(c, USE.rural)) {
+    const k = g.improvementAt(t, c.owner);
+    if (k && g.builtAt(t) !== k && !g.improvementTech(c.owner, k)) g.build(t, k);
+  }
 }
 
 export function shrink(g: Game, c: City, n: number): void {
@@ -44,6 +54,7 @@ export function setEra(g: Game, owner: number, era: EraIndex): void {
   p.era = era;
   for (const k of TECH_KEYS) if (techDef(k).era <= era) p.techs.add(k);
   for (const k of POLITICS_KEYS) if (politicsDef(k).era <= era) p.politics.add(k);
+  for (const c of g.cities) if (c.owner === owner) improveWorked(g, c);
   g.useVersion++;
 }
 
@@ -140,7 +151,7 @@ export function buildPresets(g: Game, presets: readonly Preset[] = PRESETS): Bui
     grow(g, c, p.pop - c.pop);
     for (const w of p.wonders) addWonder(g, c, w);
     if (p.hp !== undefined) c.hp = Math.round(g.cityMaxHp(c) * p.hp);
-    if (p.pillage) for (const t of g.cityTiles(c, USE.rural).slice(0, p.pillage)) g.pillaged[t] = 3;
+    if (p.pillage) for (const t of g.cityTiles(c, USE.rural).filter((x) => g.builtAt(x)).slice(0, p.pillage)) g.pillaged[t] = 3;
     if (p.razed) { g.destroyCity(c); out.push({ preset: p, tile: best, city: null }); continue; }
     g.useVersion++;
     out.push({ preset: p, tile: best, city: c });

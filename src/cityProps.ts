@@ -144,9 +144,9 @@ function roofOf(temp: number, pop: number, era: EraIndex, rand: Rng): number {
 
 const mix = (a: number, b: number) => { let h = Math.imul(a ^ 0x9e3779b9, 0x85ebca6b) ^ b; h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35); return (h ^ (h >>> 16)) >>> 0; };
 
-// A rural tile drawn with a rural drawing: land, a hex, its improvement a kind of work.
-export const isFarmland = (g: Game, t: number): boolean => g.use[t] === USE.rural && g.tiles[t].corners.length === 6 && !g.isWater(t)
-  && (() => { const k = g.improvementAt(t); return k !== null && WORK_OF[k] !== null; })();
+// An improved tile drawn with a rural drawing: a city's land, a hex, its improvement a kind of work.
+export const isFarmland = (g: Game, t: number): boolean => g.tileCity[t]! >= 0 && g.tiles[t].corners.length === 6 && !g.isWater(t)
+  && (() => { const k = g.builtAt(t); return k !== null && WORK_OF[k] !== null; })();
 
 // Built-up tiles: the cities' centers.
 export const isBuilt = (g: Game, t: number): boolean => g.use[t] === USE.center && g.tiles[t].corners.length === 6 && !g.isWater(t);
@@ -166,9 +166,10 @@ export class CityProps {
   // Forget every layout (the ground under them changed).
   invalidate(): void { this.version++; }
 
-  // Its rural tiles with drawings.
+  // Its improved tiles with drawings.
   private farmland(city: City): number[] {
-    return this.game.cityTiles(city, USE.rural).filter((t) => isFarmland(this.game, t));
+    const g = this.game;
+    return g.tilesWithin(city.tile, city.ring).filter((t) => g.tileCity[t] === city.id && isFarmland(g, t));
   }
 
   // Everything the town's layout depends on.
@@ -177,7 +178,7 @@ export class CityProps {
     if (m !== undefined) return m;
     const g = this.game;
     const wonders = g.cityWonders(city).map((w) => `${w}@${g.wondersBuilt.get(w)}`).join(',');
-    const farms = this.farmland(city).map((t) => `${t}:${g.improvementAt(t)}:${g.stageAt(t, city.owner)}:${g.pillaged[t]}`).join(';');
+    const farms = this.farmland(city).map((t) => `${t}:${g.builtAt(t)}:${g.stageAt(t, city.owner)}:${g.pillaged[t]}`).join(';');
     const sig = `${city.id}|${city.pop}|${g.players[city.owner]!.era}|${city.buildings.has('walls') ? 'w' : ''}|${city.wonderTile ?? ''}|${city.building ?? ''}|${this.version}|${wonders}|${farms}`;
     memo?.set(city.id, sig);
     return sig;
@@ -187,7 +188,7 @@ export class CityProps {
   private signature(t: number, memo?: Map<number, string>): string {
     const g = this.game;
     const u = g.use[t];
-    if (u === USE.wild) {
+    if (u === USE.wild && !g.builtAt(t)) {
       const owner = g.cityById.get(g.tileCity[t]);
       if (owner && this.landWonderOf(t)) return `town|${this.citySig(owner, memo)}`;
       const site = g.cities.some((c) => c.wonderTile === t) ? 's' : '';
@@ -196,7 +197,7 @@ export class CityProps {
     const city = g.cityById.get(g.tileCity[t]);
     if (!city) return '';
     if (u === USE.center || isFarmland(g, t)) return `town|${this.citySig(city, memo)}`;
-    return `${u}|${city.id}|${g.eraAt(t)}|${g.useVersion}`;
+    return `${u}|${city.id}|${g.eraAt(t)}|${g.builtAt(t)}|${g.useVersion}`;
   }
 
   // The tiles whose buildings changed since they were last placed.
@@ -230,7 +231,7 @@ export class CityProps {
 
   private build(t: number): PlacedBuilding[] {
     const g = this.game;
-    if (g.use[t] === USE.wild) {
+    if (g.use[t] === USE.wild && !g.builtAt(t)) {
       // (A wonder beside a city: Machu Picchu on its summit, the Great
       // Lighthouse on the sea, on flat land with the city's layout;
       // scaffolding while one goes up.)
@@ -244,8 +245,8 @@ export class CityProps {
     if (!city) return [];
     const u = g.use[t];
     const rand = mulberry32((t + 1) * 2654435761 ^ city.id * 40503);
-    if (u === USE.rural && !isFarmland(g, t)) {
-      const k = g.improvementAt(t);
+    if (u !== USE.center && !isFarmland(g, t)) {
+      const k = g.builtAt(t);
       const here = k === 'boats' || k === 'well' ? this.works(t, k, g.stageAt(t), rand) : k ? this.rural(t, RURAL[k], rand) : [];
       return [...here, ...(this.besideWonder(t) ?? [])];
     }
@@ -378,7 +379,7 @@ export class CityProps {
     // what the tile grows or digs (rural/look.ts): haystacks by the grain,
     // a herd, a grove, heaps, stones, logs.
     for (const t of this.farmland(city)) {
-      const imp = g.improvementAt(t)!, work = WORK_OF[imp]!, stage = g.stageAt(t, city.owner);
+      const imp = g.builtAt(t)!, work = WORK_OF[imp]!, stage = g.stageAt(t, city.owner);
       const r0 = g.resourceFor(t, city.owner), res = r0 && RESOURCE_IMPROVEMENT[r0] === imp ? r0 : null;
       const look = stageLook(imp, stage, res), density = look.density;
       const { toDir: toT } = onTile(g, t);
@@ -741,7 +742,7 @@ export class CityProps {
   // each the colour and height of its plot's crop.
   private crops(t: number, farm: Farm, keepOut: { p: Pt2; r: number } | undefined, stage: number, res: ResourceKey | null, put: (b: PlacedBuilding) => void): void {
     const g = this.game, D = g.globe.avgEdgeAngle, { toDir } = onTile(g, t);
-    const region = cropRegion(g.improvementAt(t), g.biome[t]!, g.feature[t] ?? null, g.map.temperature[t]!, res);
+    const region = cropRegion(g.builtAt(t), g.biome[t]!, g.feature[t] ?? null, g.map.temperature[t]!, res);
     const tint = CROP_PALETTE[region].map((h) => {
       const c = new THREE.Color(h), l = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b;
       return new THREE.Color(l + (c.r - l) * CROP_STAND_SATURATION, l + (c.g - l) * CROP_STAND_SATURATION, l + (c.b - l) * CROP_STAND_SATURATION);

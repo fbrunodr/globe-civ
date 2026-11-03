@@ -26,6 +26,7 @@ export interface UnitDef {
   mv: number;
   cost: number;
   civilian?: boolean;
+  improves?: boolean; // a worker: builds its civ's improvements (game.ts improve)
   sight?: number;
   desc?: string;
   needs?: StrategicKey; // a strategic resource the civ must own (resources.ts)
@@ -66,6 +67,7 @@ export const domainOf = (d: UnitDef): Domain => d.domain ?? 'land';
 // aircraft to sea.
 export const UNITS = {
   settler:  { name: 'Settler',  icon: 'S', melee: 1, rangedDef: 1, mv: 1, cost: 30, civilian: true, desc: 'Founds a city. Costs 1 population.' },
+  worker:   { name: 'Worker',   icon: 'B', melee: 1, rangedDef: 1, mv: 2, cost: 20, civilian: true, improves: true, desc: 'Improves the land: farms, mines, pastures, camps and the rest, a few turns on the tile.' },
   scout:    { name: 'Scout',    icon: 'R', melee: 1, rangedDef: 1, mv: 2, cost: 10, sight: 3, desc: 'Fast explorer. Cannot attack.' },
   // ---- Ancient ----
   warrior:  { name: 'Warrior',  icon: 'W', melee: 1, rangedDef: 1, mv: 1, cost: 10 },

@@ -91,7 +91,7 @@ sightBtn.addEventListener('click', toggleSight);
 // where the camera looks (Y: modern ones), on dry land; M marches every unit a tile; B sets
 // them fighting their neighbours; N stages a melee where the camera looks
 // (a foe set beside a fighting unit, both hurt in it), R likewise a volley.
-const UNIT_SAMPLE: UnitKey[] = ['warrior', 'spearman', 'archer', 'horseman', 'swordsman', 'pikeman', 'crossbowman', 'knight', 'scout', 'settler', 'commander'];
+const UNIT_SAMPLE: UnitKey[] = ['warrior', 'spearman', 'archer', 'horseman', 'swordsman', 'pikeman', 'crossbowman', 'knight', 'scout', 'settler', 'worker', 'commander'];
 const MODERN_SAMPLE: UnitKey[] = ['musketman', 'rifleman', 'infantry', 'cavalry', 'cannon', 'artillery', 'tank', 'modernArmor', 'machineGun', 'gatlingGun', 'fieldCannon'];
 const dropUnits = (sample = UNIT_SAMPLE) => {
   const at = view.looking;

@@ -16,6 +16,7 @@ import {
 
 export type Action =
   | { type: 'found' }
+  | { type: 'improve' }
   | { type: 'fortify' }
   | { type: 'wake' }
   | { type: 'skip' }
@@ -50,7 +51,7 @@ const isBuildKey = (s: string): s is BuildKey => (BUILDABLE as string[]).include
 function parseAction(el: HTMLElement): Action | null {
   const type = el.dataset['act'];
   switch (type) {
-    case 'found': case 'fortify': case 'wake': case 'skip': case 'disband': case 'endTurn': case 'governorPlace': case 'pillage': case 'raze': case 'buyMode': case 'rally': case 'deploy': case 'upgrade':
+    case 'found': case 'improve': case 'fortify': case 'wake': case 'skip': case 'disband': case 'endTurn': case 'governorPlace': case 'pillage': case 'raze': case 'buyMode': case 'rally': case 'deploy': case 'upgrade':
       return { type };
     case 'buy': {
       const c = el.dataset['currency'];
@@ -103,7 +104,7 @@ const yieldStr = (food: number, prod: number, gold: number) =>
 const KIND_NAME: Record<GrowthKind, string> = { rural: 'Rural', specialist: 'Specialist' };
 export const specialistName = (k: SpecialistKind): string => SPECIALISTS[k].name;
 export const optionName = (o: GrowthOption): string =>
-  o.kind === 'rural' ? IMPROVEMENTS[o.improvement].name : specialistName(o.specialist);
+  o.kind === 'rural' ? (o.improvement ? IMPROVEMENTS[o.improvement].name : 'Unimproved land') : specialistName(o.specialist);
 
 export class UI {
   private readonly game: Game;
@@ -188,6 +189,12 @@ export class UI {
         const ok = g.canFoundCity(u.tile, u.owner);
         buttons.push(`<button data-act="found" ${ok ? '' : 'disabled title="Too close to another city, or invalid terrain"'}>Found city <kbd>B</kbd></button>`);
       }
+      if (T.improves) {
+        // (On its own tile; fishing boats on the water beside it.)
+        const t = g.improveTarget(u) ?? u.tile, k = g.improvementAt(t, u.owner), why = g.improveBlock(u, t);
+        const label = k ? `Build ${esc(IMPROVEMENTS[k].name.toLowerCase())} <small>${g.improveTurns(t, u.owner)} turns</small>` : 'Improve';
+        buttons.push(`<button data-act="improve" ${why ? `disabled title="${esc(why)}"` : ''}>${label} <kbd>I</kbd></button>`);
+      }
       if (u.type === 'commander') {
         const can = g.rallyable(u).length, army = g.armyOf(u).length;
         buttons.push(`<button data-act="rally" ${can ? '' : `disabled title="${army >= COMMANDER_CAPACITY ? 'The army is full' : 'No units of yours on its tile or the tiles next to it'}"`}>Rally ${can ? `${can} ` : ''}<kbd>R</kbd></button>`);
@@ -201,7 +208,8 @@ export class UI {
       }
       buttons.push(`<button data-act="skip">Skip <kbd>Space</kbd></button>`, `<button data-act="disband" class="danger">Disband</button>`);
     }
-    const status = u.fortified ? 'Fortified' : u.goal != null ? 'Moving…' : '';
+    const status = u.work !== null ? `Building ${(() => { const k = g.improvementAt(u.work, u.owner); return k ? `a ${IMPROVEMENTS[k].name.toLowerCase()}` : ''; })()}: ${g.improveTurns(u.work, u.owner)} turns left`
+      : u.fortified ? 'Fortified' : u.goal != null ? 'Moving…' : '';
     const armyUnits = u.type === 'commander' ? g.armyOf(u) : [];
     const army = u.type === 'commander'
       ? `<div class="desc">Army ${armyUnits.length}/${COMMANDER_CAPACITY}${armyUnits.length ? `: ${armyUnits.map((v) => `${esc(unitDef(v.type).name)} <small>${v.hp} HP</small>`).join(', ')}` : ' · rally units from its tile and the tiles next to it'}</div>`
@@ -319,10 +327,12 @@ export class UI {
     const tc = g.cityById.get(g.tileCity[t]);
     if (tc) {
       const u = g.use[t];
-      const k = g.improvementAt(t);
+      const k = g.improvementAt(t), b = g.builtAt(t);
       const o = g.tileOutput(t);
-      const what = u === USE.center ? esc(tc.name)
-        : `${u === USE.rural && k ? IMPROVEMENTS[k].name : `Wild${k ? ` <small>(${IMPROVEMENTS[k].name.toLowerCase()} if developed)</small>` : ''}`} of ${esc(tc.name)}`;
+      // (Improved or not, worked or not, and what a worker would build there.)
+      const land = b ? `${IMPROVEMENTS[b].name}${g.pillaged[t] ? ' (pillaged)' : ''}`
+        : `Unimproved${k ? ` <small>(${IMPROVEMENTS[k].name.toLowerCase()}${g.underway[t] >= 0 ? `: being built, ${g.improveTurns(t)} turns left` : ' if improved'})</small>` : ''}`;
+      const what = u === USE.center ? esc(tc.name) : `${land}${u === USE.rural ? ' · worked' : ''} of ${esc(tc.name)}`;
       lines.push(`${what}${u === USE.wild && !g.wondersAt(t).length ? '' : ` ${outStr(o)}`}`);
     }
     const res = g.resourceFor(t, HUMAN);
