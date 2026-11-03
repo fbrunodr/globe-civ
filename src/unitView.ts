@@ -316,7 +316,7 @@ const UNIT_LIMB = /* glsl */ `
   // (Whatever hangs from a shoulder (an arm, and what it holds: a shield,
   // a spear's butt, a hanging hand) goes wholly with the body, however low
   // it reaches: else it shears where it passes the hips.)
-  bool fromShoulder = aLimb.z > 0.0 && aLimb.y > ${(HIP + 0.2).toFixed(2)} && !isSkirt;
+  bool fromShoulder = aLimb.y > ${(HIP + 0.2).toFixed(2)} && !isSkirt;
   float upper = fromShoulder ? 1.0 : (isLeg ? 1.0 - blendOn : 1.0) * smoothstep(${(HIP - 0.07).toFixed(2)}, ${(HIP + 0.03).toFixed(2)}, position.y);
   float twC = cos(upper * aPose.y), twS = sin(upper * aPose.y), bnC = cos(upper * aPose.x), bnS = sin(upper * aPose.x);`;
 const UNIT_NORMAL = /* glsl */ `

@@ -147,6 +147,10 @@ let FINE = true;
 export const LEG_AMP = 0.45;
 const LEG = (side: number) => [side, HIP, LEG_AMP] as const;
 const ARM = (side: number) => [-side, SHOULDER, 0.35] as const;
+// An arm that doesn't swing, and what it holds (a staff, a banner): hung
+// from the shoulder all the same, so it goes with the body as one (the
+// units' shader bends whatever hangs from a shoulder wholly with it).
+const STILL_ARM = [0, SHOULDER, 0] as const;
 // In a fight: the weapon arm thrusts (and its weapon with it) about the shoulder.
 export const STRIKE = 2;
 // How far a fighting arm (cutting: a sword's, a club's; thrusting: a spear's, a lance's) swings from the shoulder, per unit of its pose's arm (unitAnim.ts cutArm).
@@ -244,7 +248,7 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
   const freeL = !shield && !bow && !twoHands;
   const swing = {
     legs: (side: number) => (opts.still ? [0, HIP, 0] as const : LEG(side)),
-    arms: (side: number) => (side === -1 ? (hold === 'none' ? ARM(-1) : bow ? DRAW_ARM : strike ?? undefined) : shield ? GUARD_ARM : freeL ? ARM(1) : bow ? bowUp : hold === 'longsword' || hold === 'mg' || longGun ? strike ?? undefined : undefined),
+    arms: (side: number) => (side === -1 ? (hold === 'none' ? ARM(-1) : bow ? DRAW_ARM : strike ?? STILL_ARM) : shield ? GUARD_ARM : freeL ? ARM(1) : bow ? bowUp : hold === 'longsword' || hold === 'mg' || longGun ? strike ?? STILL_ARM : STILL_ARM),
   };
   const out = tagged(person(dress, armL, armR, swing));
   const hR = handAt(-1, armR, f), hL = handAt(1, armL, f), eR = elbowAt(-1, armR, f), eL = elbowAt(1, armL, f);
@@ -278,7 +282,7 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
   }
   // (A sling hanging from the hand: its cords and the stone's pouch.)
   if (hold === 'sling') out.push(rod(v3(hR), v3(hR).add(V(0.01, -0.21, 0.02)), 0.004, 0.004, 3, 0xb8a888, w), ball(0.025, 0x8a7a62, { x: hR.x + 0.01, y: hR.y - 0.23, z: hR.z + 0.02 }, w));
-  if (hold === 'staff') out.push(rod(up(-0.42), up(0.6), 0.013, 0.011, 5, WOOD));
+  if (hold === 'staff') out.push(rod(up(-0.42), up(0.6), 0.013, 0.011, 5, WOOD, { limb: STILL_ARM }));
   // (A long gun, one straight piece, carried muzzle up and a little
   // forward (REST_PITCH) in front of the body, between the hands: the
   // stock gripped by the right hand, the barrel on up; a rifle's with a
@@ -296,8 +300,8 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
   }
   if (hold === 'banner') {
     // A tall pole with the owner's banner hanging from a crossbar, a finial on top.
-    out.push(rod(up(-0.42), up(1.22), 0.016, 0.014, 5, WOOD), rod(up(1.1).add(V(0, 0, -0.22)), up(1.1).add(V(0, 0, 0.22)), 0.01, 0.01, 4, WOOD),
-      lp(plate([[0, 0.21], [0.44, 0.21], [0.44, -0.21], [0, -0.21]], PAINT), { x: hR.x, y: hR.y + 0.88, z: hR.z - 0.22, ry: -Math.PI / 2 }, { team: true }), ball(0.03, 0xd8b440, { x: hR.x, y: hR.y + 1.24, z: hR.z }));
+    out.push(rod(up(-0.42), up(1.22), 0.016, 0.014, 5, WOOD, { limb: STILL_ARM }), rod(up(1.1).add(V(0, 0, -0.22)), up(1.1).add(V(0, 0, 0.22)), 0.01, 0.01, 4, WOOD, { limb: STILL_ARM }),
+      lp(plate([[0, 0.21], [0.44, 0.21], [0.44, -0.21], [0, -0.21]], PAINT), { x: hR.x, y: hR.y + 0.88, z: hR.z - 0.22, ry: -Math.PI / 2 }, { team: true, limb: STILL_ARM }), ball(0.03, 0xd8b440, { x: hR.x, y: hR.y + 1.24, z: hR.z }, { limb: STILL_ARM }));
   }
   if (hold === 'bow') {
     // A bow in the left hand: two limbs bent forward from the grip, and the string.
