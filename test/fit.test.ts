@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { FINE_HEAD, PLAIN_HEAD, fineHead, hairShapes, HAIR_STYLE_KEYS } from '../src/people.ts';
+import { FINE_HEAD, PLAIN_HEAD, hairShapes, HAIR_STYLE_KEYS } from '../src/people.ts';
 import { helmetModel, type Helmet } from '../src/unitModels.ts';
 import { hull } from '../src/lowpoly.ts';
 
@@ -11,7 +11,7 @@ import { hull } from '../src/lowpoly.ts';
 const HELMETS: Helmet[] = ['crest', 'cone', 'kettle', 'hat', 'feather', 'turban', 'cap', 'beret'];
 const heads = {
   plain: hull(PLAIN_HEAD, 5, 0xffffff, { turn: Math.PI / 2 }),
-  fine: fineHead(0xffffff),
+  fine: hull(FINE_HEAD, 8, 0xffffff, { turn: Math.PI / 8 }),
 };
 // (A head's middle at a height: its rings' middles, between them.)
 const middle = (y: number) => {

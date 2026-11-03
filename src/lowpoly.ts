@@ -12,8 +12,7 @@ import type { Paint } from './creatures.ts';
 
 export const LOWPOLY_BUDGET = 200;
 // A unit's figure (people.ts finePerson: seen close up in battle) about three times that.
-// (Raised for a better-drawn head: still well under the 800 or so a figure may have.)
-export const FIGURE_BUDGET = 650;
+export const FIGURE_BUDGET = 600;
 
 export type V3 = readonly [number, number, number];
 export type LpPaint = Paint | ((p: THREE.Vector3) => Paint);
