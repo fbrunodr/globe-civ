@@ -22,9 +22,9 @@ describe('K1: workers improve the land', () => {
     const { g, farm } = fresh();
     if (farm === undefined) return;
     const w = g.createUnit('worker', HUMAN, farm);
-    expect(g.improveBlock(w, farm)).toBe('Needs The Plough.');
+    expect(g.improveBlock(w, farm)).toBe('Needs Pottery.');
     expect(g.improve(w)).toBe(false);
-    g.players[HUMAN]!.techs.add('plough');
+    g.players[HUMAN]!.techs.add('pottery');
     expect(g.improveBlock(w, farm)).toBeNull();
     // (Not on another civ's land, nor a soldier's work.)
     expect(g.improveBlock(g.createUnit('warrior', HUMAN, farm), farm)).not.toBeNull();
@@ -39,15 +39,15 @@ describe('K1: workers improve the land', () => {
     expect(bare.food + bare.prod + bare.gold).toBeGreaterThan(0);
     g.build(farm, 'farm');
     expect(g.tileOutput(farm).food).toBe(bare.food + IMPROVEMENTS.farm.bonus.food);
-    // (Its techs add theirs: The Plough a food.)
-    g.players[HUMAN]!.techs.add('plough');
+    // (Its techs add theirs: Pottery a food.)
+    g.players[HUMAN]!.techs.add('pottery');
     expect(g.tileOutput(farm).food).toBe(bare.food + IMPROVEMENTS.farm.bonus.food + 1);
   });
 
   it('a worker on the tile builds it in its turns; walking off keeps the work done', () => {
     const { g, farm } = fresh();
     if (farm === undefined) return;
-    g.players[HUMAN]!.techs.add('plough');
+    g.players[HUMAN]!.techs.add('pottery');
     const w = g.createUnit('worker', HUMAN, farm);
     expect(g.improve(w)).toBe(true);
     expect(g.improveTurns(farm)).toBe(IMPROVE_TURNS.farm);

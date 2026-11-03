@@ -213,6 +213,50 @@ export const CARD_TEXEL = `
     return lt;
   }`;
 
+// The countryside's beasts and people roam (`roam`, a model's: the radius
+// of its walk, model units; 0 for what stands still): each round a loop of
+// its own, a few steps at a time and a pause to graze or work between,
+// turned the way it walks, in its own phase (by where it stands).
+// uRoamTime: seconds.
+const ROAM_DECL = `
+  attribute float roam;
+  uniform float uRoamTime;
+  // (The angle walked so far, signed by which way round, and the loop's offset.)
+  float roamAngle(out vec3 off) {
+    off = vec3(0.0);
+    #ifdef USE_INSTANCING
+      if (roam <= 0.0) return 0.0;
+      vec3 o = instanceMatrix[3].xyz;
+      float h = fract(sin(dot(o, vec3(12.9898, 78.233, 37.719)) * 1e4) * 43758.5453);
+      float side = h < 0.5 ? -1.0 : 1.0;
+      float k = uRoamTime / (5.0 + 4.0 * h) + h * 17.0;
+      float th = (floor(k) + smoothstep(0.55, 1.0, fract(k))) * 0.8;
+      off = vec3(roam * sin(th), 0.0, side * roam * (1.0 - cos(th)));
+      return side * th;
+    #else
+      return 0.0;
+    #endif
+  }
+  vec3 roamTurn(vec3 v, float a) { float c = cos(a), s = sin(a); return vec3(v.x * c - v.z * s, v.y, v.x * s + v.z * c); }`;
+const ROAM_NORMAL = `
+  { vec3 off; float ra = roamAngle(off); objectNormal = roamTurn(objectNormal, ra); }`;
+const ROAM_VERTEX = `
+  { vec3 off; float ra = roamAngle(off); transformed = roamTurn(transformed, ra) + off; }`;
+// The roaming models' depth, for their shadows to walk with them.
+export function makeRoamDepthMaterial(time: { value: number }): THREE.MeshDepthMaterial {
+  const mat = new THREE.MeshDepthMaterial();
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms['uRoamTime'] = time;
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>
+        ${ROAM_DECL}`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        ${ROAM_VERTEX}`);
+  };
+  mat.customProgramCacheKey = () => 'roam-depth';
+  return mat;
+}
+
 // The depth flora is drawn into the sun's shadow map with ('real' shadows,
 // render.ts): the same vertices (wind, crops by distance), its cards cut
 // out to their leaves and stalks (a card would otherwise cast a square).
@@ -246,15 +290,20 @@ export function makeFloraDepthMaterial(flora: FloraUniforms): THREE.MeshDepthMat
 // the ground as they near this distance from the camera, and are gone past
 // it (the painted plots go on alone, at no cost).
 // `smooth`: smooth-shaded over the models' own normals (people, animals,
-// plants: rural/kit.ts), not flat.
-export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Vector3, flora?: FloraUniforms, smooth = false): THREE.MeshStandardMaterial {
+// plants: rural/kit.ts), not flat; with `roam` (its clock), the beasts and
+// people among them walk about.
+export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Vector3, flora?: FloraUniforms, smooth = false, roam?: { value: number }): THREE.MeshStandardMaterial {
   const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: smooth ? 0.85 : 1, flatShading: !flora && !smooth, side: THREE.DoubleSide });
   const day = sunDir !== undefined;
   mat.onBeforeCompile = (shader) => {
     if (day) shader.uniforms['uSunDir'] = { value: sunDir };
     if (flora) Object.assign(shader.uniforms, floraUniforms(flora));
+    if (roam) shader.uniforms['uRoamTime'] = roam;
     shader.vertexShader = shader.vertexShader
+      .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>
+        ${roam ? ROAM_NORMAL : ''}`)
       .replace('#include <common>', `#include <common>
+        ${roam ? ROAM_DECL : ''}
         ${flora ? FLORA_VERTEX_DECL : 'attribute float leafMask; attribute vec3 cardUv;'}
         attribute float leafShade;
         attribute vec3 leafTint;
@@ -263,7 +312,8 @@ export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Ve
         ${day ? 'uniform vec3 uSunDir;' : ''}`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
         vCard = cardUv;
-        ${flora ? FLORA_VERTEX : ''}`)
+        ${flora ? FLORA_VERTEX : ''}
+        ${roam ? ROAM_VERTEX : ''}`)
       .replace('#include <color_vertex>', `#include <color_vertex>
         #ifdef USE_INSTANCING_COLOR
           vColor.xyz = mix(color.xyz, leafTint, leafMask) * instanceColor.xyz * (1.0 - leafShade);
@@ -307,7 +357,7 @@ export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Ve
     shader.fragmentShader = frag;
   };
   // Distinct programs per bounce, saturation and sun.
-  mat.customProgramCacheKey = () => `prop-${bounce}-${saturation}-${day}-${!!flora}-${smooth}`;
+  mat.customProgramCacheKey = () => `prop-${bounce}-${saturation}-${day}-${!!flora}-${smooth}-${!!roam}`;
   return mat;
 }
 

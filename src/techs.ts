@@ -55,16 +55,16 @@ const t = (name: string, era: EraIndex, cost: number, needs: readonly TechKey[],
 
 export const TECHS: Record<TechKey, TechDef> = {
   // ---- Ancient ----
-  pottery:         t('Pottery', 0, 25, [], { buildings: ['granary'] }),
+  pottery:         t('Pottery', 0, 25, [], { buildings: ['granary'], effects: [onImprovement('farm', { food: 1 })] }),
   animalHusbandry: t('Animal Husbandry', 0, 25, [], { effects: [onImprovement('pasture', { food: 1 })] }), // (reveals Horses)
   mining:          t('Mining', 0, 25, [], { effects: [onImprovement('quarry', { prod: 1 })] }),
   sailing:         t('Sailing', 0, 30, [], { units: ['galley'], buildings: ['lighthouse'], wonders: ['greatLighthouse'] }),
   astrology:       t('Astrology', 0, 30, [], { buildings: ['shrine'], wonders: ['stonehenge'] }),
   irrigation:      t('Irrigation', 0, 35, ['pottery'], { wonders: ['hangingGardens'], effects: [onImprovement('wetland', { food: 1 })] }),
   writing:         t('Writing', 0, 35, ['pottery'], { buildings: ['library'] }),
-  archery:         t('Archery', 0, 35, ['animalHusbandry'], { units: ['archer'] }),
+  archery:         t('Archery', 0, 35, ['animalHusbandry'], { units: ['archer'], effects: [onImprovement('camp', { gold: 1 })] }),
   masonry:         t('Masonry', 0, 35, ['mining'], { buildings: ['walls'], wonders: ['pyramids'] }),
-  bronzeWorking:   t('Bronze Working', 0, 40, ['mining'], { units: ['spearman'], buildings: ['barracks'] }), // (reveals Iron)
+  bronzeWorking:   t('Bronze Working', 0, 40, ['mining'], { units: ['spearman'], buildings: ['barracks'], effects: [onImprovement('mine', { prod: 1 })] }), // (reveals Iron)
   theWheel:        t('The Wheel', 0, 40, ['mining'], { units: ['chariotArcher'], buildings: ['waterMill'] }),
   horsebackRiding: t('Horseback Riding', 0, 45, ['animalHusbandry', 'archery'], { units: ['horseman'], buildings: ['stable'] }),
   fishing:         t('Fishing', 0, 35, ['sailing'], { effects: [onImprovement('boats', { gold: 1 })] }),
@@ -78,7 +78,7 @@ export const TECHS: Record<TechKey, TechDef> = {
   engineering:     t('Engineering', 1, 45, ['theWheel', 'irrigation'], { buildings: ['aqueduct'], wonders: ['machuPicchu'] }),
   drama:           t('Drama', 1, 35, ['writing', 'mysticism'], { buildings: ['amphitheater'] }),
   literature:      t('Literature', 1, 45, ['drama'], { buildings: ['odeon'], wonders: ['greatLibrary'] }),
-  plough:          t('The Plough', 1, 40, ['irrigation', 'theWheel'], { effects: [onImprovement('farm', { food: 1 })] }),
+  plough:          t('The Plough', 1, 40, ['irrigation', 'theWheel'], { effects: [yieldPct('food', 5)] }),
   trade:           t('Trade', 1, 40, ['currency', 'horsebackRiding'], { units: ['horseArcher'], buildings: ['caravanserai'] }),
   philosophy:      t('Philosophy', 1, 45, ['writing', 'mysticism'], { effects: [yieldPct('science', 5)] }),
   shipbuilding:    t('Shipbuilding', 1, 40, ['celestialNavigation', 'fishing'], { units: ['trireme'], buildings: ['harbor'] }), // (land units embark: game.ts)
@@ -90,8 +90,8 @@ export const TECHS: Record<TechKey, TechDef> = {
   militaryTactics: t('Military Tactics', 2, 55, ['mathematics', 'ironWorking'], { units: ['pikeman'] }),
   stirrups:        t('Stirrups', 2, 55, ['horsebackRiding', 'ironWorking'], { units: ['knight'] }),
   fortification:   t('Fortification', 2, 50, ['construction', 'masonry'], { units: ['trebuchet'], effects: [pct('cityStrength', 25)] }),
-  metalCasting:    t('Metal Casting', 2, 50, ['bronzeWorking', 'apprenticeship'], { units: ['longswordsman'], effects: [onImprovement('mine', { prod: 1 }), onImprovement('quarry', { prod: 1 })] }),
-  forestry:        t('Forestry', 2, 45, ['construction', 'animalHusbandry'], { effects: [onImprovement('camp', { gold: 1 })] }),
+  metalCasting:    t('Metal Casting', 2, 50, ['bronzeWorking', 'apprenticeship'], { units: ['longswordsman'], effects: [onImprovement('quarry', { prod: 1 })] }),
+  forestry:        t('Forestry', 2, 45, ['construction', 'animalHusbandry'], { effects: [yieldPct('prod', 5)] }),
   drainage:        t('Drainage', 2, 45, ['engineering'], { effects: [onImprovement('wetland', { food: 1 })] }),
   domes:           t('Domes', 2, 55, ['engineering', 'mathematics'], { wonders: ['hagiaSophia'] }),
   compass:         t('Compass', 2, 50, ['shipbuilding', 'mathematics'], { units: ['galleass', 'cog'], effects: [onImprovement('boats', { food: 1 })] }),

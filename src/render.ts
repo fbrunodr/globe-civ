@@ -31,7 +31,7 @@ import { roadLines, ROAD_HALF_WIDTH } from './roads.ts';
 import { Vegetation, type SpotEnv } from './vegetation.ts';
 import { mulberry32, makePerlin } from './rng.ts';
 import { USE, WONDERS, type ImprovementKey } from './cities.ts';
-import { farGeometry, makeFloraDepthMaterial, makePropMaterial, instanceGeometry } from './propMaterial.ts';
+import { farGeometry, makeFloraDepthMaterial, makePropMaterial, makeRoamDepthMaterial, instanceGeometry } from './propMaterial.ts';
 import { GpuTimer } from './gpuTimer.ts';
 import { resourceDef } from './resources.ts';
 import { UnitView, type FightResult, type ShownUnit } from './unitView.ts';
@@ -255,7 +255,8 @@ export class GlobeRenderer {
   private shadowAt: { center: THREE.Vector3; dir: THREE.Vector3; half: number } | null = null;
   private readonly buildingMat = makePropMaterial(0.32, 0.6, this.sunDir);
   // (People, animals, plants: round, smooth-shaded.)
-  private readonly smoothMat = makePropMaterial(0.25, 0.7, this.sunDir, undefined, true);
+  private readonly smoothMat = makePropMaterial(0.25, 0.7, this.sunDir, undefined, true, this.floraTime);
+  private readonly roamDepth = makeRoamDepthMaterial(this.floraTime);
   private readonly propGeo = new Map<PropKind, THREE.BufferGeometry>();
   private readonly vegetation: Vegetation;
   // Per terrain vertex, for prop placement: ground slope, signed distance to
@@ -1121,6 +1122,7 @@ export class GlobeRenderer {
           mesh.castShadow = !crop;
           mesh.receiveShadow = true;
           if (isFloraKind(kind) || cards) mesh.customDepthMaterial = this.floraDepth;
+          else if (isRuralModelKind(kind) && isSmoothRural(kind)) mesh.customDepthMaterial = this.roamDepth;
           mesh.userData['stat'] = statOf(kind);
           chunk.meshes.set(kind, mesh);
           this.scene.add(mesh);

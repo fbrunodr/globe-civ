@@ -208,14 +208,14 @@ describe('S4: borders and upkeep', () => {
     expect(cityUpkeep(9, 3, false, 0)).toBeGreaterThan(cityUpkeep(3, 3, false, 0));
     expect(cityUpkeep(6, 3, true, 0)).toBeCloseTo(cityUpkeep(6, 3, false, 0) / 2);
   });
-  it('techs improve the land: a worked farm yields more after The Plough', () => {
+  it('techs improve the land: a worked farm yields more after Crop Rotation', () => {
     const g = fresh(), p = g.players[HUMAN]!;
     const c = settle(g, HUMAN);
     const farm = g.tilesWithin(c.tile, 1).find((t) => g.tileCity[t] === c.id && t !== c.tile && g.optionYield({ kind: 'rural', tile: t, improvement: 'farm' }, HUMAN) && !g.isWater(t) && g.relief[t] === 'flat' && !g.feature[t] && ['prairie', 'steppe', 'mediterranean', 'savanna'].includes(g.biome[t]!));
     if (farm === undefined) return;
     g.build(farm, 'farm');
     const before = g.workedYield(farm, HUMAN).food;
-    p.techs.add('plough');
+    p.techs.add('cropRotation');
     expect(g.workedYield(farm, HUMAN).food).toBe(before + 1);
   });
 });

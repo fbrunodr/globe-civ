@@ -133,7 +133,7 @@ export function layoutRural(inp: RuralInput, farm: Farm, site: RuralSite, keep: 
     const r = mulberry32(inp.seed + 0x6e), want = herdSize(stage);
     for (let n = 0, tries = 0; n < want && tries < want * 10; tries++) {
       const p = { x: (r() - 0.5) * 1.1, y: (r() - 0.5) * 1.1 };
-      if (rhoOf(6, p) > SAFE_RHO - 0.09 || d2(p, farm.home) < 0.1 || inYard(p) || !site.free(p) || !dry(p) || kept(p)) continue;
+      if (rhoOf(6, p) > SAFE_RHO - 0.12 || d2(p, farm.home) < 0.1 || inYard(p) || !site.free(p) || !dry(p) || kept(p)) continue;
       const m = look.herd.models[n % look.herd.models.length]!;
       add(m, p, r() * 6.28, kitBoost(m) * (0.9 + 0.2 * r()), look.herd.colors[n % look.herd.colors.length]!);
       n++;

@@ -75,8 +75,8 @@ export function stageLook(imp: ImprovementKey, stage: number, res: ResourceKey |
   switch (imp) {
     case 'farm': switch (Math.min(stage, 4)) {
       case 0: return { density: 'low', adits: 0, things: [w('farmer', 2), w('farmerB', 1), at('stooks', 2, 'yard')] };
-      case 1: return { density: 'low', adits: 0, things: [at('ploughTeam', 1, 'field', [0x8a6a4a, 0x6a4a32]), w('farmerB', 1), at('stooks', 3, 'yard')] };
-      case 2: return { density: 'medium', adits: 0, things: [at('haycart', 1, 'home'), w('reaper', 2), at('rick', 1, 'yard'), at('stooks', 2, 'yard')] };
+      case 1: return { density: 'low', adits: 0, things: [w('farmer', 2), w('farmerB', 1), at('stooks', 3, 'yard')] };
+      case 2: return { density: 'medium', adits: 0, things: [at('ploughTeam', 1, 'field', [0x8a6a4a, 0x6a4a32]), at('haycart', 1, 'home'), w('reaper', 1), at('rick', 1, 'yard'), at('stooks', 2, 'yard')] };
       case 3: return { density: 'medium', adits: 0, things: [at('windpump', 1, 'home'), at('stoneSilo', 1, 'home'), at('haycart', 1, 'field'), w('reaper', 1), at('rick', 2, 'yard')] };
       default: return { density: 'high', adits: 0, things: [at('steelSilo', 2, 'home'), at('tractor', 1, 'field', MACHINE), at('combine', 1, 'field', MACHINE), at('bales', 2, 'yard')] };
     }
@@ -107,8 +107,7 @@ export function stageLook(imp: ImprovementKey, stage: number, res: ResourceKey |
         : stage === 2 ? { density: 'medium', adits: 0, things: [at('lodge', 1, 'home'), at('haycart', 1, 'field'), w('woodcutter', 3)] }
         : { density: 'high', adits: 0, things: [at('sawmill', 1, 'home'), at('haycart', 1, 'field'), w('woodcutter', 2)] };
     }
-    case 'mine': return stage === 0 ? { density: 'low', adits: 1, things: [w('miner', 3, 'yard'), at('oreHeap', 1, 'yard', [0x8a7e6c])] }
-      : stage === 1 ? { density: 'medium', adits: 1, things: [at('headframe', 1, 'home'), at('oreCart', 1, 'yard'), w('miner', 2, 'yard')] }
+    case 'mine': return stage === 1 ? { density: 'low', adits: 1, things: [w('miner', 3, 'yard'), at('oreHeap', 1, 'yard', [0x8a7e6c])] }
       : stage === 2 ? { density: 'medium', adits: 1, things: [at('headframe', 1, 'home'), at('smelter', 1, 'home'), at('oreCart', 1, 'yard'), w('miner', 2, 'yard')] }
       : { density: 'high', adits: 0, things: [at('steamHeadframe', 1, 'home'), at('smelter', 1, 'home'), at('oreCart', 2, 'yard'), w('miner', 1, 'yard')] };
     case 'quarry': return stage <= 1 ? { density: stage ? 'medium' : 'low', adits: 0, things: [w('miner', 2, 'yard')] }

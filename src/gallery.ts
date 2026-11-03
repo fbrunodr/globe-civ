@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { WorldLabel, clickableLabels, disposeLabels, type LabelLine } from './worldLabel.ts';
-import { makePropMaterial, instanceGeometry } from './propMaterial.ts';
+import { makePropMaterial, makeRoamDepthMaterial, instanceGeometry } from './propMaterial.ts';
 import { ruralGeometry, ruralModelKind, isSmoothRural, isFloraRural, RURAL_MODELS, type RuralModel } from './rural/models.ts';
 import { resourceLayout, RESOURCE_WILD, RESOURCE_WORKED } from './rural/resourceModels.ts';
 import { RESOURCES, RESOURCE_KEYS, RESOURCE_IMPROVEMENT, type ResourceKey } from './resources.ts';
@@ -74,11 +74,14 @@ sun.shadow.normalBias = 0.06;
 scene.add(sun, sun.target);
 
 // The game's flora material (clump normals, leaf cards), at full saturation.
-const propMat = makePropMaterial(0, 1, undefined, { time: { value: 0 } });
+// (Its clock: the leaves' sway, the beasts' walk.)
+const clock = { value: 0 };
+const propMat = makePropMaterial(0, 1, undefined, { time: clock });
 // The game's material for the countryside's models (and the resources');
 // the smooth one for the kit's people, animals and plants.
 const ruralMat = makePropMaterial(0.32, 0.8);
-const smoothMat = makePropMaterial(0.25, 0.85, undefined, undefined, true);
+const smoothMat = makePropMaterial(0.25, 0.85, undefined, undefined, true, clock);
+const roamDepth = makeRoamDepthMaterial(clock);
 const matOf = (m: RuralModel) => (isFloraRural(ruralModelKind(m)) ? propMat : isSmoothRural(ruralModelKind(m)) ? smoothMat : ruralMat);
 // A tile step (center to center) in scene units: resource models are sized in them.
 const STEP = R * Math.sqrt(3);
@@ -173,6 +176,7 @@ function addInstances(items: Placed[], at: THREE.Vector3, parent: THREE.Object3D
   const off = new THREE.Matrix4().makeTranslation(at.x, at.y, at.z);
   for (const list of groups.values()) {
     const mesh = new THREE.InstancedMesh(instanceGeometry(list[0].geo, list.length), list[0].mat ?? propMat, list.length);
+    if (list[0].mat === smoothMat) mesh.customDepthMaterial = roamDepth;
     const leaf = mesh.geometry.getAttribute('leafTint') as THREE.InstancedBufferAttribute;
     list.forEach((p, i) => { mesh.setMatrixAt(i, off.clone().multiply(p.m)); mesh.setColorAt(i, p.c); leaf.setXYZ(i, p.leaf.r, p.leaf.g, p.leaf.b); });
     mesh.castShadow = true;
@@ -528,7 +532,7 @@ function buildCatalog(): void {
     const tris = triangles(geo);
     const div = label(kind[0]!.toUpperCase() + kind.slice(1), `Countryside ×${(fit / FIG_SCALE).toFixed(1)} · ${tris} tris`,
       center.clone().add(new THREE.Vector3(0, 0, 4.4)), () => { state.focus = i; refreshFocus(); setCam('close'); });
-    patches.push({ center, label: div, mix: '' });
+    patches.push({ center, label: div, mix: `<h4>${kind}</h4>` });
   });
   info.textContent = `${CATALOG_KINDS.length} props, ${BUILDING_KINDS.length} buildings, ${figures.length} animals and people and ${rest.length} countryside models, enlarged (×N in each label) to be visible. Budget ${BUDGET} triangles · drag move · right-drag or Shift+drag rotate & tilt · WASD move · Q/E rotate · T/G tilt · Z/X zoom`;
 }
@@ -667,6 +671,7 @@ resize();
 rebuild(true);
 const timer = new THREE.Timer();
 renderer.setAnimationLoop((time) => {
+  clock.value = time / 1000;
   timer.update(time);
   // (On the board, the sun's shadows follow the view: the board is too large for one shadow map.)
   if (state.view === 'terrains') {

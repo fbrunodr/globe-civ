@@ -314,26 +314,10 @@ function pumpjack(): G[] {
 function oilTank(): G[] { return [cyl(3.2, 3.2, 4.5, 10, 0xdcdcd8), cone(3.25, 0.9, 10, 0xc8c8c4, { y: 4.5 }), cyl(3.24, 3.24, 0.12, 10, 0xb8b8b4, { y: 2.2 }), beam([3.2, 0, 0], [3.2, 4.8, 0.6], 0.05, STEEL, 3)]; }
 
 // ---- plantations: what grows in their rows ----
-const LEAVES = 0x4f7a30;
 // (A leafy mass: a lumpy crown.)
 const crown = (c: V3, r: V3, paint: Paint, lump = 0.22) => fleece(c, r, paint, lump, 2);
 // (Points written as plain arrays.)
 const v = (a: readonly number[]): V3 => [a[0]!, a[1]!, a[2]!];
-// A stretch of vineyard row along x (they meet end to end into a hedge):
-// its stakes and wire, the trained vines in leaf, grapes hanging under.
-function vine(): G[] {
-  return [...[-1.2, 0, 1.2].map((x) => beam([x, 0, 0], [x, 1.45, 0], 0.035, TIMBER, 5)), beam([-1.25, 1.2, 0], [1.25, 1.2, 0], 0.01, 0x9a9a9a, 3), beam([-1.25, 0.75, 0], [1.25, 0.75, 0], 0.01, 0x9a9a9a, 3),
-    ...[-0.6, 0.6].map((x) => tube([[x, 0, 0.04], [x + 0.05, 0.4, 0.05], [x, 0.75, 0.04]], [0.05, 0.04, 0.035], 0x5a4632, 5, 2)),
-    crown([0, 1.05, 0], [1.35, 0.42, 0.3], LEAVES, 0.18), crown([0, 1.42, 0], [1.2, 0.16, 0.22], 0x5a8a3a, 0.2),
-    ...[[-0.95, 0.74, 0.22], [-0.35, 0.72, -0.23], [0.25, 0.75, 0.22], [0.85, 0.73, -0.22], [0.55, 0.72, 0.24], [-0.7, 0.75, -0.22]].map((c) => fleece(v(c), [0.06, 0.12, 0.06], 0x4a2a5a, 0.25, 1))];
-}
-// A stretch of tea hedge along x, clipped flat on top (the plucking table).
-function teaBush(): G[] { return [...[-0.6, 0.6].map((x) => cyl(0.05, 0.04, 0.4, 5, 0x5a4632, { x })), crown([0, 0.6, 0], [1.25, 0.4, 0.55], 0x3f6a2a, 0.1), crown([0, 0.92, 0], [1.15, 0.1, 0.48], 0x5a8a3a, 0.14)]; }
-function cottonBush(): G[] {
-  const out = [cyl(0.03, 0.025, 0.5, 5, 0x6a5a3a), crown([0, 0.75, 0], [0.42, 0.45, 0.42], 0x5a7a3a, 0.3)];
-  for (let i = 0; i < 9; i++) { const a = i * 2.4, y = 0.55 + (i % 3) * 0.2; out.push(ellipsoid([Math.cos(a) * 0.38, y, Math.sin(a) * 0.38], [0.09, 0.08, 0.09], 0xf6f2ea, 6)); }
-  return out;
-}
 function bananaPlant(): G[] {
   const out = [tube([[0, 0, 0], [0.04, 1.4, 0], [0.02, 2.6, 0]], [0.18, 0.14, 0.11], 0x7a7a3a, 8, 2)];
   for (let k = 0; k < 7; k++) {
@@ -343,30 +327,10 @@ function bananaPlant(): G[] {
   out.push(ellipsoid([0.22, 1.9, 0], [0.18, 0.35, 0.18], 0x9ab83a, 8), cone(0.1, 0.3, 6, 0x7a2a3a, { x: 0.28, y: 1.35, rz: Math.PI }));
   return out;
 }
-function mulberryBush(): G[] { return [tube([[0, 0, 0], [0.05, 0.7, 0], [0.0, 1.0, 0]], [0.1, 0.08, 0.08], 0x6a5038, 6, 2), ...[0, 2.1, 4.2].map((a) => tube([[0, 1.0, 0], [Math.cos(a) * 0.35, 1.5, Math.sin(a) * 0.35], [Math.cos(a) * 0.45, 1.9, Math.sin(a) * 0.45]], [0.05, 0.03, 0.02], 0x6a5038, 5, 2)), crown([0, 1.8, 0], [0.9, 0.55, 0.9], 0x557a3a)]; }
-function pepperPole(): G[] {
-  return [beam([0, 0, 0], [0, 2.8, 0], 0.06, TIMBER, 5), crown([0, 1.5, 0], [0.4, 1.3, 0.4], 0x3a6a2a, 0.3), ...[[0.32, 1.2, 0.1], [-0.3, 1.7, 0.15], [0.1, 2.1, -0.32], [-0.2, 0.9, -0.3]].map((c) => ellipsoid(v(c), [0.06, 0.12, 0.06], 0xc0402a, 6))];
-}
-function incenseTree(): G[] {
-  return [tube([[0, 0, 0], [0.2, 0.8, 0], [0.0, 1.4, 0.1]], [0.16, 0.12, 0.1], 0x8a7a64, 6, 2), tube([[0.0, 1.3, 0.1], [-0.5, 1.9, 0.1], [-0.8, 2.2, 0.2]], [0.08, 0.06, 0.04], 0x8a7a64, 5, 2), tube([[0.0, 1.3, 0.1], [0.5, 2.0, -0.1], [0.7, 2.2, -0.2]], [0.08, 0.06, 0.04], 0x8a7a64, 5, 2),
-    crown([-0.8, 2.3, 0.2], [0.6, 0.3, 0.6], 0x7a8a5a), crown([0.7, 2.35, -0.2], [0.55, 0.28, 0.55], 0x6f8250)];
-}
-function indigoBush(): G[] { return [cyl(0.03, 0.02, 0.4, 5, 0x5a4a32), crown([0, 0.6, 0], [0.45, 0.42, 0.45], 0x3a5a4a, 0.3), ...[0, 1.3, 2.6, 3.9, 5.2].map((a) => ellipsoid([Math.cos(a) * 0.36, 0.9, Math.sin(a) * 0.36], [0.05, 0.1, 0.05], 0x6a4a9a, 5))]; }
-
 // ---- the resources in the wild ----
-function wildGrain(): G[] {
-  const out: G[] = [];
-  for (let i = 0; i < 14; i++) { const a = i * 2.39, r = 0.12 + (i % 4) * 0.08, x = Math.cos(a) * r, z = Math.sin(a) * r, lean = 0.15 + (i % 3) * 0.08; out.push(tube([[x, 0, z], [x + Math.cos(a) * lean * 0.5, 0.6, z + Math.sin(a) * lean * 0.5], [x + Math.cos(a) * lean, 1.05, z + Math.sin(a) * lean]], [0.012, 0.01, 0.008], 0xb8a050, 4, 2), ellipsoid([x + Math.cos(a) * lean, 1.12, z + Math.sin(a) * lean], [0.025, 0.08, 0.025], 0xd8b850, 5)); }
-  return out;
-}
 function wildRice(): G[] {
   const out: G[] = [];
   for (let i = 0; i < 16; i++) { const a = i * 2.39, r = 0.1 + (i % 5) * 0.07, x = Math.cos(a) * r, z = Math.sin(a) * r; out.push(tube([[x, 0, z], [x * 1.4, 0.7, z * 1.4], [x * 2.0, 1.15, z * 2.0]], [0.014, 0.012, 0.006], 0x7aa040, 4, 2), tube([[x * 2.0, 1.15, z * 2.0], [x * 2.3, 1.05, z * 2.3], [x * 2.4, 0.9, z * 2.4]], [0.012, 0.016, 0.006], 0xc8b060, 4, 2)); }
-  return out;
-}
-function teosinte(): G[] {
-  const out: G[] = [];
-  for (let i = 0; i < 6; i++) { const a = i * 1.05, x = Math.cos(a) * 0.25, z = Math.sin(a) * 0.25; out.push(tube([[x, 0, z], [x * 1.2, 0.9, z * 1.2], [x * 1.5, 1.7, z * 1.5]], [0.03, 0.025, 0.015], 0x6f8f3a, 5, 2), tube([[x * 1.1, 0.7, z * 1.1], [x * 2.6, 1.0, z * 2.6], [x * 3.2, 0.85, z * 3.2]], [0.01, 0.05, 0.01], 0x5f8a34, 4, 2, 0.15), ellipsoid([x * 1.55, 1.78, z * 1.55], [0.03, 0.1, 0.03], 0xc8a040, 5)); }
   return out;
 }
 // Rock breaking out of the ground, a vein of its ore (leaf) through it;
@@ -397,8 +361,6 @@ function rockLp(c: V3, r: V3, paint: Paint | ((p: THREE.Vector3) => Paint), lump
 }
 // Weathered boulders (stone, not yet cut).
 function boulders(): G[] { return [[0, 0, 1.3, 1.0], [1.8, 0.6, 0.9, 0.7], [-1.0, 1.4, 0.7, 0.55], [0.6, -1.5, 0.6, 0.5]].map(([x, z, r, h]) => rockLp([x!, h! * 0.6, z!], [r!, h!, r! * 0.85], (p) => (p.y > h! * 0.9 ? 0xb8b2a4 : 0xa49e90), 0.15)); }
-// A wild vine climbing over a bush, its grapes hanging.
-function wildVine(): G[] { return [crown([0, 0.9, 0], [1.1, 0.9, 1.0], 0x4a6a2a, 0.3), crown([0.3, 1.5, 0.2], [0.7, 0.5, 0.6], 0x5a7a34, 0.3), ...[[0.9, 1.0, 0.4], [-0.8, 0.8, 0.5], [0.4, 0.7, -0.9], [-0.3, 1.3, 0.85]].map((c) => fleece(v(c), [0.08, 0.14, 0.08], 0x4a2a5a, 0.25, 1))]; }
 // A school of fish breaking the surface, ripples round them.
 function fishSchool(): G[] {
   const out: G[] = [];
@@ -414,7 +376,7 @@ function oysters(): G[] {
 }
 // A pine with resin weeping from its wounds, amber at its foot.
 function resinPine(): G[] {
-  return [cyl(0.35, 0.3, 1.6, 9, 0x6a4a30), P(new THREE.CircleGeometry(0.3, 9).rotateX(-Math.PI / 2), 0xc49a68, { y: 1.61 }),
+  return [cyl(0.35, 0.3, 1.6, 9, 0x6a4a30), P(new THREE.CylinderGeometry(0.3, 0.3, 0.02, 9), 0xc49a68, { y: 1.6 }),
     ...[[0.36, 0.9, 0.1], [-0.2, 0.7, 0.3], [0.1, 1.2, -0.34]].map((c) => ellipsoid(v(c), [0.06, 0.14, 0.05], 0xe0902a, 6)), ...[[0.8, 0.1, 0.3], [-0.6, 0.1, 0.6], [0.2, 0.1, -0.8]].map((c) => P(new THREE.OctahedronGeometry(0.16, 0).translate(c[0]!, c[1]!, c[2]!), 0xe8922a))];
 }
 // A worked resource's own touches: a wine press and casks; cocoon trays; tusks; bales of cotton; baskets of leaf; a salt heap.
@@ -445,9 +407,9 @@ export const KIT = {
   // water and oil
   canoe, sailboat, trawler, derrick, pumpjack, oilTank,
   // plantations
-  vine, teaBush, cottonBush, bananaPlant, mulberryBush, pepperPole, incenseTree, indigoBush,
+  bananaPlant,
   // the wild
-  wildGrain, wildRice, teosinte, outcrop: () => outcrop(), oreRock: () => outcrop(true), boulders, wildVine, fishSchool, oysters, resinPine,
+  wildRice, outcrop: () => outcrop(), oreRock: () => outcrop(true), boulders, fishSchool, oysters, resinPine,
   // worked touches
   winePress, cocoonTrays, tuskPile, cottonBales, teaBaskets, saltHeaps,
 } satisfies Record<string, () => G[]>;
@@ -462,7 +424,7 @@ export const SPECIES_OF: Partial<Record<KitModel, Species>> = { horse: 'horse', 
 // works (windpumps, silos, headframes, lodges) least.
 export const FIGURE_BOOST = 6.5, SMALL_BOOST = 4, PLANT_BOOST = 3, KIT_BOOST = 3.2, WILD_BOOST = 5;
 const SMALL: ReadonlySet<KitModel> = new Set<KitModel>(['plough', 'tractor', 'combine', 'trough', 'brokenCart', 'stooks', 'rick', 'bales', 'hideRack', 'oreHeap', 'oreCart', 'winePress', 'cocoonTrays', 'tuskPile', 'cottonBales', 'teaBaskets', 'saltHeaps', 'canoe']);
-const PLANTS: ReadonlySet<KitModel> = new Set<KitModel>(['vine', 'teaBush', 'cottonBush', 'bananaPlant', 'mulberryBush', 'pepperPole', 'incenseTree', 'indigoBush', 'wildGrain', 'wildRice', 'teosinte', 'wildVine', 'resinPine']);
+const PLANTS: ReadonlySet<KitModel> = new Set<KitModel>(['bananaPlant', 'wildRice', 'resinPine']);
 // (The wild's rock, shells and fish: drawn as large as the resources' props were.)
 const WILD: ReadonlySet<KitModel> = new Set<KitModel>(['outcrop', 'oreRock', 'boulders', 'oysters', 'fishSchool', 'resinPine', 'campfire']);
 export const kitBoost = (k: KitModel): number => (FIGURES.has(k) ? FIGURE_BOOST : WILD.has(k) ? WILD_BOOST : SMALL.has(k) ? SMALL_BOOST : PLANTS.has(k) ? PLANT_BOOST : KIT_BOOST);
