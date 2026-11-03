@@ -11,7 +11,7 @@
 // the scale that stands them in tile steps.
 
 import { paintCity, CITY_CELL, MAX_WONDERS, UNIT, UNITS_PER_CELL, type Painted, type Painting } from './cityPainter.ts';
-import { CELL, LOT_SIZE, pointInPoly, type Floors, type Footprint, type Pt } from './town/geometry.ts';
+import { CELL, LOT_SIZE, type Floors, type Footprint, type Pt } from './town/geometry.ts';
 import { HOUSE_VARIANTS, houseKind } from './houses.ts';
 import { styleOf, type ArchCiv } from './architecture.ts';
 import { wonderModelKind, type SiteModel } from './wonderModels.ts';
@@ -44,29 +44,34 @@ export interface DressedCity {
   readonly wall: readonly Pt[] | null;    // a closed ring (first point repeated)
 }
 
-// A walled city's buildings keep this far inside its walls (tile steps).
-const WALL_ROOM = 0.05;
-// The middle of the city's land (`free`, sampled every WALL_STEP over the
-// tile), and the wall round it: twelve corners, each as far out from that
-// middle as the land goes (closed: the first repeated).
-const WALL_STEP = 0.02;
-function landMiddle(free: (p: Pt) => boolean): Pt {
-  let x = 0, y = 0, n = 0;
-  for (let j = -30; j <= 30; j++) for (let i = -30; i <= 30; i++) { const p = { x: i * WALL_STEP, y: j * WALL_STEP }; if (free(p)) { x += p.x; y += p.y; n++; } }
-  return n ? { x: x / n, y: y / n } : { x: 0, y: 0 };
-}
-function wallRing(free: (p: Pt) => boolean): Pt[] {
-  const m = landMiddle(free);
-  const corner = (i: number) => {
-    const a = (i / 12) * Math.PI * 2, at = (k: number) => ({ x: m.x + k * Math.cos(a), y: m.y + k * Math.sin(a) });
-    let k = 0;
-    while (k < 0.6 && free(at(k + WALL_STEP))) k += WALL_STEP;
-    return at(Math.max(k, 0.08));
-  };
-  const ring = Array.from({ length: 12 }, (_, i) => corner(i));
+// A city's walls: round its buildings (the outline of all their corners,
+// WALL_ROOM out from it), in pieces no longer than WALL_PIECE (a tower at
+// every other joint: cityProps.ts). Closed: the first point repeated.
+const WALL_ROOM = 0.035, WALL_PIECE = 0.13;
+function wallRound(p: Painting): Pt[] | null {
+  const at = (x: number, y: number): Pt => ({ x: p.origin.x + (x * p.u.x + y * p.v.x) * UNIT, y: p.origin.y + (x * p.u.y + y * p.v.y) * UNIT });
+  const pts = p.buildings.flatMap((b) => [at(b.x0, b.y0), at(b.x1, b.y0), at(b.x1, b.y1), at(b.x0, b.y1)]);
+  if (pts.length < 3) return null;
+  // (The outline: the convex hull, by Andrew's monotone chain.)
+  pts.sort((a, b) => a.x - b.x || a.y - b.y);
+  const cross = (o: Pt, a: Pt, b: Pt) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+  const half = (list: Pt[]) => { const h: Pt[] = []; for (const q of list) { while (h.length >= 2 && cross(h[h.length - 2]!, h[h.length - 1]!, q) <= 0) h.pop(); h.push(q); } h.pop(); return h; };
+  const hull = [...half(pts), ...half([...pts].reverse())];
+  // (Each corner out along its corners' bisector, WALL_ROOM from both sides.)
+  const n = hull.length, out = hull.map((q, i) => {
+    const a = hull[(i + n - 1) % n]!, b = hull[(i + 1) % n]!;
+    const na = { x: q.y - a.y, y: a.x - q.x }, nb = { x: b.y - q.y, y: q.x - b.x }, la = Math.hypot(na.x, na.y) || 1, lb = Math.hypot(nb.x, nb.y) || 1;
+    const m = { x: na.x / la + nb.x / lb, y: na.y / la + nb.y / lb }, lm = Math.hypot(m.x, m.y) || 1, cos = Math.max(0.3, (m.x / lm) * (na.x / la) + (m.y / lm) * (na.y / la));
+    // (The hull runs counter-clockwise: its sides' outward normals point right of them.)
+    return { x: q.x + (m.x / lm) * WALL_ROOM / cos, y: q.y + (m.y / lm) * WALL_ROOM / cos };
+  });
+  const ring: Pt[] = [];
+  out.forEach((a, i) => {
+    const b = out[(i + 1) % n]!, k = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / WALL_PIECE));
+    for (let j = 0; j < k; j++) ring.push({ x: a.x + ((b.x - a.x) * j) / k, y: a.y + ((b.y - a.y) * j) / k });
+  });
   return [...ring, ring[0]!];
 }
-const wallMiddle = (wall: readonly Pt[]): Pt => { const r = wall.slice(0, -1); return { x: r.reduce((a, p) => a + p.x, 0) / r.length, y: r.reduce((a, p) => a + p.y, 0) / r.length }; };
 // The eras a city is dressed for: the game's (Ancient, Classical,
 // Medieval) and the Modern era ahead of it (the City samples preview it).
 export type DressEra = 0 | 1 | 2 | 3;
@@ -110,13 +115,9 @@ export function dressCity(c: CityLook): DressedCity {
   const wonders = c.wonders.slice(0, MAX_WONDERS);
   const total = Math.min(MAX_BUILDINGS, Math.round(4 + 3 * c.pop));
   const skyscrapers = c.era >= 3 && c.pop >= SKYSCRAPER_FROM ? Math.min(total, Math.floor(c.pop / SKYSCRAPER_PER)) : 0;
-  // The walls first: round the city's land (`free`), from its middle out to
-  // where it ends in twelve directions; the town then keeps inside them,
-  // WALL_ROOM in from them.
-  const wall = c.walled ? wallRing(c.free) : null;
-  const inner = wall ? wall.slice(0, -1).map((p, i) => { const m = wallMiddle(wall), d = Math.hypot(p.x - m.x, p.y - m.y); return { x: m.x + (p.x - m.x) * Math.max(0, d - WALL_ROOM) / d, y: m.y + (p.y - m.y) * Math.max(0, d - WALL_ROOM) / d, i }; }) : null;
-  const free = inner ? (p: Pt) => c.free(p) && pointInPoly(p, inner) : c.free;
-  const painting = paintCity({ wonders: wonders.length, skyscrapers, buildings: total - skyscrapers, seed: c.seed, free });
+  // The town on its land (`free`: its tile's painted land, padded), then
+  // its walls round it.
+  const painting = paintCity({ wonders: wonders.length, skyscrapers, buildings: total - skyscrapers, seed: c.seed, free: c.free });
   const tall = Math.min(0.8, Math.max(0.15, c.pop / 20));
   const floorsOf = (b: Painted): Floors => {
     if (b.kind === 'skyscraper') return 12;
@@ -140,5 +141,5 @@ export function dressCity(c: CityLook): DressedCity {
     const [hw, hd] = LOT_SIZE[fp];
     return { model, at: b.at, yaw: b.yaw, hw: hw * sx, hd: hd * sz, scale: CITY_CELL / CELL, sx, sz, variant: rand() };
   });
-  return { painting, buildings, roadRgb: ROAD_RGB[c.era], wall };
+  return { painting, buildings, roadRgb: ROAD_RGB[c.era], wall: c.walled ? wallRound(painting) : null };
 }

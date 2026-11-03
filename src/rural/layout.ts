@@ -13,7 +13,8 @@ import type { ResourceKey } from '../resources.ts';
 import { STAGE_TECHS } from '../techs.ts';
 import { CREATURE_SCALE } from '../creatures.ts';
 import { mulberry32 } from '../rng.ts';
-import { rhoOf, pointInPoly, type Pt, type Floors } from '../town/geometry.ts';
+import { rhoOf, pointInPoly, LOT_SIZE, CELL, type Pt, type Floors } from '../town/geometry.ts';
+import { CITY_CELL } from '../cityPainter.ts';
 import { paintFarm, WORK_OF, type Farm } from '../farmPainter.ts';
 import { CROP_HEIGHT, CROP_PALETTE, CROP_STAND_SATURATION, PLOT_SIZES, MAX_STAGE, PLANT_ROW_W, cropIndex, plotAt } from './plots.ts';
 import { SCATTER_GAP, scatterIn, type AreaLook, type CropRegion, type Fill } from './look.ts';
@@ -36,7 +37,34 @@ export interface RuralSite {
   readonly ours: (p: Pt) => boolean;  // the land painted as this tile's (its fields fill it)
   readonly inner: (p: Pt) => boolean; // that, with some room all round (a fence keeps to it)
   readonly pool: (p: Pt) => boolean;  // its water a wetland's own pools, not a river or the sea
+  readonly field: FieldRect | null;   // its fields: the largest rectangle in its padded land (largestRect), in the farm's frame
 }
+// A rectangle in the farm's frame (u along its axis, v across: tile steps).
+export interface FieldRect { readonly u0: number; readonly v0: number; readonly u1: number; readonly v1: number }
+const FIELD_STEP = 0.03;
+// The largest rectangle, lined up with the farm's axis, of ground where
+// `ok` holds (sampled every FIELD_STEP over the tile and a little past it,
+// u along the axis, v across), or null where there is none.
+export function largestRect(ok: (u: number, v: number) => boolean): FieldRect | null {
+  const H = Math.ceil(1.2 / FIELD_STEP), N = 2 * H + 1, at = (i: number) => (i - H) * FIELD_STEP;
+  const height = new Int32Array(N);
+  let best = 0, rect: FieldRect | null = null;
+  for (let j = 0; j < N; j++) {
+    for (let i = 0; i < N; i++) height[i] = ok(at(i), at(j)) ? height[i]! + 1 : 0;
+    // (The largest rectangle under the histogram of runs up to row j.)
+    const stack: number[] = [];
+    for (let i = 0; i <= N; i++) {
+      const h = i < N ? height[i]! : 0;
+      while (stack.length && height[stack[stack.length - 1]!]! >= h) {
+        const top = stack.pop()!, hh = height[top]!, left = stack.length ? stack[stack.length - 1]! + 1 : 0, area = hh * (i - left);
+        if (hh > 0 && area > best) { best = area; rect = { u0: at(left) - FIELD_STEP / 2, u1: at(i - 1) + FIELD_STEP / 2, v0: at(j - hh + 1) - FIELD_STEP / 2, v1: at(j) + FIELD_STEP / 2 }; }
+      }
+      stack.push(i);
+    }
+  }
+  return rect;
+}
+const inField = (r: FieldRect | null, pu: number, pv: number) => r !== null && pu >= r.u0 && pu <= r.u1 && pv >= r.v0 && pv <= r.v1;
 export interface RuralInput {
   readonly imp: ImprovementKey;
   readonly stage: number;
@@ -56,7 +84,7 @@ export interface RuralPlan {
 // A farm's crops: tufts in rows this far apart, this far along them, this
 // wide; kept off the plots' edges, the hex's rim, the homestead.
 export const CROP_ROW = 0.017, CROP_STEP = 0.0125, CROP_WIDTH = 0.017;
-const CROP_EDGE = 0.007, CROP_REACH = 1.3, CROP_HOME_GAP = 0.06;
+const CROP_EDGE = 0.007, CROP_HOME_GAP = 0.06;
 // A paddy's rice stands in its water, up to this share of its height.
 export const PADDY_DEPTH = 0.85;
 // A plantation's tufts: this far apart along every other row, this wide.
@@ -78,38 +106,17 @@ export function planFarm(inp: RuralInput, site: RuralSite): Farm | null {
   return work ? paintFarm({ work, axis: inp.axis, density: stageLook(inp.imp, inp.stage, inp.res).density, seed: inp.seed, free: (p) => site.free(p) && site.ours(p) && site.depth(p) <= 0 }) : null;
 }
 
-// A pasture's fence round it: six corners, each out along its corner's
-// direction as far as the land is still the tile's (its painting, past its
-// hex's sides where that goes) with some room in from its edge and the
-// water (`inner`); then, while a side runs over another's land,
-// its two corners drawn in a little. (Good enough, not the largest such.)
-function fenceRing(site: RuralSite): Pt[] {
-  const inr = 1 / rhoOf(6, { x: 1, y: 0 }), rMax = 1.3 * inr / Math.cos(Math.PI / 6);
-  const dirs = Array.from({ length: 6 }, (_, j) => ({ x: Math.cos(Math.PI / 6 + (j * Math.PI) / 3), y: Math.sin(Math.PI / 6 + (j * Math.PI) / 3) }));
-  const r = dirs.map((d) => {
-    let k = rMax;
-    while (k > rMax * 0.3 && !(site.inner({ x: d.x * k, y: d.y * k }) && site.inner({ x: d.x * k * 0.5, y: d.y * k * 0.5 }))) k -= rMax * 0.02;
-    return k;
-  });
-  const pt = (j: number) => ({ x: dirs[j]!.x * r[j]!, y: dirs[j]!.y * r[j]! });
-  for (let pass = 0; pass < 12; pass++) {
-    let moved = false;
-    for (let j = 0; j < 6; j++) {
-      const a = pt(j), b = pt((j + 1) % 6);
-      for (let n = 1; n < 8; n++) {
-        if (site.inner({ x: a.x + ((b.x - a.x) * n) / 8, y: a.y + ((b.y - a.y) * n) / 8 })) continue;
-        r[j] = Math.max(rMax * 0.3, r[j]! * 0.95); r[(j + 1) % 6] = Math.max(rMax * 0.3, r[(j + 1) % 6]! * 0.95);
-        moved = true;
-        break;
-      }
-    }
-    if (!moved) break;
-  }
-  return [...dirs.map((_, j) => pt(j)), pt(0)];
-}
-
 // How far a walker's loop takes it from where it stands (tile steps, at its size `s`).
 const walkOf = (m: RuralModel, s: number): number => 2 * roamOf(m) * s;
+// A camp's lodge drawn on a town's 2×3 lot (LOT_SIZE b23: its long side
+// along the lodge), as large as its houses: the size (one for all axes) fitting it.
+function lotFit(m: RuralModel): number {
+  const g = ruralGeometry(ruralModelKind(m));
+  g.computeBoundingBox();
+  const b = g.boundingBox!, [hw, hd] = LOT_SIZE.b23;
+  // (A town's houses stand on lots CITY_CELL / CELL larger than the plain ones: cityDress.ts.)
+  return (CITY_CELL / CELL) * Math.min((2 * hd) / (b.max.x - b.min.x), (2 * hw) / (b.max.z - b.min.z));
+}
 // How far a model reaches from its middle (tile steps, at its size `s`).
 const reach = new Map<RuralModel, number>();
 function radiusOf(m: RuralModel, s: number): number {
@@ -158,7 +165,10 @@ export function layoutRural(inp: RuralInput, farm: Farm, site: RuralSite, keep: 
   // it has them: round the farm, across it into paddocks).
   if (look.herd) {
     const unit = CREATURE_SCALE * FENCE_BOOST; // (a fence run's model length, tile steps)
-    const ring = fenceRing(site), fences = look.fence ? pastureFences(stage, inp.axis, ring) : [];
+    // (Its fence round its field, a little inside it.)
+    const f = site.field, inset = 0.02, corner = (pu: number, pv: number): Pt => ({ x: pu * u.x + pv * v.x, y: pu * u.y + pv * v.y });
+    const ring = f ? [corner(f.u0 + inset, f.v0 + inset), corner(f.u1 - inset, f.v0 + inset), corner(f.u1 - inset, f.v1 - inset), corner(f.u0 + inset, f.v1 - inset), corner(f.u0 + inset, f.v0 + inset)] : [];
+    const fences = look.fence && f ? pastureFences(stage, inp.axis, ring) : [];
     // (How near p comes to a fence: a beast's walk keeps off them all, the paddocks' too.)
     const toFence = (p: Pt) => Math.min(Infinity, ...fences.flatMap((line) => line.slice(0, -1).map((a, i) => {
       const b = line[i + 1]!, dx = b.x - a.x, dy = b.y - a.y, t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1)));
@@ -175,17 +185,19 @@ export function layoutRural(inp: RuralInput, farm: Farm, site: RuralSite, keep: 
     for (let n = 0, tries = 0; n < want && tries < want * 10; tries++) {
       const p = { x: (r() - 0.5) * 1.1, y: (r() - 0.5) * 1.1 };
       const m = look.herd.models[n % look.herd.models.length]!, s = kitBoost(m) * (0.9 + 0.2 * r()), walk = walkOf(m, s);
-      if (!pointInPoly(p, ring) || toFence(p) < walk + radiusOf(m, s) * 0.6 || d2(p, farm.home) < 0.1 || inYard(p) || !site.free(p) || !dry(p) || kept(p, walk) || taken.some((q) => d2(p, q.p) < q.r + walk)) continue;
+      if (ring.length === 0 || !pointInPoly(p, ring) || toFence(p) < walk + radiusOf(m, s) * 0.6 || d2(p, farm.home) < 0.1 || inYard(p) || !site.free(p) || !dry(p) || kept(p, walk) || taken.some((q) => d2(p, q.p) < q.r + walk)) continue;
       add(m, p, r() * 6.28, s, look.herd.colors[n % look.herd.colors.length]!);
       taken.push({ p, r: walk });
       n++;
     }
   }
 
+  // (The field: where crops and plants stand; none without one.)
+  const F = site.field ?? { u0: 0, v0: 0, u1: -1, v1: -1 };
   // Crops: farms, and rice paddies (in their water: peat is only cut).
   const ps = plotStage(imp, stage);
   // (The fields fill the tile as its land is painted, past its hex's sides where its painting goes.)
-  const off = (p: Pt) => rhoOf(6, p) > CROP_REACH || !site.ours(p) || d2(p, farm.home) < CROP_HOME_GAP || inYard(p) || kept(p) || !site.free(p);
+  const off = (p: Pt) => !inField(site.field, p.x * u.x + p.y * u.y, p.x * v.x + p.y * v.y) || d2(p, farm.home) < CROP_HOME_GAP || inYard(p) || kept(p) || !site.free(p);
   if (imp === 'farm' || (imp === 'wetland' && inp.region === 'paddy')) {
     const paddy = inp.region === 'paddy';
     const tint = CROP_PALETTE[inp.region].map((h) => {
@@ -197,7 +209,7 @@ export function layoutRural(inp: RuralInput, farm: Farm, site: RuralSite, keep: 
     // (A first farm is patchy, a ruin's mostly gone to weed; a paddy is planted
     // all over its pools, every plot, to the edges, half as thick.)
     const thin = stage === 0 ? 0.7 : paddy ? 0.5 : stage === 1 ? 0.2 : 0;
-    for (let x = -0.7; x <= 0.7; x += CROP_ROW) for (let y = -0.7; y <= 0.7; y += CROP_STEP) {
+    for (let x = F.u0; x <= F.u1; x += CROP_ROW) for (let y = F.v0; y <= F.v1; y += CROP_STEP) {
       const pu = x + (rand() - 0.5) * CROP_ROW * 0.3, pv = y + (rand() - 0.5) * CROP_STEP * 0.8, turn = rand() * Math.PI, shade = 0.9 + 0.2 * rand(), grow = 0.9 + 0.2 * rand();
       const p = { x: pu * u.x + pv * v.x, y: pu * u.y + pv * v.y };
       if (rand() < thin || off(p)) continue;
@@ -217,9 +229,9 @@ export function layoutRural(inp: RuralInput, farm: Farm, site: RuralSite, keep: 
     const spots: { p: Pt; heading: number }[] = [];
     if (pl.rows) {
       const sx = PLOT_SIZES[Math.min(ps, MAX_STAGE)]![0];
-      for (let y = -0.7; y <= 0.7; y += PLANT_STEP) {
+      for (let y = F.v0; y <= F.v1; y += PLANT_STEP) {
         let last = '';
-        for (let x = -0.7; x <= 0.7; x += 0.001) {
+        for (let x = F.u0; x <= F.u1; x += 0.001) {
           const plot = plotAt(x, y, inp.salt, ps), row = (plot.f[0] * sx) / PLANT_ROW_W, id = `${plot.h}|${Math.floor(row)}`;
           if (Math.floor(row) % 2 || row % 1 < 0.72 || id === last) continue;
           last = id;
@@ -228,7 +240,7 @@ export function layoutRural(inp: RuralInput, farm: Farm, site: RuralSite, keep: 
       }
     } else {
       // (A first plantation fills its patches loosely, a ruin's thinly.)
-      for (let x = -0.7; x <= 0.7; x += 0.017) for (let y = -0.7; y <= 0.7; y += 0.015) {
+      for (let x = F.u0; x <= F.u1; x += 0.017) for (let y = F.v0; y <= F.v1; y += 0.015) {
         const pu = x + (rand() - 0.5) * 0.008, pv = y + (rand() - 0.5) * 0.008, plot = plotAt(pu, pv, inp.salt, ps);
         if (rand() < (worn ? 0.75 : 0.3) || plot.edge < CROP_EDGE || cropIndex(plot.h, ps) === 3) continue;
         spots.push({ p: { x: pu * u.x + pv * v.x, y: pu * u.y + pv * v.y }, heading: rand() * Math.PI });
@@ -246,7 +258,7 @@ export function layoutRural(inp: RuralInput, farm: Farm, site: RuralSite, keep: 
   // people a little closer.
   const r = mulberry32(inp.seed + 0x7f);
   for (const th of look.things) for (let n = 0; n < th.n; n++) {
-    const m = th.model, fig = FIGURES.has(m), s = kitBoost(m) * (0.9 + 0.2 * r());
+    const m = th.model, fig = FIGURES.has(m), s = m === 'lodge' ? lotFit(m) : kitBoost(m) * (0.9 + 0.2 * r());
     // (A walker keeps its whole walk clear, not just where it stands.)
     const rad = radiusOf(m, s) * (fig ? 0.5 : 1) + walkOf(m, s), gap = fig ? 0.004 : GAP;
     const leaf = th.colors ? th.colors[Math.floor(r() * th.colors.length)]! : 0xffffff;

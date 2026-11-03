@@ -28,7 +28,8 @@ const FURROW_REPEAT = 0.045;
 //                           farm's palette by climate; axis: its plots' turn)
 //  10 soil.rgb, grass       what the ground is made of up close (look.ts
 //  11 dry, soil, sand, litter  GroundLook): the bare soil's color and the
-//  12 moss, snow, -, -      shares of the cover materials (sum 1)
+//  12 moss, snow, -, -
+//  13 field u0, v0, u1, v1  a farm's fields: a rectangle in its frame (cityProps.ts farmRect; u0 > u1 none)      shares of the cover materials (sum 1)
 // Fan table rows (FAN_ROWS texels):
 //   0 ids (t, A, B, C)
 //   1 rounding of edges i-1, i, i+1 and A|B
@@ -53,7 +54,7 @@ const FURROW_REPEAT = 0.045;
 // at the object-space position, so it wraps the sphere without seams.
 
 export const TEX_W = 2048;
-export const TILE_ROWS = 13;
+export const TILE_ROWS = 14;
 export const FAN_ROWS = 6;
 const NOISE_SIZE = 64;
 
@@ -604,8 +605,11 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               // dry ground between left wild.)
               // (Wherever the painting is most its tile's, at full strength: its
               // edge the tiles' border, a river's middle where one runs there.)
-              // (A little in from the border: its soft weight at least FIELD_PAD, cityProps.ts.)
-              float farm = owned(w, k) * smoothstep(0.6, 0.65, soft[k]) * (meCode == 5 ? 1.0 - snowCover : keep);
+              // (Its fields: a rectangle in its padded land, cityProps.ts farmRect.)
+              vec4 fr = tileRow(me, 13);
+              vec2 fw2 = fwidth(uv);
+              vec2 inF = smoothstep(fr.xy - fw2, fr.xy + fw2, uv) * (1.0 - smoothstep(fr.zw - fw2, fr.zw + fw2, uv));
+              float farm = inF.x * inF.y * (meCode == 5 ? 1.0 - snowCover : keep);
               if (region == ${CROP_CODE.paddy}) farm *= smoothstep(-0.00012, 0.00004, vDepth);
               vec2 f; float edge;
               float h = plotAt(uv, me, stage, f, edge);

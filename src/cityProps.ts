@@ -25,7 +25,7 @@ import { SCATTER_GAP, areaLook, cropRegion, scatterIn, type RGB } from './rural/
 import { ruralModelKind, type RuralModel } from './rural/models.ts';
 import { stageLook, waterLook } from './rural/stages.ts';
 import { kitBoost } from './rural/kit.ts';
-import { planFarm, layoutRural, PADDY_DEPTH, type RuralInput, type RuralSite } from './rural/layout.ts';
+import { planFarm, layoutRural, largestRect, PADDY_DEPTH, type FieldRect, type RuralInput, type RuralSite } from './rural/layout.ts';
 import { RESOURCE_IMPROVEMENT } from './resources.ts';
 import { len as len2, sub as sub2, type Pt as Pt2 } from './town/geometry.ts';
 import { mulberry32, type Rng } from './rng.ts';
@@ -185,6 +185,21 @@ export class CityProps {
 
   constructor(private readonly game: Game, private readonly sample: SpotSampler, private readonly sampleDir: DirSampler,
     private readonly scale: number) {}
+
+  // A farm's fields on tile t: the largest rectangle along its axis in its
+  // painted land, padded (FIELD_PAD, BEACH; dry, but for a wetland's
+  // paddies), in the farm's frame. Fixed with the painting: cached.
+  private readonly fields = new Map<number, FieldRect | null>();
+  farmRect(t: number): FieldRect | null {
+    if (this.fields.has(t)) return this.fields.get(t)!;
+    const g = this.game, { toDir } = onTile(g, t), a = farmAxis(t), ux = Math.cos(a), uy = Math.sin(a), wetland = g.builtAt(t) === 'wetland';
+    const r = largestRect((pu, pv) => {
+      const s = this.sampleDir(toDir({ x: pu * ux - pv * uy, y: pu * uy + pv * ux }));
+      return (s.owner === undefined || (s.owner === t && (s.own ?? 1) >= FIELD_PAD)) && (s.coast ?? 9) >= BEACH && (wetland || s.water - s.ground <= DRY);
+    });
+    this.fields.set(t, r);
+    return r;
+  }
 
   // Forget every layout (the ground under them changed).
   invalidate(): void { this.version++; }
@@ -431,6 +446,7 @@ export class CityProps {
         inner: imp === 'pasture' ? innerMask(toT, (d) => this.sampleDir(d), (s) => (s.owner === undefined || s.owner === t) && s.water - s.ground <= DRY) : () => false,
         // (A paddy's water is its own pools: not a river running by, nor the sea.)
         pool: (p) => { const s = this.sampleDir(toT(p)); return (s.bank ?? 0) < 0.05 && (s.coast ?? 1) > 0.3; },
+        field: this.farmRect(t),
       };
       const farm = planFarm(inp, site);
       if (!farm) continue;

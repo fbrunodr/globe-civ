@@ -1426,6 +1426,9 @@ export class GlobeRenderer {
       td[o + 2] = g.pillaged[t] ? BURNT_CODE : imp ? IMPROVEMENT_CODE[imp] : IMPROVEMENT_CODE.none;
       td[o + 3] = u === USE.center ? 1 : 0;
       // Its crops (the resource's own, if a farm of it) and its farm's stage (its owner's techs).
+      // Its fields (cityProps.ts farmRect), for a farm, plantation or wetland.
+      const fieldRect = imp === 'farm' || imp === 'plantation' || imp === 'wetland' ? this.cityProps.farmRect(t) : null;
+      td.set(fieldRect ? [fieldRect.u0, fieldRect.v0, fieldRect.u1, fieldRect.v1] : [0, 0, -1, -1], t * TILE_ROWS * 4 + 52);
       td[t * TILE_ROWS * 4 + 35] = CROP_CODE[cropRegion(imp ?? g.improvementAt(t), g.biome[t]!, g.feature[t] ?? null, g.map.temperature[t]!, g.resourceFor(t, g.ownerOf(t)))] + STAGE_STEP * plotStage(imp, g.stageAt(t));
     }
     this.tileTex.needsUpdate = true;
