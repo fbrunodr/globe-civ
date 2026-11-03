@@ -482,8 +482,13 @@ function chariot(gear: Gear, coat: number, female: boolean): THREE.BufferGeometr
       rod(V(s * 0.16, CAR_FLOOR + 0.1, CAR_Z + 0.18), V(s * 0.17, 0.62, 0.25), 0.014, 0.014, 3, WOOD)]),
   ];
   const archer = figure(gear, 'bow', false, { female, still: true, quiver: true });
-  // (Still in the car: nothing swings; its flags kept.)
-  for (const g of archer) { const a = (g.getAttribute('aLimb') as THREE.BufferAttribute).array; for (let i = 0; i < a.length; i += 4) a.fill(0, i, i + 3); g.translate(0, CAR_FLOOR, CAR_Z); }
+  // (Still in the car: nothing swings, nor turns in the hand (the bow kept
+  // raised as it is made, not aimed); its other flags kept.)
+  for (const g of archer) {
+    const a = (g.getAttribute('aLimb') as THREE.BufferAttribute).array;
+    for (let i = 0; i < a.length; i += 4) { a.fill(0, i, i + 3); if (Math.floor(a[i + 3]! / RIG.grip) % 2) a[i + 3]! -= RIG.grip; }
+    g.translate(0, CAR_FLOOR, CAR_Z);
+  }
   return [...out, ...archer];
 }
 // The knight's horse in its caparison: a cloth laid over its back,
