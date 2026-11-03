@@ -66,9 +66,9 @@ const L = (...parts: ResourceLook['parts']): ResourceLook => ({ parts });
 const W = (...parts: ResourceLook['parts']): ResourceLook => ({ parts, water: true });
 const ORE = { copper: [0x3a9a7a, 0x4aa88a], iron: [0x9a4a2a, 0x8a3f24], gold: [0xe8c040, 0xd8b030], gems: [0x9a5ad0, 0x3ab0b0, 0xd04a7a], coal: [0x0e0d0c, 0x161412] } as const;
 export const RESOURCE_WILD: Record<ResourceKey, ResourceLook> = {
-  wheat: L({ model: 'grainPatch', n: 6, colors: [0xc8a446, 0xbf9c40, 0xd0ac52] }),
+  wheat: L({ model: 'grainPatch', n: 12, colors: [0xc8a446, 0xbf9c40, 0xd0ac52] }),
   rice: L({ model: 'wildRice', n: 7 }),
-  maize: L({ model: 'tallPatch', n: 5, colors: [0x6f9238, 0x7a9a40, 0x668a34] }),
+  maize: L({ model: 'tallPatch', n: 10, colors: [0x6f9238, 0x7a9a40, 0x668a34] }),
   // (Bananas: no model of their own; a third of the tile's trees are banana plants, render.ts.)
   bananas: L(),
   cattle: L({ model: 'ox', n: 3, colors: [0x2a2018, 0x3a2a1e, 0x5a3a24] }),
