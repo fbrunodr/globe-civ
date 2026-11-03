@@ -571,10 +571,9 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               vec2 uv = vec2(ca * lp.x + sa * lp.y, -sa * lp.x + ca * lp.y);
               float ringW = fwidth(vRing);
               // (A paddy's plots are its flooded ground, under its water, the
-              // dry ground between left wild. A first farm's edge is ragged:
-              // it fades into the wild.)
-              float rim = ${SAFE_RHO.toFixed(3)} - (stage <= 1 ? 0.06 * (tFbm(P / (0.12 * uR0) + 1.7, 2) - 0.2) : 0.0);
-              float farm = (1.0 - smoothstep(rim, rim + ringW + (stage <= 1 ? 0.04 : 0.0), vRing)) * (meCode == 5 ? 1.0 - snowCover : keep);
+              // dry ground between left wild.)
+              float rim = ${SAFE_RHO.toFixed(3)};
+              float farm = (1.0 - smoothstep(rim, rim + ringW, vRing)) * (meCode == 5 ? 1.0 - snowCover : keep);
               if (region == ${CROP_CODE.paddy}) farm *= smoothstep(-0.00012, 0.00004, vDepth);
               vec2 f; float edge;
               float h = plotAt(uv, me, stage, f, edge);

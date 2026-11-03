@@ -293,8 +293,7 @@ function farmGround(imp: ImprovementKey, region: CropRegion, stage: number, salt
     const x = (i / N - 0.5) * 2 * half, y = (j / N - 0.5) * 2 * half;
     let c = bg.clone();
     const rho = rhoOf(6, { x, y });
-    const ragged = ps <= 1 ? 0.05 * Math.sin(x * 23 + y * 17) * Math.sin(y * 29 - x * 11) : 0;
-    if (imp !== 'pasture' && rho < SAFE_RHO + ragged) {
+    if (imp !== 'pasture' && rho < SAFE_RHO) {
       const pl = plotAt(x, y, salt, ps), k = cropIndex(pl.h, ps);
       c = pal[k]!.clone().multiplyScalar(0.94 + 0.12 * ((pl.h * 7.3) % 1));
       if (imp === 'plantation' && ps >= 2 && ((pl.f[0] * PLOT_SIZES[ps]![0] / PLANT_ROW_W) % 1) < 0.45) c.lerp(new THREE.Color(0.36, 0.29, 0.2), 0.7);
