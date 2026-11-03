@@ -54,6 +54,8 @@ const FURROW_REPEAT = 0.045;
 
 export const TEX_W = 2048;
 export const TILE_ROWS = 13;
+// A dirt road's colour (render.ts), the farms' trodden borders' too.
+export const ROAD_DIRT = [0.5, 0.4, 0.29] as const;
 export const FAN_ROWS = 6;
 const NOISE_SIZE = 64;
 
@@ -659,13 +661,14 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               gN = mix(gN, tn, farm * (1.0 - hedge * 0.5));
               diffuseColor.rgb = mix(diffuseColor.rgb, gTone(crop, tex.r) * vShade, farm * 0.92);
               // Its border (the padding, its own land outside the fields):
-              // worn-out ground, bare packed soil: the soil scan in the tile's
-              // soil colour (not round a wetland's paddies).
+              // worn-out ground, packed dirt as the roads are (ROAD_DIRT, the
+              // soil scan's grain: render.ts makeRoadMaterial; not round a
+              // wetland's paddies).
               float pad = owned(w, k) * (1.0 - smoothstep(0.6, 0.65, soft[k])) * keep * (meCode == 5 ? 0.0 : 1.0);
               if (pad > 0.001) {
                 vec3 sn;
                 vec4 st = gSample(${GROUND_LAYER.soil}.0, sn, 1.0);
-                diffuseColor.rgb = mix(diffuseColor.rgb, gTone(tileRow(me, 10).rgb, st.r) * vShade, pad * 0.9);
+                diffuseColor.rgb = mix(diffuseColor.rgb, vec3(${ROAD_DIRT.join(', ')}) * 2.0 * st.r * vShade, pad * 0.9);
                 gN = mix(gN, sn, pad);
               }
             }
