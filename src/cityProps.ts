@@ -349,9 +349,10 @@ export class CityProps {
     const wonders: SiteModel[] = [...g.wondersAt(city.tile).flatMap((w) => (w === 'machuPicchu' ? [] : [w])), ...(city.wonderTile === city.tile ? ['scaffold' as const] : [])];
     const dressed = dressCity({
       civ: g.players[city.owner]!.name, era: dressEraOf(era), pop: city.pop, wonders, walled, seed: mix(city.id, 0xc17),
-      // (Its own land: dry, painted as its tile's, and so all round it for
-      // INSET: breathing room from a river, the sea and the next tile's land.)
-      free: innerMask(toDir, (d) => this.sampleDir(d), (s) => !wet(s) && (s.owner === undefined || s.owner === city.tile)),
+      // (Its own land: dry, off a beach (sea or lake), painted as its tile's,
+      // and so all round it for INSET: breathing room from a river, the sea
+      // and the next tile's land.)
+      free: innerMask(toDir, (d) => this.sampleDir(d), (s) => !wet(s) && (s.coast ?? 9) >= BEACH && (s.owner === undefined || s.owner === city.tile)),
     });
     // (The painter keeps them apart and off the water: each stands where painted.)
     dressed.buildings.forEach((b, n) => {
