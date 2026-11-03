@@ -403,7 +403,11 @@ function buildTerrains(): void {
   row++;
   const floraOf = (_r: ResourceKey | null, land: TerrainSetKey | null, seed: number, clearR: number) => {
     const set = land ? TERRAINS.get(land)! : null, v = set?.variants.find((x) => x.mix.length > 0);
-    return v ? placeVariant({ ...v, density: Math.round(v.density * 0.5) }, { ...o, seed }).filter((p) => { const at = new THREE.Vector3().setFromMatrixPosition(p.m); return Math.hypot(at.x, at.z) > clearR * STEP; }) : [];
+    const items = v ? placeVariant({ ...v, density: Math.round(v.density * 0.5) }, { ...o, seed }).filter((p) => { const at = new THREE.Vector3().setFromMatrixPosition(p.m); return Math.hypot(at.x, at.z) > clearR * STEP; }) : [];
+    // (Bananas grow only on their resource's tile: a third of its trees, as render.ts.)
+    const rb = mulberry32(seed ^ 0xba);
+    return _r !== 'bananas' ? items : items.map((p) => (CATALOG[p.key as CatalogKind]?.layer === 'Canopy' || CATALOG[p.key as CatalogKind]?.layer === 'Understory') && rb() < 1 / 3
+      ? { ...p, key: 'banana', geo: catalogGeo('banana'), leaf: new THREE.Color(CATALOG.banana.leaf) } : p);
   };
   const rowsOf: { r: ResourceKey | null; imp: ImprovementKey; land: TerrainSetKey | null; name: string }[] = [
     ...RESOURCE_KEYS.map((r) => ({ r, imp: RESOURCE_IMPROVEMENT[r], land: landOf(r), name: RESOURCES[r].name })),

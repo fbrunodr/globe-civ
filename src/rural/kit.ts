@@ -318,15 +318,6 @@ function oilTank(): G[] { return [cyl(3.2, 3.2, 4.5, 10, 0xdcdcd8), cone(3.25, 0
 const crown = (c: V3, r: V3, paint: Paint, lump = 0.22) => fleece(c, r, paint, lump, 2);
 // (Points written as plain arrays.)
 const v = (a: readonly number[]): V3 => [a[0]!, a[1]!, a[2]!];
-function bananaPlant(): G[] {
-  const out = [tube([[0, 0, 0], [0.04, 1.4, 0], [0.02, 2.6, 0]], [0.18, 0.14, 0.11], 0x7a7a3a, 8, 2)];
-  for (let k = 0; k < 7; k++) {
-    const a = (k / 7) * Math.PI * 2, d: V3 = [Math.cos(a), 0, Math.sin(a)];
-    out.push(tube([[0, 2.5, 0], [d[0] * 0.8, 3.0, d[2] * 0.8], [d[0] * 1.6, 2.7, d[2] * 1.6], [d[0] * 2.1, 2.1, d[2] * 2.1]], [0.03, 0.32, 0.3, 0.05], k % 2 ? 0x5e9a3a : 0x4f8a30, 4, 2, 0.12));
-  }
-  out.push(ellipsoid([0.22, 1.9, 0], [0.18, 0.35, 0.18], 0x9ab83a, 8), cone(0.1, 0.3, 6, 0x7a2a3a, { x: 0.28, y: 1.35, rz: Math.PI }));
-  return out;
-}
 // ---- the resources in the wild ----
 function wildRice(): G[] {
   const out: G[] = [];
@@ -406,8 +397,6 @@ export const KIT = {
   adit, headframe, steamHeadframe, smelter, oreHeap, oreCart, treadCrane, steamCrane,
   // water and oil
   canoe, sailboat, trawler, derrick, pumpjack, oilTank,
-  // plantations
-  bananaPlant,
   // the wild
   wildRice, outcrop: () => outcrop(), oreRock: () => outcrop(true), boulders, fishSchool, oysters, resinPine,
   // worked touches
@@ -424,7 +413,7 @@ export const SPECIES_OF: Partial<Record<KitModel, Species>> = { horse: 'horse', 
 // works (windpumps, silos, headframes, lodges) least.
 export const FIGURE_BOOST = 6.5, SMALL_BOOST = 4, PLANT_BOOST = 3, KIT_BOOST = 3.2, WILD_BOOST = 5;
 const SMALL: ReadonlySet<KitModel> = new Set<KitModel>(['plough', 'tractor', 'combine', 'trough', 'brokenCart', 'stooks', 'rick', 'bales', 'hideRack', 'oreHeap', 'oreCart', 'winePress', 'cocoonTrays', 'tuskPile', 'cottonBales', 'teaBaskets', 'saltHeaps', 'canoe']);
-const PLANTS: ReadonlySet<KitModel> = new Set<KitModel>(['bananaPlant', 'wildRice', 'resinPine']);
+const PLANTS: ReadonlySet<KitModel> = new Set<KitModel>(['wildRice', 'resinPine']);
 // (The wild's rock, shells and fish: drawn as large as the resources' props were.)
 const WILD: ReadonlySet<KitModel> = new Set<KitModel>(['outcrop', 'oreRock', 'boulders', 'oysters', 'fishSchool', 'resinPine', 'campfire']);
 export const kitBoost = (k: KitModel): number => (FIGURES.has(k) ? FIGURE_BOOST : WILD.has(k) ? WILD_BOOST : SMALL.has(k) ? SMALL_BOOST : PLANTS.has(k) ? PLANT_BOOST : KIT_BOOST);

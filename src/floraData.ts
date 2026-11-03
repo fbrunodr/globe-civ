@@ -125,14 +125,14 @@ export const BIOME_FLORA: Record<BiomeKey, FloraSet> = {
     v('Outback', A, 85, [['eucalyptus', 15], ['shrub', 15], ['tallGrass', 55, SPINIFEX], ['termiteMound', 10], ['boulder', 3], ['tor', 2]]),
   ] },
   monsoonForest: { variants: [
-    v('Teak-sal', 'any', 140, [['beechMaple', 50, DRY], ['bamboo', 12], ['banana', 5], ['palm', 5], ['shrub', 13], ['tallGrass', 8], ['termiteMound', 2], ['fallenLog', 5]], { wet: -0.2 }),
-    v('Bamboo forest', O, 165, [['beechMaple', 20, DRY], ['bamboo', 45], ['banana', 12], ['shrub', 8], ['fernClump', 10], ['fallenLog', 5]], { wet: 0.6 }),
+    v('Teak-sal', 'any', 140, [['beechMaple', 50, DRY], ['bamboo', 12], ['palm', 10], ['shrub', 13], ['tallGrass', 8], ['termiteMound', 2], ['fallenLog', 5]], { wet: -0.2 }),
+    v('Bamboo forest', O, 165, [['beechMaple', 20, DRY], ['bamboo', 57], ['shrub', 8], ['fernClump', 10], ['fallenLog', 5]], { wet: 0.6 }),
     v('Thorn forest', W, 95, [['beechMaple', 20, DRY], ['acacia', 15], ['pricklyPear', 15], ['shrub', 30], ['tallGrass', 12], ['termiteMound', 3], ['boulder', 5]], { wet: -0.6 }),
   ] },
   jungle: { variants: [
-    v('Lowland', 'any', 200, [['jungleTree', 40, RAINFOREST], ['kapok', 6], ['palm', 10], ['banana', 14], ['shrub', 7], ['fernClump', 18], ['fallenLog', 5]]),
-    v('Várzea', W, 190, [['jungleTree', 30, RAINFOREST], ['kapok', 4], ['palm', 6], ['fanPalm', 25], ['banana', 10], ['fernClump', 18], ['fallenLog', 7]], { wet: 0.5 }),
-    v('Dipterocarp', O, 190, [['jungleTree', 35, RAINFOREST], ['kapok', 15], ['palm', 8], ['banana', 8], ['bamboo', 6], ['shrub', 5], ['fernClump', 18], ['fallenLog', 5]]),
+    v('Lowland', 'any', 200, [['jungleTree', 54, RAINFOREST], ['kapok', 6], ['palm', 10], ['shrub', 7], ['fernClump', 18], ['fallenLog', 5]]),
+    v('Várzea', W, 190, [['jungleTree', 30, RAINFOREST], ['kapok', 4], ['palm', 6], ['fanPalm', 35], ['fernClump', 18], ['fallenLog', 7]], { wet: 0.5 }),
+    v('Dipterocarp', O, 190, [['jungleTree', 43, RAINFOREST], ['kapok', 15], ['palm', 8], ['bamboo', 6], ['shrub', 5], ['fernClump', 18], ['fallenLog', 5]]),
   ] },
 };
 
@@ -185,7 +185,7 @@ export const BANK_CLIMATE: Record<BiomeKey, BankClimate> = {
 export const RIVER_BANKS: Record<BankClimate, readonly Entry[]> = {
   temperate: [['willow', 40], ['poplar', 20], ['reeds', 25], ['cattail', 15]],
   dry: [['palm', 30], ['poplar', 10], ['reeds', 30], ['shrub', 10], ['tallGrass', 20, GREEN_GRASS]],
-  tropical: [['palm', 25], ['banana', 25], ['reeds', 25], ['fernClump', 25]],
+  tropical: [['palm', 35], ['reeds', 35], ['fernClump', 30]],
   cold: [['willow', 15, DWARF_WILLOW, STUNTED], ['shrub', 40, DWARF_WILLOW], ['reeds', 20], ['cottonGrass', 25]],
 };
 // Sea coasts: coconut palms leaning out to sea on warm coasts; wind-bent

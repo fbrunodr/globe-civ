@@ -69,7 +69,8 @@ export const RESOURCE_WILD: Record<ResourceKey, ResourceLook> = {
   wheat: L({ model: 'grainPatch', n: 6, colors: [0xc8a446, 0xbf9c40, 0xd0ac52] }),
   rice: L({ model: 'wildRice', n: 7 }),
   maize: L({ model: 'tallPatch', n: 5, colors: [0x6f9238, 0x7a9a40, 0x668a34] }),
-  bananas: L({ model: 'bananaPlant', n: 7 }),
+  // (Bananas: no model of their own; a third of the tile's trees are banana plants, render.ts.)
+  bananas: L(),
   cattle: L({ model: 'ox', n: 3, colors: [0x2a2018, 0x3a2a1e, 0x5a3a24] }),
   sheep: L({ model: 'mouflon', n: 4, colors: [0x8a5a34, 0x7a4a2a, 0x9a6a40, 0x8a5a34] }),
   deer: L({ model: 'stag', n: 1, colors: [0x8a5a34] }, { model: 'deer', n: 3, colors: [0x9a6a40, 0x8a5e38] }),

@@ -34,8 +34,8 @@ describe('prop catalog', () => {
     expect(bad).toEqual([]);
   });
 
-  it('every prop is used by some variant', () => {
-    const used = new Set(allVariants.flatMap((v) => v.mix.map(([k]) => k)));
+  it('every prop is used by some variant (bananas: by their resource, render.ts)', () => {
+    const used = new Set<string>([...allVariants.flatMap((v) => v.mix.map(([k]) => k)), 'banana']);
     expect(CATALOG_KINDS.filter((k) => !used.has(k))).toEqual([]);
   });
 });

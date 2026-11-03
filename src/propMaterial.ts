@@ -186,7 +186,9 @@ const FLORA_VERTEX = `
       vec3 o = instanceMatrix[3].xyz;
       float ph = dot(o, vec3(4100.0, 3700.0, 2900.0));
       float gust = sin(uTime * 1.7 + ph) + 0.5 * sin(uTime * 2.9 + ph * 1.3);
-      transformed.xz += leafMask * transformed.y * ${WIND.toFixed(3)} * gust * vec2(1.0, 0.6);
+      // (Every leaf card sways, a bush's bursts of berries too, whatever their colour.)
+      float sway = max(leafMask, step(0.5, cardUv.z) * step(cardUv.z, 1.5));
+      transformed.xz += sway * transformed.y * ${WIND.toFixed(3)} * gust * vec2(1.0, 0.6);
       if (cardUv.z > 1.5) {
         float far = distance((modelMatrix * vec4(o, 1.0)).xyz, uEye) / uCropFar;
         transformed *= 1.0 - smoothstep(0.6, 1.0, far);

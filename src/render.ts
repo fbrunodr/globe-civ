@@ -107,6 +107,8 @@ export type DebugView = 'normal' | 'height' | 'water';
 // tiles keep whatever stands clear of their buildings and streets
 // (cityProps.floraClear); `urban` is that share for a rural tile with no
 // improvement.
+// A banana tile's trees (canopy and understory): a third of them are bananas (the only place they grow).
+const BANANA_IN: ReadonlySet<Layer> = new Set<Layer>(['Canopy', 'Understory']);
 const FLORA_KEEP: Record<'urban' | ImprovementKey, Record<Layer, number>> = {
   urban:   { Canopy: 0.06, Understory: 0.04, Ground: 0, Accent: 0 },
   farm:    { Canopy: 0.2, Understory: 0.12, Ground: 0.08, Accent: 0.3 },
@@ -957,8 +959,10 @@ export class GlobeRenderer {
             // Gentle large-scale variation in density, never clearings.
             const vary = 0.85 + 0.3 * this.propNoise.fbm(p.x * 9, p.y * 9, p.z * 9, 2);
             if (keep >= Math.min(1, (veg.density(env) / spots) * vary)) continue;
-            const prop = veg.pick(env, mulberry32(Math.floor(seed * 4294967296)), ancient && u === t);
-            if (!prop) continue;
+            const picked = veg.pick(env, mulberry32(Math.floor(seed * 4294967296)), ancient && u === t);
+            if (!picked) continue;
+            // (Bananas grow only where the resource is: a third of its trees.)
+            const prop = g.resources[u] === 'bananas' && BANANA_IN.has(CATALOG[picked.kind].layer) && rand() < 1 / 3 ? { ...picked, kind: 'banana' as const, size: 1, leaf: undefined, ancient: false } : picked;
             // Flora yields to cities.
             const use = g.use[u];
             // (What grows in the water, mangroves and reeds, stays: no house stands there.)
