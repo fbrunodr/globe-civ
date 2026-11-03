@@ -95,6 +95,7 @@ const PLANT_STEP = 0.011, PLANT_WIDTH = 0.015;
 // town's scale (its lots CITY_CELL / CELL the plain ones), as a camp's lodge
 // does (lotFit): the countryside's buildings all town-sized.
 export const HOMESTEAD_SCALE = CITY_CELL / CELL, HOMESTEAD_LOT = 'b23' as const;
+const LODGE_SQUASH = 0.7;
 const HOUSE_R = 0.045 * HOMESTEAD_SCALE, BARN_R = 0.042 * HOMESTEAD_SCALE, GAP = 0.02;
 const HARVEST: Fill = { t: 'scatter', model: 'haystack', color: 0xc9a85a, per: 1.6 };
 
@@ -284,7 +285,8 @@ export function layoutRural(inp: RuralInput, farm: Farm, site: RuralSite, keep: 
         if (cropIndex(plotAt(pu, pv, inp.salt, ps).h, ps) !== (m === 'combine' ? 0 : 3)) continue;
       }
       // (Machines and teams work along the plots; people face about.)
-      add(m, p, (th.where === 'field' && !fig) || m === 'ploughTeam' ? along : r() * 6.28, s, leaf);
+      // (A lodge kept low: at its full height it dwarfed the homestead.)
+      add(m, p, (th.where === 'field' && !fig) || m === 'ploughTeam' ? along : r() * 6.28, m === 'lodge' ? [s, s * LODGE_SQUASH, s] : s, leaf);
       taken.push({ p, r: rad });
       break;
     }

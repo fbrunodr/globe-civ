@@ -406,17 +406,20 @@ export type KitModel = keyof typeof KIT;
 export const KIT_MODELS = Object.keys(KIT) as KitModel[];
 // Animals and people are figures (drawn larger than life: FIGURE_BOOST).
 export const FIGURES: ReadonlySet<KitModel> = new Set<KitModel>(['horse', 'cow', 'pied', 'ox', 'sheep', 'mouflon', 'deer', 'stag', 'elephant', 'fox', 'farmer', 'farmerB', 'reaper', 'herder', 'herderB', 'hunter', 'gunHunter', 'picker', 'pickerB', 'miner', 'woodcutter', 'ploughTeam', 'haycart']);
+// (The people among them.)
+const PEOPLE: ReadonlySet<KitModel> = new Set<KitModel>(['farmer', 'farmerB', 'reaper', 'herder', 'herderB', 'hunter', 'gunHunter', 'picker', 'pickerB', 'miner', 'woodcutter']);
 export const SPECIES_OF: Partial<Record<KitModel, Species>> = { horse: 'horse', cow: 'cow', pied: 'pied', ox: 'ox', sheep: 'sheep', mouflon: 'mouflon', deer: 'deer', stag: 'stag', elephant: 'elephant', fox: 'fox' };
 // How much larger than life a kit model is drawn (so it reads from the
 // board beside the crops, themselves drawn about four times true): people
 // and animals most, then machines and small things, plants, and the large
 // works (windpumps, silos, headframes, lodges) least.
-export const FIGURE_BOOST = 6.5, SMALL_BOOST = 4, PLANT_BOOST = 3, KIT_BOOST = 3.2, WILD_BOOST = 5;
+// (People less: at FIGURE_BOOST they stood as tall as the homestead's walls.)
+export const FIGURE_BOOST = 6.5, PERSON_BOOST = 3.2, SMALL_BOOST = 4, PLANT_BOOST = 3, KIT_BOOST = 3.2, WILD_BOOST = 5;
 const SMALL: ReadonlySet<KitModel> = new Set<KitModel>(['plough', 'tractor', 'combine', 'trough', 'brokenCart', 'stooks', 'rick', 'bales', 'hideRack', 'oreHeap', 'oreCart', 'winePress', 'cocoonTrays', 'tuskPile', 'cottonBales', 'teaBaskets', 'saltHeaps', 'canoe']);
 const PLANTS: ReadonlySet<KitModel> = new Set<KitModel>(['wildRice', 'resinPine']);
 // (The wild's rock, shells and fish: drawn as large as the resources' props were.)
 const WILD: ReadonlySet<KitModel> = new Set<KitModel>(['outcrop', 'oreRock', 'boulders', 'oysters', 'fishSchool', 'resinPine', 'campfire']);
-export const kitBoost = (k: KitModel): number => (FIGURES.has(k) ? FIGURE_BOOST : WILD.has(k) ? WILD_BOOST : SMALL.has(k) ? SMALL_BOOST : PLANTS.has(k) ? PLANT_BOOST : KIT_BOOST);
+export const kitBoost = (k: KitModel): number => (PEOPLE.has(k) ? PERSON_BOOST : FIGURES.has(k) ? FIGURE_BOOST : WILD.has(k) ? WILD_BOOST : SMALL.has(k) ? SMALL_BOOST : PLANTS.has(k) ? PLANT_BOOST : KIT_BOOST);
 export const FENCE_BOOST = SMALL_BOOST;
 // A kit model in tile steps.
 export function kitModel(k: KitModel): G[] {
