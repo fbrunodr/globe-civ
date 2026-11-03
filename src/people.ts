@@ -104,7 +104,7 @@ export const PLAIN_HEAD: readonly Ring[] = [HEAD_CHIN, HEAD_BROW, HEAD_CROWN];
 // eight corners is (hull's order, from π/8 round in steps of π/4: the four
 // in front, from the figure's right round to its left, then the four
 // behind); made HEAD_WIDE times as broad and deep as measured.
-const HEAD_WIDE = 1.12, JAW_SLOPE = [0.014, 0.006];
+const HEAD_WIDE = 1.12;
 const HEAD_SECTIONS: readonly (readonly [number, number, readonly number[]])[] = [
   [0.874, 0.019, [0.0251, 0.0439, 0.0439, 0.0251, 0.0308, 0.0514, 0.0514, 0.0308]],
   [0.889, 0.021, [0.035, 0.0444, 0.0444, 0.035, 0.037, 0.0501, 0.0501, 0.037]],
@@ -128,10 +128,7 @@ export function fineHead(paint: Paint): THREE.BufferGeometry {
     const [, , r] = HEAD_SECTIONS[i]!, ring = FINE_HEAD[i]!;
     const th = Math.atan2((v.z - c.z) / ring.b, -(v.x - c.x) / ring.a), j = ((Math.round((th - Math.PI / 8) / (Math.PI / 4)) % 8) + 8) % 8;
     const [x, z] = corner(c.z, r, j);
-    // (The jaw's underside sloped, as on a head: lowest at the chin, rising
-    // back to the jaw's angles under the ears, so that it is seen as a line
-    // of shadow under the chin, not a dark band across the throat.)
-    v.set(x, v.y - (JAW_SLOPE[i] ?? 0) * Math.sin(cornerAt(j)), z);
+    v.set(x, v.y, z);
   } });
 }
 // (Where the face's front is at a height: the plane through its two front corners.)
