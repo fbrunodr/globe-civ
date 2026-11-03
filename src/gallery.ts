@@ -9,7 +9,7 @@ import { RESOURCES, RESOURCE_KEYS, RESOURCE_IMPROVEMENT, type ResourceKey } from
 import { TECHS, TECH_KEYS, STAGE_TECHS } from './techs.ts';
 import { IMPROVEMENTS, type ImprovementKey } from './cities.ts';
 import { stageLook, waterLook, plotStage } from './rural/stages.ts';
-import { planFarm, layoutRural, largestRect, type RuralInput, type RuralSite } from './rural/layout.ts';
+import { planFarm, layoutRural, largestRect, HOMESTEAD_SCALE, HOMESTEAD_LOT, type RuralInput, type RuralSite } from './rural/layout.ts';
 import { kitBoost, FIGURES, SPECIES_OF, KIT_BOOST, type KitModel } from './rural/kit.ts';
 import { CREATURE_SCALE } from './creatures.ts';
 import { plotAt, cropIndex, CROP_PALETTE, PLOT_SIZES, PLANT_ROW_W } from './rural/plots.ts';
@@ -341,9 +341,9 @@ function workedItems(imp: ImprovementKey, stage: number, res: ResourceKey | null
   if (!farm) return out;
   const plan = layoutRural(inp, farm, site);
   if (plan.house) {
-    const hk = houseKind(styleOf('Romans', plan.house.floors), 'b22', plan.house.floors, seed % 3);
+    const hk = houseKind(styleOf('Romans', plan.house.floors), HOMESTEAD_LOT, plan.house.floors, seed % 3);
     const geo = cached(`h|${hk}`, () => placedGeometry(hk));
-    out.push({ key: `h|${hk}`, geo, m: new THREE.Matrix4().compose(new THREE.Vector3(plan.house.p.x * STEP, 0, plan.house.p.y * STEP), new THREE.Quaternion(), new THREE.Vector3().setScalar(STEP)), c: new THREE.Color(1, 1, 1), leaf: new THREE.Color(0xa8553a), mat: ruralMat });
+    out.push({ key: `h|${hk}`, geo, m: new THREE.Matrix4().compose(new THREE.Vector3(plan.house.p.x * STEP, 0, plan.house.p.y * STEP), new THREE.Quaternion(), new THREE.Vector3().setScalar(STEP * HOMESTEAD_SCALE)), c: new THREE.Color(1, 1, 1), leaf: new THREE.Color(0xa8553a), mat: ruralMat });
   }
   // (The hex's frame is the patch's x and z: a heading a turns the model by -a about y.)
   for (const it of plan.items) out.push(kitItem(it.model, it.p, -it.heading, 0, it.leaf, new THREE.Vector3(it.size[0] * STEP, it.size[1] * STEP, it.size[2] * STEP), it.shade));

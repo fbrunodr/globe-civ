@@ -91,7 +91,11 @@ export const PADDY_DEPTH = 0.85;
 const PLANT_STEP = 0.011, PLANT_WIDTH = 0.015;
 // The homestead's footprint (radius, tile steps), the barn's, and the gap
 // kept between the works and machines and anything else.
-const HOUSE_R = 0.036, BARN_R = 0.042, GAP = 0.02;
+// A homestead's house stands on a town's 2×3 lot (HOMESTEAD_LOT), at a
+// town's scale (its lots CITY_CELL / CELL the plain ones), as a camp's lodge
+// does (lotFit): the countryside's buildings all town-sized.
+export const HOMESTEAD_SCALE = CITY_CELL / CELL, HOMESTEAD_LOT = 'b23' as const;
+const HOUSE_R = 0.045 * HOMESTEAD_SCALE, BARN_R = 0.042 * HOMESTEAD_SCALE, GAP = 0.02;
 const HARVEST: Fill = { t: 'scatter', model: 'haystack', color: 0xc9a85a, per: 1.6 };
 
 // The homestead's floors: one at first, three by the last stage.
@@ -108,7 +112,7 @@ export function planFarm(inp: RuralInput, site: RuralSite): Farm | null {
 
 // How far a walker's loop takes it from where it stands (tile steps, at its size `s`).
 const walkOf = (m: RuralModel, s: number): number => 2 * roamOf(m) * s;
-// A camp's lodge drawn on a town's 2×3 lot (LOT_SIZE b23: its long side
+// A camp's lodge (and the steam age's sawmill) drawn on a town's 2×3 lot (LOT_SIZE b23: its long side
 // along the lodge), as large as its houses: the size (one for all axes) fitting it.
 function lotFit(m: RuralModel): number {
   const g = ruralGeometry(ruralModelKind(m));
@@ -143,8 +147,8 @@ export function layoutRural(inp: RuralInput, farm: Farm, site: RuralSite, keep: 
     items.push({ model, p, heading, size: typeof s === 'number' ? [s, s, s] : s, leaf, shade });
 
   // The homestead: a house in the owner's style and its barn (none on a ruin), facing along the grid.
-  const house = worn ? null : { p: { x: farm.home.x - 0.012 * v.x, y: farm.home.y - 0.012 * v.y }, floors: houseFloors(imp, stage) };
-  const barn = !worn && look.density !== 'low' && imp !== 'camp' && imp !== 'mine' ? { x: farm.home.x + 0.03 * v.x, y: farm.home.y + 0.03 * v.y } : null;
+  const house = worn ? null : { p: { x: farm.home.x - 0.012 * HOMESTEAD_SCALE * v.x, y: farm.home.y - 0.012 * HOMESTEAD_SCALE * v.y }, floors: houseFloors(imp, stage) };
+  const barn = !worn && look.density !== 'low' && imp !== 'camp' && imp !== 'mine' ? { x: farm.home.x + 0.03 * HOMESTEAD_SCALE * v.x, y: farm.home.y + 0.03 * HOMESTEAD_SCALE * v.y } : null;
   const taken: { p: Pt; r: number }[] = [...keep];
   if (house) taken.push({ p: house.p, r: HOUSE_R });
   if (barn) taken.push({ p: barn, r: BARN_R });
@@ -256,7 +260,7 @@ export function layoutRural(inp: RuralInput, farm: Farm, site: RuralSite, keep: 
   // people a little closer.
   const r = mulberry32(inp.seed + 0x7f);
   for (const th of look.things) for (let n = 0; n < th.n; n++) {
-    const m = th.model, fig = FIGURES.has(m), s = m === 'lodge' ? lotFit(m) : kitBoost(m) * (0.9 + 0.2 * r());
+    const m = th.model, fig = FIGURES.has(m), s = m === 'lodge' || m === 'sawmill' ? lotFit(m) : kitBoost(m) * (0.9 + 0.2 * r());
     // (A walker keeps its whole walk clear, not just where it stands.)
     const rad = radiusOf(m, s) * (fig ? 0.5 : 1) + walkOf(m, s), gap = fig ? 0.004 : GAP;
     const leaf = th.colors ? th.colors[Math.floor(r() * th.colors.length)]! : 0xffffff;

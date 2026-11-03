@@ -25,7 +25,7 @@ import { SCATTER_GAP, areaLook, cropRegion, scatterIn, type RGB } from './rural/
 import { ruralModelKind, type RuralModel } from './rural/models.ts';
 import { stageLook, waterLook } from './rural/stages.ts';
 import { kitBoost } from './rural/kit.ts';
-import { planFarm, layoutRural, largestRect, PADDY_DEPTH, type FieldRect, type RuralInput, type RuralSite } from './rural/layout.ts';
+import { planFarm, layoutRural, largestRect, HOMESTEAD_SCALE, HOMESTEAD_LOT, PADDY_DEPTH, type FieldRect, type RuralInput, type RuralSite } from './rural/layout.ts';
 import { RESOURCE_IMPROVEMENT } from './resources.ts';
 import { len as len2, sub as sub2, type Pt as Pt2 } from './town/geometry.ts';
 import { mulberry32, type Rng } from './rng.ts';
@@ -483,9 +483,10 @@ export class CityProps {
         const f = toT({ x: p.x + 0.01 * farm.u.x, y: p.y + 0.01 * farm.u.y });
         const hk = houseKind(styleOf(g.players[city.owner]!.name, floors), kind, floors, Math.floor(lr() * HOUSE_VARIANTS));
         const [lw, ld] = LOT_SIZE[kind];
-        put(t, ...settleHere((k) => this.standLot(hk, s0.dir, facing(s0.dir, f) + Math.PI / 2, lw, ld, D * local(s0.dir, f) * k, lr, city.owner)));
+        // (As large as a town's houses: their lots CITY_CELL / CELL the plain ones.)
+        put(t, ...settleHere((k) => this.standLot(hk, s0.dir, facing(s0.dir, f) + Math.PI / 2, lw, ld, D * local(s0.dir, f) * k * HOMESTEAD_SCALE, lr, city.owner)));
       };
-      if (plan.house) placeLot('b22', plan.house.floors, plan.house.p, mulberry32(mix(t, 0x5a)));
+      if (plan.house) placeLot(HOMESTEAD_LOT, plan.house.floors, plan.house.p, mulberry32(mix(t, 0x5a)));
       if (plan.barn) placeLot('b32', 1, plan.barn, mulberry32(mix(t, 0x5b)));
     }
     return { sig, byTile, streets, pavings };
