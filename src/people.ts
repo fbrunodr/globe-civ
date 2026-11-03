@@ -95,7 +95,12 @@ const HEAD_BROW = R([0, HEAD_Y + 0.005, 0.002], 0.064, 0.07), HEAD_CROWN = R([0,
 const HEAD_CHIN = R([0, HEAD_Y - 0.068, 0.012], 0.036, 0.042);
 // The heads' rings, chin to crown: the plain one's (five-sided, person()) and the finer one's (eight-sided, finePerson()).
 export const PLAIN_HEAD: readonly Ring[] = [HEAD_CHIN, HEAD_BROW, HEAD_CROWN];
-export const FINE_HEAD: readonly Ring[] = [[0.874, 0.047, 0.05, 0.017], [0.889, 0.056, 0.059, 0.011], [0.912, 0.059, 0.064, 0.006], [0.938, 0.063, 0.069, 0.002], [0.964, 0.054, 0.062, -0.004], [0.99, 0.038, 0.046, -0.008]]
+// (Drawn as heads are taught (Loomis): the cranium a ball, its sides
+// flattened, deeper than it is wide and bulging back behind the neck (the
+// neck goes in under its back half, not its middle); the face hung off
+// its front, the eyes halfway down the head, the brow, the nose's base and
+// the chin dividing the face in thirds.)
+export const FINE_HEAD: readonly Ring[] = [[0.874, 0.047, 0.05, 0.019], [0.889, 0.056, 0.06, 0.012], [0.912, 0.059, 0.068, 0.003], [0.938, 0.062, 0.075, -0.005], [0.964, 0.056, 0.069, -0.013], [0.99, 0.04, 0.053, -0.017]]
   .map(([y, a, b, z]) => R([0, y!, z!], a!, b!));
 // (The jawline: the finer head's two lowest rings tilted, low at the chin, up
 // under the ears behind: from the chin up and back to the jaw's angle, its
@@ -112,16 +117,15 @@ const jawline = (i: number, v: THREE.Vector3, c: THREE.Vector3) => {
 // A shell over the head (helmets, hats, turbans: unitModels.ts): its
 // rings the head's own, scaled out, so that it holds the head at every
 // height. `levels`: (height over HEAD_Y, how far out: 1 the head's own
-// size there, 0 a point), below the crown sized on the brow, above it on
-// the crown.
+// size there, 0 a point), below the brow sized on the brow.
 // (Eight-sided, corner to corner with the finer head's rings and round
 // either head: a level's size the larger of the two heads' there; below
-// the crown sized on the brow at least (so a rim stands clear of the
-// face), above it on the crown.)
+// the brow sized on the brow at least (so a rim stands clear of the
+// face).)
 // (`sides`: 5, as the plain head's, for the countryside's people, who have only it: fewer faces.)
 export function headShell(levels: readonly (readonly [number, number])[], paint: Paint, caps: readonly [boolean, boolean] = [false, false], sides: 5 | 8 = 8): THREE.BufferGeometry {
   const rings = levels.map(([dy, k]) => {
-    const y = HEAD_Y + dy, r = dy < 0.035 ? headAt(Math.max(y, HEAD_BROW.c[1])) : HEAD_CROWN;
+    const y = HEAD_Y + dy, r = headAt(Math.max(y, HEAD_BROW.c[1]));
     return R([0, y, r.c[2]], r.a * k, r.b * k);
   });
   const g = hull(rings, sides, paint, { ...(sides === 8 ? { turn: Math.PI / 8 } : FIVE), caps });
@@ -139,8 +143,9 @@ function headAt(y: number): Ring {
     }
     return rings[rings.length - 1]!;
   };
-  const p = at(PLAIN_HEAD), f = at(FINE_HEAD);
-  return R([0, y, Math.max(p.c[2], f.c[2])], Math.max(p.a, f.a), Math.max(p.b, f.b));
+  // (Both heads within it: as far forward as either's front, as far back as either's back.)
+  const p = at(PLAIN_HEAD), f = at(FINE_HEAD), front = Math.max(p.c[2] + p.b, f.c[2] + f.b), back = Math.min(p.c[2] - p.b, f.c[2] - f.b);
+  return R([0, y, (front + back) / 2], Math.max(p.a, f.a), (front - back) / 2);
 }
 
 // Where an arm's elbow comes to (side as handAt's).
@@ -315,6 +320,10 @@ function finePerson(d: Dress, armL: ArmPose, armR: ArmPose, swing: Swing): Part[
   add(heroicHead(hull(FINE_HEAD, 8, SKIN_PAINT, { ...EIGHT, caps: [true, true], push: jawline }), hero), 'skin');
   add(heroicHead(spike([[0, 0.928, 0.064], [0, 0.912, 0.074], [0, 0.904, 0.082]], 0.013, SKIN_PAINT, 3), hero), 'skin');
   for (const s of [1, -1]) add(heroicHead(plate([[-0.009, 0], [0.009, 0], [0.007, 0.006], [-0.007, 0.006]], EYE).translate(s * 0.024, 0.927, 0.07), hero), 'plain');
+  // (The ears: on the side planes, behind the middle, from the brow's line
+  // down to the nose's base; a little out from the head, their tops leaning back.)
+  // (A small flattened solid, half in the head: lit as the skin is.)
+  for (const s of [1, -1]) add(heroicHead(gem([s * 0.058, 0.914, -0.013], [0.008, 0.014, 0.009], SKIN_PAINT, 4, [-0.3, 0, 0]), hero), 'skin');
   // Arms: one surface, shoulder to wrist (the deltoid, the biceps, the
   // elbow, the forearm), the sleeve to the elbow or the wrist; a hand,
   // its thumb.
@@ -418,7 +427,7 @@ export function hairShapes(style: HairStyleKey, sides: 5 | 8 = 8): THREE.BufferG
   // A cap over the crown, down to the brow in front and the nape behind: a
   // shell over the head's own rings (so the head never shows through it),
   // its edge raised in front and lowered behind.
-  const cap = () => hairline(headShell([[0.0, 1.1], [0.066, 1.2], [0.088, 0]], W, [false, false], sides));
+  const cap = () => hairline(headShell([[0.0, 1.11], [0.066, 1.2], [0.088, 0]], W, [false, false], sides));
   // (From the mouth's line down round the jaw, to its point under the chin.)
   const beard = () => hull([R([0, HEAD_Y - 0.042, 0.016], 0.058, 0.058), R([0, HEAD_Y - 0.092, 0.042], 0, 0)], 5, W, { ...FIVE, caps: [false, false] });
   const long = () => hull([R([0, HEAD_Y - 0.005, -0.045], 0.064, 0.03), R([0, HEAD_Y - 0.13, -0.062], 0.06, 0.018)], 4, W);
