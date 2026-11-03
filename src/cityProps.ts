@@ -40,6 +40,8 @@ export interface CitySpot {
   slope: number;
   urban: number;  // soft urban weight of the painting here (0..1)
   owner?: number; // the tile whose painting it is (where the tiles' paintings wander over their hexes' sides)
+  bank?: number;  // how near a river (render.ts: its banks' greening, 0..1)
+  coast?: number; // how far from the sea (tile inner radii)
 }
 export type SpotSampler = (t: number, i: number, wa: number, wb: number) => CitySpot;
 // The ground under any direction, and the tile it falls in.
@@ -108,6 +110,29 @@ const FOUNDATION_UNIT = 0.01;
 const FOUNDATION_STYLE = [0x8d877c, 0xb59a72, 0x9a6a55, 0x5f5a55, 0x7a5f45, 0xd2ccbe, 0xb08a5a, 0x6f7a62] as const;
 // render.ts draws prop models at 1.5 × PROP_SIZE of the reference size.
 const PROP_SCALE = 1.5 * 0.276;
+// The breathing room a town (its walls) and a pasture's fence keep from
+// the edge of their tile's painted land and from water (tile steps): the
+// land sampled on a grid of MASK_STEP squares over the tile (MASK_HALF of
+// them out from its middle), then worn back INSET.
+const INSET = 0.05, MASK_STEP = 0.02, MASK_HALF = 32;
+// The land of tile t (`ok` at each square's middle) worn back INSET, as a test of a point (tile steps).
+function innerMask(toDir: (p: Pt2) => THREE.Vector3, sample: (d: THREE.Vector3) => CitySpot, ok: (s: CitySpot) => boolean): (p: Pt2) => boolean {
+  const S = 2 * MASK_HALF, good = new Uint8Array(S * S), inner = new Uint8Array(S * S), R = Math.ceil(INSET / MASK_STEP);
+  for (let j = 0; j < S; j++) for (let i = 0; i < S; i++) good[j * S + i] = ok(sample(toDir({ x: (i - MASK_HALF + 0.5) * MASK_STEP, y: (j - MASK_HALF + 0.5) * MASK_STEP }))) ? 1 : 0;
+  for (let j = 0; j < S; j++) for (let i = 0; i < S; i++) {
+    let all = good[j * S + i] === 1;
+    for (let dj = -R; dj <= R && all; dj++) for (let di = -R; di <= R && all; di++) {
+      if (di * di + dj * dj > R * R) continue;
+      const x = i + di, y = j + dj;
+      all = x >= 0 && y >= 0 && x < S && y < S && good[y * S + x] === 1;
+    }
+    inner[j * S + i] = all ? 1 : 0;
+  }
+  return (p) => {
+    const i = Math.floor(p.x / MASK_STEP) + MASK_HALF, j = Math.floor(p.y / MASK_STEP) + MASK_HALF;
+    return i >= 0 && j >= 0 && i < S && j < S && inner[j * S + i] === 1;
+  };
+}
 // Dry ground a land building keeps round its footprint (tile steps).
 export const WATER_GAP = 0.012;
 
@@ -304,7 +329,9 @@ export class CityProps {
     const wonders: SiteModel[] = [...g.wondersAt(city.tile).flatMap((w) => (w === 'machuPicchu' ? [] : [w])), ...(city.wonderTile === city.tile ? ['scaffold' as const] : [])];
     const dressed = dressCity({
       civ: g.players[city.owner]!.name, era: dressEraOf(era), pop: city.pop, wonders, walled, seed: mix(city.id, 0xc17),
-      free: (p) => !wet(this.sampleDir(toDir(p))),
+      // (Its own land: dry, painted as its tile's, and so all round it for
+      // INSET: breathing room from a river, the sea and the next tile's land.)
+      free: innerMask(toDir, (d) => this.sampleDir(d), (s) => !wet(s) && (s.owner === undefined || s.owner === city.tile)),
     });
     // (The painter keeps them apart and off the water: each stands where painted.)
     dressed.buildings.forEach((b, n) => {
@@ -387,6 +414,10 @@ export class CityProps {
         wade: (0.0004 * this.scale) / D,
         // (The farm goes where the land is painted as this tile's.)
         ours: (p) => { const o = this.sampleDir(toT(p)).owner; return o === undefined || o === t; },
+        // (A fence keeps INSET in from that, and from the water.)
+        inner: imp === 'pasture' ? innerMask(toT, (d) => this.sampleDir(d), (s) => (s.owner === undefined || s.owner === t) && s.water - s.ground <= DRY) : () => false,
+        // (A paddy's water is its own pools: not a river running by, nor the sea.)
+        pool: (p) => { const s = this.sampleDir(toT(p)); return (s.bank ?? 0) < 0.05 && (s.coast ?? 1) > 0.3; },
       };
       const farm = planFarm(inp, site);
       if (!farm) continue;

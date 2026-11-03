@@ -95,6 +95,14 @@ vec3 tPerturb(vec3 surfPos, vec3 n, float h) {
 
 const PAINT_GLSL = /* glsl */ `
 // ---- painting (mirror of paintAt in paint.ts, plus a GPU-only fine wiggle) ----
+// How much the painting at a point is tile k's: 1 where its weight is the
+// greatest of the four (the tiles' border, as the props see it: render.ts
+// citySpot), crisp, a little blend for the pixels on the line.
+float owned(vec4 w, int k) {
+  float o = 0.0;
+  for (int j = 0; j < 4; j++) if (j != k) o = max(o, w[j]);
+  return smoothstep(-0.04, 0.04, w[k] - o);
+}
 vec4 tileRow(int t, int k) { int i = t * ${TILE_ROWS} + k; return texelFetch(uTileTex, ivec2(i % ${TEX_W}, i / ${TEX_W}), 0); }
 vec4 fanRow(int f, int k) { int i = f * ${FAN_ROWS} + k; return texelFetch(uFanTex, ivec2(i % ${TEX_W}, i / ${TEX_W}), 0); }
 vec4 paintWeights(int fan, vec3 P, vec4 ids, out vec3 sEdge, out vec4 soft) {
@@ -105,7 +113,8 @@ vec4 paintWeights(int fan, vec3 P, vec4 ids, out vec3 sEdge, out vec4 soft) {
   if (s.x >= r1.x + uFine && s.y >= r1.y + uFine && s.z >= r1.z + uFine) return soft;
   vec4 r2 = fanRow(fan, 2), r3 = fanRow(fan, 3), r4 = fanRow(fan, 4);
   float fine = clamp((tFbm(P * uFineFreq, 3) - 0.5) * 3.2, -1.0, 1.0) * uFine;
-  s += r3.xyz * fine * vec3(ids.x < ids.y ? 1.0 : -1.0, ids.x < ids.z ? 1.0 : -1.0, ids.x < ids.w ? 1.0 : -1.0);
+  // (Not along a river (r2.yzw): its border is the river's course, riverCurve.ts.)
+  s += r3.xyz * fine * vec3(ids.x < ids.y ? 1.0 : -1.0, ids.x < ids.z ? 1.0 : -1.0, ids.x < ids.w ? 1.0 : -1.0) * (1.0 - step(0.001, r2.yzw));
   float uL = (vPc0.w + r3.w * fine * (ids.z < ids.y ? 1.0 : -1.0)) / r1.w;
   float uR = (vPc1.x + r4.x * fine * (ids.z < ids.w ? 1.0 : -1.0)) / r2.x;
   sEdge = s;
@@ -541,7 +550,7 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
                 int code = int(r5.z + 0.5);
                 // (Mines keep the land's own ground: the models are enough. A
                 // camp's clearings fill its tile as the land is painted.)
-                if (code == 3) campS += w[k];
+                if (code == 3) campS += owned(w, k);
                 else if (code == 4) quarryS += soft[k];
                 else if (code == ${BURNT_CODE}) burntS += soft[k];
               }
@@ -575,8 +584,9 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               vec2 uv = vec2(ca * lp.x + sa * lp.y, -sa * lp.x + ca * lp.y);
               // (A paddy's plots are its flooded ground, under its water, the
               // dry ground between left wild.)
-              // (Full strength over its share of the painting, crisp where it meets the wild.)
-              float farm = smoothstep(0.35, 0.65, w[k]) * (meCode == 5 ? 1.0 - snowCover : keep);
+              // (Wherever the painting is most its tile's, at full strength: its
+              // edge the tiles' border, a river's middle where one runs there.)
+              float farm = owned(w, k) * (meCode == 5 ? 1.0 - snowCover : keep);
               if (region == ${CROP_CODE.paddy}) farm *= smoothstep(-0.00012, 0.00004, vDepth);
               vec2 f; float edge;
               float h = plotAt(uv, me, stage, f, edge);

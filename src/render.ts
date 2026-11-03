@@ -1812,9 +1812,13 @@ export class GlobeRenderer {
     }
     const lv = this.terrain.at(t, i, wa, wb);
     this.terrain.topo.sample(t, i, wa, wb, this.spotSmp);
-    let slope = 0;
-    for (let c = 0; c < 3; c++) slope += this.spotSmp.w[c] * this.vertSlope[this.spotSmp.v[c]];
-    return { dir, ground: lv.ground - 1, water: lv.water - 1, slope, urban, owner: fan.ids[owner]! };
+    let slope = 0, bank = 0, coast = 0;
+    const banks = this.terrain.fields.ground['bank']!;
+    for (let c = 0; c < 3; c++) {
+      const v = this.spotSmp.v[c], wv = this.spotSmp.w[c];
+      slope += wv * this.vertSlope[v]; bank += wv * banks[v]!; coast += wv * this.vertCoast[v];
+    }
+    return { dir, ground: lv.ground - 1, water: lv.water - 1, slope, urban, owner: fan.ids[owner]!, bank, coast: coast / this.paint.params.r0 };
   }
 
   private ring(t: number, color: number, opacity: number): THREE.Mesh {

@@ -34,6 +34,8 @@ export interface RuralSite {
   readonly depth: (p: Pt) => number;  // the water over the ground (tile steps; ≤ 0 dry)
   readonly wade: number;              // how deep a paddy's farmers may stand in it (tile steps)
   readonly ours: (p: Pt) => boolean;  // the land painted as this tile's (its fields fill it)
+  readonly inner: (p: Pt) => boolean; // that, with some room all round (a fence keeps to it)
+  readonly pool: (p: Pt) => boolean;  // its water a wetland's own pools, not a river or the sea
 }
 export interface RuralInput {
   readonly imp: ImprovementKey;
@@ -77,15 +79,16 @@ export function planFarm(inp: RuralInput, site: RuralSite): Farm | null {
 }
 
 // A pasture's fence round it: six corners, each out along its corner's
-// direction as far as the land is still the tile's (its painting) and
-// inside its hex; then, while a side runs over another's land,
+// direction as far as the land is still the tile's (its painting, past its
+// hex's sides where that goes) with some room in from its edge and the
+// water (`inner`); then, while a side runs over another's land,
 // its two corners drawn in a little. (Good enough, not the largest such.)
 function fenceRing(site: RuralSite): Pt[] {
-  const inr = 1 / rhoOf(6, { x: 1, y: 0 }), rMax = 0.94 * inr / Math.cos(Math.PI / 6);
+  const inr = 1 / rhoOf(6, { x: 1, y: 0 }), rMax = 1.3 * inr / Math.cos(Math.PI / 6);
   const dirs = Array.from({ length: 6 }, (_, j) => ({ x: Math.cos(Math.PI / 6 + (j * Math.PI) / 3), y: Math.sin(Math.PI / 6 + (j * Math.PI) / 3) }));
   const r = dirs.map((d) => {
     let k = rMax;
-    while (k > rMax * 0.4 && !(site.ours({ x: d.x * k, y: d.y * k }) && site.ours({ x: d.x * k * 0.5, y: d.y * k * 0.5 }))) k -= rMax * 0.03;
+    while (k > rMax * 0.3 && !(site.inner({ x: d.x * k, y: d.y * k }) && site.inner({ x: d.x * k * 0.5, y: d.y * k * 0.5 }))) k -= rMax * 0.02;
     return k;
   });
   const pt = (j: number) => ({ x: dirs[j]!.x * r[j]!, y: dirs[j]!.y * r[j]! });
@@ -94,8 +97,8 @@ function fenceRing(site: RuralSite): Pt[] {
     for (let j = 0; j < 6; j++) {
       const a = pt(j), b = pt((j + 1) % 6);
       for (let n = 1; n < 8; n++) {
-        if (site.ours({ x: a.x + ((b.x - a.x) * n) / 8, y: a.y + ((b.y - a.y) * n) / 8 })) continue;
-        r[j] = Math.max(rMax * 0.4, r[j]! * 0.95); r[(j + 1) % 6] = Math.max(rMax * 0.4, r[(j + 1) % 6]! * 0.95);
+        if (site.inner({ x: a.x + ((b.x - a.x) * n) / 8, y: a.y + ((b.y - a.y) * n) / 8 })) continue;
+        r[j] = Math.max(rMax * 0.3, r[j]! * 0.95); r[(j + 1) % 6] = Math.max(rMax * 0.3, r[(j + 1) % 6]! * 0.95);
         moved = true;
         break;
       }
@@ -192,8 +195,8 @@ export function layoutRural(inp: RuralInput, farm: Farm, site: RuralSite, keep: 
     });
     const rand = mulberry32(inp.seed + 0xc4);
     // (A first farm is patchy, a ruin's mostly gone to weed; a paddy is planted
-    // all over its water, every plot, to the edges.)
-    const thin = stage === 0 ? 0.7 : stage === 1 && !paddy ? 0.2 : 0;
+    // all over its pools, every plot, to the edges, half as thick.)
+    const thin = stage === 0 ? 0.7 : paddy ? 0.5 : stage === 1 ? 0.2 : 0;
     for (let x = -0.7; x <= 0.7; x += CROP_ROW) for (let y = -0.7; y <= 0.7; y += CROP_STEP) {
       const pu = x + (rand() - 0.5) * CROP_ROW * 0.3, pv = y + (rand() - 0.5) * CROP_STEP * 0.8, turn = rand() * Math.PI, shade = 0.9 + 0.2 * rand(), grow = 0.9 + 0.2 * rand();
       const p = { x: pu * u.x + pv * v.x, y: pu * u.y + pv * v.y };
@@ -201,7 +204,7 @@ export function layoutRural(inp: RuralInput, farm: Farm, site: RuralSite, keep: 
       const plot = plotAt(pu, pv, inp.salt, ps), k = paddy ? 0 : cropIndex(plot.h, ps), h = CROP_HEIGHT[k] * grow;
       if (h === 0 || (!paddy && plot.edge < CROP_EDGE)) continue;
       const wet = site.depth(p);
-      if (paddy ? wet <= 0 || wet > PADDY_DEPTH * h : wet > 0) continue;
+      if (paddy ? wet <= 0 || wet > PADDY_DEPTH * h || !site.pool(p) : wet > 0) continue;
       add('crop', p, turn, [CROP_WIDTH, h, CROP_WIDTH], tint[k]!, shade);
     }
   }

@@ -11,7 +11,7 @@
 // the scale that stands them in tile steps.
 
 import { paintCity, CITY_CELL, MAX_WONDERS, UNIT, UNITS_PER_CELL, type Painted, type Painting } from './cityPainter.ts';
-import { CELL, LOT_SIZE, type Floors, type Footprint, type Pt } from './town/geometry.ts';
+import { CELL, LOT_SIZE, pointInPoly, type Floors, type Footprint, type Pt } from './town/geometry.ts';
 import { HOUSE_VARIANTS, houseKind } from './houses.ts';
 import { styleOf, type ArchCiv } from './architecture.ts';
 import { wonderModelKind, type SiteModel } from './wonderModels.ts';
@@ -114,8 +114,16 @@ export function dressCity(c: CityLook): DressedCity {
     const [hw, hd] = LOT_SIZE[fp];
     return { model, at: b.at, yaw: b.yaw, hw: hw * sx, hd: hd * sz, scale: CITY_CELL / CELL, sx, sz, variant: rand() };
   });
-  // The walls: a ring round the town, inside the safe zone.
+  // The walls: a ring round the town, inside the safe zone, each of its
+  // corners drawn in to stand on the town's own dry land (`free`: off a
+  // river, off the next tile's land); what the ring leaves outside goes.
   const R = Math.min(WALLED_LIMIT * 0.5 + 0.02, painting.reach + 0.03);
-  const wall = c.walled ? Array.from({ length: 13 }, (_, i) => ({ x: R * Math.cos((i / 12) * Math.PI * 2), y: R * Math.sin((i / 12) * Math.PI * 2) })) : null;
-  return { painting, buildings, roadRgb: ROAD_RGB[c.era], wall };
+  const corner = (i: number) => {
+    const a = (i / 12) * Math.PI * 2, at = (k: number) => ({ x: k * Math.cos(a), y: k * Math.sin(a) });
+    let k = R;
+    while (k > R * 0.45 && !(c.free(at(k)) && c.free(at(k * 0.75)))) k -= R * 0.04;
+    return at(k);
+  };
+  const wall = c.walled ? [...Array.from({ length: 12 }, (_, i) => corner(i)), corner(0)] : null;
+  return { painting, buildings: wall ? buildings.filter((b) => pointInPoly(b.at, wall)) : buildings, roadRgb: ROAD_RGB[c.era], wall };
 }
