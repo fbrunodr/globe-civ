@@ -313,7 +313,11 @@ const UNIT_LIMB = /* glsl */ `
   // (Eased in across the waist, not cut there: a body in one piece (an
   // imported one: its tunic and skirt run past the hips) stretches, not tears.)
   // (A leg's corner that hangs partly from the pelvis (blended) goes partly with it.)
-  float upper = (isLeg ? 1.0 - blendOn : 1.0) * smoothstep(${(HIP - 0.07).toFixed(2)}, ${(HIP + 0.03).toFixed(2)}, position.y);
+  // (Whatever hangs from a shoulder (an arm, and what it holds: a shield,
+  // a spear's butt, a hanging hand) goes wholly with the body, however low
+  // it reaches: else it shears where it passes the hips.)
+  bool fromShoulder = aLimb.z > 0.0 && aLimb.y > ${(HIP + 0.2).toFixed(2)} && !isSkirt;
+  float upper = fromShoulder ? 1.0 : (isLeg ? 1.0 - blendOn : 1.0) * smoothstep(${(HIP - 0.07).toFixed(2)}, ${(HIP + 0.03).toFixed(2)}, position.y);
   float twC = cos(upper * aPose.y), twS = sin(upper * aPose.y), bnC = cos(upper * aPose.x), bnS = sin(upper * aPose.x);`;
 const UNIT_NORMAL = /* glsl */ `
   ${UNIT_LIMB}

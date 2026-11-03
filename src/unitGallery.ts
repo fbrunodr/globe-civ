@@ -7,8 +7,6 @@
 //              March sets them marching on the spot; Attack has
 //              them fight, over and over (melee units charge forward and
 //              strike, archers loose volleys forward).
-//   Heroic     the figures in heroic proportions (people.ts HEROIC), or as
-//              of old: to compare.
 //   Slow       everything at a quarter of its speed (to watch a blow).
 //   Battle     an attacker and a defender of your choosing, facing each
 //              other: Fight resolves an attack by the game's own rules
@@ -26,7 +24,6 @@ import { CIVS, UNITS, domainOf, type UnitKey } from './rules.ts';
 import { TECHS, TECH_KEYS } from './techs.ts';
 import { POLITICS } from './politics.ts';
 import { FORTIFY_BONUS, combatStrength, fightRounds, matchup, statOf } from './game.ts';
-import { HEROIC } from './people.ts';
 import { HAIR_STYLES, UNIT_LOOK, colsOf, formationSlots, hairModel, headOffset, isMachine, rides, unitModel, variantOf, whirls, bowman, cuts, thrusts, draws, bayonets, womenShare } from './unitModels.ts';
 import { FIGHT, PLAYS, UnitView, Volleys, durOf, defendPlay, falls, figureLooks, makeUnitMaterial, playAt, playOf, prepareUnitGeometry, type Play, type ShownUnit } from './unitView.ts';
 import type { P2 } from './duel.ts';
@@ -434,9 +431,6 @@ function options<T extends string>(id: string, values: readonly T[], name: (v: T
 options<ArchCiv | 'all'>('civSel', ['all', ...ARCH_CIVS], (v) => (v === 'all' ? 'All' : v), 'all', (v) => { civFilter = v; frame(build()); });
 $<HTMLInputElement>('suffrage').addEventListener('change', (e) => { suffrage = (e.target as HTMLInputElement).checked; build(); (e.target as HTMLElement).blur(); });
 $('hp').addEventListener('input', (e) => { sheetHp = Number((e.target as HTMLInputElement).value); $('hpV').textContent = String(sheetHp); build(); });
-// (The figures remade, heroic or not; the camera kept.)
-const setHeroic = (on: boolean) => { HEROIC.on = on; $<HTMLInputElement>('heroic').checked = on; build(); showBattle(); };
-$<HTMLInputElement>('heroic').addEventListener('change', (e) => { setHeroic((e.currentTarget as HTMLInputElement).checked); (e.currentTarget as HTMLElement).blur(); });
 const setSlow = (on: boolean) => { pageNow(); rate = on ? 0.25 : 1; $('slow').classList.toggle('active', on); };
 $('slow').addEventListener('click', (e) => { setSlow(rate === 1); (e.currentTarget as HTMLElement).blur(); });
 const setMarching = (on: boolean) => { marching = on; $('march').classList.toggle('active', on); };
@@ -504,12 +498,11 @@ $('fight').addEventListener('click', (e) => { startFight(); (e.currentTarget as 
 $('heal').addEventListener('click', (e) => { reset(); (e.currentTarget as HTMLElement).blur(); });
 
 // Keyboard: W A S D move, Q E rotate, T G tilt, Z X zoom (as the other
-// sheets); M march, B attack (all units); L slow; H heroic; Space fight (a battle).
+// sheets); M march, B attack (all units); L slow; Space fight (a battle).
 const keys = new Set<string>();
 addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLSelectElement || e.target instanceof HTMLInputElement) return;
   if (e.key === 'l' || e.key === 'L') setSlow(rate === 1);
-  else if (e.key === 'h' || e.key === 'H') setHeroic(!HEROIC.on);
   else if (mode === 'sheet' && (e.key === 'm' || e.key === 'M')) setMarching(!marching);
   else if (mode === 'sheet' && (e.key === 'b' || e.key === 'B')) setAttacking(!fight);
   else if (mode === 'battle' && e.key === ' ') { e.preventDefault(); startFight(); }

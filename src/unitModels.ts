@@ -78,7 +78,7 @@ export const GEAR: Record<ArchCiv, Gear> = {
 // The shades the team colour is drawn in (multiplied by the owner's colour):
 // cloth a touch darker than the paint on shields and plumes.
 const CLOTH = 0xa4a4a4, PAINT = 0xffffff;
-const METAL = 0x9a9ca2, WOOD = 0x7a5a3a, LEATHER = 0x6a4a30;
+const METAL = 0x9a9ca2, WOOD = 0x7a5a3a, LEATHER = 0x6a4a30, RIM = 0x4a3a2c;
 const HORSE = [0x6a4a32, 0x8a6a4a, 0x4a3a2e, 0xb8a888] as const;
 
 // (`joint`: a limb's lower piece, bent at its middle joint at y, z;
@@ -119,7 +119,7 @@ const box = (w: number, h: number, d: number, color: number, o: Tf, t?: Tag) => 
 // How much thicker than life what a figure holds is made (heroic
 // proportions: people.ts HEROIC), while its weapons are being made (1 else).
 let WK = 1;
-const arming = (on: boolean) => { WK = on && HEROIC.on ? HEROIC.weapon : 1; };
+const arming = (on: boolean) => { WK = on ? HEROIC.weapon : 1; };
 // (Low-poly: a rod is three-sided whatever `n` asks; a thick one four.)
 const rod = (a: THREE.Vector3, b: THREE.Vector3, r0: number, r1: number, n: number, color: number, t?: Tag) => tag(seg(a, b, r0 * WK, r1 * WK, Math.min(n, r0 * WK > 0.015 ? 4 : 3), color), t);
 // A low-poly piece (lowpoly.ts) tagged.
@@ -229,7 +229,7 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
   const gear: Gear = { ...gear1, helmet: opts.helmetAs ?? gear1.helmet, shield: opts.shieldAs ?? gear1.shield };
   const f = opts.female === true;
   const dress: Dress = {
-    fine: FINE, heroic: HEROIC.on, broad: HEROIC.on && opts.civilian !== true, female: f, skirt: opts.modern ? 'none' : opts.civilian && f ? 'ankle' : 'knee', legs: gear.legs,
+    fine: FINE, heroic: true, broad: opts.civilian !== true, female: f, skirt: opts.modern ? 'none' : opts.civilian && f ? 'ankle' : 'knee', legs: gear.legs,
     sleeves: gear.legs === 'bare' && !opts.modern ? 'short' : 'long',
   };
   // The arms: the right one carries the weapon, the left the shield (or the bow).
@@ -256,8 +256,10 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
   const bowTag: Tag = { limb: bowUp, joint: [eL.y, eL.z], grip: [hL.y, hL.z, Math.PI / 2] };
   const up = (d: number) => v3(hR).add(V(0, d, 0));
   arming(true);
-  if (hold === 'spear') out.push(rod(up(-0.42), up(0.86), 0.012, 0.011, 5, WOOD, w), blade(up(0.84), up(1.0), 0.026, METAL, w, true));
-  if (hold === 'pike') out.push(rod(up(-0.4), up(1.25), 0.012, 0.011, 5, WOOD, w), blade(up(1.23), up(1.38), 0.022, METAL, w, true));
+  // (A spear's head on its socket, a cap on its butt.)
+  const socketed = (lo: number, hi: number) => [rod(up(hi - 0.05), up(hi + 0.01), 0.014, 0.011, 4, METAL, w), rod(up(lo - 0.035), up(lo), 0.004, 0.012, 4, METAL, w)];
+  if (hold === 'spear') out.push(rod(up(-0.42), up(0.86), 0.012, 0.011, 5, WOOD, w), ...socketed(-0.42, 0.85), blade(up(0.84), up(1.0), 0.026, METAL, w, true));
+  if (hold === 'pike') out.push(rod(up(-0.4), up(1.25), 0.012, 0.011, 5, WOOD, w), ...socketed(-0.4, 1.24), blade(up(1.23), up(1.38), 0.022, METAL, w, true));
   // (A club: a grip, swelling to a knobbed head.)
   if (hold === 'club') { const c = (dx: number, dy: number, dz: number): V3 => [hR.x + dx, hR.y + dy, hR.z + dz]; out.push(lp(hull([R(c(0, -0.05, -0.02), 0.011 * WK), R(c(-0.008, 0.12, 0.03), 0.015 * WK), R(c(-0.016, 0.25, 0.065), 0.03 * WK), R(c(-0.02, 0.31, 0.08), 0.022 * WK)], 6, WOOD), {}, w)); }
   if (hold === 'sword') { const d = V(0, 0.36, 0.09), g0 = v3(hR).add(V(0, 0, 0.01)); out.push(...hilt(g0, d, 0.035, METAL, w), blade(g0.clone().addScaledVector(d.clone().normalize(), 0.045), g0.clone().add(d).add(V(0, 0.04, 0.01)), 0.022, METAL, w)); }
@@ -314,7 +316,7 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boole
     ...[0].map((dx) => rod(V(0.06 + dx - 0.1, 0.78, -0.09), V(0.06 + dx - 0.12, 0.84, -0.095), 0.006, 0.006, 3, 0xd8d0c0)));
   if (opts.pack) out.push(box(0.2, 0.22, 0.1, 0x9a8462, { y: 0.62, z: -0.11 }), rod(V(-0.11, 0.77, -0.1), V(0.11, 0.77, -0.1), 0.022, 0.022, 4, 0x6a5440));
   // (The shield goes with its forearm.)
-  if (shield) out.push(...shieldOf(gear.shield, hL, { limb: GUARD_ARM, joint: [eL.y, eL.z] }, HEROIC.on ? HEROIC.shield : 1));
+  if (shield) out.push(...shieldOf(gear.shield, hL, { limb: GUARD_ARM, joint: [eL.y, eL.z] }, HEROIC.shield));
   if (opts.helmet) out.push(...helmetOf(gear.helmet));
   return out;
 }
@@ -331,17 +333,23 @@ function shieldOf(s: Shield, hand: THREE.Vector3, t: Tag = {}, k = 1): THREE.Buf
 }
 function shieldShape(s: Shield, at: Tf, t: Tag): THREE.BufferGeometry[] {
   const face: Tag = { ...t, team: true };
-  // (Boards with an edge (some thickness), a domed boss.)
-  const boss = lp(gem([at.x ?? 0, at.y ?? 0, (at.z ?? 0) + 0.008], [0.032, 0.032, 0.022], METAL, 6, [Math.PI / 2, 0, 0]), {}, t);
-  const ngon = (r: number, sy = 1, n = 8) => lp(plate(Array.from({ length: n }, (_, i) => [Math.cos((i + 0.5) * 2 * Math.PI / n) * r, Math.sin((i + 0.5) * 2 * Math.PI / n) * r * sy] as const), PAINT, 0.012), at, face);
+  // (A round or oval shield dished, as they were made: its face (painted)
+  // rising from the rim to the boss at its middle, a dark rim round its
+  // edge (rawhide or iron); a flat one (a kite) a board with an edge.)
+  const boss = (z = 0.008) => lp(gem([at.x ?? 0, at.y ?? 0, (at.z ?? 0) + z], [0.032, 0.032, 0.022], METAL, 6, [Math.PI / 2, 0, 0]), {}, t);
+  const dished = (r: number, sy = 1, n = 8) => {
+    const o = { turn: Math.PI / n, caps: [false, false] as const }, up = (g: THREE.BufferGeometry) => g.rotateX(Math.PI / 2);
+    return [lp(up(hull([R([0, 0, 0], r, r * sy), R([0, 0.016, 0], r * 0.62, r * 0.62 * sy), R([0, 0.024, 0], 0, 0)], n, PAINT, o)), at, face),
+      lp(up(hull([R([0, -0.006, 0], r * 1.03, r * sy * 1.03), R([0, 0.004, 0], r * 1.03, r * sy * 1.03)], n, RIM, o)), at, t), boss(0.02)];
+  };
   switch (s) {
-    case 'round': return [ngon(0.16), boss];
-    case 'big round': return [ngon(0.2), boss];
-    case 'small': return [ngon(0.11), boss];
-    case 'oval': return [ngon(0.12, 1.6), boss];
-    case 'scutum': return [shape(new THREE.CylinderGeometry(0.2, 0.2, 0.42, 3, 1, true, -0.62, 1.24).rotateY(Math.PI), PAINT, { ...at, z: (at.z ?? 0) + 0.18, y: (at.y ?? 0) - 0.02 }, face), boss];
+    case 'round': return dished(0.16);
+    case 'big round': return dished(0.2);
+    case 'small': return dished(0.11);
+    case 'oval': return dished(0.12, 1.6);
+    case 'scutum': return [shape(new THREE.CylinderGeometry(0.2, 0.2, 0.42, 3, 1, true, -0.62, 1.24).rotateY(Math.PI), PAINT, { ...at, z: (at.z ?? 0) + 0.18, y: (at.y ?? 0) - 0.02 }, face), boss()];
     case 'pavise': return [box(0.26, 0.46, 0.025, PAINT, { ...at, y: (at.y ?? 0) - 0.03 }, face)];
-    case 'kite': return [lp(plate([[-0.12, 0.14], [0, 0.155], [0.12, 0.14], [0.11, -0.03], [0.06, -0.17], [0, -0.29], [-0.06, -0.17], [-0.11, -0.03]], PAINT, 0.012), at, face), boss];
+    case 'kite': return [lp(plate([[-0.12, 0.14], [0, 0.155], [0.12, 0.14], [0.11, -0.03], [0.06, -0.17], [0, -0.29], [-0.06, -0.17], [-0.11, -0.03]], PAINT, 0.012), at, face), boss()];
   }
 }
 
@@ -399,7 +407,7 @@ function mount(coat: number, cloth: boolean): THREE.BufferGeometry[] {
 function rider(gear: Gear, coat: number, female: boolean, style: RiderStyle): THREE.BufferGeometry[] {
   const heavy = style === 'knight';
   const out: THREE.BufferGeometry[] = [...mount(coat, !heavy), box(0.16, 0.05, 0.22, LEATHER, { y: SEAT - 0.03, z: 0.02 })];
-  const dress: Dress = { fine: FINE, heroic: HEROIC.on, broad: HEROIC.on, female, legs: gear.legs, sleeves: 'long' };
+  const dress: Dress = { fine: FINE, heroic: true, broad: true, female, legs: gear.legs, sleeves: 'long' };
   const armR: ArmPose = HOLD, armL: ArmPose = HOLD;
   // (The weapon arm strikes with its weapon: the same swing, bent at the same elbow.)
   const amp = style === 'officer' ? 0.6 : REACH, strike = HIT(SEAT + 0.3, amp);
@@ -430,7 +438,7 @@ function rider(gear: Gear, coat: number, female: boolean, style: RiderStyle): TH
     case 'horseman':
       // (A short spear held high, a small shield on the rein arm.)
       out.push(rod(hR.clone().add(V(0, -0.2, -0.1)), hR.clone().add(V(0, 0.5, 0.2)), 0.011, 0.01, 4, WOOD, w), point(0.08, 0.02, 3, METAL, { x: hR.x, y: hR.y + 0.5, z: hR.z + 0.2, rx: 0.4 }, w),
-        ...shieldOf('small', hL, {}, HEROIC.on ? HEROIC.shield : 1));
+        ...shieldOf('small', hL, {}, HEROIC.shield));
       break;
   }
   arming(false);
@@ -443,7 +451,7 @@ function horseArcher(gear: Gear, coat: number, female: boolean): THREE.BufferGeo
   const out: THREE.BufferGeometry[] = [...mount(coat, true), box(0.16, 0.05, 0.22, LEATHER, { y: SEAT - 0.03, z: 0.02 })];
   const armR: ArmPose = HOLD, armL: ArmPose = RAISE;
   const raise = HIT(SEAT + 0.3, 0.8), eL = elbowAt(1, armL, female).add(V(0, SEAT - HIP, 0));
-  out.push(...tagged(riderBody({ fine: FINE, heroic: HEROIC.on, broad: HEROIC.on, female, legs: gear.legs, sleeves: 'long' }, SEAT, armL, armR, undefined, raise)));
+  out.push(...tagged(riderBody({ fine: FINE, heroic: true, broad: true, female, legs: gear.legs, sleeves: 'long' }, SEAT, armL, armR, undefined, raise)));
   arming(true);
   const g = handAt(1, armL, female).add(V(0, SEAT - HIP, 0)), up: Tag = { limb: raise, joint: [eL.y, eL.z] };
   out.push(rod(g, g.clone().add(V(0, 0.26, -0.05)), 0.01, 0.007, 3, 0x5a3a22, up), rod(g, g.clone().add(V(0, -0.26, -0.05)), 0.01, 0.007, 3, 0x5a3a22, up), rod(g.clone().add(V(0, 0.26, -0.05)), g.clone().add(V(0, -0.26, -0.05)), 0.003, 0.003, 3, 0xd8d0c0, up),

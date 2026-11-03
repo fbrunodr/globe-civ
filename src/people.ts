@@ -51,13 +51,12 @@ export interface Dress {
 // chest and shoulders broader, so that a figure reads at a glance from
 // far off (ours about six and a third heads tall, not seven and a half).
 // The units wear them (unitModels.ts); the countryside's people don't.
-// (`on`: whether models are made so: the Units page compares both.)
 // (The head, with all it wears (helmets, hair), scaled about the neck:
 // NECK_Y at its middle, so what fits it still fits.)
-export const HEROIC = { on: true, head: 1.14, hand: 1.3, chest: 1.09, deltoid: 1.14, weapon: 1.3, shield: 1.08 };
+export const HEROIC = { head: 1.14, hand: 1.3, chest: 1.09, deltoid: 1.14, weapon: 1.3, shield: 1.08 };
 export const NECK_Y = 0.86;
 const headScale = new THREE.Matrix4().makeTranslation(0, NECK_Y, 0).multiply(new THREE.Matrix4().makeScale(HEROIC.head, HEROIC.head, HEROIC.head)).multiply(new THREE.Matrix4().makeTranslation(0, -NECK_Y, 0));
-export const heroicHead = <G extends THREE.BufferGeometry>(g: G, on = HEROIC.on): G => (on ? g.applyMatrix4(headScale) : g);
+export const heroicHead = <G extends THREE.BufferGeometry>(g: G, on = true): G => (on ? g.applyMatrix4(headScale) : g);
 // (Scales a hand's (or any piece's) points about where it starts.)
 const about = (o: THREE.Vector3, k: number) => (p: THREE.Vector3): V3 => { const q = p.clone().sub(o).multiplyScalar(k).add(o); return [q.x, q.y, q.z]; };
 // How its arms are held: each arm's upper and lower directions (unit
@@ -187,7 +186,7 @@ export function person(d: Dress, armL: ArmPose = HANG, armR: ArmPose = HANG, swi
   // The torso (the tunic's body: pointed at the sides, flat before and
   // behind), its skirt and belt.
   const T0 = f ? [[0.098, 0.066], [0.074, 0.054], [0.104, 0.072], [0.046, 0.038]] : [[0.085, 0.062], [0.08, 0.058], [0.118, 0.068], [0.05, 0.04]];
-  const T = d.broad ? T0.map(([a, b], i) => (i === 2 ? [a! * HEROIC.chest, b!] : [a!, b!])) : T0;
+  const T = d.broad ? T0.map(([a, b], i) => (i === 2 ? [a!, b! * 1.06] : [a!, b!])) : T0;
   // (Under a skirt, from the waist: the hips hidden.)
   const from = skirt === 'none' ? 0 : 1;
   add(hull([0.46, 0.6, 0.76, 0.855].slice(from).map((y, i) => R([0, y, 0], T[i + from]![0]!, T[i + from]![1]!)), 6, CLOTH_PAINT, { caps: [false, true] }), 'team');
@@ -296,8 +295,10 @@ function finePerson(d: Dress, armL: ArmPose, armR: ArmPose, swing: Swing): Part[
   // The torso: hips, waist, chest, shoulders, the base of the neck.
   const T = f ? [[0.104, 0.07, 0], [0.076, 0.056, 0], [0.103, 0.074, 0.007], [0.108, 0.058, 0], [0.05, 0.042, 0]]
     : [[0.094, 0.064, 0], [0.084, 0.06, 0], [0.114, 0.072, 0.007], [0.126, 0.062, 0], [0.055, 0.045, 0]];
-  // (A soldier's broader: the chest and the shoulders out, its joints where they were.)
-  if (d.broad) for (const i of [2, 3]) T[i] = [T[i]![0]! * HEROIC.chest, T[i]![1]! * (i === 2 ? 1.04 : 1), T[i]![2]!];
+  // (A soldier's broader: the shoulders out (the deltoids cover their
+  // joints, which stay where they were), the chest deeper; not wider
+  // where the arms hang beside it, or they sink into it.)
+  if (d.broad) { T[3] = [T[3]![0]! * HEROIC.chest, T[3]![1]!, T[3]![2]!]; T[2] = [T[2]![0]!, T[2]![1]! * 1.06, T[2]![2]!]; }
   const TY = [0.46, 0.58, 0.72, 0.815, 0.857];
   // (Under a skirt too, from the hips: so no gap opens between them as the skirt swings.)
   const from = 0;
