@@ -464,17 +464,6 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
           vec3 sEdge;
           vec4 soft;
           vec4 w = paintWeights(fan, P, ids, sEdge, soft);
-          // How far each tile's painted land reaches past here (world units,
-          // > 0 inside it): its lead over the next tile in the soft weights,
-          // which grows about evenly from its border inward, over that
-          // lead's rate on screen. (Read here, in step for the derivatives.)
-          vec4 lead;
-          for (int k = 0; k < 4; k++) {
-            float o = 0.0;
-            for (int j = 0; j < 4; j++) if (j != k) o = max(o, soft[j]);
-            lead[k] = soft[k] - o;
-          }
-          vec4 inward = lead * tLod / max(fwidth(lead), vec4(1e-7));
           vec4 m0 = vec4(0.0), m1 = vec4(0.0), m2 = vec4(0.0), m3 = vec4(0.0), m4 = vec4(0.0);
           vec4 g0 = vec4(0.0), g1 = vec4(0.0), g2 = vec4(0.0);
           for (int k = 0; k < 4; k++) {
@@ -624,10 +613,9 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               // dry ground between left wild.)
               // (Wherever the painting is most its tile's, at full strength: its
               // edge the tiles' border, a river's middle where one runs there.)
-              // (In from the border by half a lane, FARM_LANE: where two farms
-              // meet, their bands make one lane between them.)
+              // (A little in from the border: its soft weight at least FIELD_PAD, cityProps.ts.)
               float tile = fr0.w; // world units per tile step
-              float band = meCode == 5 ? smoothstep(0.6, 0.65, soft[k]) : smoothstep(0.0, 1.5 * tLod, inward[k] - 0.5 * ${FARM_LANE} * tile);
+              float band = smoothstep(0.565, 0.595, soft[k]);
               float farm = owned(w, k) * band * (meCode == 5 ? 1.0 - snowCover : keep);
               if (region == ${CROP_CODE.paddy}) farm *= smoothstep(-0.00012, 0.00004, vDepth);
               vec2 f; float edge;
@@ -645,9 +633,10 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               // A neglected farm (stage 0): its crops dull, weeds and grass
               // over much of it.
               if (stage == 0) crop = mix(mix(crop, vec3(dot(crop, vec3(0.3, 0.55, 0.15))) * vec3(1.05, 0.95, 0.8), 0.5), diffuseColor.rgb / max(vShade, 0.05), 0.6 * smoothstep(0.35, 0.6, tFbm(P / (0.05 * uR0) + 5.3, 2)));
-              // Between the plots: lanes of trodden earth, FARM_LANE wide, as
-              // its border is (a pasture's paddocks keep their thin lines).
-              float lw = meCode == 5 ? 0.002 : 0.5 * ${FARM_LANE};
+              // Between the plots: lanes of trodden earth, as its border is
+              // (FARM_LANE wide: a first farm's narrower, the machine age's
+              // narrower still; a pasture's paddocks keep thin lines).
+              float lw = meCode == 5 ? 0.002 : 0.5 * ${FARM_LANE} * (stage <= 1 ? 0.55 : stage == 4 ? 0.375 : 1.0);
               float hedge = (1.0 - smoothstep(lw, lw + 1.5 * fwidth(edge), edge)) * tFade(1.0 / (0.02 * tile));
               if (meCode == 5) crop = mix(crop, vec3(0.32, 0.4, 0.2), hedge * 0.6);
               // Each plot in its crop's colour on a scan of what it is: a

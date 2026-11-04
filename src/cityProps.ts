@@ -119,7 +119,7 @@ const INSET = 0.05, MASK_STEP = 0.02, MASK_HALF = 32;
 // A farm keeps in from its tile's painted border (its soft weight there at
 // least FIELD_PAD: the shader's too, terrainMaterial.ts) and off a beach
 // (BEACH inner radii from the shore).
-const FIELD_PAD = 0.65;
+const FIELD_PAD = 0.595; // (its border band then 1.5 lanes wide, rural/plots.ts FARM_LANE)
 export const BEACH = 0.35;
 // The land of tile t (`ok` at each square's middle) worn back INSET, as a test of a point (tile steps).
 function innerMask(toDir: (p: Pt2) => THREE.Vector3, sample: (d: THREE.Vector3) => CitySpot, ok: (s: CitySpot) => boolean): (p: Pt2) => boolean {

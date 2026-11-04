@@ -19,10 +19,11 @@ import type { CropRegion } from './look.ts';
 // first farm's fields, gone to weed.)
 export const PLOT_SIZES = [[0.065, 0.1], [0.065, 0.1], [0.11, 0.24], [0.15, 0.3], [0.22, 0.42]] as const;
 export const MAX_STAGE = PLOT_SIZES.length - 1;
+// A farm's lanes of trodden earth between its plots, in tile steps (its
+// enclosed fields'; a first farm's and the machine age's narrower): its
+// border band 1.5 times as wide (0.024 at the median: FIELD_PAD).
+export const FARM_LANE = 0.016;
 // A plantation's rows across a plot, this far apart (tile steps; its plants on every other).
-// A farm's lanes of trodden earth between its plots, and its border (half
-// one, so two farms side by side meet in one), in tile steps.
-export const FARM_LANE = 0.024;
 export const PLANT_ROW_W = 0.016;
 
 // The integer hash of a cell and a salt, in [0, 1) (24 bits).
