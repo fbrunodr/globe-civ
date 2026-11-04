@@ -34,7 +34,7 @@ const FURROW_REPEAT = 0.045;
 //   1 rounding of edges i-1, i, i+1 and A|B
 //   2 rounding of B|C, river strength of edges i-1, i, i+1
 //   3 warp share of edges i-1, i, i+1 and A|B
-//   4 warp share of B|C, look similarity B|C and A|C
+//   4 warp share of B|C, look similarity B|C and A|C, river on A|B (1) + B|C (2)
 //   5 look similarity t|A, t|B, t|C, A|B (1 = same group)
 //
 // Per-vertex attributes:
@@ -109,7 +109,7 @@ float owned(vec4 w, int k) {
 }
 vec4 tileRow(int t, int k) { int i = t * ${TILE_ROWS} + k; return texelFetch(uTileTex, ivec2(i % ${TEX_W}, i / ${TEX_W}), 0); }
 vec4 fanRow(int f, int k) { int i = f * ${FAN_ROWS} + k; return texelFetch(uFanTex, ivec2(i % ${TEX_W}, i / ${TEX_W}), 0); }
-vec4 paintWeights0(int fan, vec3 P, vec4 ids, out vec3 sEdge, out vec4 soft) {
+vec4 paintWeights(int fan, vec3 P, vec4 ids, out vec3 sEdge, out vec4 soft) {
   vec3 s = vPc0.xyz;
   vec4 r1 = fanRow(fan, 1);
   sEdge = s;
@@ -119,8 +119,9 @@ vec4 paintWeights0(int fan, vec3 P, vec4 ids, out vec3 sEdge, out vec4 soft) {
   float fine = clamp((tFbm(P * uFineFreq, 3) - 0.5) * 3.2, -1.0, 1.0) * uFine;
   // (Not along a river (r2.yzw): its border is the river's course, riverCurve.ts.)
   s += r3.xyz * fine * vec3(ids.x < ids.y ? 1.0 : -1.0, ids.x < ids.z ? 1.0 : -1.0, ids.x < ids.w ? 1.0 : -1.0) * (1.0 - step(0.001, r2.yzw));
-  float uL = (vPc0.w + r3.w * fine * (ids.z < ids.y ? 1.0 : -1.0)) / r1.w;
-  float uR = (vPc1.x + r4.x * fine * (ids.z < ids.w ? 1.0 : -1.0)) / r2.x;
+  // (Nor along a river between the neighbours, r4.w: 1 on A|B, 2 on B|C.)
+  float uL = (vPc0.w + r3.w * fine * (ids.z < ids.y ? 1.0 : -1.0) * (1.0 - step(0.5, mod(r4.w, 2.0)))) / r1.w;
+  float uR = (vPc1.x + r4.x * fine * (ids.z < ids.w ? 1.0 : -1.0) * (1.0 - step(1.5, r4.w))) / r2.x;
   sEdge = s;
   vec3 c = smoothstep(-1.0, 1.0, -s / r1.xyz);
   vec4 w = vec4(
@@ -143,29 +144,7 @@ vec4 paintWeights0(int fan, vec3 P, vec4 ids, out vec3 sEdge, out vec4 soft) {
   vec4 q = w * S2 * S2 * S; // w · S^(SHARPEN-1), SHARPEN = 6
   return q / dot(q, vec4(1.0));
 }
-// Near a river, each tile keeps to its side of the water (surface.ts
-// riverSd, riverP, riverN): the tile across has none of it. Up to three
-// times: the nearest stretch and the nearest between other pairs of tiles
-// (where rivers meet or one turns onto another edge).
-vec4 keepSide1(vec4 w, vec4 ids, float sd, float P, float N) {
-  if (P < 0.0) return w;
-  float wrong = sd >= 0.0 ? N : P;
-  vec4 k = w;
-  for (int j = 0; j < 4; j++) if (abs(ids[j] - wrong) < 0.5) k[j] = 0.0;
-  float t = k.x + k.y + k.z + k.w;
-  return t > 1e-6 ? k / t : w;
-}
-vec4 keepSideAt(vec4 w, vec4 ids, vec3 sd) {
-  w = keepSide1(w, ids, sd.x, vRiverIds.x, vRiverIds.y);
-  w = keepSide1(w, ids, sd.y, vRiverIds.z, vRiverIds.w);
-  return keepSide1(w, ids, sd.z, vRiverIds2.x, vRiverIds2.y);
-}
-vec4 keepSide(vec4 w, vec4 ids) { return keepSideAt(w, ids, vRiverSd); }
-vec4 paintWeights(int fan, vec3 P, vec4 ids, out vec3 sEdge, out vec4 soft) {
-  vec4 w = paintWeights0(fan, P, ids, sEdge, soft);
-  soft = keepSide(soft, ids);
-  return keepSide(w, ids);
-}
+
 `;
 
 // Ground materials (groundTextures.ts): textures planar-projected along the
@@ -397,8 +376,6 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
         attribute float depth;
         attribute float bank;
         attribute float shore;
-        attribute vec3 riverSd; attribute vec4 riverIds; attribute vec2 riverIds2;
-        varying vec3 vRiverSd; flat varying vec4 vRiverIds; flat varying vec2 vRiverIds2;
         attribute vec4 pc0;
         attribute vec2 pc1;
         varying vec4 vPc0;
@@ -414,7 +391,7 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
         varying vec3 vObjPos;`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
         ${FOG_FLATTEN}
-        vRing = ring; vFog = unexplored; vShade = shade; vSnow = snow; vDepth = depth; vBank = bank; vShore = shore; vRiverSd = riverSd; vRiverIds = riverIds; vRiverIds2 = riverIds2;
+        vRing = ring; vFog = unexplored; vShade = shade; vSnow = snow; vDepth = depth; vBank = bank; vShore = shore;
         vPc0 = pc0; vPc1 = pc1;
         vObjPos = position; vObjNormal = normal;`);
 
@@ -440,7 +417,6 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
         varying float vDepth;
         varying float vShore;
         varying float vBank;
-        varying vec3 vRiverSd; flat varying vec4 vRiverIds; flat varying vec2 vRiverIds2;
         varying vec3 vObjPos;
         varying vec3 vObjNormal;
         float tLod;
@@ -813,19 +789,6 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
             pc *= 0.8 + 0.4 * jit;
             float d = w[best] - second;
             float edge = 1.0 - smoothstep(0.0, max(fwidth(d), 1e-5) * 1.5, d);
-            // (Along a river the owner changes hands at once: a line where
-            // the river's middle is and the other side has another owner.)
-            vec3 rl = 1.0 - smoothstep(vec3(0.0), max(fwidth(vRiverSd), 1e-6) * 1.5, abs(vRiverSd));
-            vec3 rawEdge; vec4 rawSoft;
-            vec4 raw = paintWeights0(fan, P, ids, rawEdge, rawSoft);
-            for (int r = 0; r < 3; r++) {
-              if (rl[r] <= 0.0) continue;
-              vec3 flip = vRiverSd; flip[r] = -flip[r];
-              vec4 o = keepSideAt(raw, ids, flip);
-              int ob = 0;
-              for (int k = 1; k < 4; k++) if (o[k] > o[ob]) ob = k;
-              if (int(ids[ob]) != bt) edge = max(edge, rl[r]);
-            }
             float sf = soft[best] - 0.6;
             float inner = 1.0 - smoothstep(0.0, max(fwidth(sf), 1e-5) * 1.2, abs(sf));
             pc = mix(pc, vec3(1.0), 0.35 * inner);

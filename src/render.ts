@@ -431,7 +431,7 @@ export class GlobeRenderer {
       fd.set(f.round.slice(0, 4), o + 4);
       fd.set([f.round[4], ...f.river], o + 8);
       fd.set(f.warp.slice(0, 4), o + 12);
-      fd.set([f.warp[4], f.sim[4], f.sim[5]], o + 16);
+      fd.set([f.warp[4], f.sim[4], f.sim[5], (f.riverAcross[0] ? 1 : 0) + (f.riverAcross[1] ? 2 : 0)], o + 16);
       fd.set(f.sim.slice(0, 4), o + 20);
     });
 
@@ -1821,24 +1821,6 @@ export class GlobeRenderer {
     fanCoords(this.frames[fanId], fan, warpAt(this.paint.params, dir.x, dir.y, dir.z), dir.x, dir.y, dir.z, this.spotCo);
     const w = softAt(this.paint, fanId, this.spotCo), pw = paintAt(this.paint, fanId, this.spotCo).w;
     this.terrain.topo.sample(t, i, wa, wb, this.spotSmp);
-    // (Near a river, each tile keeps to its side: as the shader, terrainMaterial.ts keepSide.)
-    {
-      const f = this.terrain.fields.ground, sv = this.spotSmp;
-      let near = 0;
-      for (let c = 1; c < 3; c++) if (sv.w[c] > sv.w[near]) near = c;
-      for (const n of ['', '2', '3']) {
-        const P = f['riverP' + n]![sv.v[near]]!, N = f['riverN' + n]![sv.v[near]]!;
-        if (P < 0) continue;
-        let sd = 0;
-        for (let c = 0; c < 3; c++) sd += sv.w[c] * f['riverSd' + n]![sv.v[c]]!;
-        const wrong = sd >= 0 ? N : P;
-        const keep = (a: Float32Array | number[]) => {
-          const k = Array.from(a, (x, c) => (fan.ids[c] === wrong ? 0 : x));
-          if (k.reduce((s, x) => s + x, 0) > 1e-6) for (let c = 0; c < 4; c++) a[c] = k[c]!;
-        };
-        keep(pw); keep(w);
-      }
-    }
     let owner = 0;
     for (let c = 1; c < 4; c++) if (pw[c]! > pw[owner]!) owner = c;
     let urban = 0;

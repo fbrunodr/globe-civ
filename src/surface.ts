@@ -86,8 +86,8 @@ export const MAX_RIVER_SLOPE = 0.07;
 export const STEEP_RIVER_SLOPE = 2;
 const K_BANK = 0.6;    // slope of the channel's banks
 const BANK_H = 0.00025; // height of the banks above the water, before the valley's gentler slope
-const K_VALLEY = 0.16;
-const RIVER_SLOTS = 3; // river sides a ground vertex knows (terrainMaterial.ts keepSide) // slope of the valley sides a river cuts
+const K_VALLEY = 0.16; // slope of the valley sides a river cuts
+const SMOOTH_PASSES = 20; // rounding of a river's turns (buildSurface)
 const POOL_DEPTH = 0.0004;
 export const POOL_BANK = 0.0002; // pool water sits this far under the lowest ground around it
 const POOL_BAND = 0.0012; // height range of one pool body: pools on slopes step down in terraces
@@ -438,6 +438,22 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
       const vary = 1 + 0.3 * noise.noise(p.x * fw + 3.3, p.y * fw, p.z * fw - 8.1);
       return size[j] * (0.06 + 0.08 * f) * vary * (0.45 + 0.55 * smoothstep(0, 0.8 * r0, along));
     });
+    // Turns rounded: where three tiles meet, the painted border has a
+    // corner, and a sharp bend would part the water's levels on its outside.
+    // Each point moves at most half the river's width, so the border stays
+    // under the water (its banks still never share a tile).
+    {
+      const orig = pts.map((p) => p.clone()), mid = new THREE.Vector3();
+      for (let pass = 0; pass < SMOOTH_PASSES; pass++) {
+        const prev = pts.map((p) => p.clone());
+        for (let j = 1; j + 1 < Math.min(n, mouth + 1); j++) {
+          mid.copy(prev[j - 1]).add(prev[j + 1]).normalize();
+          const p = pts[j].lerp(mid, 0.5).normalize();
+          const off = p.distanceTo(orig[j]), most = half[j];
+          if (off > most) p.sub(orig[j]).multiplyScalar(most / off).add(orig[j]).normalize();
+        }
+      }
+    }
     const depth = flow.map((f, j) => (0.00035 + 0.0005 * f) * Math.min(1, half[j] / (size[j] * (0.06 + 0.08 * f))));
     for (let j = mouth + 1; j < n; j++) half[j] *= 1 + 0.5 * Math.min(1, (j - mouth) / 8); // estuary
     // Ground along the course: the lowest of the middle and both banks.
@@ -523,71 +539,9 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
   });
   const bank = new Float32Array(V);
   const riverGap = new Float32Array(V).fill(Infinity); // distance from the river's water edge
-  // Which side of a river each vertex near one is on: its signed distance
-  // from the river's middle, and the tiles on the positive side and on the
-  // negative (-1 where none): the painting keeps each tile to its side
-  // (terrainMaterial.ts paintWeights, render.ts citySpot).
-  const riverSd = new Float32Array(V), riverP = new Float32Array(V).fill(-1), riverN = new Float32Array(V).fill(-1);
-  const riverSd2 = new Float32Array(V), riverP2 = new Float32Array(V).fill(-1), riverN2 = new Float32Array(V).fill(-1);
-  const riverSd3 = new Float32Array(V), riverP3 = new Float32Array(V).fill(-1), riverN3 = new Float32Array(V).fill(-1);
-  const slots = [[riverSd, riverP, riverN], [riverSd2, riverP2, riverN2], [riverSd3, riverP3, riverN3]] as const;
-  const ab = new THREE.Vector3();
-  const pairOf = (k: number) => { const { c, j } = segs[k]; return courses[c].sides[j]!; };
-  const abN = new THREE.Vector3();
-  const samePairAt = (course: RiverCourse, i: number, j: number) => {
-    const p = course.sides[i]!, q = course.sides[j]!;
-    return (p[0] === q[0] && p[1] === q[1]) || (p[0] === q[1] && p[1] === q[0]);
-  };
-  // (keep: the tiles too, else only the distance, for the triangles at the
-  // reach's edge to interpolate.)
-  const sideOf = (k: number, jn: number, v: number, d: THREE.Vector3, slot: number, keep: boolean) => {
-    const [sd, P, N] = slots[slot]!;
-    const { c, j } = segs[k];
-    const course = courses[c], side = course.sides[j]!;
-    ab.crossVectors(course.pts[j], course.pts[j + 1]).normalize();
-    if (jn !== j) ab.add(abN.crossVectors(course.pts[jn], course.pts[jn + 1]).normalize()).normalize();
-    sd[v] = ab.dot(d);
-    if (!keep) { P[v] = -1; N[v] = -1; return; }
-    const pos = ab.dot(tiles[side[0]].center) >= 0;
-    P[v] = pos ? side[0] : side[1];
-    N[v] = pos ? side[1] : side[0];
-  };
   const riverW = new Float32Array(V); // how much the water here is a river's (vs the sea it runs into)
   const flowVec = new Float32Array(V * 3);
   const seg = new THREE.Vector3(), rel = new THREE.Vector3(), tmp = new THREE.Vector3();
-  // Each river's pair of tiles gets one of the slots, pairs that reach the
-  // same ground (within their reach) different ones where they can.
-  const SIDE_REACH = 0.8 * r0, SIDE_PAD = 0.3 * r0; // how far from a river's water its sides hold; the distance a little further
-  const pairKey = (p: readonly [number, number]) => Math.min(p[0], p[1]) * 65536 + Math.max(p[0], p[1]);
-  const pairSlot = new Map<number, number>();
-  {
-    const at = new Map<number, { pts: THREE.Vector3[]; reach: number }>();
-    for (const course of courses) course.sides.forEach((side, j) => {
-      if (side[0] < 0) return;
-      const key = pairKey(side);
-      const e = at.get(key) ?? { pts: [], reach: 0 };
-      e.pts.push(course.pts[j]!);
-      e.reach = Math.max(e.reach, course.half[j]! + SIDE_REACH + SIDE_PAD);
-      at.set(key, e);
-    });
-    const keys = [...at.keys()];
-    const clash = new Map<number, number[]>(keys.map((k) => [k, []]));
-    for (let a = 0; a < keys.length; a++) {
-      const A = at.get(keys[a]!)!;
-      for (let b = a + 1; b < keys.length; b++) {
-        const B = at.get(keys[b]!)!;
-        const r = A.reach + B.reach;
-        if (A.pts[0]!.distanceTo(B.pts[0]!) > r + 6 * r0) continue;
-        if (A.pts.some((p) => B.pts.some((q) => p.distanceTo(q) < r))) { clash.get(keys[a]!)!.push(keys[b]!); clash.get(keys[b]!)!.push(keys[a]!); }
-      }
-    }
-    keys.sort((a, b) => clash.get(b)!.length - clash.get(a)!.length);
-    for (const k of keys) {
-      const used = new Array<number>(RIVER_SLOTS).fill(0);
-      for (const o of clash.get(k)!) { const n = pairSlot.get(o); if (n !== undefined) used[n]!++; }
-      pairSlot.set(k, used.indexOf(Math.min(...used)));
-    }
-  }
   for (let v = 0; v < V; v++) {
     const list = segsNear[topo.tile[v]];
     if (list.length === 0) continue;
@@ -623,40 +577,6 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
     }
     if (carve < Infinity) height[v] = smin(height[v], carve, 0.00025);
     if (bestSeg >= 0) riverGap[v] = bestDist - bestHalf;
-    if (bestSeg >= 0 && bestDist < bestHalf + SIDE_REACH + SIDE_PAD) {
-      // The nearest stretch between each pair of tiles near (where rivers
-      // meet, or one turns onto another edge: every tile keeps to its side),
-      // up to three. Past a stretch's end only where the river
-      // goes on between the same tiles (the side then from the two stretches'
-      // mean direction): not past a river's free ends (its source, a
-      // tributary's end in its main river) or where it turns onto another
-      // edge, as no line runs on there.
-      const near: { k: number; dist: number; jn: number; keep: boolean }[] = [];
-      for (const k of list) {
-        const { c, j } = segs[k];
-        const course = courses[c], side = course.sides[j]!;
-        if (side[0] < 0 || !samePairAt(course, j, j + 1)) continue; // (the stretch over a turn onto another edge: neither's)
-        const a = course.pts[j], b = course.pts[j + 1];
-        seg.subVectors(b, a);
-        const len2 = seg.lengthSq();
-        const u = len2 > 0 ? rel.subVectors(d, a).dot(seg) / len2 : 0;
-        const jn = u < 0 ? j - 1 : u > 1 ? j + 1 : j;
-        if (jn !== j) {
-          if (jn < 0 || jn + 1 >= course.pts.length || !samePairAt(course, jn, j) || !samePairAt(course, jn, jn + 1)) continue;
-        }
-        const uc = Math.min(1, Math.max(0, u));
-        const w = course.half[j] + (course.half[j + 1] - course.half[j]) * uc;
-        const dist = tmp.copy(a).addScaledVector(seg, uc).distanceTo(d);
-        if (dist < w + SIDE_REACH + SIDE_PAD) near.push({ k, dist, jn, keep: dist < w + SIDE_REACH });
-      }
-      // (Each in its pair's own slot, so the sides interpolate between
-      // vertices: the same slot is the same river everywhere.)
-      const slotBest = new Array<number>(RIVER_SLOTS).fill(Infinity);
-      for (const p of near) {
-        const n = pairSlot.get(pairKey(pairOf(p.k)))!;
-        if (p.dist < slotBest[n]!) { slotBest[n] = p.dist; sideOf(p.k, p.jn, v, d, n, p.keep); }
-      }
-    }
     if (bestSeg >= 0 && bestDist < bestHalf + MARGIN) {
       bank[v] = 1 - smoothstep(bestHalf, bestHalf + 0.3 * r0, bestDist);
       if (bestLevel >= water[v]) {
@@ -801,7 +721,7 @@ export function buildSurface(globe: Globe, map: MapData, looks: readonly TileLoo
   return {
     fields: {
       height, water,
-      ground: { bank, shore, riverSd, riverP, riverN, riverSd2, riverP2, riverN2, riverSd3, riverP3, riverN3 },
+      ground: { bank, shore },
       water3d: [{ name: 'tint', itemSize: 4, data: tint }, { name: 'flow', itemSize: 3, data: flowVec },
         { name: 'wsrc', itemSize: 1, data: Float32Array.from(source) }, { name: 'wstep', itemSize: 1, data: waterSteps(topo, height, water, fall) }],
     },

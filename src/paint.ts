@@ -177,6 +177,7 @@ export interface FanRules {
   warp: number[];  // 5 warp shares
   round: number[]; // 5 rounding widths (radians)
   river: number[]; // 3 (real edges): river strength 0..1, 0 = no river
+  riverAcross: [boolean, boolean]; // a river on the borders A|B and B|C (no fine wiggle there either)
   // How alike the looks of each pair of the fan's tiles are (0..1; 1 = same
   // group): t|A, t|B, t|C, A|B, B|C, A|C.
   sim: number[];
@@ -268,6 +269,7 @@ export function buildPaintData(globe: Globe, map: MapData, worldSeed: number): P
         warp: rules.map((r) => r.warp),
         round: rules.map((r, j) => r.round * size(...pairs[j]!)),
         river: [A, B, C].map((nb) => edgeRiver.get(edgeKey(N, t, nb)) ?? 0),
+        riverAcross: [edgeRiver.has(edgeKey(N, B, A)), edgeRiver.has(edgeKey(N, B, C))],
         sim: [sim(t, A), sim(t, B), sim(t, C), sim(A, B), sim(B, C), sim(A, C)],
       });
     }
