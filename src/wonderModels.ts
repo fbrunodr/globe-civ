@@ -37,6 +37,13 @@ const seg = (a: THREE.Vector3, b: THREE.Vector3, r: number, c: number): G => {
   return P(g.translate(a.x, a.y, a.z), c);
 };
 const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
+// A rocky islet in the sea, its top at the water line (origin): what a
+// wonder standing on the sea stands on (cityProps.ts seaWonder).
+const islet = (): G[] => [
+  P(new THREE.CylinderGeometry(0.068, 0.075, 0.0078, 9).translate(0, 0.0021, 0), ROCK, { ry: 0.3 }),
+  ...[[0.06, 0.025, 1.1], [-0.045, 0.05, 0.9], [-0.03, -0.058, 1], [0.035, -0.055, 0.8]].map(([x, z, s]) =>
+    P(new THREE.DodecahedronGeometry(0.011 * s!, 0).scale(1, 0.7, 1), shade(ROCK, 0.9 + 0.1 * s!), { x: x!, y: 0.0065, z: z!, ry: x! * 40 })),
+];
 
 const MODELS: Record<SiteModel, () => G[]> = {
   // Giza: the great pyramid at the back, two queens' pyramids before it,
@@ -52,9 +59,7 @@ const MODELS: Record<SiteModel, () => G[]> = {
   // its fire, on a rocky islet in the sea (its origin at the water line:
   // it stands beside a coastal city, cityProps.ts).
   greatLighthouse: () => [
-    P(new THREE.CylinderGeometry(0.068, 0.075, 0.0078, 9).translate(0, 0.0021, 0), ROCK, { ry: 0.3 }),
-    ...[[0.06, 0.025, 1.1], [-0.045, 0.05, 0.9], [-0.03, -0.058, 1], [0.035, -0.055, 0.8]].map(([x, z, s]) =>
-      P(new THREE.DodecahedronGeometry(0.011 * s!, 0).scale(1, 0.7, 1), shade(ROCK, 0.9 + 0.1 * s!), { x: x!, y: 0.0065, z: z!, ry: x! * 40 })),
+    ...islet(),
     ...frustum(0.06, 0.06, 0.05, 0.05, 0.075, LIMESTONE, { y: 0.006 }, shade(LIMESTONE, 0.95)),
     ...chamfered(0.036, 0.04, 0.036, 0.3, LIMESTONE, { y: 0.081 }),
     ...drum(0.012, 0.011, 0.022, 10, LIMESTONE, { y: 0.121 }),
@@ -136,10 +141,11 @@ const MODELS: Record<SiteModel, () => G[]> = {
     return out;
   },
   // Rhodes: the bronze sun god on a high pedestal by the harbour, torch raised.
+  // (On its islet in the harbour beside a coastal city, as the Pharos.)
   colossus: () => {
     const B = 0x9a7a4a, G2 = shade(B, 0.85);
     return [
-      patch(2 * H, 2 * H, shade(STONE, 1.05)),
+      ...islet(),
       ...frustum(0.07, 0.07, 0.056, 0.056, 0.05, STONE, {}, shade(STONE, 1.05)),
       seg(V(-0.012, 0.05, 0), V(-0.008, 0.1, 0), 0.006, B), seg(V(0.012, 0.05, 0), V(0.008, 0.1, 0), 0.006, B),
       cyl(0.012, 0.014, 0.045, 7, B, { y: 0.098 }),

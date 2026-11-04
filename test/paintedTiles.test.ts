@@ -1,5 +1,5 @@
 // Everything drawn on a tile stands on the tile's painted land (the
-// painting's owner there, paint.ts paintAt), not its formal hex: the hexes
+// painting's owner there as drawn, fine wiggle and all: paint.ts paintDelta), not its formal hex: the hexes
 // are the rules' business. Ground and biomes are the painting itself;
 // rivers run on its borders (paint.test.ts P9); here the props: resources
 // (and their beasts' walks), cities and the countryside.
@@ -10,7 +10,7 @@ import { Game } from '../src/game.ts';
 import { aiTurn } from '../src/ai.ts';
 import { USE } from '../src/cities.ts';
 import { BIOMES } from '../src/terrain.ts';
-import { buildPaintData, fanCoords, fanFrames, paintAt, softAt, warpAt, FAN_COORDS } from '../src/paint.ts';
+import { buildPaintData, fanCoords, fanFrames, paintAt, paintDelta, softAt, FAN_COORDS } from '../src/paint.ts';
 import { locate } from '../src/terrainMesh.ts';
 import { CityProps, type CitySpot } from '../src/cityProps.ts';
 import { waterRule } from '../src/buildingCatalog.ts';
@@ -30,7 +30,7 @@ const frames = fanFrames(g.globe);
 const co = new Float32Array(FAN_COORDS);
 const spotIn = (t: number, i: number, dir: THREE.Vector3): CitySpot => {
   const fanId = paint.fanStart[t]! + i, fan = paint.fans[fanId]!;
-  fanCoords(frames[fanId]!, fan, warpAt(paint.params, dir.x, dir.y, dir.z), dir.x, dir.y, dir.z, co);
+  fanCoords(frames[fanId]!, fan, paintDelta(paint.params, dir.x, dir.y, dir.z), dir.x, dir.y, dir.z, co);
   const w = paintAt(paint, fanId, co).w, soft = softAt(paint, fanId, co);
   let o = 0;
   for (let c = 1; c < 4; c++) if (w[c]! > w[o]!) o = c;

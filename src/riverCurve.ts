@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import type { Globe } from './goldberg.ts';
 import type { River } from './rivers.ts';
 import { borderBetween } from './rivers.ts';
-import { FAN_COORDS, fanCoords, fanFrames, paintAt, warpAt, type PaintData } from './paint.ts';
+import { FAN_COORDS, fanCoords, fanFrames, paintAt, paintDelta, type PaintData } from './paint.ts';
 import { locate } from './terrainMesh.ts';
 
 export interface RiverPoint {
@@ -28,14 +28,14 @@ const STRAY_TURN = (70 * Math.PI) / 180;
 
 export function riverCurve(globe: Globe, paint: PaintData, river: River): RiverPoint[] {
   const frames = fanFrames(globe);
-  const delta = [0, 0, 0], co = new Float32Array(FAN_COORDS);
+  const delta = [0, 0, 0, 0], co = new Float32Array(FAN_COORDS);
   let hint = 0;
   // The tile that owns the painting at a point.
   const owner = (dir: THREE.Vector3): number => {
     const { t, i } = locate(globe, dir, hint);
     hint = t;
     const fanId = paint.fanStart[t] + i, fan = paint.fans[fanId];
-    fanCoords(frames[fanId], fan, warpAt(paint.params, dir.x, dir.y, dir.z, delta), dir.x, dir.y, dir.z, co);
+    fanCoords(frames[fanId], fan, paintDelta(paint.params, dir.x, dir.y, dir.z, delta), dir.x, dir.y, dir.z, co);
     const w = paintAt(paint, fanId, co).w;
     let o = 0;
     for (let c = 1; c < 4; c++) if (w[c] > w[o]) o = c;

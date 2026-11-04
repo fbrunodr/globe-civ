@@ -27,6 +27,9 @@ import { stageLook, waterLook } from './rural/stages.ts';
 import { kitBoost } from './rural/kit.ts';
 import { planFarm, layoutRural, largestRect, HOMESTEAD_SCALE, HOMESTEAD_LOT, PADDY_DEPTH, type FieldRect, type RuralInput, type RuralSite } from './rural/layout.ts';
 import { RESOURCE_IMPROVEMENT } from './resources.ts';
+import { BIOMES } from './terrain.ts';
+import { borderBetween } from './rivers.ts';
+import { FARM_LANE } from './rural/plots.ts';
 import { len as len2, sub as sub2, type Pt as Pt2 } from './town/geometry.ts';
 import { mulberry32, type Rng } from './rng.ts';
 import { dressCity, type DressEra } from './cityDress.ts';
@@ -44,6 +47,10 @@ export interface CitySpot {
   bank?: number;  // how near a river (render.ts: its banks' greening, 0..1)
   coast?: number; // how far from the sea (tile inner radii)
 }
+// A straight side of a farm's fields (farmShape): inside where nx·x + ny·y ≥ c.
+export interface FarmSide { readonly nx: number; readonly ny: number; readonly c: number; readonly water: boolean }
+// Its fields keep this far in from it (tile steps): the border band, 1.5 lanes.
+export const FARM_BAND = 1.5 * FARM_LANE;
 export type SpotSampler = (t: number, i: number, wa: number, wb: number) => CitySpot;
 // The ground under any direction, and the tile it falls in.
 export type DirSampler = (dir: THREE.Vector3) => CitySpot & { t: number };
@@ -200,6 +207,96 @@ export class CityProps {
     });
     this.fields.set(t, r);
     return r;
+  }
+
+  // A farm's fields (a pasture's keep its rectangle): straight between the
+  // corners of its painted land (where its land reaches toward each corner
+  // of its hex), but along water (the sea, a lake, a river on that side),
+  // where they run on to the painted shore (`water`: the painting decides
+  // near it). Lines in onTile's frame (tile steps), inside where n · p ≥ c.
+  // Fixed with the painting: cached.
+  private readonly shapes = new Map<number, FarmSide[]>();
+  private riverEdges: Set<number> | null = null;
+  farmShape(t: number): FarmSide[] {
+    const hit = this.shapes.get(t);
+    if (hit) return hit;
+    const g = this.game, tl = g.tiles[t]!, n = tl.corners.length, { toDir } = onTile(g, t), { c, e1, e2, k } = tileFrame(g, t);
+    if (!this.riverEdges) {
+      this.riverEdges = new Set();
+      for (const r of g.map.rivers) for (let i = 0; i + 1 < r.corners.length; i++) {
+        const pair = borderBetween(g.globe, r.corners[i]!, r.corners[i + 1]!);
+        if (pair) this.riverEdges.add(Math.min(...pair) * g.N + Math.max(...pair));
+      }
+    }
+    const at = (d: THREE.Vector3): Pt2 => { const s = d.dot(c) * k; return { x: d.dot(e1) / s, y: d.dot(e2) / s }; };
+    const ours = (p: Pt2) => { const s = this.sampleDir(toDir(p)); return s.owner === undefined || s.owner === t; };
+    // (Where its land ends on the ray from its middle out through q.)
+    const reach = (q: Pt2): Pt2 => {
+      let lo = 0, hi = NaN;
+      for (let u = 0.05; u <= 1.5; u += 0.05) { if (!ours({ x: q.x * u, y: q.y * u })) { hi = u; break; } lo = u; }
+      if (!Number.isNaN(hi)) for (let it = 0; it < 14; it++) { const m = (lo + hi) / 2; if (ours({ x: q.x * m, y: q.y * m })) lo = m; else hi = m; }
+      return { x: q.x * lo, y: q.y * lo };
+    };
+    const corner = (j: number) => at(g.globe.triCenters[tl.corners[j % n]!]!);
+    // Its painted corners: where the painting of the three tiles at each
+    // corner of its hex meet (paintedCorner: one point per corner, its
+    // neighbours' too, so a side two farms share is the same line in both),
+    // else where its land ends toward that corner.
+    const meet = (j: number): Pt2 => {
+      const d = this.paintedCorner(tl.corners[j % n]!, k);
+      return d ? at(d) : reach(corner(j));
+    };
+    const V = Array.from({ length: n }, (_, j) => meet(j));
+    const sides: FarmSide[] = [];
+    for (let j = 0; j < n; j++) {
+      const nb = tl.neighbors[j]!, water = BIOMES[g.biome[nb]!].water || this.riverEdges.has(Math.min(t, nb) * g.N + Math.max(t, nb));
+      const a = V[j]!, b = V[(j + 1) % n]!, l = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+      let nx = -(b.y - a.y) / l, ny = (b.x - a.x) / l;
+      if (nx * -a.x + ny * -a.y < 0) { nx = -nx; ny = -ny; }
+      sides.push({ nx, ny, c: nx * a.x + ny * a.y, water });
+    }
+    this.shapes.set(t, sides);
+    return sides;
+  }
+
+  // The middle of tile t's painted hexagon: the mean of its painted corners
+  // (paintedCorner; the hex's own where none is found).
+  paintedMiddle(t: number): THREE.Vector3 {
+    const g = this.game, tl = g.tiles[t]!, { k } = onTile(g, t), m = new THREE.Vector3();
+    for (const cn of tl.corners) m.add(this.paintedCorner(cn, k) ?? g.globe.triCenters[cn]!);
+    return m.normalize();
+  }
+
+  // Where the painting of the three tiles round a corner of the globe's
+  // hexes meet (owners sampled on a grid round the corner, then finer round
+  // the meeting found): a unit direction, or null. k: a tile step there
+  // (radians). Fixed with the painting: cached.
+  private readonly corners = new Map<number, THREE.Vector3 | null>();
+  private paintedCorner(cn: number, k: number): THREE.Vector3 | null {
+    if (this.corners.has(cn)) return this.corners.get(cn)!;
+    const g = this.game, P = g.globe.triCenters[cn]!, three = g.globe.tris[cn]!;
+    const e1 = new THREE.Vector3(1, 0, 0).addScaledVector(P, -P.x);
+    if (e1.lengthSq() < 1e-6) e1.set(0, 1, 0).addScaledVector(P, -P.y);
+    e1.normalize();
+    const e2 = P.clone().cross(e1);
+    const dirAt = (x: number, y: number) => P.clone().addScaledVector(e1, x * k).addScaledVector(e2, y * k).normalize();
+    let ox = 0, oy = 0, found = false;
+    for (const step of [0.045, 0.008, 0.0015, 0.0003]) {
+      const N = 8, id: (number | undefined)[][] = [];
+      for (let a = -N; a <= N; a++) { const row: (number | undefined)[] = []; for (let b = -N; b <= N; b++) row.push(this.sampleDir(dirAt(ox + a * step, oy + b * step)).owner); id.push(row); }
+      let best: [number, number] | null = null, bd = Infinity;
+      for (let a = 0; a < 2 * N; a++) for (let b = 0; b < 2 * N; b++) {
+        const q = new Set([id[a]![b], id[a + 1]![b], id[a]![b + 1], id[a + 1]![b + 1]]);
+        if (!three.every((t) => q.has(t))) continue;
+        const x = ox + (a - N + 0.5) * step, y = oy + (b - N + 0.5) * step, dd = Math.hypot(x - ox, y - oy);
+        if (dd < bd) { bd = dd; best = [x, y]; }
+      }
+      if (!best) break;
+      [ox, oy] = best; found = true;
+    }
+    const out = found ? dirAt(ox, oy) : null;
+    this.corners.set(cn, out);
+    return out;
   }
 
   // Forget every layout (the ground under them changed).
@@ -395,12 +492,13 @@ export class CityProps {
       const sc = LAND_WONDER_HALF / Math.max(hw, hd), r = Math.SQRT2 * (LAND_WONDER_HALF + LAND_WONDER_GAP);
       const tl = g.tiles[t]!, i = tl.neighbors.indexOf(city.tile), n = tl.corners.length;
       const edge = g.globe.triCenters[tl.corners[i]!]!.clone().add(g.globe.triCenters[tl.corners[(i + 1) % n]!]!).normalize();
-      // (Spots nearest the edge first; the first whose circle is all dry
-      // and clear of roads, checked every 0.02 across it.)
+      // (Spots nearest the middle of its painted hexagon first; the first whose circle is
+      // all dry and clear of roads, checked every 0.02 across it.)
       const disk: Pt2[] = [];
       for (let x = -r; x <= r; x += 0.02) for (let y = -r; y <= r; y += 0.02) if (Math.hypot(x, y) <= r) disk.push({ x, y });
       const spots: { p: Pt2; dist: number }[] = [];
-      for (let x = -0.4; x <= 0.4; x += 0.02) for (let y = -0.4; y <= 0.4; y += 0.02) spots.push({ p: { x, y }, dist: toDir({ x, y }).angleTo(edge) });
+      const mid = this.paintedMiddle(t);
+      for (let x = -0.4; x <= 0.4; x += 0.02) for (let y = -0.4; y <= 0.4; y += 0.02) spots.push({ p: { x, y }, dist: toDir({ x, y }).angleTo(mid) });
       spots.sort((a, b) => a.dist - b.dist);
       let best: Pt2 | null = null;
       for (const { p } of spots) {
@@ -438,6 +536,7 @@ export class CityProps {
         // from its border (FIELD_PAD), off a beach, and on the tile's side of
         // a river: no water between it and the tile's middle.)
         ours: (p) => {
+          if (imp !== 'pasture' && this.farmShape(t).some((sd) => !sd.water && sd.nx * p.x + sd.ny * p.y - sd.c < FARM_BAND)) return false;
           const s = this.sampleDir(toT(p));
           if (s.owner !== undefined && (s.owner !== t || (s.own ?? 1) < FIELD_PAD)) return false;
           if ((s.coast ?? 9) < BEACH) return false;
@@ -561,19 +660,20 @@ export class CityProps {
     return g.use[t] === USE.center || isFarmland(g, t) || (g.use[t] === USE.wild && (this.landWonderOf(t) !== null || g.wonderOn(t) === 'machuPicchu'));
   }
 
-  // Where a wonder on the sea stands: on the line from the tile's middle to
-  // the middle of the edge it shares with its city, as near that edge as
-  // its islet keeps wholly in the water; facing the city.
+  // Where a wonder on the sea stands: on the line from the middle of its
+  // painted hexagon (paintedMiddle) to the middle of the edge it shares
+  // with its city, as near that middle as its islet keeps wholly in the
+  // water; facing the city.
   private seaSpot(t: number): { dir: THREE.Vector3; toward: THREE.Vector3; r: number; k: number } | null {
     const g = this.game, city = g.cityById.get(g.tileCity[t]!);
     if (!city) return null;
     const tl = g.tiles[t]!, i = tl.neighbors.indexOf(city.tile);
     if (i < 0) return null;
-    const n = tl.corners.length, c = tl.center;
+    const n = tl.corners.length, c = this.paintedMiddle(t);
     const edge = g.globe.triCenters[tl.corners[i]!]!.clone().add(g.globe.triCenters[tl.corners[(i + 1) % n]!]!).normalize();
     const { k } = onTile(g, t), r = SEA_ISLET * SEA_WONDER * k;
     const wet = (d: THREE.Vector3) => { const s = this.sampleDir(d); return s.water - s.ground >= 0.0003; };
-    for (let f = 0.75; f >= 0; f -= 0.05) {
+    for (let f = 0; f <= 0.75; f += 0.05) {
       const dir = c.clone().lerp(edge, f).normalize();
       const q = new THREE.Quaternion().setFromUnitVectors(UP, dir);
       const ring = Array.from({ length: 8 }, (_, j) => dir.clone().add(new THREE.Vector3(Math.cos(j * Math.PI / 4) * r, 0, Math.sin(j * Math.PI / 4) * r).applyQuaternion(q)).normalize());

@@ -1293,6 +1293,21 @@ export class Game {
 
   private completeWonder(city: City, k: WonderKey, t: number): void {
     this.wondersBuilt.set(k, t);
+    // (Beside its city, it takes the tile: any improvement there gone, a
+    // citizen working it back to its city to be placed again, the tile's
+    // resource worked by the wonder itself: connected.)
+    if (t !== city.tile) {
+      this.improved[t] = this.underway[t] = -1;
+      this.buildLeft[t] = 0;
+      this.pillaged[t] = 0;
+      for (const v of this.units) if (v.work === t) v.work = null;
+      if (this.use[t] === USE.rural) {
+        this.setUse(t, USE.wild);
+        city.pop = Math.max(1, city.pop - 1);
+        city.growth++;
+        if (!this.players[city.owner]!.isHuman) this.autoPlace(city);
+      }
+    }
     city.building = null;
     city.wonderTile = null;
     this.useVersion++;
@@ -1432,6 +1447,7 @@ export class Game {
   // Tile t improved (a peat bog drained for good: it is its land from now
   // on, cities.ts drained).
   build(t: number, k: ImprovementKey): void {
+    if (this.wondersAt(t).length) return; // (a wonder's tile is the wonder's)
     if (this.feature[t] === 'bog') {
       this.feature[t] = null;
       this.drained[t] = 1;
@@ -1741,11 +1757,12 @@ export class Game {
   // ---------- resources ----------
 
   // The resource on tile t civ `owner` has the use of: on its land, its
-  // improvement built there (Civ V's: a mine on the iron), not pillaged.
+  // improvement built there (Civ V's: a mine on the iron), not pillaged; or
+  // a wonder standing there, which works it as a city would.
   private connected(t: number, owner: number): ResourceKey | null {
     if (!this.resources[t] || this.ownerOf(t) !== owner || this.pillaged[t]) return null;
     const r = this.resourceFor(t, owner);
-    return r && this.builtAt(t) === RESOURCE_IMPROVEMENT[r] ? r : null;
+    return r && (this.builtAt(t) === RESOURCE_IMPROVEMENT[r] || this.wondersAt(t).length > 0) ? r : null;
   }
   // The resources on tiles a civ owns, by kind (each counted once; a
   // strategic one once the civ has revealed it).

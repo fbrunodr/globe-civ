@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { mulberry32 } from './rng.ts';
+import { NOISE_SIZE, noiseData } from './fineNoise.ts';
 import type { ImprovementKey } from './cities.ts';
 import type { CropRegion } from './rural/look.ts';
 import type { BiomeKey, FeatureKey, ReliefKey } from './terrain.ts';
@@ -32,6 +32,10 @@ const FURROW_REPEAT = 0.045;
 //  12 moss, snow, paint, floodplain   shares of the cover materials (sum 1);
 //                           paint: the paint view's color (paintViewColor,
 //                           0xRRGGBB); floodplain: 1 on one (its old beds)
+//  13-18 side.nx, ny, c, water   a farm's sides (cityProps.ts farmShape:
+//                           inside where n · p ≥ c, p in its frame; water: 1
+//                           along water, the painting deciding there; none:
+//                           0, 0, -1, 0)
 // Fan table rows (FAN_ROWS texels):
 //   0 ids (t, A, B, C)
 //   1 rounding of edges i-1, i, i+1 and A|B
@@ -76,13 +80,12 @@ export function paintViewColor(biome: BiomeKey, feature: FeatureKey | null, reli
 }
 
 export const TEX_W = 2048;
-export const TILE_ROWS = 13;
+export const TILE_ROWS = 19;
 // A dirt road's colour (render.ts).
 export const ROAD_DIRT = [0.66, 0.54, 0.34] as const;
 // (Its grain: the sand scan, fine and stoneless, not the soil's pebbles.)
 export const ROAD_GRAIN = 'sand' as const;
 export const FAN_ROWS = 6;
-const NOISE_SIZE = 64;
 
 // Noise and bump helpers, shared with the water shader (needs uNoise and tLod).
 // Color grade shared by terrain, water and props: everything in sight loses
@@ -139,7 +142,7 @@ vec4 paintWeights(int fan, vec3 P, vec4 ids, out vec3 sEdge, out vec4 soft) {
   soft = vec4(1.0, 0.0, 0.0, 0.0);
   if (s.x >= r1.x + uFine && s.y >= r1.y + uFine && s.z >= r1.z + uFine) return soft;
   vec4 r2 = fanRow(fan, 2), r3 = fanRow(fan, 3), r4 = fanRow(fan, 4);
-  float fine = clamp((tFbm(P * uFineFreq, 3) - 0.5) * 3.2, -1.0, 1.0) * uFine;
+  float fine = clamp((tFbm(normalize(P) * uFineFreq, 3) - 0.5) * 3.2, -1.0, 1.0) * uFine; // (on the unit sphere: paint.ts paintDelta reads the same)
   // (Not along a river (r2.yzw): its border is the river's course, riverCurve.ts.)
   s += r3.xyz * fine * vec3(ids.x < ids.y ? 1.0 : -1.0, ids.x < ids.z ? 1.0 : -1.0, ids.x < ids.w ? 1.0 : -1.0) * (1.0 - step(0.001, r2.yzw));
   // (Nor along a river between the neighbours, r4.w: 1 on A|B, 2 on B|C.)
@@ -336,10 +339,7 @@ export function noiseTexture(): THREE.Data3DTexture {
   return noiseTex;
 }
 function makeNoiseTexture(): THREE.Data3DTexture {
-  const rand = mulberry32(0x5eed);
-  const data = new Uint8Array(NOISE_SIZE ** 3);
-  for (let i = 0; i < data.length; i++) data[i] = Math.floor(rand() * 256);
-  const tex = new THREE.Data3DTexture(data, NOISE_SIZE, NOISE_SIZE, NOISE_SIZE);
+  const tex = new THREE.Data3DTexture(noiseData(), NOISE_SIZE, NOISE_SIZE, NOISE_SIZE);
   tex.format = THREE.RedFormat;
   tex.type = THREE.UnsignedByteType;
   tex.minFilter = THREE.LinearFilter;
@@ -623,15 +623,53 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
             // tiles as the painting has them, each tile's share of it (w)
             // with its own plots (rural/plots.ts), laid along its hex's sides.
             // (A pasture keeps the land's own grass.)
+            // (A farm's straight sides reach over the painting's wiggles: its
+            // soft share, not only its painted one.)
+            // Which farm paints here, one only: of those whose hexagons
+            // (cityProps.ts farmShape) reach it, the one it lies deepest in;
+            // their shared sides are one line, so they tile the ground, no
+            // gap, no overlap. (Near its water, only where the land is its own.)
+            int farmK = -1;
+            float deepest = -1e9;
             for (int k = 0; k < 4; k++) {
-            if (w[k] < 0.001) continue;
+              if (w[k] < 0.001 && soft[k] < 0.001) continue;
+              int me = int(ids[k]), mc = int(tileRow(me, 5).z + 0.5);
+              if (mc != 1 && mc != 9) continue;
+              vec4 q0 = tileRow(me, 7), q1 = tileRow(me, 8), q2 = tileRow(me, 9);
+              vec3 dn = normalize(P);
+              vec2 lq = vec2(dot(dn, q1.xyz), dot(dn, q2.xyz)) / (dot(dn, q0.xyz) * q0.w);
+              float dep = 1.0, sh = 0.0;
+              for (int j = 0; j < 6; j++) {
+                vec4 sd = tileRow(me, 13 + j);
+                float dd = dot(sd.xy, lq) - sd.z;
+                if (sd.w > 0.5) sh = max(sh, 1.0 - smoothstep(0.1, 0.16, dd)); else dep = min(dep, dd);
+              }
+              if (mix(1.0, owned(w, k), sh) < 0.5 || dep < -2.0 * fwidth(dep)) continue;
+              if (dep > deepest) { deepest = dep; farmK = k; }
+            }
+            for (int k = 0; k < 4; k++) {
+            if (w[k] < 0.001 && soft[k] < 0.001) continue;
             int me = int(ids[k]), meCode = int(tileRow(me, 5).z + 0.5);
+            if ((meCode == 1 || meCode == 9) && k != farmK) continue;
             if (meCode == 1 || meCode == 5 || meCode == 9) {
               vec4 fr0 = tileRow(me, 7), fr1 = tileRow(me, 8), fr2 = tileRow(me, 9);
               int region = int(mod(fr1.w + 0.5, ${STAGE_STEP}.0)), stage = int((fr1.w + 0.5) / ${STAGE_STEP}.0);
               // (The inverse of onTile's projection, exactly.)
               vec3 d = normalize(P);
               vec2 lp = vec2(dot(d, fr1.xyz), dot(d, fr2.xyz)) / (dot(d, fr0.xyz) * fr0.w);
+              // (Its fields straight between its corners, FARM_BAND in from
+              // those sides, over the painting's wiggles; near water the
+              // painting decides: cityProps.ts farmShape.)
+              // (hexIn: inside its straight sides, its border band along them;
+              // straight: in past that band, its fields.)
+              float straight = 1.0, hexIn = 1.0, shore = meCode == 5 ? 1.0 : 0.0;
+              if (meCode != 5) for (int j = 0; j < 6; j++) {
+                vec4 sd = tileRow(me, 13 + j);
+                float dd = dot(sd.xy, lp) - sd.z, aa = 1.5 * fwidth(dd);
+                if (sd.w > 0.5) shore = max(shore, 1.0 - smoothstep(0.1, 0.16, dd));
+                else { hexIn *= smoothstep(-aa, 0.0, dd); straight *= smoothstep(0.0, aa, dd - ${(1.5 * FARM_LANE).toFixed(4)}); }
+              }
+              float mine = mix(1.0, owned(w, k), shore);
               float ca = cos(fr2.w), sa = sin(fr2.w);
               vec2 uv = vec2(ca * lp.x + sa * lp.y, -sa * lp.x + ca * lp.y);
               // (A paddy's plots are its flooded ground, under its water, the
@@ -641,7 +679,7 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               // (A little in from the border: its soft weight at least FIELD_PAD, cityProps.ts.)
               float tile = fr0.w; // world units per tile step
               float band = smoothstep(0.565, 0.595, soft[k]);
-              float farm = owned(w, k) * band * (meCode == 5 ? 1.0 - snowCover : keep);
+              float farm = mine * mix(1.0, band, shore) * straight * (meCode == 5 ? 1.0 - snowCover : keep);
               if (region == ${CROP_CODE.paddy}) farm *= smoothstep(-0.00012, 0.00004, vDepth);
               vec2 f; float edge;
               float h = plotAt(uv, me, stage, f, edge);
@@ -697,7 +735,7 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               // its lanes: worn-out ground, packed dirt, the land's own colour
               // turned well toward a yellow earth (its soil and the roads'
               // dirt: not round a wetland's paddies).
-              float pad = owned(w, k) * keep * (meCode == 5 ? 0.0 : max(1.0 - band, farm * hedge));
+              float pad = mine * hexIn * keep * (meCode == 5 ? 0.0 : max(1.0 - mix(1.0, band, shore) * straight, farm * hedge));
               if (pad > 0.001) {
                 vec3 sn;
                 vec4 st = gSample(${GROUND_LAYER.soil}.0, sn, 1.0);

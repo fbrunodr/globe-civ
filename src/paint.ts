@@ -17,7 +17,8 @@
 //
 // The warp is evaluated per vertex on the CPU and interpolated by the GPU,
 // so the shader does no noise work for it. The shader adds a tiny fine
-// wiggle (at most FINE_MAX) that the CPU ignores.
+// wiggle (at most FINE_MAX) per pixel; paintDelta has it too, for what on
+// the CPU must match what's drawn (a tile's corners, its spots).
 //
 // Coordinates. The mesh splits each tile into fans, one per edge. Fan i of
 // tile t lies between corners c_i and c_{i+1}. A point in it can only be
@@ -32,6 +33,7 @@ import type { Globe } from './goldberg.ts';
 import type { MapData } from './mapgen.ts';
 import type { BiomeKey, FeatureKey } from './terrain.ts';
 import { tileLook } from './look.ts';
+import { tFbm } from './fineNoise.ts';
 
 // ---------- rules ----------
 
@@ -89,7 +91,8 @@ export const WARP_LAYERS = [
   { amp: 0.22, wavelength: 1.2 }, // bends along each border
 ] as const;
 export const WARP_MAX = WARP_LAYERS.reduce((a, l) => a + l.amp, 0);
-// GPU-only fine wiggle (share of the inner radius) and its wavelength.
+// The fine wiggle (share of the inner radius) and its wavelength: the
+// shader's, and paintDelta's.
 export const FINE_MAX = 0.14;
 export const FINE_WAVELENGTH = 1.1;
 // Sharpening between groups: higher = crisper region outlines.
@@ -138,6 +141,16 @@ export function valueNoise(px: number, py: number, pz: number, s: number): numbe
 export interface PaintParams {
   r0: number;   // mean tile inner radius (radians); rule shares are relative to it
   seed: number;
+}
+
+// The warp at unit direction (x, y, z) and, fourth, the fine wiggle there
+// (the shader's: fineNoise.ts): fanCoords adds it as the shader does, so
+// the painting found is the one drawn.
+export function paintDelta(params: PaintParams, x: number, y: number, z: number, out: number[] = [0, 0, 0, 0]): number[] {
+  warpAt(params, x, y, z, out);
+  const f = 1 / (FINE_WAVELENGTH * params.r0);
+  out[3] = Math.min(1, Math.max(-1, (tFbm(x * f, y * f, z * f, 3) - 0.5) * 3.2)) * FINE_MAX * params.r0;
+  return out;
 }
 
 // The warp field at unit direction (x, y, z), in radians (|δ| ≤ WARP_MAX·r0).
@@ -331,6 +344,14 @@ export function fanCoords(fr: FanFrame, fan: FanRules, delta: ArrayLike<number>,
   for (let j = 0; j < 5; j++) {
     const nx = fr.n[3 * j], ny = fr.n[3 * j + 1], nz = fr.n[3 * j + 2];
     out[off + j] = x * nx + y * ny + z * nz + fan.warp[j] * (delta[0] * nx + delta[1] * ny + delta[2] * nz);
+  }
+  // (With the fine wiggle, paintDelta: as the shader adds it, each boundary
+  // its way by its tiles' order, none along a river.)
+  if (delta.length > 3) {
+    const fine = delta[3]!, ids = fan.ids;
+    for (let j = 0; j < 3; j++) if (!(fan.river[j]! > 0)) out[off + j] += fan.warp[j] * fine * (ids[0] < ids[j + 1]! ? 1 : -1);
+    if (!fan.riverAcross[0]) out[off + 3] += fan.warp[3] * fine * (ids[2] < ids[1] ? 1 : -1);
+    if (!fan.riverAcross[1]) out[off + 4] += fan.warp[4] * fine * (ids[2] < ids[3] ? 1 : -1);
   }
 }
 

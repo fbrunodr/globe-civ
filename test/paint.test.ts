@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { generateWorld } from '../src/world.ts';
-import { buildPaintData, fanCoords, fanFrames, paintAt, warpAt, WARP_MAX, FAN_COORDS } from '../src/paint.ts';
+import { buildPaintData, fanCoords, fanFrames, paintAt, paintDelta, warpAt, WARP_MAX, FAN_COORDS } from '../src/paint.ts';
 import { buildRelief } from '../src/relief.ts';
 import { riverCurve } from '../src/riverCurve.ts';
 import { tileLook } from '../src/look.ts';
@@ -150,7 +150,7 @@ describe('terrain painting', () => {
           const l = locate(globe, d, hint);
           hint = l.t;
           const fanId = paint.fanStart[l.t] + l.i, fan = paint.fans[fanId];
-          fanCoords(frames[fanId], fan, warpAt(paint.params, d.x, d.y, d.z), d.x, d.y, d.z, co);
+          fanCoords(frames[fanId], fan, paintDelta(paint.params, d.x, d.y, d.z), d.x, d.y, d.z, co);
           const pw = paintAt(paint, fanId, co).w;
           let o = 0;
           for (let c = 1; c < 4; c++) if (pw[c] > pw[o]) o = c;

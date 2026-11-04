@@ -303,7 +303,7 @@ export const WONDERS = {
   greatLibrary:    { name: 'Great Library',    cost: 200, site: 'any', yields: out({ science: 5, culture: 2 }), desc: '+5 science, +2 culture.' },
   stonehenge:      { name: 'Stonehenge',       cost: 140, site: 'flat', beside: 'land', yields: out({ faith: 4, culture: 1 }), desc: 'On flat open land beside the city. +4 faith, +1 culture.' },
   colosseum:       { name: 'Colosseum',        cost: 180, site: 'any', yields: out({ culture: 5, gold: 1 }), desc: '+5 culture, +1 gold.' },
-  colossus:        { name: 'Colossus',         cost: 220, site: 'coast', yields: out({ gold: 4, culture: 1 }), desc: 'A coastal city. +4 gold, +1 culture.' },
+  colossus:        { name: 'Colossus',         cost: 220, site: 'coast', beside: 'sea', yields: out({ gold: 4, culture: 1 }), desc: 'On the sea beside a coastal city. +4 gold, +1 culture.' },
   angkorWat:       { name: 'Angkor Wat',       cost: 320, site: 'any', yields: out({ food: 3, faith: 3, culture: 2 }), desc: '+3 food, +3 faith, +2 culture.' },
   hagiaSophia:     { name: 'Hagia Sophia',     cost: 320, site: 'any', yields: out({ faith: 5, culture: 3 }), desc: '+5 faith, +3 culture.' },
   notreDame:       { name: 'Notre-Dame',       cost: 340, site: 'river', yields: out({ faith: 4, culture: 4 }), desc: 'A city by a river. +4 faith, +4 culture.' },

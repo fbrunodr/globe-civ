@@ -7,7 +7,7 @@ import { GROUND_COVERS, SNOW, tileLook, type GroundCover, type TileLook } from '
 import { buildTerrainMesh, locate, newSample, type TerrainMesh } from './terrainMesh.ts';
 import { makeTerrainMaterial, makeTerrainDepthMaterial, paintViewColor, makeTable, FAN_ROWS, TILE_ROWS, IMPROVEMENT_CODE, BURNT_CODE, CROP_CODE, STAGE_STEP, ROAD_DIRT, ROAD_GRAIN, type TerrainMaterial } from './terrainMaterial.ts';
 import { makeSmoke, type Emitter, type Smoke } from './smoke.ts';
-import { buildPaintData, fanCoords, fanFrames, paintAt, softAt, warpAt, FAN_COORDS, FINE_MAX, FINE_WAVELENGTH, type PaintData, type FanFrame } from './paint.ts';
+import { buildPaintData, fanCoords, fanFrames, paintAt, paintDelta, softAt, warpAt, FAN_COORDS, FINE_MAX, FINE_WAVELENGTH, type PaintData, type FanFrame } from './paint.ts';
 import { buildRelief, CONE_RADIUS, CRATER, CRATER_DEPTH, type Relief } from './relief.ts';
 import { buildSurface, meshLevels, type SurfaceLayers } from './surface.ts';
 import { cityGround } from './terraform.ts';
@@ -785,6 +785,8 @@ export class GlobeRenderer {
     const share = (k: GroundCover) => (k === main ? 1 : 0);
     const soil = new THREE.Color(l.ground.soil);
     td.set([soil.r, soil.g, soil.b, share('grass'), share('dry'), share('soil'), share('sand'), share('litter'), share('moss'), share('snow'), paintViewColor(g.biome[t]!, g.feature[t] ?? null, g.map.relief[t]!), g.feature[t] === 'floodplain' ? 1 : 0], o + 40);
+    // (No straight sides until it is farmed: updateTiles.)
+    for (let r = 13; r < 19; r++) td.set([0, 0, -1, 0], o + r * 4);
     this.tileTex.needsUpdate = true;
   }
 
@@ -901,7 +903,7 @@ export class GlobeRenderer {
     const most = Math.max(veg.maxDensity(t), ...tile.neighbors.map((u) => veg.maxDensity(u)));
     if (most > 0) {
       const co = new Float32Array(FAN_COORDS);
-      const delta = [0, 0, 0];
+      const delta = [0, 0, 0, 0];
       const q = new THREE.Quaternion(), sc = new THREE.Vector3(), axis = new THREE.Vector3();
       const smp = newSample();
       const rand = mulberry32(t * 7919 + 1);
@@ -940,7 +942,7 @@ export class GlobeRenderer {
             const d = p.clone().normalize();
             const fanId = this.paint.fanStart[t] + i;
             const fan = this.paint.fans[fanId];
-            fanCoords(this.frames[fanId], fan, warpAt(this.paint.params, d.x, d.y, d.z, delta), d.x, d.y, d.z, co);
+            fanCoords(this.frames[fanId], fan, paintDelta(this.paint.params, d.x, d.y, d.z, delta), d.x, d.y, d.z, co);
             const ps = paintAt(this.paint, fanId, co);
             // Which tile's props show here.
             let u = fan.ids[0], acc = 0;
@@ -1059,7 +1061,8 @@ export class GlobeRenderer {
   // improvement's look (the farm, the pasture, the mine: cityProps.ts).
   private resourceProps(t: number): PlacedProp[] {
     const g = this.game, r = g.resourceFor(t, HUMAN);
-    if (!r || g.use[t] === USE.center) return [];
+    // (A wonder standing there works it: none of its models shown.)
+    if (!r || g.use[t] === USE.center || g.wondersAt(t).length) return [];
     const worked = g.ownerOf(t) >= 0 && g.builtAt(t) === RESOURCE_IMPROVEMENT[r] && !g.pillaged[t];
     const key = `${r}|${worked}`;
     const hit = this.resourceCache.get(t);
@@ -1408,6 +1411,9 @@ export class GlobeRenderer {
       td[o + 2] = g.pillaged[t] ? BURNT_CODE : imp ? IMPROVEMENT_CODE[imp] : IMPROVEMENT_CODE.none;
       td[o + 3] = u === USE.center ? 1 : 0;
       // Its crops (the resource's own, if a farm of it) and its farm's stage (its owner's techs).
+      // Its fields' straight sides (none for a pasture, or along water).
+      const sides = imp === 'farm' || imp === 'plantation' || imp === 'wetland' ? this.cityProps.farmShape(t) : [];
+      for (let j = 0; j < 6; j++) { const sd = sides[j]; td.set(sd ? [sd.nx, sd.ny, sd.c, sd.water ? 1 : 0] : [0, 0, -1, 0], t * TILE_ROWS * 4 + (13 + j) * 4); }
       td[t * TILE_ROWS * 4 + 35] = CROP_CODE[cropRegion(imp ?? g.improvementAt(t), g.biome[t]!, g.feature[t] ?? null, g.map.temperature[t]!, g.resourceFor(t, g.ownerOf(t)))] + STAGE_STEP * plotStage(imp, g.stageAt(t));
     }
     this.tileTex.needsUpdate = true;
@@ -1797,7 +1803,7 @@ export class GlobeRenderer {
     const dir = p.clone().normalize();
     const fanId = this.paint.fanStart[t] + i;
     const fan = this.paint.fans[fanId];
-    fanCoords(this.frames[fanId], fan, warpAt(this.paint.params, dir.x, dir.y, dir.z), dir.x, dir.y, dir.z, this.spotCo);
+    fanCoords(this.frames[fanId], fan, paintDelta(this.paint.params, dir.x, dir.y, dir.z), dir.x, dir.y, dir.z, this.spotCo);
     const w = softAt(this.paint, fanId, this.spotCo), pw = paintAt(this.paint, fanId, this.spotCo).w;
     this.terrain.topo.sample(t, i, wa, wb, this.spotSmp);
     let owner = 0;
