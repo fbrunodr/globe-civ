@@ -78,7 +78,7 @@ export interface PlacedBuilding {
 }
 
 const UP = new THREE.Vector3(0, 1, 0);
-const DRY = -0.00008;      // like the flora: the water this far under the ground
+export const DRY = -0.00008; // like the flora: the water this far under the ground
 // A wonder on the sea (the Great Lighthouse): its scale (model units, tile
 // steps) and its islet's radius (model units, wonderModels.ts).
 const SEA_WONDER = 0.9, SEA_ISLET = 0.075;
@@ -119,7 +119,8 @@ const INSET = 0.05, MASK_STEP = 0.02, MASK_HALF = 32;
 // A farm keeps in from its tile's painted border (its soft weight there at
 // least FIELD_PAD: the shader's too, terrainMaterial.ts) and off a beach
 // (BEACH inner radii from the shore).
-const FIELD_PAD = 0.65, BEACH = 0.35;
+const FIELD_PAD = 0.65;
+export const BEACH = 0.35;
 // The land of tile t (`ok` at each square's middle) worn back INSET, as a test of a point (tile steps).
 function innerMask(toDir: (p: Pt2) => THREE.Vector3, sample: (d: THREE.Vector3) => CitySpot, ok: (s: CitySpot) => boolean): (p: Pt2) => boolean {
   const S = 2 * MASK_HALF, good = new Uint8Array(S * S), inner = new Uint8Array(S * S), R = Math.ceil(INSET / MASK_STEP);

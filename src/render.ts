@@ -20,7 +20,7 @@ import { BUILDING_KINDS, buildBuildingGeometry, type BuildingKind } from './buil
 import { houseGeometry, isHouseKind, type HouseKind } from './houses.ts';
 import { isWonderModelKind, wonderGeometry, type WonderModelKind } from './wonderModels.ts';
 import { isFloraRural, isCropRural, isSmoothRural, roamOf, isRuralModelKind, ruralGeometry, ruralModelKind, type RuralModelKind } from './rural/models.ts';
-import { CityProps, tileFrame, SUMMIT_HOUSES, type CitySpot } from './cityProps.ts';
+import { CityProps, tileFrame, SUMMIT_HOUSES, BEACH, DRY, type CitySpot } from './cityProps.ts';
 import { CITY_CELL } from './cityPainter.ts';
 import { RESOURCE_WILD, RESOURCE_WORKED, resourceLayout } from './rural/resourceModels.ts';
 import { RESOURCE_IMPROVEMENT } from './resources.ts';
@@ -1088,8 +1088,9 @@ export class GlobeRenderer {
     let hint = t;
     const at = (x: number, y: number) => mid.clone().addScaledVector(u, x * k).addScaledVector(w, y * k).normalize();
     const spotAt = (dir: THREE.Vector3) => { const l = locate(g.globe, dir, hint); hint = l.t; return this.citySpot(l.t, l.i, l.wa, l.wb); };
-    // (Only on the tile's painted land: in the water for a sea resource, dry for the rest.)
-    const fits = (s: CitySpot) => s.owner === t && (s.water - s.ground > 0.0003) === (look.water === true);
+    // (Only on the tile's painted land: in the water for a sea resource; for
+    // the rest, dry and off the beach, as farms are.)
+    const fits = (s: CitySpot) => s.owner === t && (look.water ? s.water - s.ground > 0.0003 : s.water - s.ground <= DRY && (s.coast ?? 9) >= BEACH);
     for (const m of resourceLayout(r, rand, look, (x, y) => fits(spotAt(at(x, y))))) {
       const dir = at(m.x, m.y), s0 = spotAt(dir);
       const q = new THREE.Quaternion().setFromUnitVectors(UP, dir).multiply(new THREE.Quaternion().setFromAxisAngle(UP, m.yaw));
