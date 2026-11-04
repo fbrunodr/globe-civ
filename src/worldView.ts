@@ -64,7 +64,7 @@ view.onTileHover = (t) => {
 };
 
 // Debug views (render.ts): normal, height map with contours, water by source.
-const VIEWS: DebugView[] = ['normal', 'height', 'water'];
+const VIEWS: DebugView[] = ['normal', 'height', 'water', 'paint'];
 const setView = (m: DebugView) => {
   view.setView(m);
   document.querySelectorAll<HTMLButtonElement>('#views [data-view]').forEach((b) => b.classList.toggle('active', b.dataset['view'] === m));

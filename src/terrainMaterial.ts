@@ -297,7 +297,7 @@ export interface TerrainMaterial {
   material: THREE.MeshStandardMaterial;
   setTime(seconds: number): void;
   setGrid(on: boolean): void; // the hex grid lines (fog of war shows them regardless)
-  setView(mode: number): void; // debug views: 0 normal, 1 height map, 2 water (ground grayed)
+  setView(mode: number): void; // debug views: 0 normal, 1 height map, 2 water (ground grayed), 3 the painting's tiles
 }
 
 export interface PaintUniforms {
@@ -788,7 +788,28 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
           // Debug views: the ground's height as colors with contour lines
           // (thin every 0.0005, thick every 0.0025), so steps, terraces and
           // trenches show as bunched lines.
-          if (uView > 0.5) {
+          if (uView > 2.5) {
+            // The painting's tiles (paint view): each pixel in the color of
+            // the tile that owns it (owned(): where props and farms see the
+            // tile's land), every tile a little lighter or darker than its
+            // neighbours, a dark line where ownership changes hands (between
+            // like tiles too) and a faint one where the tile's padded inner
+            // land (a farm's fill, soft weight 0.6) begins.
+            int best = 0;
+            for (int k = 1; k < 4; k++) if (w[k] > w[best]) best = k;
+            float second = 0.0;
+            for (int k = 0; k < 4; k++) if (k != best) second = max(second, w[k]);
+            int bt = int(ids[best]);
+            vec3 pc = tileRow(bt, 0).rgb;
+            float jit = fract(sin(float(bt) * 12.9898) * 43758.5453);
+            pc *= 0.8 + 0.4 * jit;
+            float d = w[best] - second;
+            float edge = 1.0 - smoothstep(0.0, max(fwidth(d), 1e-5) * 1.5, d);
+            float sf = soft[best] - 0.6;
+            float inner = 1.0 - smoothstep(0.0, max(fwidth(sf), 1e-5) * 1.2, abs(sf));
+            pc = mix(pc, vec3(1.0), 0.35 * inner);
+            diffuseColor.rgb = mix(pc, vec3(0.02), edge);
+          } else if (uView > 0.5) {
             float alt = length(vObjPos) - 1.0;
             vec3 hc = alt < 0.0 ? mix(vec3(0.05, 0.15, 0.45), vec3(0.45, 0.75, 0.95), clamp(1.0 + alt / 0.008, 0.0, 1.0))
               : alt < 0.01 ? mix(vec3(0.15, 0.5, 0.2), vec3(0.75, 0.8, 0.3), alt / 0.01)

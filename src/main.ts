@@ -86,12 +86,12 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
   // Dev-only handle for profiling from the browser console or test scripts.
   if (import.meta.env.DEV) Object.assign(window, { __globe: { game, view } });
 
-  // Debug views (render.ts): height map with contours, or water by source with steps in red.
+  // Debug views (render.ts): height map with contours, water by source with steps in red, or the painting's tiles.
   const viewPanel = document.createElement('div');
   viewPanel.className = 'panel';
   viewPanel.id = 'views';
-  viewPanel.innerHTML = `View <button data-view="normal" class="active">Normal</button><button data-view="height">Height</button><button data-view="water">Water</button> <kbd>J</kbd>`;
-  const VIEWS: DebugView[] = ['normal', 'height', 'water'];
+  viewPanel.innerHTML = `View <button data-view="normal" class="active">Normal</button><button data-view="height">Height</button><button data-view="water">Water</button><button data-view="paint">Paint</button> <kbd>J</kbd>`;
+  const VIEWS: DebugView[] = ['normal', 'height', 'water', 'paint'];
   const setView = (m: DebugView) => {
     view.setView(m);
     viewPanel.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((b) => b.classList.toggle('active', b.dataset['view'] === m));

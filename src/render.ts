@@ -100,7 +100,7 @@ interface PlacedProp {
 // Reference tile spacing (radians) that unit/city sizes were tuned for.
 const REF_EDGE = 0.07;
 
-export type DebugView = 'normal' | 'height' | 'water';
+export type DebugView = 'normal' | 'height' | 'water' | 'paint';
 
 // Flora yields to cities: the share of each layer's props that stays on a
 // rural tile (fields keep hedgerow trees; camps keep their forest). Built
@@ -668,15 +668,16 @@ export class GlobeRenderer {
   // Hex grid lines on or off (off by default, as in Civ V; selection and
   // hover rings always show).
   private grid = false;
-  // Debug views of the terrain: the height map (contours, no water) or the
-  // water (colored by source, steps in red). Props and clouds are hidden.
+  // Debug views of the terrain: the height map (contours, no water), the
+  // water (colored by source, steps in red) or the painting's tiles (each
+  // tile's painted land, edges drawn, no water). Props and clouds are hidden.
   view: DebugView = 'normal';
   setView(mode: DebugView): void {
     this.view = mode;
-    const m = mode === 'normal' ? 0 : mode === 'height' ? 1 : 2;
+    const m = mode === 'normal' ? 0 : mode === 'height' ? 1 : mode === 'water' ? 2 : 3;
     this.terrainMat.setView(m);
     this.waterMat.setView(m);
-    this.waterMesh.visible = mode !== 'height';
+    this.waterMesh.visible = mode === 'normal' || mode === 'water';
     this.weather.group.visible = mode === 'normal' && this.clouds;
   }
 
