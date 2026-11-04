@@ -20,9 +20,10 @@ import { BUILDING_KINDS, buildBuildingGeometry, type BuildingKind } from './buil
 import { houseGeometry, isHouseKind, type HouseKind } from './houses.ts';
 import { isWonderModelKind, wonderGeometry, type WonderModelKind } from './wonderModels.ts';
 import { isFloraRural, isCropRural, isSmoothRural, roamOf, isRuralModelKind, ruralGeometry, ruralModelKind, type RuralModelKind } from './rural/models.ts';
-import { CityProps, tileFrame, SUMMIT_HOUSES, BEACH, DRY, type CitySpot } from './cityProps.ts';
+import { CityProps, tileFrame, SUMMIT_HOUSES, type CitySpot } from './cityProps.ts';
 import { CITY_CELL } from './cityPainter.ts';
-import { RESOURCE_WILD, RESOURCE_WORKED, resourceLayout } from './rural/resourceModels.ts';
+import { RESOURCE_WILD, RESOURCE_WORKED } from './rural/resourceModels.ts';
+import { placeResource } from './rural/resourcePlace.ts';
 import { RESOURCE_IMPROVEMENT } from './resources.ts';
 import { plotStage } from './rural/stages.ts';
 import { farmAxis } from './farmPainter.ts';
@@ -1064,8 +1065,8 @@ export class GlobeRenderer {
   // What a resource shows on its tile (rural/resourceModels.ts), once the
   // player knows of it: a few small models in a patch toward one corner
   // (under its badge), a little larger than life so they read from the
-  // board; on the tile's painted land, on the water for a sea resource,
-  // never in the water for the rest, never in a city's center.
+  // board; where rural/resourcePlace.ts puts them (the tile's painted
+  // land), never in a city's center.
   private readonly resourceCache = new Map<number, { key: string; items: PlacedProp[] }>();
   // Wild, it shows the resource as nature has it; worked for it (its
   // improvement the resource's), only its own touches: the rest is the
@@ -1080,22 +1081,13 @@ export class GlobeRenderer {
     const look = worked ? RESOURCE_WORKED[r] : RESOURCE_WILD[r];
     if (!look) { this.resourceCache.set(t, { key, items: [] }); return []; }
     const rand = mulberry32((t + 11) * 2246822519);
-    const tile = g.tiles[t], { e1, k } = tileFrame(g, t);
-    // (A land resource over its whole tile; a sea one in a patch toward a corner, under its badge.)
-    const mid = look.water || look.corner ? tile.center.clone().lerp(g.globe.triCenters[tile.corners[2 % tile.corners.length]!]!, 0.4).normalize() : tile.center.clone();
-    const u = e1.clone().addScaledVector(mid, -e1.dot(mid)).normalize(), w = mid.clone().cross(u);
-    const items: PlacedProp[] = [];
     let hint = t;
-    const at = (x: number, y: number) => mid.clone().addScaledVector(u, x * k).addScaledVector(w, y * k).normalize();
-    const spotAt = (dir: THREE.Vector3) => { const l = locate(g.globe, dir, hint); hint = l.t; return this.citySpot(l.t, l.i, l.wa, l.wb); };
-    // (Only on the tile's painted land: in the water for a sea resource; for
-    // the rest, dry and off the beach, as farms are.)
-    const fits = (s: CitySpot) => s.owner === t && (look.water ? s.water - s.ground > 0.0003 : s.water - s.ground <= DRY && (s.coast ?? 9) >= BEACH);
-    for (const m of resourceLayout(r, rand, look, (x, y) => fits(spotAt(at(x, y))))) {
-      const dir = at(m.x, m.y), s0 = spotAt(dir);
-      const q = new THREE.Quaternion().setFromUnitVectors(UP, dir).multiply(new THREE.Quaternion().setFromAxisAngle(UP, m.yaw));
-      const sc = k * m.s, shade = 0.92 + 0.12 * rand();
-      items.push({ kind: ruralModelKind(m.model), matrix: new THREE.Matrix4().compose(dir.clone().multiplyScalar(1 + Math.max(s0.ground, s0.water) - 0.00004 * this.scale), q, new THREE.Vector3(sc, sc, sc)),
+    const sampleDir = (d: THREE.Vector3) => { const l = locate(g.globe, d, hint); hint = l.t; return { ...this.citySpot(l.t, l.i, l.wa, l.wb), t: l.t }; };
+    const items: PlacedProp[] = [];
+    for (const m of placeResource(g, t, r, look, rand, sampleDir)) {
+      const q = new THREE.Quaternion().setFromUnitVectors(UP, m.dir).multiply(new THREE.Quaternion().setFromAxisAngle(UP, m.yaw));
+      const sc = m.k * m.s, shade = 0.92 + 0.12 * rand();
+      items.push({ kind: ruralModelKind(m.model), matrix: new THREE.Matrix4().compose(m.dir.clone().multiplyScalar(1 + Math.max(m.spot.ground, m.spot.water) - 0.00004 * this.scale), q, new THREE.Vector3(sc, sc, sc)),
         color: new THREE.Color(shade, shade, shade), leaf: new THREE.Color(m.color ?? 0xffffff) });
     }
     this.resourceCache.set(t, { key, items });

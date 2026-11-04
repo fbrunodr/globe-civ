@@ -20,6 +20,9 @@ import type { CropRegion } from './look.ts';
 export const PLOT_SIZES = [[0.065, 0.1], [0.065, 0.1], [0.11, 0.24], [0.15, 0.3], [0.22, 0.42]] as const;
 export const MAX_STAGE = PLOT_SIZES.length - 1;
 // A plantation's rows across a plot, this far apart (tile steps; its plants on every other).
+// A farm's lanes of trodden earth between its plots, and its border (half
+// one, so two farms side by side meet in one), in tile steps.
+export const FARM_LANE = 0.024;
 export const PLANT_ROW_W = 0.016;
 
 // The integer hash of a cell and a salt, in [0, 1) (24 bits).

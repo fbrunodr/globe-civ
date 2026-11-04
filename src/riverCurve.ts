@@ -47,7 +47,29 @@ export function riverCurve(globe: Globe, paint: PaintData, river: River): RiverP
   for (let k = 0; k + 1 < n; k++) pairs.push(borderBetween(globe, river.corners[k], river.corners[k + 1]));
   const shared = (p: readonly number[] | null, q: readonly number[] | null) => (p && q ? p.find((t) => q.includes(t)) : undefined);
 
-  const out: RiverPoint[] = [];
+  // Where S's land ends, on the ray from S's center out through `through`:
+  // only into a tile across the river (near its source, or its mouth, S's
+  // land may end into a third tile, where the river isn't yet).
+  const trace = (S: number, across: readonly number[], through: THREE.Vector3): THREE.Vector3 | null => {
+    const ctr = globe.tiles[S].center;
+    const point = (u: number) => ctr.clone().lerp(through, u).normalize();
+    let lo = NaN, hi = NaN;
+    for (let m = 1; m * STEP <= REACH; m++) {
+      const o = owner(point(m * STEP));
+      if (o === S) continue;
+      if (across.includes(o)) { lo = (m - 1) * STEP; hi = m * STEP; }
+      break;
+    }
+    if (Number.isNaN(lo)) return null;
+    for (let it = 0; it < 18; it++) {
+      const mid = (lo + hi) / 2;
+      if (owner(point(mid)) === S) lo = mid; else hi = mid;
+    }
+    return point((lo + hi) / 2);
+  };
+
+  type Traced = RiverPoint & { S: number; across: number[] };
+  const out: Traced[] = [];
   const at = new THREE.Vector3();
   for (let k = 0; k + 1 < n; k++) {
     const pair = pairs[k];
@@ -62,30 +84,13 @@ export function riverCurve(globe: Globe, paint: PaintData, river: River): RiverP
     // Whose border it follows: toward each corner, the tile this edge shares
     // with the next (or last) edge, so the turn keeps to one tile's outline.
     const start = shared(pairs[k - 1] ?? null, pair) ?? a, end = shared(pair, pairs[k + 1] ?? null) ?? a;
-    const edgePts: RiverPoint[] = [];
+    const edgePts: Traced[] = [];
     for (let s = k === 0 ? 0 : 1; s <= SAMPLES; s++) {
       const f = s / SAMPLES;
       const S = f <= 0.5 ? start : end;
-      at.copy(p0).lerp(p1, f).normalize();
-      // From S's center out through the edge point: where S's land ends.
-      const ctr = globe.tiles[S].center;
-      const point = (u: number) => ctr.clone().lerp(at, u).normalize();
-      // (Only into a tile across the river: near its source, or its mouth,
-      // S's land may end into a third tile, where the river isn't yet.)
       const across = [...pair, ...((f <= 0.5 ? pairs[k - 1] : pairs[k + 1]) ?? [])].filter((t) => t !== S);
-      let lo = NaN, hi = NaN;
-      for (let m = 1; m * STEP <= REACH; m++) {
-        const o = owner(point(m * STEP));
-        if (o === S) continue;
-        if (across.includes(o)) { lo = (m - 1) * STEP; hi = m * STEP; }
-        break;
-      }
-      if (Number.isNaN(lo)) continue;
-      for (let it = 0; it < 18; it++) {
-        const mid = (lo + hi) / 2;
-        if (owner(point(mid)) === S) lo = mid; else hi = mid;
-      }
-      edgePts.push({ dir: point((lo + hi) / 2), tile: a, fan: i, edge: k });
+      const dir = trace(S, across, at.copy(p0).lerp(p1, f).normalize());
+      if (dir) edgePts.push({ dir, tile: a, fan: i, edge: k, S, across });
     }
     // (In order along the edge: past its middle the rays come from the other
     // bank's center and reach the border a little apart from the first's.)
@@ -96,9 +101,11 @@ export function riverCurve(globe: Globe, paint: PaintData, river: River): RiverP
   // (A lone point turning sharper than any corner of the border is a stray:
   // a ray that met the border where it wiggles. Dropped.)
   const t1 = new THREE.Vector3(), t2 = new THREE.Vector3();
-  for (let j = 1; j + 1 < out.length; j++) {
+  const turn = (j: number) => {
+    if (j < 1 || j + 1 >= out.length) return 0;
     t1.subVectors(out[j].dir, out[j - 1].dir); t2.subVectors(out[j + 1].dir, out[j].dir);
-    if (t1.dot(t2) < Math.cos(STRAY_TURN) * t1.length() * t2.length()) { out.splice(j, 1); j = Math.max(0, j - 2); }
-  }
-  return out;
+    return Math.acos(Math.max(-1, Math.min(1, t1.dot(t2) / (t1.length() * t2.length() || 1))));
+  };
+  for (let j = 1; j + 1 < out.length; j++) if (turn(j) > STRAY_TURN) { out.splice(j, 1); j = Math.max(0, j - 2); }
+  return out.map(({ dir, tile, fan, edge }) => ({ dir, tile, fan, edge }));
 }

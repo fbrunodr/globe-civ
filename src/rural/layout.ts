@@ -16,7 +16,7 @@ import { mulberry32 } from '../rng.ts';
 import { rhoOf, pointInPoly, LOT_SIZE, CELL, type Pt, type Floors } from '../town/geometry.ts';
 import { CITY_CELL } from '../cityPainter.ts';
 import { paintFarm, WORK_OF, type Farm } from '../farmPainter.ts';
-import { CROP_HEIGHT, CROP_PALETTE, CROP_STAND_SATURATION, PLOT_SIZES, MAX_STAGE, PLANT_ROW_W, cropIndex, plotAt } from './plots.ts';
+import { CROP_HEIGHT, CROP_PALETTE, CROP_STAND_SATURATION, PLOT_SIZES, MAX_STAGE, PLANT_ROW_W, cropIndex, plotAt, FARM_LANE } from './plots.ts';
 import { SCATTER_GAP, scatterIn, type AreaLook, type CropRegion, type Fill } from './look.ts';
 import { stageLook, plotStage, pastureFences, herdSize } from './stages.ts';
 import { kitBoost, FIGURES, FENCE_BOOST } from './kit.ts';
@@ -84,7 +84,7 @@ export interface RuralPlan {
 // A farm's crops: tufts in rows this far apart, this far along them, this
 // wide; kept off the plots' edges, the hex's rim, the homestead.
 export const CROP_ROW = 0.017, CROP_STEP = 0.0125, CROP_WIDTH = 0.017;
-const CROP_EDGE = 0.007, CROP_REACH = 1.3, CROP_HOME_GAP = 0.06;
+const CROP_EDGE = 0.5 * FARM_LANE + 0.003, CROP_REACH = 1.3, CROP_HOME_GAP = 0.06;
 // A paddy's rice stands in its water, up to this share of its height.
 export const PADDY_DEPTH = 0.85;
 // A plantation's tufts: this far apart along every other row, this wide.
@@ -239,7 +239,7 @@ export function layoutRural(inp: RuralInput, farm: Farm, site: RuralSite, keep: 
           const plot = plotAt(x, y, inp.salt, ps), row = (plot.f[0] * sx) / PLANT_ROW_W, id = `${plot.h}|${Math.floor(row)}`;
           if (Math.floor(row) % 2 || row % 1 < 0.72 || id === last) continue;
           last = id;
-          if (plot.edge >= 0.01 && cropIndex(plot.h, ps) !== 3) spots.push({ p: { x: x * u.x + y * v.x, y: x * u.y + y * v.y }, heading: along + Math.PI / 2 });
+          if (plot.edge >= CROP_EDGE && cropIndex(plot.h, ps) !== 3) spots.push({ p: { x: x * u.x + y * v.x, y: x * u.y + y * v.y }, heading: along + Math.PI / 2 });
         }
       }
     } else {

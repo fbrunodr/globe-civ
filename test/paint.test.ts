@@ -10,6 +10,7 @@ import { buildPaintData, fanCoords, fanFrames, paintAt, warpAt, WARP_MAX, FAN_CO
 import { buildRelief } from '../src/relief.ts';
 import { riverCurve } from '../src/riverCurve.ts';
 import { tileLook } from '../src/look.ts';
+import { locate } from '../src/terrainMesh.ts';
 import { mulberry32 } from '../src/rng.ts';
 import type { MapSizeKey } from '../src/rules.ts';
 
@@ -137,6 +138,42 @@ describe('terrain painting', () => {
             expect(best / r0).toBeLessThanOrEqual(0.6);
           }
         }
+      });
+
+      it(`P9 ${size} seed ${seed}: a river's middle is on the painted border, within 0.05 r (its two banks never share a tile)`, () => {
+        const { w, paint, frames } = setup(size, seed);
+        const { globe, map } = w;
+        const r0 = paint.params.r0;
+        const co = new Float32Array(FAN_COORDS);
+        let hint = 0;
+        const owner = (d: THREE.Vector3) => {
+          const l = locate(globe, d, hint);
+          hint = l.t;
+          const fanId = paint.fanStart[l.t] + l.i, fan = paint.fans[fanId];
+          fanCoords(frames[fanId], fan, warpAt(paint.params, d.x, d.y, d.z), d.x, d.y, d.z, co);
+          const pw = paintAt(paint, fanId, co).w;
+          let o = 0;
+          for (let c = 1; c < 4; c++) if (pw[c] > pw[o]) o = c;
+          return fan.ids[o];
+        };
+        const bad: string[] = [];
+        let checked = 0;
+        map.rivers.forEach((r, ri) => {
+          const pts = riverCurve(globe, paint, r);
+          // (Across each stretch at its middle: at a corner of the border
+          // both sides of a single point can be the one tile's.)
+          for (let j = 0; j + 1 < pts.length; j++) {
+            const a = pts[j].dir, b = pts[j + 1].dir, p = a.clone().add(b).normalize();
+            // (0.05 r: a stretch over a corner of the border cuts across it a
+            // little; surface.ts rounds the turns within half the river's
+            // width anyway, the border staying under its water.)
+            const across = p.clone().cross(b.clone().sub(a)).normalize().multiplyScalar(0.05 * r0);
+            checked++;
+            if (owner(p.clone().add(across).normalize()) === owner(p.clone().sub(across).normalize())) bad.push(`river ${ri} stretch ${j}`);
+          }
+        });
+        expect(checked).toBeGreaterThan(100);
+        expect(bad.slice(0, 10)).toEqual([]);
       });
 
       it(`P8 ${size} seed ${seed}: flat land centers sit at their level`, () => {

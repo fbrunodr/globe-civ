@@ -3,7 +3,7 @@ import { mulberry32 } from './rng.ts';
 import type { ImprovementKey } from './cities.ts';
 import type { CropRegion } from './rural/look.ts';
 import type { BiomeKey, FeatureKey, ReliefKey } from './terrain.ts';
-import { CROP_INDEX_GLSL, CROP_PALETTE, CROP_SATURATION, PLOTS_GLSL, MAX_STAGE, PLANT_ROW_W } from './rural/plots.ts';
+import { CROP_INDEX_GLSL, CROP_PALETTE, CROP_SATURATION, PLOTS_GLSL, MAX_STAGE, PLANT_ROW_W, FARM_LANE } from './rural/plots.ts';
 import { GROUND_LAYER, GROUND_TEX, groundUniform } from './groundTextures.ts';
 // One repeat of the furrows' scan on a farm's ploughed plots (tile steps).
 const FURROW_REPEAT = 0.045;
@@ -464,6 +464,17 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
           vec3 sEdge;
           vec4 soft;
           vec4 w = paintWeights(fan, P, ids, sEdge, soft);
+          // How far each tile's painted land reaches past here (world units,
+          // > 0 inside it): its lead over the next tile in the soft weights,
+          // which grows about evenly from its border inward, over that
+          // lead's rate on screen. (Read here, in step for the derivatives.)
+          vec4 lead;
+          for (int k = 0; k < 4; k++) {
+            float o = 0.0;
+            for (int j = 0; j < 4; j++) if (j != k) o = max(o, soft[j]);
+            lead[k] = soft[k] - o;
+          }
+          vec4 inward = lead * tLod / max(fwidth(lead), vec4(1e-7));
           vec4 m0 = vec4(0.0), m1 = vec4(0.0), m2 = vec4(0.0), m3 = vec4(0.0), m4 = vec4(0.0);
           vec4 g0 = vec4(0.0), g1 = vec4(0.0), g2 = vec4(0.0);
           for (int k = 0; k < 4; k++) {
@@ -613,14 +624,16 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               // dry ground between left wild.)
               // (Wherever the painting is most its tile's, at full strength: its
               // edge the tiles' border, a river's middle where one runs there.)
-              // (A little in from the border: its soft weight at least FIELD_PAD, cityProps.ts.)
-              float farm = owned(w, k) * smoothstep(0.6, 0.65, soft[k]) * (meCode == 5 ? 1.0 - snowCover : keep);
+              // (In from the border by half a lane, FARM_LANE: where two farms
+              // meet, their bands make one lane between them.)
+              float tile = fr0.w; // world units per tile step
+              float band = meCode == 5 ? smoothstep(0.6, 0.65, soft[k]) : smoothstep(0.0, 1.5 * tLod, inward[k] - 0.5 * ${FARM_LANE} * tile);
+              float farm = owned(w, k) * band * (meCode == 5 ? 1.0 - snowCover : keep);
               if (region == ${CROP_CODE.paddy}) farm *= smoothstep(-0.00012, 0.00004, vDepth);
               vec2 f; float edge;
               float h = plotAt(uv, me, stage, f, edge);
               vec3 crop = cropColor(region, h, stage);
               crop *= 0.94 + 0.12 * fract(h * 7.3);
-              float tile = fr0.w; // world units per tile step
               if (meCode == 9 && stage >= 2) {
                 // A plantation: rows of its plants on bare earth, along each plot (a first one's patches unrowed).
                 float rows = step(0.45, fract(f.x * PLOT_SIZES[clamp(stage, 0, ${MAX_STAGE})].x / ${PLANT_ROW_W}));
@@ -632,13 +645,11 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               // A neglected farm (stage 0): its crops dull, weeds and grass
               // over much of it.
               if (stage == 0) crop = mix(mix(crop, vec3(dot(crop, vec3(0.3, 0.55, 0.15))) * vec3(1.05, 0.95, 0.8), 0.5), diffuseColor.rgb / max(vShade, 0.05), 0.6 * smoothstep(0.35, 0.6, tFbm(P / (0.05 * uR0) + 5.3, 2)));
-              // Between the plots: grass balks (a first farm's patches),
-              // hedges (enclosed fields), thin ones later, none in the
-              // machine age.
-              float bw = stage <= 1 ? 0.0022 : stage == 4 ? 0.0015 : 0.004;
-              float hedge = bw > 0.0 ? (1.0 - smoothstep(bw, bw + 1.5 * fwidth(edge), edge)) * tFade(1.0 / (0.02 * tile)) : 0.0;
-              vec3 hedgeC = stage <= 1 ? vec3(0.32, 0.4, 0.2) : stage == 4 ? vec3(0.42, 0.38, 0.3) : vec3(0.2, 0.25, 0.15);
-              crop = mix(crop, hedgeC, hedge * (stage <= 1 ? 0.6 : 0.7));
+              // Between the plots: lanes of trodden earth, FARM_LANE wide, as
+              // its border is (a pasture's paddocks keep their thin lines).
+              float lw = meCode == 5 ? 0.002 : 0.5 * ${FARM_LANE};
+              float hedge = (1.0 - smoothstep(lw, lw + 1.5 * fwidth(edge), edge)) * tFade(1.0 / (0.02 * tile));
+              if (meCode == 5) crop = mix(crop, vec3(0.32, 0.4, 0.2), hedge * 0.6);
               // Each plot in its crop's colour on a scan of what it is: a
               // ploughed one furrowed (the scan laid along the farm, its
               // furrows down the plots), grain on dry grass, green crops and
@@ -665,17 +676,17 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
                 float layer = region == ${CROP_CODE.peat} ? ${GROUND_LAYER.soil}.0 : crop.g > crop.r * 1.04 || ci == 2 ? ${GROUND_LAYER.grass}.0 : ${GROUND_LAYER.dry}.0;
                 tex = gSample(layer, tn, 1.0);
               }
+              vec3 land = diffuseColor.rgb / max(vShade, 0.05);
               gN = mix(gN, tn, farm * (1.0 - hedge * 0.5));
               diffuseColor.rgb = mix(diffuseColor.rgb, gTone(crop, tex.r) * vShade, farm * 0.92);
-              // Its border (the padding, its own land outside the fields):
-              // worn-out ground, packed dirt, the land's own colour turned well
-              // toward a yellow earth (its soil and the roads' dirt: not round
-              // a wetland's paddies).
-              float pad = owned(w, k) * (1.0 - smoothstep(0.6, 0.65, soft[k])) * keep * (meCode == 5 ? 0.0 : 1.0);
+              // Its border (half a lane, its own land outside the fields) and
+              // its lanes: worn-out ground, packed dirt, the land's own colour
+              // turned well toward a yellow earth (its soil and the roads'
+              // dirt: not round a wetland's paddies).
+              float pad = owned(w, k) * keep * (meCode == 5 ? 0.0 : max(1.0 - band, farm * hedge));
               if (pad > 0.001) {
                 vec3 sn;
                 vec4 st = gSample(${GROUND_LAYER.soil}.0, sn, 1.0);
-                vec3 land = diffuseColor.rgb / max(vShade, 0.05);
                 vec3 earth = mix(tileRow(me, 10).rgb, vec3(${ROAD_DIRT.join(', ')}), 0.65);
                 vec3 packed = mix(land, earth, 0.68 + 0.15 * (tFbm(P / (0.05 * uR0) + 8.1, 2) - 0.5));
                 // (Trodden flat: the soil's grain at half its contrast.)
