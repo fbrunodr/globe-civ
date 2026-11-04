@@ -57,7 +57,7 @@ export const FEATURE_GROUND: Partial<Record<FeatureKey, GroundLook>> = {
   swamp:      { cover: { moss: 0.6, litter: 0.25, soil: 0.15 }, soil: 0x3f3a2a },
   mangrove:   { cover: { soil: 0.55, litter: 0.25, moss: 0.2 }, soil: 0x5a4f3a },
   bog:        { cover: { moss: 0.7, dry: 0.2, soil: 0.1 }, soil: 0x4a3a26 },
-  floodplain: { cover: { grass: 0.75, soil: 0.25 }, soil: 0x5e4c34 },
+  floodplain: { cover: { grass: 0.85, soil: 0.15 }, soil: 0x43362a }, // (dark silt under lush grass)
   oasis:      { cover: { grass: 0.5, sand: 0.3, soil: 0.2 }, soil: 0x9c7e56 },
   volcano:    { cover: { soil: 0.8, sand: 0.2 }, soil: 0x3a3430 },
 };
@@ -118,7 +118,7 @@ export const FEATURE_LOOK: Record<FeatureKey, FeatureLook> = {
   swamp:      { color: 0x526b48, rock: null, colorMix: 0.5,  patch: 0.5,  patchColor: 0x4d5f3a, heightDelta: -0.0005, plateau: null, strata: 0, wet: 0.2 },
   mangrove:   { color: 0x48694f, rock: null, colorMix: 0.4,  patch: 0.5,  patchColor: 0x6b6247, heightDelta: -0.001, plateau: null, strata: 0, wet: 0.25 },
   bog:        { color: 0x7d7552, rock: null, colorMix: 0.4, patch: 0.55, patchColor: 0x6e6038, heightDelta: -0.0005, plateau: null, strata: 0, wet: 0.15 },
-  floodplain: { color: 0x7d9750, rock: null, colorMix: 0.55, patch: 0.25, patchColor: 0x5d8a3a, heightDelta: -0.002, plateau: 0.7, strata: 0, wet: 0 },
+  floodplain: { color: 0x4f8a32, rock: null, colorMix: 0.8, patch: 0.3, patchColor: 0x3f7a2a, heightDelta: -0.002, plateau: 0.7, strata: 0, wet: 0 },
   oasis:      { color: 0x71874a, rock: null, colorMix: 0.45, patch: 0.3,  patchColor: 0x6f8f3e, heightDelta: 0,      plateau: null, strata: 0, wet: 0 },
   volcano:    { color: 0x4a423c, rock: 0x3d3632, colorMix: 0.7,  patch: 0,    patchColor: 0x000000, heightDelta: 0.008,  plateau: null, strata: 0.3, wet: 0 },
   // Glaciers keep the mountain's colors; the renderer caps only the peak with ice.

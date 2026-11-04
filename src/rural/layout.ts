@@ -168,14 +168,14 @@ export function layoutRural(inp: RuralInput, farm: Farm, site: RuralSite, keep: 
   });
 
   // A pasture's herd, grazing over the whole tile (inside its fences once
-  // it has them: round the farm, across it into paddocks).
+  // it has them: round the farm).
   if (look.herd) {
     const unit = CREATURE_SCALE * FENCE_BOOST; // (a fence run's model length, tile steps)
     // (Its fence round its field, a little inside it.)
     const f = site.field, inset = 0.02, corner = (pu: number, pv: number): Pt => ({ x: pu * u.x + pv * v.x, y: pu * u.y + pv * v.y });
     const ring = f ? [corner(f.u0 + inset, f.v0 + inset), corner(f.u1 - inset, f.v0 + inset), corner(f.u1 - inset, f.v1 - inset), corner(f.u0 + inset, f.v1 - inset), corner(f.u0 + inset, f.v0 + inset)] : [];
-    const fences = look.fence && f ? pastureFences(stage, inp.axis, ring) : [];
-    // (How near p comes to a fence: a beast's walk keeps off them all, the paddocks' too.)
+    const fences = look.fence && f ? pastureFences(stage, ring) : [];
+    // (How near p comes to its fence: a beast's walk keeps off it.)
     const toFence = (p: Pt) => Math.min(Infinity, ...fences.flatMap((line) => line.slice(0, -1).map((a, i) => {
       const b = line[i + 1]!, dx = b.x - a.x, dy = b.y - a.y, t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1)));
       return Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy);

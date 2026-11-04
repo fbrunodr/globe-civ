@@ -22,7 +22,7 @@ import { houseKind } from './houses.ts';
 import { styleOf } from './architecture.ts';
 import { CATALOG, CATALOG_KINDS, buildCatalogGeometry, triangles, type CatalogKind } from './propCatalog.ts';
 import { BUILDINGS_CATALOG, BUILDING_KINDS, buildBuildingGeometry } from './buildingCatalog.ts';
-import { BIOME_FLORA, FEATURE_FLORA, realmsLabel, type Tint, type Variant } from './floraData.ts';
+import { BIOME_FLORA, FEATURE_FLORA, FLORA_KEEP, realmsLabel, type Tint, type Variant } from './floraData.ts';
 import { BIOME_LOOK, FEATURE_LOOK } from './look.ts';
 import type { BiomeKey, FeatureKey } from './terrain.ts';
 import { biomeDef, featureDef } from './terrain.ts';
@@ -446,9 +446,13 @@ function buildTerrains(): void {
   world.add(head);
   rowStart.set('resources', patches.length);
   row++;
-  const floraOf = (_r: ResourceKey | null, land: TerrainSetKey | null, seed: number, clearR: number) => {
-    const set = land ? TERRAINS.get(land)! : null, v = set?.variants.find((x) => x.mix.length > 0);
-    const items = v ? placeVariant({ ...v, density: Math.round(v.density * 0.5) }, { ...o, seed }).filter((p) => { const at = new THREE.Vector3().setFromMatrixPosition(p.m); return Math.hypot(at.x, at.z) > clearR * STEP; }) : [];
+  // (Worked, what of it its improvement keeps: render.ts, FLORA_KEEP.)
+  const floraOf = (_r: ResourceKey | null, land: TerrainSetKey | null, seed: number, clearR: number, imp?: ImprovementKey) => {
+    const set = land ? TERRAINS.get(land)! : null, v = set?.variants.find((x) => x.mix.length > 0), rk = mulberry32(seed ^ 0x4b);
+    const items = v ? placeVariant({ ...v, density: Math.round(v.density * 0.5) }, { ...o, seed }).filter((p) => {
+      const at = new THREE.Vector3().setFromMatrixPosition(p.m), layer = CATALOG[p.key as CatalogKind]?.layer;
+      return Math.hypot(at.x, at.z) > clearR * STEP && (!imp || !layer || rk() < FLORA_KEEP[imp][layer]);
+    }) : [];
     // (Bananas grow only on their resource's tile: a third of its trees, as render.ts.)
     const rb = mulberry32(seed ^ 0xba);
     return _r !== 'bananas' ? items : items.map((p) => (CATALOG[p.key as CatalogKind]?.layer === 'Canopy' || CATALOG[p.key as CatalogKind]?.layer === 'Understory') && rb() < 1 / 3
@@ -485,7 +489,7 @@ function buildTerrains(): void {
       const farmed = imp === 'farm' || imp === 'wetland' || imp === 'plantation';
       const lift = (items: Placed[]) => (water === undefined ? items : items.map((it) => ({ ...it, m: new THREE.Matrix4().makeTranslation(0, water * SC, 0).multiply(it.m) })));
       const paddy = region === 'paddy';
-      const items = [...(farmed ? [] : floraOf(r, land, seed, imp === 'camp' ? 0.12 : imp === 'pasture' ? 0.45 : 0.3)), ...lift(workedItems(imp, st, r, region, seed, (land ?? 'prairie') as BiomeKey, pools))];
+      const items = [...(farmed ? [] : floraOf(r, land, seed, imp === 'camp' ? 0.12 : imp === 'pasture' ? 0.45 : 0.3, imp)), ...lift(workedItems(imp, st, r, region, seed, (land ?? 'prairie') as BiomeKey, pools))];
       if (r && RESOURCE_WORKED[r]) items.push(...resourceItems(r, seed, RESOURCE_WORKED[r], pools, { x: 0.25, y: -0.2 }));
       if (farmed) { world.add(groundHex(farmGround(imp, region, st, seed, set?.ground ?? 0x6a7a40, pools), center)); world.add(rim(center)); if (pools) wet(center); else if (paddy && water === undefined) world.add(waterSheet(center, PADDY_WATER / SC * STEP)); }
       else wet(center);

@@ -29,8 +29,9 @@ const FURROW_REPEAT = 0.045;
 //                           farm's palette by climate; axis: its plots' turn)
 //  10 soil.rgb, grass       what the ground is made of up close (look.ts
 //  11 dry, soil, sand, litter  GroundLook): the bare soil's color and the
-//  12 moss, snow, paint, -  shares of the cover materials (sum 1); paint:
-//                           the paint view's color (paintViewColor, 0xRRGGBB)
+//  12 moss, snow, paint, floodplain   shares of the cover materials (sum 1);
+//                           paint: the paint view's color (paintViewColor,
+//                           0xRRGGBB); floodplain: 1 on one (its old beds)
 // Fan table rows (FAN_ROWS texels):
 //   0 ids (t, A, B, C)
 //   1 rounding of edges i-1, i, i+1 and A|B
@@ -42,6 +43,7 @@ const FURROW_REPEAT = 0.045;
 // Per-vertex attributes:
 //   ring        0 at a tile center, 1 on its edge -> hex grid line
 //   unexplored  1 under fog of war -> flat dark fog, no lighting
+//   dim         1 where explored but out of sight -> grayed and darkened
 //   shade       baked ambient occlusion and tint
 //   snow        snowline altitude (height above radius 1; NO_SNOW where none)
 //   depth       water level minus ground height (> 0 under water; the water
@@ -392,6 +394,7 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
       .replace('#include <common>', `#include <common>
         attribute float ring;
         attribute float unexplored;
+        attribute float dim;
         attribute float shade;
         attribute float snow;
         attribute float depth;
@@ -404,6 +407,7 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
         varying vec3 vObjNormal;
         varying float vRing;
         varying float vFog;
+        varying float vDim;
         varying float vShade;
         varying float vSnow;
         varying float vDepth;
@@ -412,7 +416,7 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
         varying vec3 vObjPos;`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
         ${FOG_FLATTEN}
-        vRing = ring; vFog = unexplored; vShade = shade; vSnow = snow; vDepth = depth; vBank = bank; vShore = shore;
+        vRing = ring; vFog = unexplored; vDim = dim; vShade = shade; vSnow = snow; vDepth = depth; vBank = bank; vShore = shore;
         vPc0 = pc0; vPc1 = pc1;
         vObjPos = position; vObjNormal = normal;`);
 
@@ -433,6 +437,7 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
         varying vec2 vPc1;
         varying float vRing;
         varying float vFog;
+        varying float vDim;
         varying float vShade;
         varying float vSnow;
         varying float vDepth;
@@ -546,6 +551,19 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
 
           // River banks: greener, damper ground beside the water.
           diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.05, 0.2, 0.035) * vShade, vBank * 0.55 * dry * (1.0 - snowCover));
+
+          // Floodplains: the river's old beds, faint meandering scars over
+          // the land (a contour of a slow warped noise), a little darker and
+          // damper than the lush ground round them.
+          if (g2.w > 0.01) {
+            vec3 q = P / (0.6 * uR0);
+            float n = tFbm(q + 0.8 * vec3(tNoise(q * 1.3 + 2.3), tNoise(q * 1.3 + 7.1), tNoise(q * 1.3 + 4.7)), 3);
+            float fw = max(fwidth(n), 1e-5), d = abs(n - 0.42);
+            float bed = 1.0 - smoothstep(0.01, 0.01 + 1.5 * fw, d);
+            float damp = 1.0 - smoothstep(0.01, 0.035, d);
+            float scar = (0.12 * damp + 0.16 * bed) * smoothstep(0.4, 0.75, g2.w) * dry * (1.0 - snowCover) * tFade(1.0 / (0.6 * uR0));
+            diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.62, 0.78, 0.6), scar * 2.0);
+          }
 
           // Dunes and sand ripples: warped ripples.
           duneWave = 0.0;
@@ -789,6 +807,11 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
           // alike, so the lines never trace an unexplored coast.)
           gridLine *= (1.0 - smoothstep(0.05, 0.16, fw)) * max(dry, step(0.5, vFog));
           diffuseColor.rgb *= 1.0 - 0.18 * gridLine * uGrid;
+
+          // Out of sight (explored, not seen now): everything the ground
+          // shows grayed and darkened alike, its textures, banks and farms
+          // as much as its color (dim: the share of its tiles out of sight).
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(dot(diffuseColor.rgb, vec3(0.333))), 0.6 * vDim) * (1.0 - 0.5 * vDim);
 
           // Debug views: the ground's height as colors with contour lines
           // (thin every 0.0005, thick every 0.0025), so steps, terraces and

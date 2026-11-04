@@ -93,7 +93,7 @@ export function areaLook(imp: ImprovementKey, biome: BiomeKey, feature: FeatureK
   switch (imp) {
     case 'mine': return { name: 'spoil heaps', ground: rgb(0x3a332c), fill: { t: 'scatter', model: 'heap', color: 0x8a7e6c, per: 6 } };
     case 'quarry': return { name: 'quarry', ground: rgb(0xa8a08e), fill: { t: 'scatter', model: 'block', color: 0xe2dac8, per: 7 } };
-    case 'camp': return { name: 'logging', ground: rgb(0x4a3a24), fill: { t: 'scatter', model: 'stump', color: 0x6a5038, per: 14 }, extra: { t: 'scatter', model: 'logs', color: 0x7a5f45, per: 3 } };
+    case 'camp': return { name: 'logging', ground: rgb(0x4a3a24), fill: { t: 'scatter', model: 'stump', color: 0x6a5038, per: 7 }, extra: { t: 'scatter', model: 'logs', color: 0x7a5f45, per: 2 } };
     case 'wetland': return temp < PEAT_BELOW ? PEAT : RICE;
     case 'boats': case 'well': return { name: 'water', ground: GRASS, fill: { t: 'none' } };
     case 'pasture': return MEADOW;

@@ -8,7 +8,8 @@
 // Placement modifiers (hills, mountains, river banks, coasts, lake shores,
 // forest edges) live in vegetation.ts; their mixes are here.
 
-import type { CatalogKind } from './propCatalog.ts';
+import type { CatalogKind, Layer } from './propCatalog.ts';
+import type { ImprovementKey } from './cities.ts';
 import type { BiomeKey, FeatureKey } from './terrain.ts';
 
 export const REALMS = ['northern', 'austral', 'oldWorld', 'newWorld'] as const;
@@ -208,3 +209,21 @@ export function realmAllows(v: Variant, realm: Realm | null): boolean {
 }
 export const realmsLabel = (v: Variant): string =>
   v.realms === 'any' ? 'any realm' : v.realms.map((r) => REALM_NAMES[r]).join(', ');
+
+// Flora yields to cities: the share of each layer's props that stays on a
+// rural tile (fields keep hedgerow trees; camps much of their forest). Built
+// tiles keep whatever stands clear of their buildings and streets
+// (cityProps.floraClear); `urban` is that share for a rural tile with no
+// improvement.
+export const FLORA_KEEP: Record<'urban' | ImprovementKey, Record<Layer, number>> = {
+  urban:   { Canopy: 0.06, Understory: 0.04, Ground: 0, Accent: 0 },
+  farm:    { Canopy: 0.2, Understory: 0.12, Ground: 0.08, Accent: 0.3 },
+  mine:    { Canopy: 0.35, Understory: 0.35, Ground: 0.35, Accent: 0.6 },
+  quarry:  { Canopy: 0.35, Understory: 0.35, Ground: 0.35, Accent: 0.6 },
+  camp:    { Canopy: 0.55, Understory: 0.45, Ground: 0.6, Accent: 1 }, // (a logging camp's cut: stumps where its trees stood)
+  wetland: { Canopy: 0.2, Understory: 0.12, Ground: 0.08, Accent: 0.3 }, // (paddies and peat beds: cleared as fields are)
+  boats:   { Canopy: 1, Understory: 1, Ground: 1, Accent: 1 },
+  pasture: { Canopy: 0.25, Understory: 0.1, Ground: 0.3, Accent: 0.5 },
+  plantation: { Canopy: 0.15, Understory: 0.08, Ground: 0.08, Accent: 0.3 },
+  well:    { Canopy: 0.4, Understory: 0.4, Ground: 0.4, Accent: 0.6 },
+};

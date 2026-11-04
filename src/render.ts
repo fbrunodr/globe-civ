@@ -16,6 +16,7 @@ import { WalkCamera } from './walk.ts';
 import { makeSky, makeHalo, installHaze, HAZE, HAZE_DENSITY, AIR } from './sky.ts';
 import { makeWeather, type Weather } from './weather.ts';
 import { buildPropGeometry, catalogEntry, CATALOG, CATALOG_KINDS, type CatalogKind, type Layer } from './propCatalog.ts';
+import { FLORA_KEEP } from './floraData.ts';
 import { BUILDING_KINDS, buildBuildingGeometry, type BuildingKind } from './buildingCatalog.ts';
 import { houseGeometry, isHouseKind, type HouseKind } from './houses.ts';
 import { isWonderModelKind, wonderGeometry, type WonderModelKind } from './wonderModels.ts';
@@ -31,7 +32,7 @@ import { cropRegion } from './rural/look.ts';
 import { roadLines, ROAD_HALF_WIDTH } from './roads.ts';
 import { Vegetation, type SpotEnv } from './vegetation.ts';
 import { mulberry32, makePerlin } from './rng.ts';
-import { USE, WONDERS, type ImprovementKey } from './cities.ts';
+import { USE, WONDERS } from './cities.ts';
 import { farGeometry, makeFloraDepthMaterial, makePropMaterial, makeRoamDepthMaterial, instanceGeometry } from './propMaterial.ts';
 import { GpuTimer } from './gpuTimer.ts';
 import { resourceDef } from './resources.ts';
@@ -103,25 +104,8 @@ const REF_EDGE = 0.07;
 
 export type DebugView = 'normal' | 'height' | 'water' | 'paint';
 
-// Flora yields to cities: the share of each layer's props that stays on a
-// rural tile (fields keep hedgerow trees; camps keep their forest). Built
-// tiles keep whatever stands clear of their buildings and streets
-// (cityProps.floraClear); `urban` is that share for a rural tile with no
-// improvement.
 // A banana tile's trees (canopy and understory): a third of them are bananas (the only place they grow).
 const BANANA_IN: ReadonlySet<Layer> = new Set<Layer>(['Canopy', 'Understory']);
-const FLORA_KEEP: Record<'urban' | ImprovementKey, Record<Layer, number>> = {
-  urban:   { Canopy: 0.06, Understory: 0.04, Ground: 0, Accent: 0 },
-  farm:    { Canopy: 0.2, Understory: 0.12, Ground: 0.08, Accent: 0.3 },
-  mine:    { Canopy: 0.35, Understory: 0.35, Ground: 0.35, Accent: 0.6 },
-  quarry:  { Canopy: 0.35, Understory: 0.35, Ground: 0.35, Accent: 0.6 },
-  camp:    { Canopy: 0.85, Understory: 0.7, Ground: 0.8, Accent: 1 },
-  wetland: { Canopy: 0.2, Understory: 0.12, Ground: 0.08, Accent: 0.3 }, // (paddies and peat beds: cleared as fields are)
-  boats:   { Canopy: 1, Understory: 1, Ground: 1, Accent: 1 },
-  pasture: { Canopy: 0.25, Understory: 0.1, Ground: 0.3, Accent: 0.5 },
-  plantation: { Canopy: 0.15, Understory: 0.08, Ground: 0.08, Accent: 0.3 },
-  well:    { Canopy: 0.4, Understory: 0.4, Ground: 0.4, Accent: 0.6 },
-};
 
 // Roads between cities, and streets: dirt, then paving from the Classical era.
 // (A little darker than the terrain's own: the roads' material lights it brighter.)
@@ -467,6 +451,7 @@ export class GlobeRenderer {
     geo.setAttribute('shade', new THREE.BufferAttribute(shade, 1));
     geo.setAttribute('snow', new THREE.BufferAttribute(snow, 1));
     geo.setAttribute('unexplored', new THREE.BufferAttribute(new Float32Array(V).fill(1), 1));
+    geo.setAttribute('dim', new THREE.BufferAttribute(new Float32Array(V), 1));
 
     this.terrainMat = makeTerrainMaterial({
       tileTex: this.tileTex, fanTex,
@@ -799,7 +784,7 @@ export class GlobeRenderer {
     const main = GROUND_COVERS.reduce((a, k) => ((cover[k] ?? 0) > (cover[a] ?? 0) ? k : a));
     const share = (k: GroundCover) => (k === main ? 1 : 0);
     const soil = new THREE.Color(l.ground.soil);
-    td.set([soil.r, soil.g, soil.b, share('grass'), share('dry'), share('soil'), share('sand'), share('litter'), share('moss'), share('snow'), paintViewColor(g.biome[t]!, g.feature[t] ?? null, g.map.relief[t]!), 0], o + 40);
+    td.set([soil.r, soil.g, soil.b, share('grass'), share('dry'), share('soil'), share('sand'), share('litter'), share('moss'), share('snow'), paintViewColor(g.biome[t]!, g.feature[t] ?? null, g.map.relief[t]!), g.feature[t] === 'floodplain' ? 1 : 0], o + 40);
     this.tileTex.needsUpdate = true;
   }
 
@@ -840,10 +825,7 @@ export class GlobeRenderer {
     if (!g.explored[t]) return out.copy(FOG);
     const owner = g.ownerOf(t);
     out.copy(tint ? (owner >= 0 ? this.playerColors[owner]! : FOG) : snow ? SNOW : this.baseColors[t]);
-    if (!g.visible[t]) {
-      const gray = (out.r + out.g + out.b) / 3;
-      out.setRGB(lerp(out.r, gray, 0.6) * 0.5, lerp(out.g, gray, 0.6) * 0.5, lerp(out.b, gray, 0.6) * 0.5);
-    }
+    // (Out of sight, the shader grays and darkens all of it: the dim attribute.)
     return out;
   }
 
@@ -865,19 +847,23 @@ export class GlobeRenderer {
     this.tileTex.needsUpdate = true;
     const fogAttr = this.terrain.geometry.getAttribute('unexplored') as THREE.BufferAttribute;
     const fogArr = fogAttr.array as Float32Array;
+    const dimAttr = this.terrain.geometry.getAttribute('dim') as THREE.BufferAttribute, dimArr = dimAttr.array as Float32Array;
     const dirty = new Set<number>();
     for (const t of changed) for (const v of tileVerts[t]) dirty.add(v);
     for (const v of dirty) {
-      let n = 0, hidden = 0;
+      let n = 0, hidden = 0, unseen = 0;
       for (let s = 0; s < 3; s++) {
         const t = vertTiles[v * 3 + s];
         if (t < 0) continue;
         if (!g.explored[t]) hidden++;
+        else if (!g.visible[t]) unseen++;
         n++;
       }
       fogArr[v] = hidden / n;
+      dimArr[v] = unseen / Math.max(1, n - hidden);
     }
     fogAttr.needsUpdate = true;
+    dimAttr.needsUpdate = true;
     // Water: per shared vertex, from the tiles it touches.
     const owners = this.terrain.topo.owners;
     const wFog = this.terrain.water.getAttribute('unexplored') as THREE.BufferAttribute;
@@ -2176,8 +2162,6 @@ function smoothstep(a: number, b: number, x: number): number {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
 }
-
-function lerp(a: number, b: number, t: number): number { return a + (b - a) * t; }
 
 function fmtTris(n: number): string {
   return n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : `${n}`;
