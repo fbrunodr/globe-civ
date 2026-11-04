@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mulberry32 } from './rng.ts';
 import type { ImprovementKey } from './cities.ts';
 import type { CropRegion } from './rural/look.ts';
+import type { BiomeKey, FeatureKey, ReliefKey } from './terrain.ts';
 import { CROP_INDEX_GLSL, CROP_PALETTE, CROP_SATURATION, PLOTS_GLSL, MAX_STAGE, PLANT_ROW_W } from './rural/plots.ts';
 import { GROUND_LAYER, GROUND_TEX, groundUniform } from './groundTextures.ts';
 // One repeat of the furrows' scan on a farm's ploughed plots (tile steps).
@@ -28,7 +29,8 @@ const FURROW_REPEAT = 0.045;
 //                           farm's palette by climate; axis: its plots' turn)
 //  10 soil.rgb, grass       what the ground is made of up close (look.ts
 //  11 dry, soil, sand, litter  GroundLook): the bare soil's color and the
-//  12 moss, snow, -, -      shares of the cover materials (sum 1)
+//  12 moss, snow, paint, -  shares of the cover materials (sum 1); paint:
+//                           the paint view's color (paintViewColor, 0xRRGGBB)
 // Fan table rows (FAN_ROWS texels):
 //   0 ids (t, A, B, C)
 //   1 rounding of edges i-1, i, i+1 and A|B
@@ -51,6 +53,25 @@ const FURROW_REPEAT = 0.045;
 //
 // Noise comes from a small tiling 3D texture (one fetch per octave), sampled
 // at the object-space position, so it wraps the sphere without seams.
+
+// The paint view's colors (render.ts setView 'paint'): a map's, one per
+// biome, a feature's over it, hills a little darker, mountains grayed.
+const PAINT_BIOME: Record<BiomeKey, number> = {
+  ocean: 0x1f4e8c, shallowSea: 0x4f9fd1, lake: 0x3c86c0, seaIce: 0xd6eef5,
+  iceSheet: 0xf2f6f8, tundra: 0xa9b8a0, taiga: 0x2f5d4a,
+  coldDesert: 0xc2b48a, steppe: 0xc8c27a, prairie: 0x9cc65a, temperateForest: 0x3f8a3a, temperateRainforest: 0x2d6e4e, mediterranean: 0xa7a35a,
+  hotDesert: 0xe8cf86, savanna: 0xd4b157, monsoonForest: 0x5e9a2e, jungle: 0x1f7a2b,
+};
+const PAINT_FEATURE: Record<FeatureKey, number> = {
+  marsh: 0x6f9c7c, swamp: 0x4f6f45, mangrove: 0x3c7f6a, bog: 0x7a6a4e, floodplain: 0x8fcf6a,
+  oasis: 0x4fc79a, volcano: 0x8a2f1f, glacier: 0xe6f2fb, reef: 0xff8f7a, kelp: 0x2e8f78,
+};
+export function paintViewColor(biome: BiomeKey, feature: FeatureKey | null, relief: ReliefKey): number {
+  const c = new THREE.Color(feature ? PAINT_FEATURE[feature] : PAINT_BIOME[biome]);
+  if (relief === 'hills') c.multiplyScalar(0.82);
+  else if (relief === 'mountains') c.lerp(new THREE.Color(0x8a8580), 0.6);
+  return c.getHex();
+}
 
 export const TEX_W = 2048;
 export const TILE_ROWS = 13;
@@ -784,9 +805,11 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
             float second = 0.0;
             for (int k = 0; k < 4; k++) if (k != best) second = max(second, w[k]);
             int bt = int(ids[best]);
-            vec3 pc = tileRow(bt, 0).rgb;
+            float code = tileRow(bt, 12).z;
+            vec3 pc = vec3(floor(code / 65536.0), mod(floor(code / 256.0), 256.0), mod(code, 256.0)) / 255.0;
+            pc = pow(pc, vec3(2.2)); // (sRGB to the linear the material works in)
             float jit = fract(sin(float(bt) * 12.9898) * 43758.5453);
-            pc *= 0.8 + 0.4 * jit;
+            pc *= 0.85 + 0.3 * jit;
             float d = w[best] - second;
             float edge = 1.0 - smoothstep(0.0, max(fwidth(d), 1e-5) * 1.5, d);
             float sf = soft[best] - 0.6;

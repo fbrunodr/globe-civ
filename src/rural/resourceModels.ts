@@ -133,22 +133,28 @@ export const spreadOf = (look: ResourceLook): number => look.spread ?? (look.wat
 // (The leaf-card plants, true size in metres: drawn this much larger than life.)
 const SHRUB_BOOST: Partial<Record<ShrubModel, number>> = { teaShrub: 9, spiceShrub: 9, cottonBush: 7, indigoBush: 7, wildVine: 5, mulberryBush: 4.5, incenseTree: 4.5 };
 export interface ResourceSpot { readonly model: Shown; readonly color: number | undefined; readonly x: number; readonly y: number; readonly yaw: number; readonly s: number }
-export function resourceLayout(r: ResourceKey, rand: () => number, look: ResourceLook = RESOURCE_WILD[r]): ResourceSpot[] {
+// `inside`: where in the patch a model may stand (the tile's painted land,
+// render.ts); spots are only ever drawn there, and a model with none left is
+// left out.
+export function resourceLayout(r: ResourceKey, rand: () => number, look: ResourceLook = RESOURCE_WILD[r], inside: (x: number, y: number) => boolean = () => true): ResourceSpot[] {
   const models = look.parts.flatMap((pt) => Array.from({ length: pt.n }, (_, i) => ({ model: pt.model, color: pt.colors?.[i % pt.colors.length] })));
   const taken: [number, number][] = [];
-  return models.map((m) => {
+  return models.flatMap((m) => {
     let best: [number, number] = [0, 0], bestD = -1;
-    for (let c = 0; c < 10; c++) {
+    for (let c = 0, tries = 0; c < 10 && tries < 40; tries++) {
       const a = rand() * Math.PI * 2, rr = Math.sqrt(rand()) * spreadOf(look);
       const x = Math.cos(a) * rr, y = Math.sin(a) * rr;
+      if (!inside(x, y)) continue;
+      c++;
       const d = taken.reduce((m2, [px, py]) => Math.min(m2, (px - x) ** 2 + (py - y) ** 2), Infinity);
       if (d > bestD) { bestD = d; best = [x, y]; }
     }
+    if (bestD < 0) return [];
     taken.push(best);
     // (The kit's models are true to size: drawn a little larger than life,
     // kitBoost; a stand of grain a unit across, PATCH_SIZE; a shrub as a
     // plantation's plants were.)
     const s0 = m.model in KIT ? kitBoost(m.model as KitModel) : m.model === 'grainPatch' || m.model === 'tallPatch' ? PATCH_SIZE : SHRUB_BOOST[m.model as ShrubModel] ?? RESOURCE_SCALE;
-    return { ...m, x: best[0], y: best[1], yaw: rand() * Math.PI * 2, s: s0 * (0.9 + 0.2 * rand()) };
+    return [{ ...m, x: best[0], y: best[1], yaw: rand() * Math.PI * 2, s: s0 * (0.9 + 0.2 * rand()) }];
   });
 }

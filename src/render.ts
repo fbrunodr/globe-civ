@@ -5,7 +5,7 @@ import { GlobeCamera } from './camera.ts';
 import { HUMAN, type Game, type Unit, type City } from './game.ts';
 import { GROUND_COVERS, SNOW, tileLook, type GroundCover, type TileLook } from './look.ts';
 import { buildTerrainMesh, locate, newSample, type TerrainMesh } from './terrainMesh.ts';
-import { makeTerrainMaterial, makeTerrainDepthMaterial, makeTable, FAN_ROWS, TILE_ROWS, IMPROVEMENT_CODE, BURNT_CODE, CROP_CODE, STAGE_STEP, ROAD_DIRT, ROAD_GRAIN, type TerrainMaterial } from './terrainMaterial.ts';
+import { makeTerrainMaterial, makeTerrainDepthMaterial, paintViewColor, makeTable, FAN_ROWS, TILE_ROWS, IMPROVEMENT_CODE, BURNT_CODE, CROP_CODE, STAGE_STEP, ROAD_DIRT, ROAD_GRAIN, type TerrainMaterial } from './terrainMaterial.ts';
 import { makeSmoke, type Emitter, type Smoke } from './smoke.ts';
 import { buildPaintData, fanCoords, fanFrames, paintAt, softAt, warpAt, FAN_COORDS, FINE_MAX, FINE_WAVELENGTH, type PaintData, type FanFrame } from './paint.ts';
 import { buildRelief, CONE_RADIUS, CRATER, CRATER_DEPTH, type Relief } from './relief.ts';
@@ -798,7 +798,7 @@ export class GlobeRenderer {
     const main = GROUND_COVERS.reduce((a, k) => ((cover[k] ?? 0) > (cover[a] ?? 0) ? k : a));
     const share = (k: GroundCover) => (k === main ? 1 : 0);
     const soil = new THREE.Color(l.ground.soil);
-    td.set([soil.r, soil.g, soil.b, share('grass'), share('dry'), share('soil'), share('sand'), share('litter'), share('moss'), share('snow'), 0, 0], o + 40);
+    td.set([soil.r, soil.g, soil.b, share('grass'), share('dry'), share('soil'), share('sand'), share('litter'), share('moss'), share('snow'), paintViewColor(g.biome[t]!, g.feature[t] ?? null, g.map.relief[t]!), 0], o + 40);
     this.tileTex.needsUpdate = true;
   }
 
@@ -1064,8 +1064,8 @@ export class GlobeRenderer {
   // What a resource shows on its tile (rural/resourceModels.ts), once the
   // player knows of it: a few small models in a patch toward one corner
   // (under its badge), a little larger than life so they read from the
-  // board; on the water for a sea resource, never in the water for the
-  // rest, never in a city's center.
+  // board; on the tile's painted land, on the water for a sea resource,
+  // never in the water for the rest, never in a city's center.
   private readonly resourceCache = new Map<number, { key: string; items: PlacedProp[] }>();
   // Wild, it shows the resource as nature has it; worked for it (its
   // improvement the resource's), only its own touches: the rest is the
@@ -1086,12 +1086,12 @@ export class GlobeRenderer {
     const u = e1.clone().addScaledVector(mid, -e1.dot(mid)).normalize(), w = mid.clone().cross(u);
     const items: PlacedProp[] = [];
     let hint = t;
-    for (const m of resourceLayout(r, rand, look)) {
-      const dir = mid.clone().addScaledVector(u, m.x * k).addScaledVector(w, m.y * k).normalize();
-      const l = locate(g.globe, dir, hint);
-      hint = l.t;
-      const s0 = this.citySpot(l.t, l.i, l.wa, l.wb), wet = s0.water - s0.ground > 0.0003;
-      if (wet !== (look.water === true)) continue;
+    const at = (x: number, y: number) => mid.clone().addScaledVector(u, x * k).addScaledVector(w, y * k).normalize();
+    const spotAt = (dir: THREE.Vector3) => { const l = locate(g.globe, dir, hint); hint = l.t; return this.citySpot(l.t, l.i, l.wa, l.wb); };
+    // (Only on the tile's painted land: in the water for a sea resource, dry for the rest.)
+    const fits = (s: CitySpot) => s.owner === t && (s.water - s.ground > 0.0003) === (look.water === true);
+    for (const m of resourceLayout(r, rand, look, (x, y) => fits(spotAt(at(x, y))))) {
+      const dir = at(m.x, m.y), s0 = spotAt(dir);
       const q = new THREE.Quaternion().setFromUnitVectors(UP, dir).multiply(new THREE.Quaternion().setFromAxisAngle(UP, m.yaw));
       const sc = k * m.s, shade = 0.92 + 0.12 * rand();
       items.push({ kind: ruralModelKind(m.model), matrix: new THREE.Matrix4().compose(dir.clone().multiplyScalar(1 + Math.max(s0.ground, s0.water) - 0.00004 * this.scale), q, new THREE.Vector3(sc, sc, sc)),
