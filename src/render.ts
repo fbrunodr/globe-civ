@@ -1826,12 +1826,17 @@ export class GlobeRenderer {
       const f = this.terrain.fields.ground, sv = this.spotSmp;
       let near = 0;
       for (let c = 1; c < 3; c++) if (sv.w[c] > sv.w[near]) near = c;
-      const P = f['riverP']![sv.v[near]]!, N = f['riverN']![sv.v[near]]!;
-      if (P >= 0) {
+      for (const n of ['', '2', '3']) {
+        const P = f['riverP' + n]![sv.v[near]]!, N = f['riverN' + n]![sv.v[near]]!;
+        if (P < 0) continue;
         let sd = 0;
-        for (let c = 0; c < 3; c++) sd += sv.w[c] * f['riverSd']![sv.v[c]]!;
+        for (let c = 0; c < 3; c++) sd += sv.w[c] * f['riverSd' + n]![sv.v[c]]!;
         const wrong = sd >= 0 ? N : P;
-        for (let c = 0; c < 4; c++) if (fan.ids[c] === wrong) { pw[c] = 0; w[c] = 0; }
+        const keep = (a: Float32Array | number[]) => {
+          const k = Array.from(a, (x, c) => (fan.ids[c] === wrong ? 0 : x));
+          if (k.reduce((s, x) => s + x, 0) > 1e-6) for (let c = 0; c < 4; c++) a[c] = k[c]!;
+        };
+        keep(pw); keep(w);
       }
     }
     let owner = 0;

@@ -15,7 +15,7 @@ export interface FanAttribute {
 
 // Per-vertex data of the surface, on the shared (watertight) vertices.
 // Ground fields holding tile ids (taken whole, never blended).
-const ID_FIELDS: ReadonlySet<string> = new Set(['riverP', 'riverN']);
+const ID_FIELDS: ReadonlySet<string> = new Set(['riverP', 'riverN', 'riverP2', 'riverN2', 'riverP3', 'riverN3']);
 export interface SurfaceFields {
   height: Float32Array; // ground height above radius 1
   water: Float32Array;  // water level above radius 1 (water shows where water > height)
@@ -290,7 +290,7 @@ export function buildTerrainMesh(globe: Globe, spec: TerrainSpec, coarse: number
     }
     height[v] = Math.hypot(positions[v * 3], positions[v * 3 + 1], positions[v * 3 + 2]) - 1;
     water[v] = Math.hypot(waterPos[v * 3], waterPos[v * 3 + 1], waterPos[v * 3 + 2]) - 1;
-    // (Tile ids, riverP and riverN, are not blended: the nearer end's.)
+    // (Tile ids, riverP/N, P2/N2 and P3/N3, are not blended: the nearer end's.)
     for (const [name, f] of Object.entries(fields.ground)) f[v] = ID_FIELDS.has(name) ? (j.f < 0.5 ? f[a]! : f[b]!) : f[a] * (1 - j.f) + f[b] * j.f;
     for (const f of fields.water3d) for (let c = 0; c < f.itemSize; c++) {
       f.data[v * f.itemSize + c] = f.data[a * f.itemSize + c] * (1 - j.f) + f.data[b * f.itemSize + c] * j.f;
@@ -371,7 +371,17 @@ export function buildTerrainMesh(globe: Globe, spec: TerrainSpec, coarse: number
   const depth = new Float32Array(Vs);
   for (let v = 0; v < Vs; v++) depth[v] = water[v] - height[v];
   geometry.setAttribute('depth', new THREE.BufferAttribute(pick(depth, 1), 1));
-  for (const [name, f] of Object.entries(fields.ground)) geometry.setAttribute(name, new THREE.BufferAttribute(pick(f, 1), 1));
+  // (The river sides go packed: riverSd (sd, sd2, sd3), riverIds (P, N,
+  // P2, N2) and riverIds2 (P3, N3), as the shader has few attributes to spare.)
+  const interleave = (names: readonly string[]) => {
+    const parts = names.map((n) => pick(fields.ground[n]!, 1)), out = new Float32Array(parts[0]!.length * names.length);
+    for (let v = 0; v < parts[0]!.length; v++) for (let c = 0; c < names.length; c++) out[v * names.length + c] = parts[c]![v]!;
+    return new THREE.BufferAttribute(out, names.length);
+  };
+  for (const [name, f] of Object.entries(fields.ground)) if (!name.startsWith('river')) geometry.setAttribute(name, new THREE.BufferAttribute(pick(f, 1), 1));
+  geometry.setAttribute('riverSd', interleave(['riverSd', 'riverSd2', 'riverSd3']));
+  geometry.setAttribute('riverIds', interleave(['riverP', 'riverN', 'riverP2', 'riverN2']));
+  geometry.setAttribute('riverIds2', interleave(['riverP3', 'riverN3']));
   const vertDir = pick(sharedDir, 3);
   const dir = new THREE.Vector3();
   for (const fa of spec.fanAttributes) {
