@@ -552,17 +552,24 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
           // River banks: greener, damper ground beside the water.
           diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.05, 0.2, 0.035) * vShade, vBank * 0.55 * dry * (1.0 - snowCover));
 
-          // Floodplains: the river's old beds, faint meandering scars over
-          // the land (a contour of a slow warped noise), a little darker and
-          // damper than the lush ground round them.
+          // Floodplains: damp hollows the floods leave, pools strung along
+          // the river's old beds (a contour of a slow warped noise, broken
+          // into beads by another), a little darker and damper than the lush
+          // ground round them. Not where the tile is worked or built on.
           if (g2.w > 0.01) {
+            float built = 0.0;
+            for (int k = 0; k < 4; k++) if (soft[k] > 0.001) { vec4 r5 = tileRow(int(ids[k]), 5); if (r5.x > 0.5 || r5.z > 0.5) built += soft[k]; }
             vec3 q = P / (0.6 * uR0);
             float n = tFbm(q + 0.8 * vec3(tNoise(q * 1.3 + 2.3), tNoise(q * 1.3 + 7.1), tNoise(q * 1.3 + 4.7)), 3);
-            float fw = max(fwidth(n), 1e-5), d = abs(n - 0.42);
-            float bed = 1.0 - smoothstep(0.01, 0.01 + 1.5 * fw, d);
-            float damp = 1.0 - smoothstep(0.01, 0.035, d);
-            float scar = (0.12 * damp + 0.16 * bed) * smoothstep(0.4, 0.75, g2.w) * dry * (1.0 - snowCover) * tFade(1.0 / (0.6 * uR0));
-            diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.62, 0.78, 0.6), scar * 2.0);
+            float bead = tFbm(P / (0.12 * uR0) + 9.7, 2);
+            // (Distance from the bed, less where a bead swells it: < 0 in a pool.)
+            float d = abs(n - 0.45) - 0.05 * smoothstep(0.45, 0.7, bead);
+            float fw = max(fwidth(d), 1e-5);
+            float keep = smoothstep(0.65, 0.9, g2.w) * (1.0 - built) * dry * (1.0 - snowCover);
+            float pool = 1.0 - smoothstep(-0.006, -0.006 + 1.5 * fw, d);
+            float damp = 1.0 - smoothstep(-0.006, 0.02, d);
+            float hollow = (0.32 * pool + 0.12 * damp) * keep;
+            diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.62, 0.78, 0.6), hollow * 2.0);
           }
 
           // Dunes and sand ripples: warped ripples.
