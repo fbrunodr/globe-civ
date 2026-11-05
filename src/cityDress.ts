@@ -72,10 +72,11 @@ function wallRound(p: Painting): Pt[] | null {
   });
   return [...ring, ring[0]!];
 }
-// The eras a city is dressed for: the game's (Ancient, Classical,
-// Medieval) and the Modern era ahead of it (the City samples preview it).
+// The eras a city is dressed for, the game's seven in four: Ancient,
+// Classical and Medieval, Renaissance and Industrial, Modern and Information
+// (cityProps.ts DRESS_ERA). Each builds a floor higher than the last.
 export type DressEra = 0 | 1 | 2 | 3;
-export const DRESS_ERA_NAME: readonly string[] = ['Ancient', 'Classical', 'Medieval', 'Modern'];
+export const DRESS_ERA_NAME: readonly string[] = ['Ancient', 'Classical–Medieval', 'Renaissance–Industrial', 'Modern–Information'];
 // Roads by era: dirt, paving, asphalt.
 const ROAD_RGB: Record<DressEra, RGB> = { 0: [0.55, 0.49, 0.39], 1: [0.58, 0.57, 0.54], 2: [0.58, 0.57, 0.54], 3: [0.3, 0.3, 0.31] };
 // Skyscrapers: one per this many citizens, from the Modern era (none
@@ -84,7 +85,7 @@ const SKYSCRAPER_PER = 3;
 const SKYSCRAPER_FROM = 10;
 
 // The heights each era builds (floorsOf below; the Buildings page shows them).
-export const ERA_HEIGHTS: Record<DressEra, readonly Floors[]> = { 0: [1, 2], 1: [1, 2], 2: [1, 2, 3], 3: [2, 3, 4, 12] };
+export const ERA_HEIGHTS: Record<DressEra, readonly Floors[]> = { 0: [1], 1: [1, 2], 2: [1, 2, 3], 3: [2, 3, 4, 12] };
 // The first era that builds a height.
 export const firstEra = (f: Floors): DressEra => ([0, 1, 2, 3] as const).find((e) => ERA_HEIGHTS[e].includes(f)) ?? 3;
 // The house model for a painted rectangle (front × depth, units): the
@@ -121,7 +122,7 @@ export function dressCity(c: CityLook): DressedCity {
   const tall = Math.min(0.8, Math.max(0.15, c.pop / 20));
   const floorsOf = (b: Painted): Floors => {
     if (b.kind === 'skyscraper') return 12;
-    if (c.era === 0) return b.order < tall * 0.5 ? 2 : 1;
+    if (c.era === 0) return 1;
     if (c.era === 1) return b.order < tall ? 2 : 1;
     if (c.era === 2) return b.order < tall * 0.5 ? 3 : b.order < tall + 0.2 ? 2 : 1;
     return b.order < tall * 0.5 ? 4 : b.order < tall ? 3 : 2;

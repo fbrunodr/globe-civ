@@ -285,7 +285,7 @@ export class Sheets {
       const cells = Array.from({ length: PAIR_SLOTS }, (_, i) => `<i class="${i < lv[a] ? 'a' : i >= PAIR_SLOTS - lv[b] ? 'b' : ''}"></i>`).join('');
       return `<div class="slider"><span>${PATHS[a].name} <b>${lv[a]}</b></span><div class="cells">${cells}</div><span><b>${lv[b]}</b> ${PATHS[b].name}</span></div>`;
     };
-    const PAIRS = ['martial', 'devotion', 'openMarket', 'frontier', 'maritime'] as const;
+    const PAIRS = ['martial', 'devotion', 'commerce', 'frontier', 'maritime'] as const;
     const profile = PAIRS.map(slider).join('');
     const traitNode = (k: TraitKey): string => {
       const d = traitDef(k), block = traitBlock(k, have, p.era, founded);

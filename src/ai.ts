@@ -318,8 +318,8 @@ export function pathTaste(g: Game, p: Player): Record<PathKey, number> {
   const rand = mulberry32((g.seed * 31 + p.id * 977) ^ 0x1de);
   const w = warlike(g, p);
   const taste = Object.fromEntries(PATH_KEYS.map((k) => [k, rand() * 3
-    + (w && (k === 'martial' || k === 'nationalIndustry' || k === 'pastoral') ? 1.5 : 0)
-    + (!w && (k === 'concord' || k === 'reason' || k === 'openMarket' || k === 'heartland') ? 1 : 0)])) as Record<PathKey, number>;
+    + (w && (k === 'martial' || k === 'craft' || k === 'pastoral') ? 1.5 : 0)
+    + (!w && (k === 'concord' || k === 'reason' || k === 'commerce' || k === 'heartland') ? 1 : 0)])) as Record<PathKey, number>;
   tasteCache.set(key, taste);
   return taste;
 }

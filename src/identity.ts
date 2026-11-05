@@ -9,8 +9,8 @@ import {
 // adopted costs more than the last (traitCost), whatever the civ's size,
 // and a civ adopts MAX_TRAITS at most. Traits belong to ten paths in five
 // opposed pairs, each pair a slider (like a political compass's axes):
-//   Martial ⟷ Concord        Devotion ⟷ Reason     Open Market ⟷ National Industry
-//   Frontier ⟷ Heartland     Maritime ⟷ Pastoral
+//   Martial ⟷ Concord     Devotion ⟷ Reason     Commerce ⟷ Craft
+//   Frontier ⟷ Heartland  Maritime ⟷ Pastoral
 // Each path climbs through PAIR_SLOTS slots, one per step: an opening trait
 // (Ancient), two Classical ones, a Medieval one, a Renaissance fork (one of
 // two: the other closes), an Industrial one and a Modern capstone. The two
@@ -25,7 +25,7 @@ import {
 // undone: that is what sets civs apart (techs are the same for everyone;
 // governments and policies change at will: politics.ts).
 
-export const PATH_KEYS = ['martial', 'concord', 'devotion', 'reason', 'openMarket', 'nationalIndustry', 'frontier', 'heartland', 'maritime', 'pastoral'] as const;
+export const PATH_KEYS = ['martial', 'concord', 'devotion', 'reason', 'commerce', 'craft', 'frontier', 'heartland', 'maritime', 'pastoral'] as const;
 export type PathKey = typeof PATH_KEYS[number];
 export interface PathDef {
   readonly name: string;
@@ -38,8 +38,8 @@ export const PATHS: Record<PathKey, PathDef> = {
   concord:   { name: 'Concord',   epithet: 'Peaceable',   opposite: 'martial',   desc: 'Peace at home: growth, defense, cohesion.' },
   devotion:  { name: 'Devotion',  epithet: 'Devout',      opposite: 'reason',    desc: 'Faith: founding a religion and spreading it.' },
   reason:    { name: 'Reason',    epithet: 'Rational',    opposite: 'devotion',  desc: 'Inquiry: science and secular institutions.' },
-  openMarket:       { name: 'Open Market',       epithet: 'Mercantile',  opposite: 'nationalIndustry', desc: 'Trade: gold, markets and purchases.' },
-  nationalIndustry: { name: 'National Industry', epithet: 'Industrious', opposite: 'openMarket',       desc: 'Making: production, buildings and wonders.' },
+  commerce:  { name: 'Commerce',  epithet: 'Mercantile',  opposite: 'craft',     desc: 'Trade: gold, markets and purchases.' },
+  craft:     { name: 'Craft',     epithet: 'Industrious', opposite: 'commerce',  desc: 'Making: production, buildings and wonders.' },
   frontier:  { name: 'Frontier',  epithet: 'Expansive',   opposite: 'heartland', desc: 'Wide: settling, borders and cheap provinces.' },
   heartland: { name: 'Heartland', epithet: 'Urbane',      opposite: 'frontier',  desc: 'Tall: a great capital and dense cities.' },
   maritime:  { name: 'Maritime',  epithet: 'Seafaring',   opposite: 'pastoral',  desc: 'The sea: fishing grounds and sea trade.' },
@@ -104,24 +104,24 @@ export const TRAITS = {
   appliedScience:   tr('Applied Science', 'reason', 3, yieldPct('prod', 10), yieldPct('science', 5)),
   secularism:       tr('Secularism', 'reason', 4, yieldPct('cohesion', 15), pct('buildingUpkeep', -15)),
   progressivism:    tr('Progressivism', 'reason', 5, yieldPct('science', 15)),
-  // ---- Open Market ----
-  marketDays:       tr('Market Days', 'openMarket', 0, yieldPct('gold', 10)),
-  caravanRoutes:    tr('Caravan Routes', 'openMarket', 1, perLuxury({ gold: 1 })),
-  moneyChangers:    tr('Money Changers', 'openMarket', 1, pct('buyCost', -15)),
-  merchantGuilds:   tr('Merchant Guilds', 'openMarket', 2, perSpecialist('merchant', { gold: 2 })),
-  bankingHouses:    tr('Banking Houses', 'openMarket', 3, yieldPct('gold', 15)),
-  freePorts:        tr('Free Ports', 'openMarket', 3, pct('tilePrice', -40), pct('buyCost', -15)),
-  commercialEmpire: tr('Commercial Empire', 'openMarket', 4, pct('upkeep', -20), yieldPct('gold', 10)),
-  globalTrade:      tr('Global Trade', 'openMarket', 5, yieldPct('gold', 20), yieldPct('science', 5)),
-  // ---- National Industry ----
-  artisans:         tr('Artisans', 'nationalIndustry', 0, yieldPct('prod', 10)),
-  stonemasons:      tr('Stonemasons', 'nationalIndustry', 1, onImprovement('quarry', { prod: 1 }), prodPct('wonder', 15)),
-  smiths:           tr('Smiths', 'nationalIndustry', 1, onImprovement('mine', { prod: 1 })),
-  masterBuilders:   tr('Master Builders', 'nationalIndustry', 2, prodPct('building', 20)),
-  monumentBuilders: tr('Monument Builders', 'nationalIndustry', 3, prodPct('wonder', 30), yieldPct('culture', 5)),
-  workshopsOfTheWorld: tr('Workshops of the World', 'nationalIndustry', 3, perSpecialist('engineer', { prod: 2 })),
-  heavyIndustry:    tr('Heavy Industry', 'nationalIndustry', 4, yieldPct('prod', 15), pct('buildingUpkeep', -15)),
-  industrialMight:  tr('Industrial Might', 'nationalIndustry', 5, yieldPct('prod', 20), prodPct('military', 15)),
+  // ---- Commerce ----
+  marketDays:       tr('Market Days', 'commerce', 0, yieldPct('gold', 10)),
+  caravanRoutes:    tr('Caravan Routes', 'commerce', 1, perLuxury({ gold: 1 })),
+  moneyChangers:    tr('Money Changers', 'commerce', 1, pct('buyCost', -15)),
+  merchantGuilds:   tr('Merchant Guilds', 'commerce', 2, perSpecialist('merchant', { gold: 2 })),
+  bankingHouses:    tr('Banking Houses', 'commerce', 3, yieldPct('gold', 15)),
+  openMarkets:      tr('Open Markets', 'commerce', 3, pct('tilePrice', -40), pct('buyCost', -15)),
+  commercialEmpire: tr('Commercial Empire', 'commerce', 4, pct('upkeep', -20), yieldPct('gold', 10)),
+  globalTrade:      tr('Global Trade', 'commerce', 5, yieldPct('gold', 20), yieldPct('science', 5)),
+  // ---- Craft ----
+  artisans:         tr('Artisans', 'craft', 0, yieldPct('prod', 10)),
+  stonemasons:      tr('Stonemasons', 'craft', 1, onImprovement('quarry', { prod: 1 }), prodPct('wonder', 15)),
+  smiths:           tr('Smiths', 'craft', 1, onImprovement('mine', { prod: 1 })),
+  masterBuilders:   tr('Master Builders', 'craft', 2, prodPct('building', 20)),
+  monumentBuilders: tr('Monument Builders', 'craft', 3, prodPct('wonder', 30), yieldPct('culture', 5)),
+  workshopsOfTheWorld: tr('Workshops of the World', 'craft', 3, perSpecialist('engineer', { prod: 2 })),
+  heavyIndustry:    tr('Heavy Industry', 'craft', 4, yieldPct('prod', 15), pct('buildingUpkeep', -15)),
+  industrialMight:  tr('Industrial Might', 'craft', 5, yieldPct('prod', 20), prodPct('military', 15)),
   // ---- Frontier ----
   pioneers:         tr('Pioneers', 'frontier', 0, prodPct('settler', 30)),
   homesteading:     tr('Homesteading', 'frontier', 1, pct('tilePrice', -30), pct('border', 30)),

@@ -210,7 +210,7 @@ const options = <T extends string | number>(id: string, xs: readonly T[], name: 
   el.addEventListener('change', () => { set(el.value === 'any' ? 'any' : (xs.find((x) => String(x) === el.value) as T)); build(); el.blur(); });
 };
 options('fCiv', ARCH_CIVS, (c) => c, (v) => { filters.civ = v; });
-options('fEra', [0, 1, 2, 3] as const, (e) => (e === 3 ? 'Modern (preview)' : DRESS_ERA_NAME[e]!), (v) => { filters.era = v; });
+options('fEra', [0, 1, 2, 3] as const, (e) => DRESS_ERA_NAME[e]!, (v) => { filters.era = v; });
 options('fGround', GROUNDS, (g) => g, (v) => { filters.ground = v; });
 options('fWonders', ['none', 'few', 'many'] as const, (w) => ({ none: 'none', few: '1–3', many: '4–10' })[w], (v) => { filters.wonders = v; });
 options('fWalls', ['yes', 'no'] as const, (w) => w, (v) => { filters.walls = v; });
