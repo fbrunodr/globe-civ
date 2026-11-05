@@ -680,9 +680,16 @@ export class GlobeRenderer {
       if (!o.visible) { hidden.push(o); o.visible = true; }
       if (o.frustumCulled) { culled.push(o); o.frustumCulled = false; }
     });
+    // (The shadow map drawn in the same render, first: without it every
+    // material receiving shadows samples no depth texture, and WebGL turns
+    // each of their draws away, leaving them unprepared.)
+    this.updateSun();
+    this.renderer.shadowMap.needsUpdate = true;
     this.renderer.render(this.scene, this.camera);
     for (const o of hidden) o.visible = false;
     for (const o of culled) o.frustumCulled = true;
+    // (Drawn with everything in it, hidden too: drawn again as it should be.)
+    this.shadowsDirty = true;
     this.scene.remove(wall);
     wall.geometry.dispose();
   }
