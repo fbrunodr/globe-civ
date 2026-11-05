@@ -69,6 +69,10 @@ const PROP_CHUNKS = 48;
 const FAR_PX = 16;
 // A town's buildings go far this much farther off than the trees (they stand taller).
 const HOUSE_FAR = 1.6;
+// A cap on the frame rate (0: none): frames evenly spaced on whole
+// refreshes (a 120 Hz screen shows each for two) look smoother than more of
+// them, unevenly (a frame of 10–14 ms held for one refresh, then two or three).
+const FPS_CAP = 60;
 // The share of a chimney's puffs that show, by its owner's era: a fire lit
 // now and then before the industrial age, every stack pouring in it, less
 // as the modern and information ages clean up.
@@ -574,7 +578,14 @@ export class GlobeRenderer {
     addEventListener('resize', resize, { signal: this.abort.signal });
     resize();
     this.cam.setLens(LENS);
-    this.renderer.setAnimationLoop(() => this.frame());
+    // (At most FPS_CAP frames a second, each on a whole refresh: the 4 ms of
+    // slack lets a refresh that comes a little early still draw.)
+    let lastDrawn = 0;
+    this.renderer.setAnimationLoop((t) => {
+      if (FPS_CAP > 0 && t - lastDrawn < 1000 / FPS_CAP - 4) return;
+      lastDrawn = t;
+      this.frame();
+    });
   }
 
   // ---------- public API ----------
