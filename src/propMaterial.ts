@@ -291,6 +291,107 @@ export function makeFloraDepthMaterial(flora: FloraUniforms): THREE.MeshDepthMat
   return mat;
 }
 
+// Built surfaces (makePropMaterial `surfaces`): a texture worked out per
+// pixel, in the model's own axes (its walls upright, its roofs' slopes)
+// at the world's size (a storey: uStorey), from what each face is: walls
+// of brick, stone, plaster or timber, roofs of clay tiles, slate or
+// thatch, flat tops of fine grit, each told by its colour and slope (no
+// texture to draw or load). Faded out where it would be finer than the
+// pixels.
+const SURFACE_VERTEX = /* glsl */ `
+  #ifdef USE_INSTANCING
+    vec3 sScale = vec3(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz), length(instanceMatrix[2].xyz));
+  #else
+    vec3 sScale = vec3(1.0);
+  #endif
+  vSurfP = position * sScale;
+  vSurfN = normalize(objectNormal / sScale);
+`;
+const SURFACE_FRAGMENT = /* glsl */ `
+float sHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float sNoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p), u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(sHash(i), sHash(i + vec2(1.0, 0.0)), u.x), mix(sHash(i + vec2(0.0, 1.0)), sHash(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+// Courses of h by blocks of w, every other course shifted half a block:
+// its mortar (1 on a joint, j its width as a share), the block's id.
+float sCourses(vec2 q, float w, float h, float j, out vec2 id) {
+  float row = floor(q.y / h);
+  float x = q.x / w + 0.5 * mod(row, 2.0);
+  id = vec2(floor(x), row);
+  vec2 f = vec2(fract(x), fract(q.y / h));
+  vec2 e = min(f, 1.0 - f) / vec2(j * h / w, j);
+  return 1.0 - smoothstep(0.5, 1.0, min(e.x, e.y));
+}
+// How much of a pattern of this period shows (none where finer than the pixels).
+float sShow(float coord, float period) { return 1.0 - smoothstep(0.25, 0.7, fwidth(coord) / period); }
+float surfaceShade(vec3 c, vec3 P, vec3 N) {
+  float S = uStorey;
+  float hi = max(c.r, max(c.g, c.b)), lo = min(c.r, min(c.g, c.b));
+  float lum = dot(c, vec3(0.3, 0.59, 0.11)), sat = hi > 0.0 ? (hi - lo) / hi : 0.0, gr = c.g / max(c.r, 1e-3);
+  bool red = c.r >= hi && c.r > c.b * 1.4;
+  vec2 id;
+  if (abs(N.y) < 0.3) {
+    // A wall: along it (u) and up (v).
+    vec2 t = normalize(vec2(-N.z, N.x) + 1e-5);
+    vec2 q = vec2(dot(P.xz, t), P.y);
+    if (lum < 0.03) return 1.0; // (windows, doors: dark glass and wood)
+    if (red && gr < 0.45 && sat > 0.5) {
+      // Brick: small courses, pale mortar, each brick its own fired shade.
+      float h = S / 9.0, show = sShow(q.y, h);
+      float m = sCourses(q, 2.2 * h, h, 0.12, id);
+      return 1.0 + show * (mix((sHash(id) - 0.5) * 0.32, 0.3, m));
+    }
+    if (red && gr >= 0.45 && sat > 0.55 && lum < 0.2) {
+      // Timber: boards across, a dark seam between, the grain along them.
+      float h = S / 6.0, show = sShow(q.y, h);
+      float seam = 1.0 - smoothstep(0.0, 0.08, min(fract(q.y / h), 1.0 - fract(q.y / h)));
+      float grain = sNoise(vec2(q.x / (h * 4.0), q.y / (h * 0.15)));
+      return 1.0 + show * (-0.3 * seam + 0.16 * (grain - 0.5) + 0.1 * (sHash(vec2(0.0, floor(q.y / h))) - 0.5));
+    }
+    if (sat < 0.38 && lum < 0.5) {
+      // Stone: dressed blocks, each its own shade, dark joints.
+      float h = S / 3.5, show = sShow(q.y, h);
+      float m = sCourses(q + vec2(0.0, 0.0), h * (1.4 + 0.6 * sHash(vec2(floor(q.y / h), 7.0))), h, 0.07, id);
+      float n = sNoise(q / (h * 0.35));
+      return 1.0 + show * (mix((sHash(id) - 0.5) * 0.4 + 0.16 * (n - 0.5), -0.5, m));
+    }
+    // Plaster: a soft mottle and fine grit, stained low where the rain splashes.
+    float show = sShow(q.y, S * 0.08);
+    float mottle = sNoise(q / (S * 0.7)) - 0.5, grit = sNoise(q / (S * 0.05)) - 0.5;
+    float stain = 1.0 - smoothstep(0.0, S * 0.35, P.y);
+    return 1.0 + 0.24 * mottle + show * 0.16 * grit - 0.16 * stain;
+  }
+  if (N.y > 0.3 && N.y < 0.95) {
+    // A roof: across its slope (u) and down it (v).
+    vec2 d = normalize(N.xz);
+    vec3 down = normalize(vec3(d.x, 0.0, d.y) * N.y - vec3(0.0, 1.0 - N.y * N.y, 0.0));
+    vec2 q = vec2(dot(P.xz, vec2(-d.y, d.x)), -dot(P, down));
+    if (red && gr < 0.55) {
+      // Clay tiles: rows of them, each darker at its lower lip (the next row's shadow).
+      float h = S / 6.0, show = sShow(q.y, h);
+      float m = sCourses(q, h * 0.9, h, 0.06, id);
+      float lip = fract(q.y / h);
+      return 1.0 + show * (0.22 * (lip - 0.5) + (sHash(id) - 0.5) * 0.16 - 0.15 * m);
+    }
+    if (red && gr >= 0.55) {
+      // Thatch: straw down the slope, in bundles, the courses' edges dark.
+      float h = S / 4.0, show = sShow(q.x, S * 0.05);
+      float straw = sNoise(vec2(q.x / (S * 0.025), q.y / (S * 0.6)));
+      float edge = smoothstep(0.75, 1.0, fract(q.y / h));
+      return 1.0 + show * (0.24 * (straw - 0.5)) - sShow(q.y, h) * 0.14 * edge;
+    }
+    // Slate (or any other roof): small dark-jointed slates.
+    float h = S / 7.0, show = sShow(q.y, h);
+    float m = sCourses(q, h * 1.3, h, 0.08, id);
+    return 1.0 + show * ((sHash(id) - 0.5) * 0.2 - 0.3 * m);
+  }
+  // Flat (a terrace, a top, a paved yard): fine grit.
+  vec2 q = P.xz;
+  return 1.0 + sShow(q.x, S * 0.1) * 0.1 * (sNoise(q / (S * 0.1)) - 0.5) + 0.06 * (sNoise(q / S) - 0.5);
+}
+`;
+
 // `flora` (trees, shrubs, ground cover): smooth shading over the models'
 // clump normals (propCatalog.ts: fluffy foliage), crowns darker underneath
 // (leafShade), and the leaves stirring in the wind (`time`, seconds, kept
@@ -301,17 +402,21 @@ export function makeFloraDepthMaterial(flora: FloraUniforms): THREE.MeshDepthMat
 // `smooth`: smooth-shaded over the models' own normals (people, animals,
 // plants: rural/kit.ts), not flat; with `roam` (its clock), the beasts and
 // people among them walk about.
-export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Vector3, flora?: FloraUniforms, smooth = false, roam?: { value: number }): THREE.MeshStandardMaterial {
+// `surfaces` (world units a storey, cityProps' houses as placed): built
+// surfaces textured (SURFACE_FRAGMENT).
+export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Vector3, flora?: FloraUniforms, smooth = false, roam?: { value: number }, surfaces?: number): THREE.MeshStandardMaterial {
   const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: smooth ? 0.85 : 1, flatShading: !flora && !smooth, side: THREE.DoubleSide });
   const day = sunDir !== undefined;
   mat.onBeforeCompile = (shader) => {
     if (day) shader.uniforms['uSunDir'] = { value: sunDir };
     if (flora) Object.assign(shader.uniforms, floraUniforms(flora));
     if (roam) shader.uniforms['uRoamTime'] = roam;
+    if (surfaces) shader.uniforms['uStorey'] = { value: surfaces };
     shader.vertexShader = shader.vertexShader
       .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>
         ${roam ? ROAM_NORMAL : ''}`)
       .replace('#include <common>', `#include <common>
+        ${surfaces ? 'varying vec3 vSurfP; varying vec3 vSurfN;' : ''}
         ${roam ? ROAM_DECL : ''}
         ${flora ? FLORA_VERTEX_DECL : 'attribute float leafMask; attribute vec3 cardUv;'}
         attribute float leafShade;
@@ -321,6 +426,7 @@ export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Ve
         ${day ? 'uniform vec3 uSunDir;' : ''}`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
         vCard = cardUv;
+        ${surfaces ? SURFACE_VERTEX : ''}
         ${flora ? FLORA_VERTEX : ''}
         ${roam ? ROAM_VERTEX : ''}`)
       .replace('#include <color_vertex>', `#include <color_vertex>
@@ -336,6 +442,7 @@ export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Ve
       .replace('#include <common>', `#include <common>
         varying float vDay;
         varying vec3 vCard;
+        ${surfaces ? `varying vec3 vSurfP; varying vec3 vSurfN; uniform float uStorey; ${SURFACE_FRAGMENT}` : ''}
         ${flora ? CARD_TEXEL : ''}
         ${GRADE_GLSL}`)
       .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
@@ -351,6 +458,8 @@ export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Ve
         #include <opaque_fragment>`);
     // (A card's two sides share its outward normal, so light never falls
     // into the clump; a flat leaf's (vCard.z -1) share its normal up.)
+    if (surfaces) frag = frag.replace('#include <color_fragment>', `#include <color_fragment>
+        diffuseColor.rgb *= surfaceShade(diffuseColor.rgb, vSurfP, normalize(vSurfN));`);
     if (flora) frag = frag.replace('#include <normal_fragment_begin>', `#include <normal_fragment_begin>
         if (abs(vCard.z) > 0.5) normal *= faceDirection;`);
     if (flora) frag = frag.replace('#include <color_fragment>', `#include <color_fragment>
@@ -366,7 +475,7 @@ export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Ve
     shader.fragmentShader = frag;
   };
   // Distinct programs per bounce, saturation and sun.
-  mat.customProgramCacheKey = () => `prop-${bounce}-${saturation}-${day}-${!!flora}-${smooth}-${!!roam}`;
+  mat.customProgramCacheKey = () => `prop-${bounce}-${saturation}-${day}-${!!flora}-${smooth}-${!!roam}-${surfaces ?? 0}`;
   return mat;
 }
 

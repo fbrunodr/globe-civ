@@ -2,7 +2,8 @@
 // building takes part of the lot; the rest is garden, paving, a fence or
 // wall, a path to its door, shrubs and trees). One parametric model per
 // architectural style (architecture.ts), built to the lot's footprint and
-// height, in three variants. Detailed but stylised (the maquette look):
+// height, in five variants (houseKit.ts VARIANT_LOOK: each its own
+// massing, roofs and wing, not only its colours). Detailed but stylised (the maquette look):
 // plinths, cornices, windows and shutters, timber framing, porches,
 // chimneys, dormers, balconies, awnings.
 //
@@ -18,14 +19,16 @@ import { CELL, FOOTPRINT_CELLS, wallHeight, type Floors, type Footprint } from '
 import { mulberry32 } from './rng.ts';
 import type { Style } from './architecture.ts';
 import {
-  BAND, E, P, box, cypress, fence, frustum, gable, hip, onFace, palm, patch, pick, place, plant, ring, shrub, storeys, tree, windows, yard, faceWidth,
+  BAND, E, P, VARIANTS, VARIANT, VARIANT_LOOK, box, cypress, fence, frustum, gable, hip, onFace, palm, patch, pick, place, plant, ring, shrub, storeys, tree, windows, yard, faceWidth,
   type Body, type Build, type Face, type G, type Lot,
 } from './houseKit.ts';
 import { HOUSE_STYLES } from './styles/houses.ts';
 import { TRIPLE_STYLES } from './styles/triples.ts';
 import { QUAD_STYLES } from './styles/quads.ts';
 import { TOWER_STYLES } from './styles/towers.ts';
-export const HOUSE_VARIANTS = 3;
+export const HOUSE_VARIANTS = VARIANTS;
+// A skyscraper's height by its variant (its storeys taller or more of them: a skyline, not a row).
+const TOWER_HEIGHT: readonly number[] = [1, 1.3, 0.8, 1.45, 0.9];
 // A lot model's key (a model kind of its own for the renderers): its
 // style, footprint, height and variant (the last three loosely typed: the
 // full product is too large a union for the compiler; houseKind builds it).
@@ -403,14 +406,38 @@ const STYLE_BUILD: Record<Style, Build> = {
 const cache = new Map<string, G>();
 // The model of a lot (cached): its parts merged, colors per vertex, no
 // leaf parts (houses take only a shade per instance).
+// A variant's lower wing (VARIANT_LOOK wing): beside its main body where
+// the lot has room, a storey high (less on a one-floor house), in the
+// body's walls with a little gabled roof of its roofs (flat with a
+// parapet if it has none), a window or two on its front.
+function wing(l: Lot): G[] {
+  const b = VARIANT.body, wall = VARIANT.wall;
+  if (!VARIANT_LOOK[l.v % VARIANTS]!.wing || !b || wall === null) return [];
+  const side = b.x <= 0 ? 1 : -1, edge = b.x + side * b.w / 2, room = l.lw * 0.94 - side * edge;
+  if (room < 0.012) return [];
+  const w = Math.min(room - 0.002, b.w * 0.7), d = b.d * 0.62, h = Math.min(b.h * 0.55, wallHeight(1) * 0.8);
+  // (Set back from the body's front: its doors and steps keep their own plane.)
+  const x = edge + side * (w / 2 + 0.0004), z = b.z + b.d / 2 - d / 2 - 0.004;
+  const out: G[] = [...box(w, h, d, wall, { x, z })];
+  if (VARIANT.roof !== null) out.push(...gable(w + 0.002, d + 0.002, Math.min(w, d) * 0.3, VARIANT.roof, { x, y: h, z }, true, wall));
+  else out.push(ring(w, 0.0016, d, wall, { x, y: h, z }));
+  const wb: Body = { x, z, w, d, y: 0, h };
+  out.push(...windows(wb, 'front', { w: 0.0028, h: h * 0.35, spacing: 0.011, sill: h * 0.3, color: 0x2e2a26, floors: 1, storey: h, base: 0 }));
+  return out;
+}
+
 export function houseGeometry(kind: HouseKind): G {
   let g = cache.get(kind);
   if (!g) {
     const { style, fp, floors, variant } = parseHouseKind(kind);
     const [cw, cd] = FOOTPRINT_CELLS[fp];
-    const lot: Lot = { lw: (cw * CELL) / 2, ld: (cd * CELL) / 2, floors, H: wallHeight(floors), v: variant, fp, rand: mulberry32(variant * 7919 + cw * 31 + cd * 131 + floors) };
-    const parts = STYLE_BUILD[style](lot).map((p) => p.index ? p.toNonIndexed() : p);
+    const lot: Lot = { lw: (cw * CELL) / 2, ld: (cd * CELL) / 2, floors, H: wallHeight(floors) * (floors === 12 ? TOWER_HEIGHT[variant % VARIANTS]! : 1), v: variant, fp, rand: mulberry32(variant * 7919 + cw * 31 + cd * 131 + floors) };
+    Object.assign(VARIANT, { free: true, v: variant, body: null, wall: null, roof: null });
+    let built: G[];
+    try { built = [...STYLE_BUILD[style](lot), ...wing(lot)]; } finally { VARIANT.free = false; }
+    const parts = built.map((p) => p.index ? p.toNonIndexed() : p);
     g = mergeGeometries(parts)!;
+    if (VARIANT_LOOK[variant % VARIANTS]!.mirror) g.scale(-1, 1, 1);
     if (!g) throw new Error(`house ${kind}`);
     for (const p of parts) p.dispose();
     g.setAttribute('leafMask', new THREE.BufferAttribute(new Float32Array(g.getAttribute('position').count), 1));

@@ -146,6 +146,7 @@ document.querySelectorAll<HTMLButtonElement>('button[data-mode]').forEach((b) =>
 }));
 $('style').addEventListener('change', (e) => { style = (e.target as HTMLSelectElement).value as Style; rebuild(true); });
 $('civSel').addEventListener('change', (e) => { civ = (e.target as HTMLSelectElement).value as ArchCiv; rebuild(); });
+$('variant').innerHTML = [...Array.from({ length: HOUSE_VARIANTS }, (_, i) => `<option value="${i}">${i + 1}</option>`), '<option value="all">all</option>'].join('');
 $('variant').addEventListener('change', (e) => { const v = (e.target as HTMLSelectElement).value; variant = v === 'all' ? 'all' : Number(v); rebuild(true); });
 
 // Keyboard: W A S D move, Q E rotate, T G tilt (toward the horizon / back down, as in the world view), Z X zoom.

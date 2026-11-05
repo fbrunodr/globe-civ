@@ -327,7 +327,7 @@ export class CityProps {
     const g = this.game;
     const wonders = g.cityWonders(city).map((w) => `${w}@${g.wondersBuilt.get(w)}`).join(',');
     const farms = this.farmland(city).map((t) => `${t}:${g.builtAt(t)}:${g.stageAt(t, city.owner)}:${g.pillaged[t]}`).join(';');
-    const sig = `${city.id}|${city.pop}|${g.players[city.owner]!.era}|${city.buildings.has('walls') ? 'w' : ''}|${city.wonderTile ?? ''}|${city.building ?? ''}|${this.version}|${wonders}|${farms}`;
+    const sig = `${city.id}|${city.pop}|${g.players[city.owner]!.era}|${city.buildings.has('walls') && !g.wallsObsolete(city.owner) ? 'w' : ''}|${city.wonderTile ?? ''}|${city.building ?? ''}|${this.version}|${wonders}|${farms}`;
     memo?.set(city.id, sig);
     return sig;
   }
@@ -417,7 +417,7 @@ export class CityProps {
     const byTile = new Map<number, PlacedBuilding[]>();
     const put = (t: number, ...bs: PlacedBuilding[]) => { const l = byTile.get(t); if (l) l.push(...bs); else byTile.set(t, bs); };
     const era = g.players[city.owner]!.era;
-    const walled = city.buildings.has('walls');
+    const walled = city.buildings.has('walls') && !g.wallsObsolete(city.owner);
     const wet = (s: CitySpot) => s.water - s.ground > DRY;
     // How much a drawing is stretched or squeezed here (tiles vary in size).
     const local = (a: THREE.Vector3, b: THREE.Vector3) => Math.min(1.25, Math.max(0.7, a.angleTo(b) / (0.01 * D)));

@@ -392,3 +392,18 @@ describe(`wonders: at most ${MAX_CITY_WONDERS} in a city`, () => {
     expect(g.placeWonder(c, next, c.tile)).toBe(false);
   });
 });
+
+describe('Defense in Depth: walls obsolete', () => {
+  it('every city defends as walled, walls can no longer be built, and those standing come down', () => {
+    const g = new Game({ size: 'small', seed: 5 }), c = settle(g, HUMAN), p = g.players[HUMAN]!;
+    c.buildings.add('walls');
+    const hp = g.cityMaxHp(c);
+    for (const k of TECH_KEYS) p.techs.add(k);
+    expect(g.wallsObsolete(HUMAN)).toBe(true);
+    expect(g.walled(c)).toBe(true);
+    expect(g.canBuild(c, 'walls')).toBe(false);
+    g.endTurn();
+    expect(c.buildings.has('walls')).toBe(false);
+    expect(g.cityMaxHp(c)).toBe(hp);
+  });
+});

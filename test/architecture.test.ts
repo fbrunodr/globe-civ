@@ -30,7 +30,7 @@ describe('AR2: every slot has a model', () => {
     for (const st of STYLES) expect(pairsOf(st).length, st).toBeGreaterThan(0);
     for (const c of ARCH_CIVS) for (const f of FLOORS) expect(STYLES).toContain(styleOf(c, f));
   });
-  it('each model builds, stays on its lot, stands up, and keeps within 700 triangles', () => {
+  it('each model builds, stays on its lot, stands up, and keeps within 700 triangles (a skyscraper 875)', () => {
     const bad: string[] = [];
     for (const st of STYLES) for (const f of styleFloors(st)) for (const fp of FOOTPRINTS) for (let v = 0; v < HOUSE_VARIANTS; v++) {
       const k = houseKind(st, fp, f, v), g = houseGeometry(k);
@@ -40,7 +40,8 @@ describe('AR2: every slot has a model', () => {
       if (b.max.x > lw * 1.08 || -b.min.x > lw * 1.08 || b.max.z > ld * 1.08 || -b.min.z > ld * 1.08) bad.push(`${k}: off its lot`);
       // (Shrubs and trees may sit a little into the ground.)
       if (b.max.y < 0.004 || b.min.y < -0.002) bad.push(`${k}: height ${b.min.y.toFixed(4)}..${b.max.y.toFixed(4)}`);
-      if (triangles(g) > 700) bad.push(`${k}: ${triangles(g)} triangles`);
+      // (A skyscraper a quarter more: its taller variants, and few of them stand in a city.)
+      if (triangles(g) > (f === 12 ? 875 : 700)) bad.push(`${k}: ${triangles(g)} triangles`);
     }
     expect(bad.slice(0, 10)).toEqual([]);
   });

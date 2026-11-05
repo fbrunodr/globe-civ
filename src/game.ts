@@ -853,7 +853,7 @@ export class Game {
     if (role === 'atk') return combatStrength(u.type, stat, u.hp, 0) * (combat + (this.cityByTile.has(tile) ? total(fx, 'vsCities') / 100 : 0));
     let bonus = this.defenseBonus(tile) + (this.ownerOf(tile) === u.owner ? total(fx, 'homeDefense') / 100 : 0);
     const city = this.cityByTile.get(tile);
-    if (city) bonus += 0.5 + (city.buildings.has('walls') ? 1 : 0) + 0.25 * (Number(city.buildings.has('barracks')) + Number(city.buildings.has('stable')));
+    if (city) bonus += 0.5 + (this.walled(city) ? 1 : 0) + 0.25 * (Number(city.buildings.has('barracks')) + Number(city.buildings.has('stable')));
     if (u.fortified) bonus += FORTIFY_BONUS;
     if (this.isEmbarked(u)) return combatStrength(u.type, stat, u.hp, 0) * combat * EMBARKED_DEF;
     return combatStrength(u.type, stat, u.hp, bonus) * combat;
@@ -937,7 +937,13 @@ export class Game {
     if (city && city.owner !== u.owner) this.captureCity(city, u.owner);
   }
 
-  cityMaxHp(c: City): number { return CITY_HP + (c.buildings.has('walls') ? WALLS_HP : 0); }
+  // Whether a city's walls are no more: its owner defends in depth (techs.ts
+  // defenseInDepth), every city as if walled, walls no longer built.
+  wallsObsolete(owner: number): boolean { return this.effectsOf(this.players[owner]!).some((e) => e.k === 'fortified'); }
+  // Whether a city defends as walled: its walls, or its owner's defense in depth.
+  walled(c: City): boolean { return c.buildings.has('walls') || this.wallsObsolete(c.owner); }
+
+  cityMaxHp(c: City): number { return CITY_HP + (this.walled(c) ? WALLS_HP : 0); }
 
   // The center's strength, attacking and defending: its size, walls and garrison.
   // (Stronger in later eras: its owner's era adds half again for each, so
@@ -945,7 +951,7 @@ export class Game {
   cityStrength(c: City): number {
     const garrison = Number(c.buildings.has('barracks')) + Number(c.buildings.has('stable'));
     const p = this.players[c.owner]!;
-    return (2.5 + 0.3 * c.pop + (c.buildings.has('walls') ? 3 : 0) + garrison) * (1 + 0.5 * p.era) * (1 + total(this.effectsOf(p), 'cityStrength') / 100);
+    return (2.5 + 0.3 * c.pop + (this.walled(c) ? 3 : 0) + garrison) * (1 + 0.5 * p.era) * (1 + total(this.effectsOf(p), 'cityStrength') / 100);
   }
 
   // A unit attacks a city with no defenders: a few exchanges with its walls.
@@ -969,7 +975,7 @@ export class Game {
   // Each city strikes the weakest enemy unit near it (2 tiles with walls).
   private cityStrike(city: City): void {
     if (city.hp <= 0) return;
-    const near = new Set(this.tilesWithin(city.tile, city.buildings.has('walls') ? 2 : 1));
+    const near = new Set(this.tilesWithin(city.tile, this.walled(city) ? 2 : 1));
     let target: Unit | null = null;
     for (const u of this.units) {
       if (u.owner === city.owner || unitDef(u.type).civilian || domainOf(unitDef(u.type)) === 'air' || !near.has(u.tile) || u.packedIn !== null || !this.atWar(city.owner, u.owner)) continue;
@@ -1615,6 +1621,7 @@ export class Game {
       return !need || anyResource || this.hasResource(p.id, need);
     }
     if (isWonder(key)) return !this.wondersBuilt.has(key) && this.wonderRoom(city) && (this.wonderSpots(city, key).length > 0 || city.wonderTile !== null && city.building === key);
+    if (key === 'walls' && this.wallsObsolete(city.owner)) return false;
     const need = CITY_BUILDINGS[key].resource;
     return (!need || anyResource || this.hasResource(p.id, need)) && buildingAllowed(key, city.buildings, this.cityRiver(city), this.cityCoast(city));
   }
@@ -1626,6 +1633,8 @@ export class Game {
       else this.destroyCity(city);
       return;
     }
+    // (Walls obsolete: they come down, no more upkeep.)
+    if (city.buildings.has('walls') && this.wallsObsolete(city.owner)) { city.buildings.delete('walls'); this.useVersion++; }
     const y = this.cityYields(city);
 
     city.food += y.surplus;

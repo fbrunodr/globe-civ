@@ -30,6 +30,8 @@ import { OUTPUT_KEYS, out, ZERO, addOut, type Output, type OutputKey, type Impro
 //   follower       flat yields in each city following a religion (religion.ts)
 //   pressure       +pct% to the religious pressure of its cities
 //   tithe          +n gold to a religion's founder per city following it
+//   fortified      every city defends as if walled; walls no longer built
+//                  (and those standing come down: game.ts)
 export type ProdTarget = 'military' | 'melee' | 'ranged' | 'mounted' | 'siege' | 'settler' | 'building' | 'wonder' | 'all';
 export type ResourceKindTarget = 'bonus' | 'luxury' | 'strategic';
 export type Effect =
@@ -56,7 +58,8 @@ export type Effect =
   | { readonly k: 'luxury'; readonly o: Output }
   | { readonly k: 'follower'; readonly o: Output }
   | { readonly k: 'pressure'; readonly pct: number }
-  | { readonly k: 'tithe'; readonly n: number };
+  | { readonly k: 'tithe'; readonly n: number }
+  | { readonly k: 'fortified' };
 
 type Pct = 'combat' | 'homeDefense' | 'vsCities' | 'cityStrength' | 'upkeep' | 'buildingUpkeep' | 'tilePrice' | 'buyCost' | 'growth' | 'border' | 'wealth' | 'pressure';
 type Count = 'freeUnits' | 'heal' | 'tithe';
@@ -154,6 +157,7 @@ export function describe(e: Effect): string {
     case 'follower': return `${flats(e.o)} in each city following it`;
     case 'pressure': return `${sign(e.pct)}% religious pressure`;
     case 'tithe': return `${sign(e.n)} gold per city following your religion`;
+    case 'fortified': return 'Every city defends as if walled; Walls obsolete';
   }
 }
 export const describeAll = (fx: readonly Effect[]): string => fx.map(describe).join('; ');

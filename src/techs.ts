@@ -29,7 +29,7 @@ export const TECH_KEYS = [
   'economics', 'fertilizer', 'archaeology', 'pedagogy', 'biology', 'dynamite',
   // Modern
   'electricity', 'refining', 'combustion', 'replaceableParts', 'radio', 'motorizedWarfare', 'electronics', 'steel', 'massProduction',
-  'refrigeration', 'medicine', 'atomicTheory', 'telecommunications', 'flight', 'radar', 'jetPropulsion',
+  'refrigeration', 'medicine', 'defenseInDepth', 'atomicTheory', 'telecommunications', 'flight', 'radar', 'jetPropulsion',
   // Information
   'computers', 'rocketry', 'composites', 'mobileTactics', 'nuclearFission', 'guidance', 'stealth', 'robotics', 'globalization', 'advancedBallistics',
 ] as const;
@@ -138,6 +138,8 @@ export const TECHS: Record<TechKey, TechDef> = {
   massProduction:  t('Mass Production', 5, 220, ['replaceableParts', 'steel'], { units: ['heavyBomber'], effects: [prodPct('all', 10)] }),
   refrigeration:   t('Refrigeration', 5, 205, ['electricity', 'sanitation'], { effects: [onImprovement('farm', { food: 1 }), onImprovement('wetland', { food: 1 }), onImprovement('pasture', { food: 1 })] }),
   medicine:        t('Medicine', 5, 210, ['biology', 'refrigeration'], { effects: [count('heal', 10), pct('growth', -10)] }),
+  // (Walls give way to defense in depth: trenches, bunkers, guns.)
+  defenseInDepth:  t('Defense in Depth', 5, 205, ['ballistics', 'railroad'], { effects: [{ k: 'fortified' }] }),
   atomicTheory:    t('Atomic Theory', 5, 225, ['electricity', 'chemistry'], { buildings: ['researchLab'] }),
   telecommunications: t('Telecommunications', 5, 225, ['radio', 'electronics'], { effects: [yieldPct('cohesion', 10), yieldPct('culture', 10)] }),
   flight:          t('Flight', 5, 230, ['combustion', 'radio'], { units: ['fighter', 'bomber'] }),

@@ -23,6 +23,7 @@ import { isWonderModelKind, wonderGeometry, type WonderModelKind } from './wonde
 import { isFloraRural, isCropRural, isSmoothRural, roamOf, isRuralModelKind, ruralGeometry, ruralModelKind, type RuralModelKind } from './rural/models.ts';
 import { CityProps, tileFrame, SUMMIT_HOUSES, type CitySpot } from './cityProps.ts';
 import { CITY_CELL } from './cityPainter.ts';
+import { CELL, wallHeight } from './town/geometry.ts';
 import { RESOURCE_WILD, RESOURCE_WORKED } from './rural/resourceModels.ts';
 import { placeResource } from './rural/resourcePlace.ts';
 import { RESOURCE_IMPROVEMENT } from './resources.ts';
@@ -242,7 +243,9 @@ export class GlobeRenderer {
   private shadowsDirty = true;
   // Where the shadow map was last drawn: round what, for which sun, how far (setShadows, updateSun).
   private shadowAt: { center: THREE.Vector3; dir: THREE.Vector3; half: number } | null = null;
-  private readonly buildingMat = makePropMaterial(0.32, 0.6, this.sunDir);
+  // (Built surfaces textured at a storey's size: a single floor's walls, as
+  // a town's houses stand, a tile step about avgEdgeAngle · √3.)
+  private readonly buildingMat: THREE.MeshStandardMaterial;
   // (People, animals, plants: round, smooth-shaded.)
   private readonly smoothMat = makePropMaterial(0.25, 0.7, this.sunDir, undefined, true, this.floraTime);
   private readonly roamDepth = makeRoamDepthMaterial(this.floraTime);
@@ -309,6 +312,7 @@ export class GlobeRenderer {
 
   constructor(canvas: HTMLCanvasElement, game: Game) {
     this.game = game;
+    this.buildingMat = makePropMaterial(0.32, 0.6, this.sunDir, undefined, false, undefined, wallHeight(1) * (CITY_CELL / CELL) * game.globe.avgEdgeAngle * Math.sqrt(3));
     this.scale = game.globe.avgEdgeAngle / REF_EDGE;
     this.cropFar.value = CROP_FAR * game.globe.avgEdgeAngle;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });

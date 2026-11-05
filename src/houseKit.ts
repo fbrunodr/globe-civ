@@ -4,6 +4,7 @@
 // the front (+z) faces its street.
 
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { cone, cyl, part, tf, type Tf } from './propCatalog.ts';
 import type { Floors, Footprint } from './town/geometry.ts';
 import type { Rng } from './rng.ts';
@@ -19,8 +20,15 @@ export const E = 0.00025; // how far details stand proud of a wall
 // flicker): painted bands and strips lowest, window frames over them,
 // windows and doors (E) over both, anything laid on those at E * 2 and up.
 export const BAND = E * 0.4, FRAME = E * 0.7;
+// (The building's own walls, the first box or frustum its body's size: their
+// colour, for its variant's wing and gables.)
+function noteWalls(w: number, d: number, c: number): void {
+  const b = VARIANT.body;
+  if (b && VARIANT.wall === null && Math.abs(w - b.w) < 0.003 && Math.abs(d - b.d) < 0.003) VARIANT.wall = c;
+}
 // A closed box standing on y = o.y (walls and a top; no floor).
 export function box(w: number, h: number, d: number, c: number, o: Tf = {}, top = c): G[] {
+  noteWalls(w, d, c);
   return [
     P(new THREE.CylinderGeometry(Math.SQRT1_2, Math.SQRT1_2, 1, 4, 1, true).rotateY(Math.PI / 4).translate(0, 0.5, 0).scale(w, h, d), c, o),
     P(new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2).translate(0, h, 0), top, o),
@@ -35,6 +43,7 @@ export const patch = (w: number, d: number, c: number, x = 0, z = 0, y = 0.0003,
 // A frustum: a w0 × d0 base rising h to a w1 × d1 top (8 triangles; the top
 // closed when `top` is given).
 export function frustum(w0: number, d0: number, w1: number, d1: number, h: number, c: number, o: Tf = {}, top?: number): G[] {
+  noteWalls(w1, d1, c);
   const a = [w0 / 2, d0 / 2], b = [w1 / 2, d1 / 2];
   const q = (x0: number, z0: number, x1: number, z1: number, x2: number, z2: number, x3: number, z3: number) => [x0, 0, z0, x1, 0, z1, x2, h, z2, x0, 0, z0, x2, h, z2, x3, h, z3];
   const p = [
@@ -51,7 +60,16 @@ export function frustum(w0: number, d0: number, w1: number, d1: number, h: numbe
 }
 // A gable roof over w × d, h high, its ridge along x (or along z: `alongZ`).
 export function gable(w: number, d: number, h: number, c: number, o: Tf = {}, alongZ = false, end = c): G[] {
-  if (alongZ) return gable(d, w, h, c, { ...o, ry: (o.ry ?? 0) + Math.PI / 2 }, false, end);
+  if (VARIANT.free) {
+    VARIANT.roof ??= c;
+    const m = VARIANT_LOOK[VARIANT.v % VARIANTS]!;
+    if (m.roof === 'hip') return [freeHip(w, d, h * m.pitch, c, o)];
+    h *= m.pitch;
+  }
+  return gableShape(w, d, h, c, o, alongZ, end);
+}
+function gableShape(w: number, d: number, h: number, c: number, o: Tf = {}, alongZ = false, end = c): G[] {
+  if (alongZ) return gableShape(d, w, h, c, { ...o, ry: (o.ry ?? 0) + Math.PI / 2 }, false, end);
   const x = w / 2, z = d / 2;
   const slopes = new THREE.BufferGeometry();
   slopes.setAttribute('position', new THREE.Float32BufferAttribute([
@@ -64,6 +82,19 @@ export function gable(w: number, d: number, h: number, c: number, o: Tf = {}, al
 }
 // A hipped roof over w × d, h high (its ridge along the longer side).
 export function hip(w: number, d: number, h: number, c: number, o: Tf = {}): G {
+  if (VARIANT.free) {
+    VARIANT.roof ??= c;
+    const m = VARIANT_LOOK[VARIANT.v % VARIANTS]!;
+    if (m.roof === 'gable' || m.roof === 'gableAcross') {
+      // (Its ends in the walls' colour, as a gable's are.)
+      const across = (m.roof === 'gableAcross') === (w >= d);
+      return mergeGeometries(gableShape(w, d, h * m.pitch, c, o, across, VARIANT.wall ?? c).map((g) => (g.index ? g.toNonIndexed() : g)))!;
+    }
+    h *= m.pitch;
+  }
+  return freeHip(w, d, h, c, o);
+}
+function freeHip(w: number, d: number, h: number, c: number, o: Tf = {}): G {
   const x = w / 2, z = d / 2, r = Math.max(0, (Math.max(w, d) - Math.min(w, d)) / 2);
   const [rx, rz] = w >= d ? [r, 0] : [0, r];
   const g = new THREE.BufferGeometry();
@@ -120,9 +151,17 @@ export function windows(b: Body, face: Face, o: WinOpts): G[] {
 export interface Lot { lw: number; ld: number; floors: Floors; H: number; v: number; rand: Rng; fp: Footprint }
 // The building's place on its lot: a share of the lot's width and depth,
 // set back from the front by `setback` (tile steps).
+// (Its variant's massing: VARIANT_LOOK, kept on the lot.)
+const PLACE_ROOM = 0.007;
 export function place(l: Lot, cw: number, cd: number, setback: number): Body {
-  const w = 2 * l.lw * cw, d = 2 * l.ld * cd;
-  return { x: 0, z: l.ld - setback - d / 2, w, d, y: 0, h: l.H };
+  const m = VARIANT.free ? VARIANT_LOOK[l.v % VARIANTS]! : VARIANT_LOOK[0]!;
+  // (Its eaves and ends' details room inside the lot: PLACE_ROOM.)
+  const w = Math.min(2 * l.lw * cw * m.w, 2 * (l.lw - PLACE_ROOM)), d = Math.min(2 * l.ld * cd * m.d, 2 * (l.ld - PLACE_ROOM));
+  const x = Math.max(-(l.lw - PLACE_ROOM) + w / 2, Math.min(l.lw - PLACE_ROOM - w / 2, m.dx * l.lw * 2));
+  const z = Math.max(-(l.ld - PLACE_ROOM) + d / 2, l.ld - setback - d / 2);
+  const b = { x, z, w, d, y: 0, h: l.H };
+  if (VARIANT.free && !VARIANT.body) VARIANT.body = b;
+  return b;
 }
 // The ground of the lot, a path from the door to the street.
 export function yard(l: Lot, b: Body, ground: number, path: number, pathW = 0.005): G[] {
@@ -150,7 +189,29 @@ export function plant(l: Lot, b: Body, n: number, c: number, r = 0.0026): G[] {
   }
   return out;
 }
-export const pick = <T>(l: Lot, xs: readonly T[]): T => xs[l.v % xs.length]!;
+export const pick = <T>(l: Lot, xs: readonly T[]): T => xs[(l.v * 2) % xs.length]!;
+
+// ---------- variants ----------
+
+// A style's VARIANTS, each its own shape (not only its colours): its main
+// body's share of the width and depth and where it stands across the lot
+// (w, d, dx: place), its roofs (as the style has them, or hipped, or
+// gabled along or across: hip and gable), their pitch, mirrored or not,
+// and a lower wing beside it where the lot has room (houses.ts).
+export const VARIANTS = 5;
+export interface VariantLook { w: number; d: number; dx: number; roof: 'style' | 'hip' | 'gable' | 'gableAcross'; pitch: number; mirror: boolean; wing: boolean }
+export const VARIANT_LOOK: readonly VariantLook[] = [
+  { w: 1, d: 1, dx: 0, roof: 'style', pitch: 1, mirror: false, wing: false },
+  { w: 0.74, d: 1.08, dx: -0.1, roof: 'gable', pitch: 1.35, mirror: false, wing: true },
+  { w: 1, d: 0.78, dx: 0, roof: 'style', pitch: 0.7, mirror: true, wing: false },
+  { w: 0.8, d: 0.95, dx: 0.09, roof: 'gableAcross', pitch: 1.15, mirror: true, wing: true },
+  { w: 0.9, d: 0.86, dx: 0, roof: 'style', pitch: 1.5, mirror: false, wing: false },
+];
+// The house being built (houses.ts houseGeometry sets it): its variant,
+// and what its style gave it so far: its main body, walls' and roofs'
+// colours. (free: the variant's shape is taken; off for anything else
+// built with the kit.)
+export const VARIANT: { free: boolean; v: number; body: Body | null; wall: number | null; roof: number | null } = { free: false, v: 0, body: null, wall: null, roof: null };
 
 
 // The storey layout of a body: floor heights from the walls' height.
