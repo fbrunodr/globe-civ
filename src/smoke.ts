@@ -5,14 +5,15 @@ import * as THREE from 'three';
 // chimneys. One point cloud; each puff loops along its column in the vertex
 // shader, so animating it costs nothing on the CPU.
 
-export type SmokeKind = 'smoke' | 'fire' | 'chimney';
+export type SmokeKind = 'smoke' | 'fire' | 'chimney' | 'factory';
 export interface Emitter {
   pos: THREE.Vector3; // on the ground (or a chimney top)
   kind: SmokeKind;
 }
 
-const PUFFS: Record<SmokeKind, number> = { smoke: 12, fire: 6, chimney: 6 };
-const KIND_CODE: Record<SmokeKind, number> = { smoke: 0, fire: 1, chimney: 2 };
+// (A chimney a thin wisp; a factory's stack, from the industrial age, a thick plume.)
+const PUFFS: Record<SmokeKind, number> = { smoke: 12, fire: 6, chimney: 5, factory: 10 };
+const KIND_CODE: Record<SmokeKind, number> = { smoke: 0, fire: 1, chimney: 2, factory: 3 };
 
 export interface Smoke {
   points: THREE.Points;
@@ -28,21 +29,21 @@ export function makeSmoke(scale: number): Smoke {
     transparent: true,
     depthWrite: false,
     vertexShader: /* glsl */ `
-      attribute vec2 seed; // phase, kind (0 smoke, 1 fire, 2 chimney)
+      attribute vec2 seed; // phase, kind (0 smoke, 1 fire, 2 chimney, 3 factory)
       uniform float uTime, uPx, uScale;
       varying float vT;
       varying float vKind;
       void main() {
-        float fire = step(0.5, seed.y) * step(seed.y, 1.5), chimney = step(1.5, seed.y);
-        float speed = mix(mix(0.22, 1.4, fire), 0.3, chimney);
+        float fire = step(0.5, seed.y) * step(seed.y, 1.5), chimney = step(1.5, seed.y) * step(seed.y, 2.5), factory = step(2.5, seed.y);
+        float speed = mix(mix(mix(0.22, 1.4, fire), 0.3, chimney), 0.22, factory);
         float t = fract(uTime * speed * (0.8 + 0.4 * fract(seed.x * 7.3)) + seed.x);
         vec3 up = normalize(position);
         vec3 side = normalize(cross(up, vec3(0.3, 1.0, 0.2)));
-        float rise = mix(mix(0.02, 0.004, fire), 0.012, chimney) * uScale;
+        float rise = mix(mix(mix(0.02, 0.004, fire), 0.012, chimney), 0.022, factory) * uScale;
         vec3 p = position + up * (t * rise) + side * (sin(seed.x * 40.0 + t * 3.0) * 0.0012 + t * 0.005 * (1.0 - fire)) * uScale;
         vec4 mv = modelViewMatrix * vec4(p, 1.0);
         gl_Position = projectionMatrix * mv;
-        float size = mix(mix(0.003 + 0.008 * t, 0.0028 * (1.0 - 0.5 * t), fire), 0.0012 + 0.004 * t, chimney) * uScale;
+        float size = mix(mix(mix(0.003 + 0.008 * t, 0.0028 * (1.0 - 0.5 * t), fire), 0.0012 + 0.004 * t, chimney), 0.002 + 0.008 * t, factory) * uScale;
         gl_PointSize = size * uPx / -mv.z;
         vT = t;
         vKind = seed.y;
@@ -56,6 +57,7 @@ export function makeSmoke(scale: number): Smoke {
         float soft = smoothstep(0.5, 0.1, r);
         vec3 c; float a;
         if (vKind > 0.5 && vKind < 1.5) { c = mix(vec3(1.0, 0.82, 0.4), vec3(0.85, 0.25, 0.05), vT); a = soft * (1.0 - vT); }
+        else if (vKind > 2.5) { c = mix(vec3(0.3, 0.29, 0.28), vec3(0.62, 0.61, 0.6), vT); a = soft * (1.0 - vT) * 0.5; }
         else if (vKind > 1.5) { c = vec3(0.78, 0.77, 0.75); a = soft * (1.0 - vT) * 0.35; }
         else { c = mix(vec3(0.16, 0.15, 0.14), vec3(0.45, 0.44, 0.42), vT); a = soft * (1.0 - vT) * 0.6; }
         gl_FragColor = vec4(c, a);

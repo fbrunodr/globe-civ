@@ -262,7 +262,7 @@ document.body.addEventListener('click', (e) => {
       else addBuilding(game, c, k);
       break;
     }
-    case 'walls': if (c) { if (c.buildings.has('walls')) c.buildings.delete('walls'); else c.buildings.add('walls'); c.hp = Math.min(c.hp, game.cityMaxHp(c)); game.useVersion++; } break;
+    case 'walls': if (c) { if (c.buildings.has('walls')) c.buildings.delete('walls'); else game.addBuilding(c, 'walls'); c.hp = Math.min(c.hp, game.cityMaxHp(c)); game.useVersion++; } break;
     case 'wonder': {
       if (!c) break;
       const k = v as WonderKey;

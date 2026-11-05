@@ -196,6 +196,13 @@ export function plant(l: Lot, b: Body, n: number, c: number, r = 0.0026): G[] {
 }
 export const pick = <T>(l: Lot, xs: readonly T[]): T => xs[(l.v * 2) % xs.length]!;
 
+// ---------- smoke ----------
+
+// Where smoke rises from a model being built (a chimney's top, a kiln's
+// flue: houses.ts houseSmoke), in the lot's frame; render.ts sends it up.
+export const SMOKE: { at: [number, number, number][] | null } = { at: null };
+export function smokeFrom(x: number, y: number, z: number): void { SMOKE.at?.push([x, y, z]); }
+
 // ---------- variants ----------
 
 // A style's VARIANTS and what each is: two homes, two shops, a works

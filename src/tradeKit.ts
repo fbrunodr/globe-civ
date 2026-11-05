@@ -6,7 +6,7 @@
 
 import * as THREE from 'three';
 import { cone, cyl, type Tf } from './propCatalog.ts';
-import { E, P, box, onFace, type Body, type Face, type G } from './houseKit.ts';
+import { E, P, box, onFace, smokeFrom, type Body, type Face, type G } from './houseKit.ts';
 
 // An awning hung from a wall (its top edge along x at y, z; out over +z,
 // turned by o.ry), `depth` out and sloping by `tilt` (radians down from
@@ -50,12 +50,15 @@ export function doubleDoor(b: Body, face: Face, along: number, w: number, h: num
     onFace(b, face, along + (w + gap) / 4, 0, (w - gap) / 2, h, leaf, out + E),
   ];
 }
-// A square chimney stack standing on the ground (or o.y), capped darker.
-export const stack = (w: number, h: number, c: number, cap: number, o: Tf = {}): G[] => [...box(w, h, w, c, o, cap), ...box(w * 1.25, w * 0.35, w * 1.25, cap, { ...o, y: (o.y ?? 0) + h })];
-// A round chimney, tapering, banded near its top.
-export const roundStack = (r: number, h: number, c: number, band: number, o: Tf = {}): G[] => [
+// A square chimney stack standing on the ground (or o.y), capped darker; smoke from its top.
+export const stack = (w: number, h: number, c: number, cap: number, o: Tf = {}): G[] => {
+  smokeFrom(o.x ?? 0, (o.y ?? 0) + h + w * 0.35, o.z ?? 0);
+  return [...box(w, h, w, c, o, cap), ...box(w * 1.25, w * 0.35, w * 1.25, cap, { ...o, y: (o.y ?? 0) + h })];
+};
+// A round chimney, tapering, banded near its top; smoke from its top.
+export const roundStack = (r: number, h: number, c: number, band: number, o: Tf = {}): G[] => (smokeFrom(o.x ?? 0, (o.y ?? 0) + h, o.z ?? 0), [
   cyl(r, r * 0.72, h, 8, c, o), cyl(r * 0.8, r * 0.8, h * 0.05, 8, band, { ...o, y: (o.y ?? 0) + h * 0.9 }),
-];
+]);
 // A sawtooth roof over w × d (its teeth across x, `teeth` of them along z,
 // each `h` high: a slope of `roof` rising toward -z, then a glazed face of
 // `glass` dropping to the next, the north lights).
@@ -148,6 +151,7 @@ export function jars(n: number, r: number, c: number, o: Tf = {}): G[] {
 // A beehive kiln: a round base, its dome, a firing mouth's dark arch facing +z (turned by ry), a small flue.
 export function kiln(r: number, h: number, c: number, o: Tf = {}): G[] {
   const ry = o.ry ?? 0;
+  smokeFrom(o.x ?? 0, (o.y ?? 0) + h * 1.25, o.z ?? 0);
   return [
     cyl(r, r * 1.05, h * 0.45, 8, c, o),
     P(new THREE.SphereGeometry(r, 8, 4, 0, Math.PI * 2, 0, Math.PI / 2), c, { ...o, y: (o.y ?? 0) + h * 0.45, sy: (h * 0.55) / r }),

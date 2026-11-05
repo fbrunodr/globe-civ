@@ -18,7 +18,7 @@ import { makeWeather, type Weather } from './weather.ts';
 import { buildPropGeometry, catalogEntry, CATALOG, CATALOG_KINDS, type CatalogKind, type Layer } from './propCatalog.ts';
 import { FLORA_KEEP } from './floraData.ts';
 import { BUILDING_KINDS, buildBuildingGeometry, type BuildingKind } from './buildingCatalog.ts';
-import { houseGeometry, isHouseKind, type HouseKind } from './houses.ts';
+import { WORKS_VARIANT, houseFarGeometry, houseGeometry, houseSmoke, isHouseKind, parseHouseKind, type HouseKind } from './houses.ts';
 import { isWonderModelKind, wonderGeometry, type WonderModelKind } from './wonderModels.ts';
 import { isFloraRural, isCropRural, isSmoothRural, roamOf, isRuralModelKind, ruralGeometry, ruralModelKind, type RuralModelKind } from './rural/models.ts';
 import { CityProps, tileFrame, SUMMIT_HOUSES, type CitySpot } from './cityProps.ts';
@@ -66,6 +66,8 @@ const PROP_CHUNKS = 48;
 // Trees are drawn with their far models (farGeometry) once under this many
 // (device) pixels tall.
 const FAR_PX = 16;
+// A town's buildings go far this much farther off than the trees (they stand taller).
+const HOUSE_FAR = 1.6;
 // What lies on the ground is drawn before what stands on it (the opaque
 // pass, by renderOrder): after the sky (-10, sky.ts: drawn first, no depth
 // test), the ground and the roads over it, then everything else (0).
@@ -245,7 +247,9 @@ export class GlobeRenderer {
   private shadowAt: { center: THREE.Vector3; dir: THREE.Vector3; half: number } | null = null;
   // (Built surfaces textured at a storey's size: a single floor's walls, as
   // a town's houses stand, a tile step about avgEdgeAngle · √3.)
-  private readonly buildingMat: THREE.MeshStandardMaterial;
+  private readonly buildingMat = makePropMaterial(0.32, 0.6, this.sunDir);
+  // (Only the walls textured, as stone: propMaterial.ts SURFACE_FRAGMENT, at a storey's size.)
+  private readonly wallMat: THREE.MeshStandardMaterial;
   // (People, animals, plants: round, smooth-shaded.)
   private readonly smoothMat = makePropMaterial(0.25, 0.7, this.sunDir, undefined, true, this.floraTime);
   private readonly roamDepth = makeRoamDepthMaterial(this.floraTime);
@@ -312,7 +316,7 @@ export class GlobeRenderer {
 
   constructor(canvas: HTMLCanvasElement, game: Game) {
     this.game = game;
-    this.buildingMat = makePropMaterial(0.32, 0.6, this.sunDir, undefined, false, undefined, wallHeight(1) * (CITY_CELL / CELL) * game.globe.avgEdgeAngle * Math.sqrt(3));
+    this.wallMat = makePropMaterial(0.32, 0.6, this.sunDir, undefined, false, undefined, wallHeight(1) * (CITY_CELL / CELL) * game.globe.avgEdgeAngle * Math.sqrt(3));
     this.scale = game.globe.avgEdgeAngle / REF_EDGE;
     this.cropFar.value = CROP_FAR * game.globe.avgEdgeAngle;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -1124,7 +1128,7 @@ export class GlobeRenderer {
           // (A farm's crops are drawn with the flora, and hide from high up as its understory does.)
           // (Shrubs and fences of cards are drawn with it too, casting their shadows as trees do.)
           const cards = isRuralModelKind(kind) && isFloraRural(kind), crop = cards && isCropRural(kind);
-          mesh = new THREE.InstancedMesh(instanceGeometry(this.geometryOf(kind), cap), isFloraKind(kind) || cards ? this.propMat : isRuralModelKind(kind) && isSmoothRural(kind) ? this.smoothMat : this.buildingMat, cap);
+          mesh = new THREE.InstancedMesh(instanceGeometry(this.geometryOf(kind), cap), isFloraKind(kind) || cards ? this.propMat : isRuralModelKind(kind) && isSmoothRural(kind) ? this.smoothMat : kind === 'wallSegment' || kind === 'wallTower' ? this.wallMat : this.buildingMat, cap);
           mesh.userData['hideAbove'] = isFloraKind(kind) ? HIDE_ABOVE[CATALOG[kind].layer] : Infinity;
           // (Crops hide once the camera is higher than they reach, cullProps.)
           if (crop) mesh.userData['crop'] = true;
@@ -1155,14 +1159,18 @@ export class GlobeRenderer {
         mesh.computeBoundingSphere();
         // Trees also get a far twin (farGeometry: a few triangles), drawn
         // instead when they are a few pixels tall (cullChunks); it shares
-        // their instances (matrices, colors, leaf colors).
-        if (isFloraKind(kind) && CATALOG[kind].layer === 'Canopy') {
+        // their instances (matrices, colors, leaf colors). So do the
+        // towns' buildings (houses.ts houseFarGeometry: their details left
+        // out), a little farther off (HOUSE_FAR).
+        const house = isHouseKind(kind);
+        if (house || (isFloraKind(kind) && CATALOG[kind].layer === 'Canopy')) {
           let far = mesh.userData['far'] as THREE.InstancedMesh | undefined;
           if (!far) {
             const geo = new THREE.BufferGeometry();
-            for (const [name, attr] of Object.entries(this.farGeometryOf(kind).attributes)) geo.setAttribute(name, attr);
+            for (const [name, attr] of Object.entries((house ? houseFarGeometry(kind) : this.farGeometryOf(kind as CatalogKind)).attributes)) geo.setAttribute(name, attr);
             geo.setAttribute('leafTint', leaf);
-            far = new THREE.InstancedMesh(geo, this.propMat, mesh.instanceMatrix.count);
+            far = new THREE.InstancedMesh(geo, house ? this.buildingMat : this.propMat, mesh.instanceMatrix.count);
+            if (house) mesh.userData['farAt'] = HOUSE_FAR;
             far.instanceMatrix = mesh.instanceMatrix;
             far.userData['stat'] = `${statOf(kind)} (far)`;
             far.receiveShadow = true;
@@ -1237,11 +1245,12 @@ export class GlobeRenderer {
       const seen = camDir.angleTo(chunk.dir) < horizon + chunk.radius && this.frustum.intersectsSphere(this.chunkSphere);
       for (const mesh of chunk.surface) mesh.visible = seen;
       // (Its trees go far when even its nearest are under FAR_PX tall.)
-      const far = cam.distanceTo(this.chunkSphere.center) - this.chunkSphere.radius > farDist;
+      const away = cam.distanceTo(this.chunkSphere.center) - this.chunkSphere.radius;
       for (const mesh of chunk.meshes.values()) {
         const show = this.view === 'normal' && seen && altitude < (mesh.userData['hideAbove'] as number)
           && (mesh.userData['crop'] !== true || dist - 1 < this.cropFar.value);
         const twin = mesh.userData['far'] as THREE.InstancedMesh | undefined;
+        const far = away > farDist * ((mesh.userData['farAt'] as number | undefined) ?? 1);
         mesh.visible = show && !(twin && far);
         if (twin) twin.visible = show && far;
       }
@@ -1448,6 +1457,20 @@ export class GlobeRenderer {
     for (let t = 0; t < g.N; t++) {
       if (!g.pillaged[t] || !g.visible[t]) continue;
       out.push({ pos: at(t, 0, 0.2, 0.2), kind: 'smoke' }, { pos: at(t, 3, 0.3, 0.1), kind: 'fire' });
+    }
+    // Chimneys: a wisp from each forge, kiln and stove in sight (houses.ts
+    // houseSmoke); a works' stacks in the industrial age pour it out.
+    const p = new THREE.Vector3();
+    for (const c of g.cities) {
+      const industrial = g.players[c.owner]!.era >= 4;
+      for (const t of [c.tile, ...g.cityTiles(c, USE.rural)]) {
+        if (!g.visible[t]) continue;
+        for (const b of this.cityProps.place(t)) {
+          if (!isHouseKind(b.kind)) continue;
+          const works = parseHouseKind(b.kind).variant === WORKS_VARIANT;
+          for (const [x, y, z] of houseSmoke(b.kind)) out.push({ pos: p.set(x, y, z).applyMatrix4(b.matrix).clone(), kind: works && industrial ? 'factory' : 'chimney' });
+        }
+      }
     }
     this.smoke.set(out);
   }

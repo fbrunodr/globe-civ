@@ -16,7 +16,7 @@ import { USE, BORDER_MAX, wonderBeside, isWonderKey, type ImprovementKey, type E
 import { ROOFS, buildingEntry, isFloraModel, isLotModel, placedGeometry, waterRule, type BuildingKind, type LotModelKind, type PlacedKind } from './buildingCatalog.ts';
 import { ON_BARE_GROUND, isWonderModelKind, wonderModelKind, type SiteModel } from './wonderModels.ts';
 import type { CatalogKind } from './propCatalog.ts';
-import { HOUSE_VARIANTS, houseKind } from './houses.ts';
+import { WORKS_VARIANT, houseKind } from './houses.ts';
 import { styleOf } from './architecture.ts';
 import { LOT_SIZE, rhoOf, type Floors, type Footprint } from './town/geometry.ts';
 import { planRoads, roadLines, ROAD_HALF_WIDTH } from './roads.ts';
@@ -592,7 +592,8 @@ export class CityProps {
         const s0 = this.sampleDir(toT(p));
         if (wet(s0)) return;
         const f = toT({ x: p.x + 0.01 * farm.u.x, y: p.y + 0.01 * farm.u.y });
-        const hk = houseKind(styleOf(g.players[city.owner]!.name, floors), kind, floors, Math.floor(lr() * HOUSE_VARIANTS));
+        // (A farm's house a home, one of its style's two; a mine's its works.)
+        const hk = houseKind(styleOf(g.players[city.owner]!.name, floors), kind, floors, imp === 'mine' && kind === HOMESTEAD_LOT ? WORKS_VARIANT : Math.floor(lr() * 2));
         const [lw, ld] = LOT_SIZE[kind];
         // (As large as a town's houses: their lots CITY_CELL / CELL the plain ones.)
         put(t, ...settleHere((k) => this.standLot(hk, s0.dir, facing(s0.dir, f) + Math.PI / 2, lw, ld, D * local(s0.dir, f) * k * HOMESTEAD_SCALE, lr, city.owner)));

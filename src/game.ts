@@ -1217,6 +1217,8 @@ export class Game {
   }
 
   addBuilding(city: City, k: BuildingKey): void {
+    // (New walls come with their HP: a city just walled is whole, not hurt.)
+    if (k === 'walls' && !this.walled(city)) city.hp += WALLS_HP;
     city.buildings.add(k);
     this.useVersion++;
   }
@@ -1943,7 +1945,10 @@ export class Game {
     if (!p.research) { p.scienceBank += amount; return; }
     const k = p.research, got = (p.techProgress[k] ?? 0) + amount;
     if (got < techDef(k).cost) { p.techProgress[k] = got; return; }
+    const walled = this.cities.filter((c) => c.owner === p.id && this.walled(c));
     p.techs.add(k);
+    // (Defense in depth: every city walled now, its walls' HP with it.)
+    for (const c of this.cities) if (c.owner === p.id && this.walled(c) && !walled.includes(c)) c.hp += WALLS_HP;
     delete p.techProgress[k];
     // (A tech that improves the land restyles it: rural/stages.)
     if ((techDef(k).effects ?? []).some((e) => e.k === 'improvement')) this.useVersion++;

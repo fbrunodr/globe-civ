@@ -19,7 +19,7 @@ import { CELL, FOOTPRINT_CELLS, wallHeight, type Floors, type Footprint } from '
 import { mulberry32 } from './rng.ts';
 import type { Style } from './architecture.ts';
 import {
-  BAND, E, P, VARIANTS, VARIANT, VARIANT_LOOK, useOf, box, cypress, fence, frustum, gable, hip, onFace, palm, patch, pick, place, plant, ring, shrub, storeys, tree, windows, yard, faceWidth,
+  BAND, E, P, SMOKE, VARIANTS, VARIANT, VARIANT_LOOK, useOf, box, cypress, fence, frustum, gable, hip, onFace, palm, patch, pick, place, plant, ring, shrub, storeys, tree, windows, yard, faceWidth,
   type Body, type Build, type Face, type G, type Lot, type Trade,
 } from './houseKit.ts';
 import { HOUSE_STYLES } from './styles/houses.ts';
@@ -32,6 +32,8 @@ import { TRIPLES1_TRADE } from './styles/trade/triples1.ts';
 import { TRIPLES2_TRADE } from './styles/trade/triples2.ts';
 import { QUADS_TRADE } from './styles/trade/quads.ts';
 export const HOUSE_VARIANTS = VARIANTS;
+// The variant that is a style's works (houseKit.ts VARIANT_LOOK).
+export const WORKS_VARIANT = VARIANT_LOOK.findIndex((v) => v.use === 'works');
 // A skyscraper's height by its variant (its storeys taller or more of them: a skyline, not a row).
 const TOWER_HEIGHT: readonly number[] = [1, 1.3, 0.8, 1.45, 0.9];
 // A lot model's key (a model kind of its own for the renderers): its
@@ -451,6 +453,66 @@ function mirror(g: G): void {
   }
 }
 
+// Works whose trade keeps a fire (a forge, a kiln, a furnace, a stove, a
+// boiler) but whose chimney its builder did not mark: theirs is found in
+// the model (chimneyTop). (The rest work cold: mills, presses, salt pans,
+// tanneries, an ice house, a filling station...)
+const FIRED: ReadonlySet<Style> = new Set<Style>(['izba', 'yurt', 'mesoamerican', 'african', 'insula', 'neoclassical', 'renaissance', 'kura', 'monastic', 'haveli', 'georgian', 'gothic', 'bryggen', 'panel', 'zakkyo']);
+// A chimney's top in a model: the highest point standing well clear of
+// everything round it (a narrow peak: not a roof's ridge, which runs on at
+// its height), or null.
+function chimneyTop(g: G): [number, number, number] | null {
+  const pos = g.getAttribute('position'), C = 0.0015, top = new Map<string, { y: number; x: number; z: number }>();
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i), k = `${Math.floor(x / C)},${Math.floor(z / C)}`;
+    const t = top.get(k);
+    if (!t || y > t.y) top.set(k, { y, x, z });
+  }
+  let best: [number, number, number] | null = null, bestRise = 0.003;
+  for (const [k, t] of top) {
+    const [i, j] = k.split(',').map(Number) as [number, number];
+    let around = 0;
+    for (let a = -3; a <= 3; a++) for (let b = -3; b <= 3; b++) {
+      if (Math.max(Math.abs(a), Math.abs(b)) < 2) continue;
+      around = Math.max(around, top.get(`${i + a},${j + b}`)?.y ?? 0);
+    }
+    if (t.y - around > bestRise) { bestRise = t.y - around; best = [t.x, t.y, t.z]; }
+  }
+  return best;
+}
+
+// A lot model as seen from afar (render.ts swaps it in when the town is a
+// few pixels across): its small triangles left out (windows, signs, trim,
+// goods, posts: under FAR_AREA each), its walls, roofs and stacks kept.
+const FAR_AREA = 1.2e-5; // tile steps²: a window pane's half
+const farCache = new Map<string, G>();
+export function houseFarGeometry(kind: HouseKind): G {
+  let f = farCache.get(kind);
+  if (!f) {
+    const g = houseGeometry(kind), pos = g.getAttribute('position'), keep: number[] = [];
+    const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+    for (let t = 0; t + 2 < pos.count; t += 3) {
+      a.fromBufferAttribute(pos, t); b.fromBufferAttribute(pos, t + 1); c.fromBufferAttribute(pos, t + 2);
+      if (b.sub(a).cross(c.sub(a)).length() / 2 >= FAR_AREA) keep.push(t, t + 1, t + 2);
+    }
+    f = new THREE.BufferGeometry();
+    for (const [name, attr] of Object.entries(g.attributes)) {
+      const n = attr.itemSize, arr = new Float32Array(keep.length * n);
+      keep.forEach((v, i) => { for (let k = 0; k < n; k++) arr[i * n + k] = attr.getComponent(v, k); });
+      f.setAttribute(name, new THREE.BufferAttribute(arr, n));
+    }
+    farCache.set(kind, f);
+  }
+  return f;
+}
+
+// Where smoke rises from a lot model (its chimneys' and kilns' tops, in its own frame).
+const smokes = new Map<string, readonly (readonly [number, number, number])[]>();
+export function houseSmoke(kind: HouseKind): readonly (readonly [number, number, number])[] {
+  houseGeometry(kind);
+  return smokes.get(kind) ?? [];
+}
+
 export function houseGeometry(kind: HouseKind): G {
   let g = cache.get(kind);
   if (!g) {
@@ -460,14 +522,20 @@ export function houseGeometry(kind: HouseKind): G {
     // A home: the style's house in its variant's shape; a shop or a works: the style's own (styles/trade).
     const trade = lot.use === 'home' ? null : tradeOf(style);
     let built: G[];
-    if (trade) built = lot.use === 'shop' ? trade.shops[variant % VARIANTS === 2 ? 0 : 1](lot) : trade.works(lot);
-    else {
-      Object.assign(VARIANT, { free: true, v: variant, body: null, wall: null, roof: null });
-      try { built = [...STYLE_BUILD[style](lot), ...wing(lot)]; } finally { VARIANT.free = false; }
-    }
+    const smoke: [number, number, number][] = [];
+    SMOKE.at = smoke;
+    try {
+      if (trade) built = lot.use === 'shop' ? trade.shops[variant % VARIANTS === 2 ? 0 : 1](lot) : trade.works(lot);
+      else {
+        Object.assign(VARIANT, { free: true, v: variant, body: null, wall: null, roof: null });
+        try { built = [...STYLE_BUILD[style](lot), ...wing(lot)]; } finally { VARIANT.free = false; }
+      }
+    } finally { SMOKE.at = null; }
     const parts = built.map((p) => p.index ? p.toNonIndexed() : p);
     g = mergeGeometries(parts)!;
-    if (VARIANT_LOOK[variant % VARIANTS]!.mirror) mirror(g);
+    if (VARIANT_LOOK[variant % VARIANTS]!.mirror) { mirror(g); for (const p of smoke) p[0] = -p[0]; }
+    if (lot.use === 'works' && smoke.length === 0 && FIRED.has(style)) { const p = chimneyTop(g); if (p) smoke.push(p); }
+    smokes.set(kind, smoke);
     if (!g) throw new Error(`house ${kind}`);
     for (const p of parts) p.dispose();
     g.setAttribute('leafMask', new THREE.BufferAttribute(new Float32Array(g.getAttribute('position').count), 1));

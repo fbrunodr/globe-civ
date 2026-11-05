@@ -8,7 +8,7 @@ import { cone, cyl, seg, type Tf } from '../../propCatalog.ts';
 import { wallHeight } from '../../town/geometry.ts';
 import {
   E, BAND, FACE_TURN, P, arch, bands, birch, box, disc, dome, drum, fence, frustum, gable, hip, merlons, palm, shade, onFace, patch, pick, place, ring, shrub, steps, storeys, strips, tilted, tree, windows, yard, faceWidth,
-  SEEN, type Body, type Build, type Face, type G, type Lot, type Trade,
+  SEEN, type Body, type Build, type Face, type G, type Lot, type Trade, smokeFrom,
 } from '../../houseKit.ts';
 import { anvil, awning, barrels, cart, crates, doubleDoor, hangingSign, lantern, leanTo, logs, sacks, signBoard, stall } from '../../tradeKit.ts';
 
@@ -70,8 +70,8 @@ function spandrels(R: number): THREE.BufferGeometry {
   sh.moveTo(R, 0); sh.lineTo(R, R); sh.lineTo(-R, R); sh.lineTo(-R, 0); sh.absarc(0, 0, R, Math.PI, 0, true);
   return new THREE.ShapeGeometry(sh, 4);
 }
-// A puff of smoke over a kiln or a forge.
-const puff = (r: number, o: Tf = {}) => P(new THREE.IcosahedronGeometry(r, 0), 0xcfcbc4, { ...o, sy: 0.7 });
+// Smoke over a kiln or a forge: where it rises from (render.ts draws it, moving).
+const puff = (_r: number, o: Tf = {}): G[] => { smokeFrom(o.x ?? 0, o.y ?? 0, o.z ?? 0); return []; };
 // A leafy clump (vine, a crown), squashed.
 const leaves = (r: number, c: number, o: Tf = {}) => P(new THREE.OctahedronGeometry(r, 0), c, o);
 
@@ -319,7 +319,7 @@ const alfar: Build = (l) => {
   out.push(...arch({ ...k, d: kw + 0.0008 }, 'front', 0, 0, kw * 0.36, kh * 0.18, 0x1e1a16));
   out.push(onFace({ ...k, d: kw + 0.0008 }, 'front', 0, kh * 0.18 + kw * 0.18 + 0.001, kw * 0.7, 0.0006, 0x8a5034, E));
   for (const t of [-0.25, 0.25]) out.push(...box(0.0016, 0.0018, 0.0016, brick, { x: kx + t * kw, y: kh + kw * 0.28, z: kz }, 0x2a2420));
-  for (const [i, r] of [[0, 0.0017], [1, 0.0023]] as const) out.push(puff(r, { x: kx - kw * 0.25 + i * 0.0016, y: kh + kw * 0.45 + 0.0016 + i * 0.0034, z: kz - i * 0.001 }));
+  for (const [i, r] of [[0, 0.0017]] as const) out.push(...puff(r, { x: kx - kw * 0.25 + i * 0.0016, y: kh + kw * 0.45 + 0.0016 + i * 0.0034, z: kz - i * 0.001 }));
   out.push(...logs(6, 0.0062, 0.0007, 0x7a5a3a, { x: kx - kw * 0.1, z: kz + kw / 2 + 0.0036 })); // firewood (olive prunings) for the mouth
   // Tiles drying in rows in the yard, glazed ones and raw.
   const rows = Math.max(2, Math.min(4, Math.floor((l.ld - b.z - b.d / 2) / 0.0062))), cols = Math.max(3, Math.min(6, Math.floor(l.lw / 0.0056)));
@@ -432,7 +432,7 @@ const brickyard: Build = (l) => {
   out.push(cyl(kr * 1.05, kr, kh, 10, 0xa8784a, { x: kx, z: kz }), dome(kr, 0x9a6a40, { x: kx, y: kh, z: kz, sy: 0.75 }));
   out.push(...arch({ x: kx, z: kz, w: kr * 2, d: kr * 2.02, y: 0, h: kh }, 'front', 0, 0, kr * 0.55, kh * 0.32, 0x1e1a16));
   out.push(cyl(kr * 0.22, kr * 0.2, kr * 0.5, 6, 0x8a5a38, { x: kx, y: kh + kr * 0.62, z: kz }));
-  for (const [i, r] of [[0, 0.002], [1, 0.0026]] as const) out.push(puff(r, { x: kx + i * 0.0018, y: kh + kr * 1.25 + i * 0.0036, z: kz + i * 0.0008 }));
+  for (const [i, r] of [[0, 0.002]] as const) out.push(...puff(r, { x: kx + i * 0.0018, y: kh + kr * 1.25 + i * 0.0036, z: kz + i * 0.0008 }));
   out.push(...logs(5, 0.0058, 0.0007, 0x7a6448, { x: kx + kr + 0.0042, z: kz + kr * 0.6, ry: Math.PI / 2 })); // brushwood and palm fronds for the fire
   // The tool hut on the right, mudbrick, merlons.
   const hw = Math.min(0.014, l.lw * 0.6), h: Body = { x: l.lw * 0.97 - hw / 2, z: -l.ld * 0.5, w: hw, d: Math.min(0.013, l.ld * 0.7), y: 0, h: wallHeight(1) * 0.7 };
@@ -575,7 +575,7 @@ const rangraz: Build = (l) => {
   for (let i = 0; i < nv; i++) out.push(drum(0.0028, 0.0028, 0.0003, 8, 0xa88a62, { x: -l.lw * 0.3 + (i - (nv - 1) / 2) * 0.0068, y: 0.0014, z: vz }, vats[i % vats.length]!)[1]!);
   // The cauldron on its fire-pit, at the side.
   const cx = l.lw * 0.62, cz = vz;
-  out.push(cyl(0.0026, 0.0028, 0.0018, 7, 0x8a7a68, { x: cx, z: cz }), cyl(0.0024, 0.0019, 0.0022, 7, 0xa86a3a, { x: cx, y: 0.0018, z: cz }), puff(0.0018, { x: cx, y: 0.0062, z: cz }));
+  out.push(cyl(0.0026, 0.0028, 0.0018, 7, 0x8a7a68, { x: cx, z: cz }), cyl(0.0024, 0.0019, 0.0022, 7, 0xa86a3a, { x: cx, y: 0.0018, z: cz }), ...puff(0.0018, { x: cx, y: 0.0062, z: cz }));
   // Skeins drying on poles, across the front of the yard.
   const wool = [0x1e2a6a, 0x8a1a1a, 0xd8a020, 0x2a6a8a, 0xa82a4a, 0x3a3a7a];
   const rw = Math.min(l.lw * 1.6, 0.04), rz = l.ld * 0.84;
@@ -830,7 +830,7 @@ const noborigama: Build = (l) => {
   }
   const top = z0 - n * cl * 0.98 + cl * 0.2, ty = n * 0.0016;
   out.push(...box(0.0034, ty + 0.012, 0.0034, 0x8a6a50, { x: kx, z: top }, 0x2a2420));
-  out.push(puff(0.0022, { x: kx + 0.001, y: ty + 0.0145, z: top }));
+  out.push(...puff(0.0022, { x: kx + 0.001, y: ty + 0.0145, z: top }));
   // Split pine stacked high beside it.
   out.push(...box(0.003, 0.0058, Math.min(0.016, l.ld * 0.8), 0xc8a070, { x: kx + cw / 2 + 0.0034, z: z0 - cl }, 0xa88050));
   // The workshop on the right: wood below, tiles over; boards of pots drying before it.
@@ -1088,7 +1088,7 @@ const naust: Build = (l) => {
   for (const k of [-1, 1]) for (const t of [-0.25, 0.1]) out.push(seg(V3(hx + k * hb * 0.75, 0, t * hl), V3(hx + k * hb * 0.42, 0.0034, t * hl), 0.0002, 0.0002, 3, 0x6a5a48)); // props
   // Oak logs waiting, the tar pot on its fire.
   out.push(...logs(4, 0.014, 0.0009, 0x7a5a38, { x: hx, z: -l.ld * 0.82 }));
-  out.push(cyl(0.0013, 0.0011, 0.0018, 6, 0x2a2420, { x: l.lw * 0.86, z: l.ld * 0.82 }), puff(0.0014, { x: l.lw * 0.86, y: 0.0034, z: l.ld * 0.82 }));
+  out.push(cyl(0.0013, 0.0011, 0.0018, 6, 0x2a2420, { x: l.lw * 0.86, z: l.ld * 0.82 }), ...puff(0.0014, { x: l.lw * 0.86, y: 0.0034, z: l.ld * 0.82 }));
   return out;
 };
 
