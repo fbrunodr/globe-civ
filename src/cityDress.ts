@@ -10,7 +10,7 @@
 // In the tile's canonical hex (tile steps); models in their own units with
 // the scale that stands them in tile steps.
 
-import { paintCity, CITY_CELL, MAX_WONDERS, UNIT, UNITS_PER_CELL, type Painted, type Painting } from './cityPainter.ts';
+import { paintCity, CITY_CELL, MAX_WONDERS, UNIT, UNITS_PER_CELL, type Height, type Painted, type Painting } from './cityPainter.ts';
 import { CELL, LOT_SIZE, type Floors, type Footprint, type Pt } from './town/geometry.ts';
 import { HOUSE_VARIANTS, houseKind } from './houses.ts';
 import { styleOf, type ArchCiv } from './architecture.ts';
@@ -109,6 +109,21 @@ const halfExtents = (k: LotModelKind): readonly [number, number] => {
   return r;
 };
 
+// How many of a city's n buildings stand at each height, by its era and
+// size (`tall`: a share that grows with the city): Classical–Medieval, the
+// tall share two floors, the rest one; Renaissance–Industrial, half of it
+// three floors, the rest of it and a fifth more two, the rest one;
+// Modern–Information, half of it four, the rest of it three, the rest two.
+export function heightsOf(era: DressEra, pop: number, n: number): Record<Height, number> {
+  const tall = Math.min(0.8, Math.max(0.15, pop / 20));
+  // (Shares, tallest first, each the share at that height or taller.)
+  const upTo: [Height, number][] = era === 0 ? [[1, 1]] : era === 1 ? [[2, tall], [1, 1]] : era === 2 ? [[3, tall * 0.5], [2, tall + 0.2], [1, 1]] : [[4, tall * 0.5], [3, tall], [2, 1]];
+  const out: Record<Height, number> = { 1: 0, 2: 0, 3: 0, 4: 0 };
+  let done = 0;
+  for (const [h, share] of upTo) { const k = Math.min(n, Math.round(n * share)) - done; out[h] = Math.max(0, k); done += out[h]; }
+  return out;
+}
+
 // The most buildings and skyscrapers a city shows (its wonders besides).
 const MAX_BUILDINGS = 50;
 
@@ -116,17 +131,10 @@ export function dressCity(c: CityLook): DressedCity {
   const wonders = c.wonders.slice(0, MAX_WONDERS);
   const total = Math.min(MAX_BUILDINGS, Math.round(4 + 3 * c.pop));
   const skyscrapers = c.era >= 3 && c.pop >= SKYSCRAPER_FROM ? Math.min(total, Math.floor(c.pop / SKYSCRAPER_PER)) : 0;
-  // The town on its land (`free`: its tile's painted land, padded), then
-  // its walls round it.
-  const painting = paintCity({ wonders: wonders.length, skyscrapers, buildings: total - skyscrapers, seed: c.seed, free: c.free });
-  const tall = Math.min(0.8, Math.max(0.15, c.pop / 20));
-  const floorsOf = (b: Painted): Floors => {
-    if (b.kind === 'skyscraper') return 12;
-    if (c.era === 0) return 1;
-    if (c.era === 1) return b.order < tall ? 2 : 1;
-    if (c.era === 2) return b.order < tall * 0.5 ? 3 : b.order < tall + 0.2 ? 2 : 1;
-    return b.order < tall * 0.5 ? 4 : b.order < tall ? 3 : 2;
-  };
+  // The town on its land (`free`: its tile's painted land, padded), its
+  // buildings' heights decided up front (heightsOf), then its walls round it.
+  const painting = paintCity({ wonders: wonders.length, skyscrapers, buildings: heightsOf(c.era, c.pop, total - skyscrapers), seed: c.seed, free: c.free });
+  const floorsOf = (b: Painted): Floors => (b.kind === 'building' ? b.height : 12);
   let w = 0;
   const buildings = painting.buildings.map((b, n): DressedBuilding => {
     const rand = mulberry32(c.seed * 31 + n + 1);

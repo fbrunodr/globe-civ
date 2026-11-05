@@ -18,7 +18,7 @@ import { aiTurn, aiPickTech, aiPickPolitics, aiGovern, aiAcceptsPeace, aiAccepts
 import {
   USE, FOOD_PER_CITIZEN, ZERO, CITY_REACH, START_REACH, tileCost, GROWTH_TURNS, SPECIALIST_KINDS, AQUEDUCT_KEEP, BUILDINGS as CITY_BUILDINGS,
   addOut, scaleOut, centerYield, ruralYield, improvementFor, governorScore, specialistsWanted, borderRing,
-  buildingsYield, withPercents, wonderBeside, specialistYield, specialistSlots, buildingAllowed, weigh, WONDERS, WONDER_KEYS, ERAS,
+  buildingsYield, withPercents, wonderBeside, MAX_CITY_WONDERS, specialistYield, specialistSlots, buildingAllowed, weigh, WONDERS, WONDER_KEYS, ERAS,
   type FocusKey, type GrowthOption, type TileUse, type Output, type SpecialistKind, type WonderKey, type WonderSite, type EraIndex, type ImprovementKey,
 } from './cities.ts';
 import { IMPROVEMENTS, IMPROVEMENT_KEYS, IMPROVE_TURNS, drained, out, OUTPUT_KEYS } from './cities.ts';
@@ -1270,9 +1270,13 @@ export class Game {
       .sort((a, b) => Number(this.biome[b] === 'shallowSea') - Number(this.biome[a] === 'shallowSea') || a - b);
   }
 
+  // Whether a city may take on another wonder: fewer than MAX_CITY_WONDERS
+  // so far (in it and beside it alike).
+  wonderRoom(city: City): boolean { return this.cityWonders(city).length < MAX_CITY_WONDERS; }
+
   // Starts wonder k on tile t (production goes on).
   startWonder(city: City, k: WonderKey, t: number): boolean {
-    if (this.wondersBuilt.has(k) || !this.wonderSpots(city, k).includes(t)) return false;
+    if (this.wondersBuilt.has(k) || !this.wonderRoom(city) || !this.wonderSpots(city, k).includes(t)) return false;
     if (city.building !== k) city.building = k;
     city.wonderTile = t;
     this.useVersion++;
@@ -1286,7 +1290,7 @@ export class Game {
   // Builds wonder k on tile t at once (the City Lab; the game completes
   // wonders through production).
   placeWonder(city: City, k: WonderKey, t: number): boolean {
-    if (this.wondersBuilt.has(k) || !this.wonderSpots(city, k).includes(t)) return false;
+    if (this.wondersBuilt.has(k) || !this.wonderRoom(city) || !this.wonderSpots(city, k).includes(t)) return false;
     this.completeWonder(city, k, t);
     return true;
   }
@@ -1610,7 +1614,7 @@ export class Game {
       if (domainOf(unitDef(key)) === 'sea' && !this.cityCoast(city)) return false;
       return !need || anyResource || this.hasResource(p.id, need);
     }
-    if (isWonder(key)) return !this.wondersBuilt.has(key) && (this.wonderSpots(city, key).length > 0 || city.wonderTile !== null && city.building === key);
+    if (isWonder(key)) return !this.wondersBuilt.has(key) && this.wonderRoom(city) && (this.wonderSpots(city, key).length > 0 || city.wonderTile !== null && city.building === key);
     const need = CITY_BUILDINGS[key].resource;
     return (!need || anyResource || this.hasResource(p.id, need)) && buildingAllowed(key, city.buildings, this.cityRiver(city), this.cityCoast(city));
   }

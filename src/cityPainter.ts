@@ -10,10 +10,11 @@
 //      as near the middle as it fits in the largest stretch of dry land
 //      (where water cuts the tile in pieces, the city keeps to one);
 //   4. every wonder the city has is placed (at most MAX_WONDERS), wholly
-//      inside the safe zone. The order they go up is drawn, the wonders
-//      and skyscrapers favoured (WEIGHT), so they mostly stand near the
-//      middle, but not always, and houses mix in among them;
-//   5. the tallest stand nearest the middle (heights: cityDress.ts);
+//      inside the safe zone, each among the first WONDERS_BY to go up;
+//   5. each building's height is asked for up front (cityDress.ts counts
+//      them), and the order they go up is drawn, the wonders, skyscrapers
+//      and taller buildings favoured (WEIGHT): the tallest mostly stand
+//      near the middle, but not all, and lower ones mix in among them;
 //   6. roads fill the gap between each joined pair, from the end of one
 //      building to the end of the other, the corners where they meet, and
 //      every gap inside the town (on dry ground); painted once (a set of
@@ -27,6 +28,7 @@
 
 import { mulberry32, type Rng } from './rng.ts';
 import { rhoOf, SAFE_RHO, type Pt } from './town/geometry.ts';
+import { MAX_CITY_WONDERS } from './cities.ts';
 
 // A cell as the city is drawn (lot models' 0.0225 tile steps, drawn 1.3 ×
 // larger so a town reads from the board), and the grid's unit: half of it.
@@ -34,8 +36,14 @@ export const CITY_CELL = 0.0225 * 1.3;
 // (A quarter of a cell: the streets, a unit wide, as narrow as a quarter cell.)
 export const UNITS_PER_CELL = 4;
 export const UNIT = CITY_CELL / UNITS_PER_CELL;
-export const MAX_WONDERS = 10;
+// (As many as a city may have: cities.ts.)
+export const MAX_WONDERS = MAX_CITY_WONDERS;
+// Wonders go up among the first this many buildings.
+export const WONDERS_BY = 30;
 export type Kind = 'building' | 'skyscraper' | 'wonder';
+// A building's height (floors; a skyscraper's is its own).
+export type Height = 1 | 2 | 3 | 4;
+export const HEIGHTS: readonly Height[] = [4, 3, 2, 1];
 // Each kind's rectangles (units, either way round), the first most often.
 export const SIZES: Record<Kind, readonly (readonly [number, number])[]> = {
   building: [[8, 8], [8, 10], [10, 8], [10, 10]],
@@ -49,14 +57,13 @@ const REACH: Record<Kind, number> = { wonder: SAFE_RHO, skyscraper: 0.88, buildi
 // A building: its rectangle on the grid (units, [x0, x1) × [y0, y1)) and
 // its middle and front in the tile (front: the way it faces, toward a road;
 // `front` its width along that side, `depth` back from it, units).
-export interface Painted {
-  readonly kind: Kind;
+// (A building has its height; wonders and skyscrapers have their own.)
+export type Painted = {
   readonly x0: number; readonly y0: number; readonly x1: number; readonly y1: number;
   readonly at: Pt;
   readonly yaw: number;
   readonly front: number; readonly depth: number;
-  readonly order: number;   // 0 at the middle, 1 the farthest: how tall it stands
-}
+} & ({ readonly kind: 'building'; readonly height: Height } | { readonly kind: 'skyscraper' | 'wonder' });
 export interface Painting {
   readonly buildings: readonly Painted[];
   readonly roads: readonly (readonly Pt[])[];   // rectangles in the tile, merged from the road squares
@@ -67,7 +74,7 @@ export interface Painting {
 export interface PaintInput {
   readonly wonders: number;
   readonly skyscrapers: number;
-  readonly buildings: number;
+  readonly buildings: Readonly<Record<Height, number>>; // how many of each height
   readonly seed: number;
   // Whether a point of the tile may be built on (dry land); the painter
   // adds the reach of each kind.
@@ -77,11 +84,15 @@ export interface PaintInput {
   readonly limit?: number;
 }
 
-// How strongly each kind is drawn to go up next (per one left of it), and
-// pulled toward the middle where it goes (paintCity).
-const KINDS = ['wonder', 'skyscraper', 'building'] as const;
-const WEIGHT: Record<Kind, number> = { wonder: 5, skyscraper: 2, building: 1 };
+// What goes up, one at a time: a wonder, a skyscraper or a building of a
+// height. How strongly each is drawn to go up next (per one left of it),
+// so the tallest come early, near the middle; and how strongly each kind
+// is pulled toward the middle where it goes (paintCity).
+type Pick = 'wonder' | 'skyscraper' | Height;
+const PICKS: readonly Pick[] = ['wonder', 'skyscraper', ...HEIGHTS];
+const WEIGHT: Record<Pick, number> = { wonder: 7, skyscraper: 5, 4: 4, 3: 3, 2: 2, 1: 1 };
 const PULL: Record<Kind, number> = { wonder: 1, skyscraper: 3, building: 1 };
+const kindOf = (k: Pick): Kind => (typeof k === 'number' ? 'building' : k);
 // Gaps in a town this narrow or less (units, each side) are paved over.
 const CLOSE = 2;
 // Dry ground kept round every building (units).
@@ -167,7 +178,7 @@ export function paintCity(inp: PaintInput): Painting {
   // Taken: every building's square grown by 1 (nothing may stand there: guarantee 1).
   let taken = new Uint8Array(N * N);
   let takenSums = sums(taken);
-  let placed: { kind: Kind; x0: number; y0: number; w: number; h: number }[] = [];
+  let placed: { pick: Pick; x0: number; y0: number; w: number; h: number }[] = [];
   const clear = (x0: number, y0: number, w: number, h: number) => area(takenSums, x0, y0, x0 + w, y0 + h) === 0;
   const take = (x0: number, y0: number, w: number, h: number) => {
     for (let j = y0 - 1; j < y0 + h + 1; j++) for (let i = x0 - 1; i < x0 + w + 1; i++) if (i >= -H && j >= -H && i < H && j < H) taken[(j + H) * N + i + H] = 1;
@@ -187,7 +198,8 @@ export function paintCity(inp: PaintInput): Painting {
     }
     return out;
   };
-  const place = (k: Kind, centre: number, r: Rng): boolean => {
+  const place = (pick: Pick, r: Rng): boolean => {
+    const k = kindOf(pick), centre = PULL[k];
     // (A size drawn for it, the first of the kind's most often; another if that one finds no room.)
     const sizes = SIZES[k], first = r() < 0.4 ? 0 : 1 + Math.floor(r() * (sizes.length - 1));
     for (const [w, h] of [sizes[first]!, ...sizes.filter((_, i) => i !== first)]) {
@@ -209,33 +221,39 @@ export function paintCity(inp: PaintInput): Painting {
         if (sc > bs) { bs = sc; best = [x0, y0]; }
       }
       if (!best) continue;
-      placed.push({ kind: k, x0: best[0], y0: best[1], w, h });
+      placed.push({ pick, x0: best[0], y0: best[1], w, h });
       take(best[0], best[1], w, h);
       return true;
     }
     return false;
   };
-  // The order they go up: each next one drawn by how many of its kind are
-  // left times the kind's WEIGHT, so wonders and skyscrapers mostly come
-  // early (near the middle) but houses mix in among them. A kind that finds
-  // no more room stops there. A wonder must find room (guarantee 4): should
-  // one drawn late find none, the city is drawn again with its wonders
-  // first.
+  // The order they go up: each next one drawn by how many of it are left
+  // times its WEIGHT, so wonders, skyscrapers and the tallest buildings
+  // mostly come early (near the middle) but lower ones mix in among them;
+  // a wonder still left when only as many picks remain before WONDERS_BY
+  // goes up then. Buildings that find no more room stop there (all heights
+  // alike: they are one size). A wonder must find room (guarantee 4):
+  // should one find none, the city is drawn again with its wonders first.
   const build = (wondersFirst: boolean): boolean => {
     const r = mulberry32(inp.seed ^ 0x9e3779b9);
     placed = [];
     taken = new Uint8Array(N * N);
     takenSums = sums(taken);
-    const left: Record<Kind, number> = { wonder: Math.min(MAX_WONDERS, inp.wonders), skyscraper: inp.skyscrapers, building: inp.buildings };
-    if (wondersFirst) for (; left.wonder > 0; left.wonder--) if (!place('wonder', PULL.wonder, r)) return false;
-    for (;;) {
-      const total = KINDS.reduce((a, k) => a + left[k] * WEIGHT[k], 0);
+    const left: Record<Pick, number> = { wonder: Math.min(MAX_WONDERS, inp.wonders), skyscraper: inp.skyscrapers, ...inp.buildings };
+    if (wondersFirst) for (; left.wonder > 0; left.wonder--) if (!place('wonder', r)) return false;
+    for (let n = 0; ; n++) {
+      const total = PICKS.reduce((a, k) => a + left[k] * WEIGHT[k], 0);
       if (total <= 0) return true;
-      let pick = r() * total, k: Kind = 'building';
-      for (const kk of KINDS) { pick -= left[kk] * WEIGHT[kk]; if (pick < 0) { k = kk; break; } }
-      if (place(k, PULL[k], r)) left[k]--;
+      let k: Pick = 1;
+      if (left.wonder > 0 && n + left.wonder >= WONDERS_BY) k = 'wonder';
+      else {
+        let draw = r() * total;
+        for (const kk of PICKS) { draw -= left[kk] * WEIGHT[kk]; if (draw < 0) { k = kk; break; } }
+      }
+      if (place(k, r)) left[k]--;
       else if (k === 'wonder') return false;
-      else left[k] = 0;
+      else if (k === 'skyscraper') left.skyscraper = 0;
+      else for (const h of HEIGHTS) left[h] = 0;
     }
   };
   if (!build(false)) build(true);
@@ -306,11 +324,10 @@ export function paintCity(inp: PaintInput): Painting {
   }
 
   // Each building faces the joined neighbour nearest the middle (its road
-  // there), or out; its order: how far it stands from the middle, ranked.
+  // there), or out.
   // (A rectangle's middle, on the grid; and relative to the town's middle, mx my, for facing and ranking.)
   const middle = (p: { x0: number; y0: number; w: number; h: number }) => ({ x: p.x0 + p.w / 2, y: p.y0 + p.h / 2 });
   const rel = (p: { x0: number; y0: number; w: number; h: number }) => ({ x: p.x0 + p.w / 2 - mx, y: p.y0 + p.h / 2 - my });
-  const ranked = [...placed].sort((a, b) => Math.hypot(rel(a).x, rel(a).y) - Math.hypot(rel(b).x, rel(b).y));
   const buildings: Painted[] = placed.map((p) => {
     const m = middle(p);
     let face: { x: number; y: number } | null = null, fd = Infinity;
@@ -322,12 +339,12 @@ export function paintCity(inp: PaintInput): Painting {
     const r = rel(p);
     face ??= Math.abs(r.x) > Math.abs(r.y) ? { x: Math.sign(r.x) || 1, y: 0 } : { x: 0, y: Math.sign(r.y) || 1 };
     const dir = { x: face.x * u.x + face.y * v.x, y: face.x * u.y + face.y * v.y };
-    return {
-      kind: p.kind, x0: p.x0, y0: p.y0, x1: p.x0 + p.w, y1: p.y0 + p.h,
+    const box = {
+      x0: p.x0, y0: p.y0, x1: p.x0 + p.w, y1: p.y0 + p.h,
       at: toTile(m.x, m.y), yaw: Math.atan2(dir.y, dir.x),
       front: face.x ? p.h : p.w, depth: face.x ? p.w : p.h,
-      order: placed.length > 1 ? ranked.indexOf(p) / (placed.length - 1) : 0,
     };
+    return typeof p.pick === 'number' ? { ...box, kind: 'building', height: p.pick } : { ...box, kind: p.pick };
   });
   const reach = placed.reduce((a, p) => Math.max(a, ...[[p.x0, p.y0], [p.x0 + p.w, p.y0], [p.x0, p.y0 + p.h], [p.x0 + p.w, p.y0 + p.h]].map(([x, y]) => Math.hypot(toTile(x!, y!).x, toTile(x!, y!).y))), 0);
   return { buildings, roads, reach, origin, u, v };

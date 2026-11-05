@@ -6,7 +6,7 @@ import { TRAIT_KEYS, FAITH_KEYS, PATH_KEYS, PATHS, MAX_TRAITS, traitDef, traitCo
 import { RELIGION_KEYS } from '../src/religion.ts';
 import * as THREE from 'three';
 import { RESOURCES, RESOURCE_KEYS, RESOURCE_IMPROVEMENT, LUXURY_KEYS, empireBonus, type ResourceKey } from '../src/resources.ts';
-import { IMPROVEMENTS, type ImprovementKey } from '../src/cities.ts';
+import { IMPROVEMENTS, WONDER_KEYS, MAX_CITY_WONDERS, wonderBeside, type ImprovementKey } from '../src/cities.ts';
 import { STAGE_TECHS } from '../src/techs.ts';
 import { stageLook } from '../src/rural/stages.ts';
 import { KIT_MODELS, kitModel } from '../src/rural/kit.ts';
@@ -371,5 +371,24 @@ describe('S8: worked land: each resource its improvement; techs take it on a sta
     const finite = (gs: readonly THREE.BufferGeometry[]) => gs.every((g) => { const p = g.getAttribute('position'); for (let i = 0; i < p.count * 3; i++) if (!Number.isFinite((p.array as Float32Array)[i])) return false; return true; });
     for (const k of KIT_MODELS) expect(finite(kitModel(k)), k).toBe(true);
     for (const type of Object.keys(UNITS) as (keyof typeof UNITS)[]) expect(finite([unitModel(type, 'Romans', 0, false), unitModel(type, 'Chinese', 1, true)]), type).toBe(true);
+  });
+});
+
+describe(`wonders: at most ${MAX_CITY_WONDERS} in a city`, () => {
+  it('a city with its seven (in it or beside it) may start no other; one with six may', () => {
+    const g = new Game({ size: 'small', seed: 5 }), c = settle(g, HUMAN);
+    const keys = WONDER_KEYS.filter((k) => !wonderBeside(k));
+    // (Six in the city, then a seventh beside it: on a tile of the city's.)
+    for (const k of keys.slice(0, 6)) g.wondersBuilt.set(k, c.tile);
+    const next = keys[6]!, tech = (k: typeof next) => g.unlocked(g.players[c.owner]!).has(k);
+    for (const k of TECH_KEYS) g.players[c.owner]!.techs.add(k);
+    expect(tech(next)).toBe(true);
+    expect(g.wonderRoom(c)).toBe(true);
+    const beside = g.tiles[c.tile].neighbors.find((t) => g.tileCity[t] === c.id)!;
+    g.wondersBuilt.set(keys[7]!, beside);
+    expect(g.wonderRoom(c)).toBe(false);
+    expect(g.canBuild(c, next)).toBe(false);
+    expect(g.startWonder(c, next, c.tile)).toBe(false);
+    expect(g.placeWonder(c, next, c.tile)).toBe(false);
   });
 });

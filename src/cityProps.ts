@@ -722,7 +722,7 @@ export class CityProps {
     const g = this.game, rand = mulberry32((t + 7) * 2246822519);
     if (g.tiles[t].corners.length !== 6) return [];
     const { toDir } = onTile(g, t);
-    const town = paintCity({ wonders: 0, skyscrapers: 0, buildings: 12, seed: mix(t, 0x7ab), free: (p) => { const s = this.sampleDir(toDir(p)); return s.water - s.ground <= DRY; } });
+    const town = paintCity({ wonders: 0, skyscrapers: 0, buildings: { 1: 12, 2: 0, 3: 0, 4: 0 }, seed: mix(t, 0x7ab), free: (p) => { const s = this.sampleDir(toDir(p)); return s.water - s.ground <= DRY; } });
     const out: PlacedBuilding[] = [];
     for (const b of town.buildings) {
       if (rand() > 0.35) continue;

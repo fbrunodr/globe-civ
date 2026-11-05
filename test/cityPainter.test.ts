@@ -5,17 +5,20 @@
 
 import { describe, it, expect } from 'vitest';
 import { paintCity, gapBetween, joined, MAX_WONDERS, UNIT, type Painting, type PaintInput } from '../src/cityPainter.ts';
+import { heightsOf } from '../src/cityDress.ts';
 import { rhoOf, SAFE_RHO, type Pt } from '../src/town/geometry.ts';
 
 // Cities of every size: wonders 0..10, a growing count of buildings; on open
 // land, and with water (a river across one side, a lake) where nothing stands.
 const river = (p: Pt) => Math.abs(p.x * 0.8 + p.y * 0.6 - 0.36) > 0.03;
 const lake = (p: Pt) => Math.hypot(p.x + 0.25, p.y - 0.2) > 0.12;
+const open = () => true;
 const CASES: PaintInput[] = [];
 for (let seed = 1; seed <= 24; seed++) {
   const wonders = seed % (MAX_WONDERS + 1), pop = 1 + ((seed * 7) % 22);
   const total = Math.round(4 + 3 * pop), skyscrapers = Math.floor(pop / 4);
-  for (const free of [() => true, river, lake]) CASES.push({ wonders, skyscrapers, buildings: total - skyscrapers, seed, free });
+  const buildings = heightsOf((seed % 4) as 0 | 1 | 2 | 3, pop, total - skyscrapers);
+  for (const free of [open, river, lake]) CASES.push({ wonders, skyscrapers, buildings, seed, free });
 }
 const paint = CASES.map((c) => ({ c, p: paintCity(c) }));
 
@@ -83,10 +86,24 @@ describe('CP1: buildings', () => {
     const mean = (xs: number[]) => xs.reduce((a, x) => a + x, 0) / xs.length;
     expect(mean(share.skyscraper)).toBeLessThan(mean(share.building) - 0.05);
   });
+  it('every height asked for is built (on open land), the taller nearer the middle, over all cities', () => {
+    const at: Record<number, number[]> = { 1: [], 2: [], 3: [], 4: [] };
+    for (const { c, p } of paint) {
+      if (c.free !== open) continue;
+      for (const h of [1, 2, 3, 4] as const) expect(p.buildings.filter((b) => b.kind === 'building' && b.height === h).length, `seed ${c.seed}`).toBe(c.buildings[h]);
+      for (const b of p.buildings) if (b.kind === 'building') at[b.height]!.push(Math.hypot(b.at.x, b.at.y) / p.reach);
+    }
+    const mean = (xs: number[]) => xs.reduce((a, x) => a + x, 0) / xs.length;
+    expect(mean(at[4]!)).toBeLessThan(mean(at[3]!));
+    expect(mean(at[2]!)).toBeLessThan(mean(at[1]!));
+  });
+  it('heightsOf shares out every building', () => {
+    for (const era of [0, 1, 2, 3] as const) for (const pop of [1, 5, 12, 25]) for (const n of [4, 19, 50]) expect(Object.values(heightsOf(era, pop, n)).reduce((a, k) => a + k, 0)).toBe(n);
+  });
   it('nothing stands on water; a city on open land gets every building asked for', () => {
     for (const { c, p } of paint) {
       for (const b of p.buildings) expect(c.free(b.at), `seed ${c.seed}`).toBe(true);
-      if (c.free === CASES[0]!.free) expect(p.buildings.length).toBe(Math.min(MAX_WONDERS, c.wonders) + c.skyscrapers + c.buildings);
+      if (c.free === open) expect(p.buildings.length).toBe(Math.min(MAX_WONDERS, c.wonders) + c.skyscrapers + Object.values(c.buildings).reduce((a, k) => a + k, 0));
     }
   });
 });
@@ -98,7 +115,7 @@ describe('CP3: water cutting the tile', () => {
       // A river across the tile, off the middle: the larger part holds the middle.
       const off = 0.04 + 0.01 * (seed % 5), a = seed * 0.7, d = { x: Math.cos(a), y: Math.sin(a) };
       const side = (p: Pt) => p.x * d.x + p.y * d.y - off;
-      const p = paintCity({ wonders: seed % 4, skyscrapers: 2, buildings: 30, seed, free: (q) => Math.abs(side(q)) > 0.025 });
+      const p = paintCity({ wonders: seed % 4, skyscrapers: 2, buildings: { 1: 20, 2: 10, 3: 0, 4: 0 }, seed, free: (q) => Math.abs(side(q)) > 0.025 });
       const wrong = p.buildings.filter((b) => side(b.at) > 0);
       if (wrong.length) bad.push(`seed ${seed}: ${wrong.length} across the river`);
     }

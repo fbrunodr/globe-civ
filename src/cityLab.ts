@@ -13,7 +13,7 @@ import { MAP_SCRIPTS, MAP_SIZES, isMapScript, tileCount, type MapScriptKey, type
 import { terrainName } from './terrain.ts';
 import {
   USE, BUILDINGS, BUILDING_KEYS, WONDERS, WONDER_KEYS, FOCUSES, ERAS, IMPROVEMENTS, SPECIALIST_KINDS,
-  specialistYield, wonderBeside, type BuildingKey, type WonderKey, type EraIndex, type FocusKey, type Output, type SpecialistKind,
+  specialistYield, wonderBeside, MAX_CITY_WONDERS, type BuildingKey, type WonderKey, type EraIndex, type FocusKey, type Output, type SpecialistKind,
 } from './cities.ts';
 import { specialistName } from './ui.ts';
 import { buildPresets, foundCity, grow, shrink, setEra, addBuilding, addWonder, improveWorked } from './sandbox.ts';
@@ -156,7 +156,8 @@ function renderBuilder(): void {
     const elsewhere = game.wondersBuilt.has(k) && !here;
     // (Machu Picchu: a mountain beside the city the lab can buy for it will do.)
     const buyable = WONDERS[k].site === 'mountainTop' && game.buyableTiles(c).some((x) => game.tiles[c.tile].neighbors.includes(x) && game.relief[x] === 'mountains' && game.feature[x] !== 'volcano');
-    return btn(`data-lab="wonder" data-v="${k}"`, WONDERS[k].name, { active: here, disabled: elsewhere || (!here && !game.wonderSpots(c, k).length && !buyable), title: elsewhere ? 'Built elsewhere (once in the world)' : WONDERS[k].desc });
+    const full = !here && !game.wonderRoom(c);
+    return btn(`data-lab="wonder" data-v="${k}"`, WONDERS[k].name, { active: here, disabled: elsewhere || full || (!here && !game.wonderSpots(c, k).length && !buyable), title: elsewhere ? 'Built elsewhere (once in the world)' : full ? `This city has its ${MAX_CITY_WONDERS} wonders` : WONDERS[k].desc });
   }).join('');
   const maxHp = game.cityMaxHp(c);
   box.innerHTML = `<h3>${esc(c.name)} <small>size ${c.pop} · ${esc(p.name)} · ${ERAS[p.era].name}</small></h3>

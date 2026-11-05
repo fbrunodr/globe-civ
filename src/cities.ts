@@ -317,6 +317,8 @@ export const WONDERS = {
 export type WonderKey = keyof typeof WONDERS;
 export const WONDER_KEYS = Object.keys(WONDERS) as WonderKey[];
 export const isWonderKey = (s: string): s is WonderKey => s in WONDERS;
+// The most wonders a city may have, in it and beside it alike.
+export const MAX_CITY_WONDERS = 7;
 export const wonderBeside = (k: WonderKey): WonderDef['beside'] => (WONDERS[k] as WonderDef).beside;
 
 // ---------- eras ----------
