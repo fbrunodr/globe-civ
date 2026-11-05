@@ -9,6 +9,7 @@ export type SmokeKind = 'smoke' | 'fire' | 'chimney' | 'factory';
 export interface Emitter {
   pos: THREE.Vector3; // on the ground (or a chimney top)
   kind: SmokeKind;
+  rate?: number;      // the share of its puffs that show (1, the default: all): a fire lit now and then
 }
 
 // (A chimney a thin wisp; a factory's stack, from the industrial age, a thick plume.)
@@ -29,14 +30,17 @@ export function makeSmoke(scale: number): Smoke {
     transparent: true,
     depthWrite: false,
     vertexShader: /* glsl */ `
-      attribute vec2 seed; // phase, kind (0 smoke, 1 fire, 2 chimney, 3 factory)
+      attribute vec3 seed; // phase, kind (0 smoke, 1 fire, 2 chimney, 3 factory), rate
       uniform float uTime, uPx, uScale;
       varying float vT;
       varying float vKind;
       void main() {
         float fire = step(0.5, seed.y) * step(seed.y, 1.5), chimney = step(1.5, seed.y) * step(seed.y, 2.5), factory = step(2.5, seed.y);
         float speed = mix(mix(mix(0.22, 1.4, fire), 0.3, chimney), 0.22, factory);
-        float t = fract(uTime * speed * (0.8 + 0.4 * fract(seed.x * 7.3)) + seed.x);
+        float cycle = uTime * speed * (0.8 + 0.4 * fract(seed.x * 7.3)) + seed.x, t = fract(cycle);
+        // (Each time round, a puff shows or not by its rate: a chimney
+        // smoking now and then, not always.)
+        float shows = step(fract(sin(floor(cycle) * 12.9898 + seed.x * 78.233) * 43758.5453), seed.z);
         vec3 up = normalize(position);
         vec3 side = normalize(cross(up, vec3(0.3, 1.0, 0.2)));
         float rise = mix(mix(mix(0.02, 0.004, fire), 0.012, chimney), 0.022, factory) * uScale;
@@ -44,7 +48,7 @@ export function makeSmoke(scale: number): Smoke {
         vec4 mv = modelViewMatrix * vec4(p, 1.0);
         gl_Position = projectionMatrix * mv;
         float size = mix(mix(mix(0.003 + 0.008 * t, 0.0028 * (1.0 - 0.5 * t), fire), 0.0012 + 0.004 * t, chimney), 0.002 + 0.008 * t, factory) * uScale;
-        gl_PointSize = size * uPx / -mv.z;
+        gl_PointSize = size * uPx / -mv.z * shows;
         vT = t;
         vKind = seed.y;
       }`,
@@ -75,11 +79,11 @@ export function makeSmoke(scale: number): Smoke {
         const n = PUFFS[e.kind];
         for (let i = 0; i < n; i++) {
           pos.push(e.pos.x, e.pos.y, e.pos.z);
-          seed.push(i / n + 0.137 * ei, KIND_CODE[e.kind]);
+          seed.push(i / n + 0.137 * ei, KIND_CODE[e.kind], e.rate ?? 1);
         }
       });
       geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-      geo.setAttribute('seed', new THREE.Float32BufferAttribute(seed, 2));
+      geo.setAttribute('seed', new THREE.Float32BufferAttribute(seed, 3));
       geo.computeBoundingSphere();
     },
     update(seconds, pxPerUnit) {

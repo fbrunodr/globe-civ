@@ -156,11 +156,11 @@ const RURAL: Record<ImprovementKey, BuildingKind> = {
 };
 
 
-// The look a city takes in a game era (cityDress.ts has four), by its
+// The look a city takes in a game era (cityDress.ts has five), by its
 // tallest building: Ancient one floor, Classical and Medieval two,
-// Renaissance and Industrial three, Modern and Information four
-// (skyscrapers too).
-const DRESS_ERA: Record<EraIndex, DressEra> = { 0: 0, 1: 1, 2: 1, 3: 2, 4: 2, 5: 3, 6: 3 };
+// Renaissance three, Industrial four, Modern and Information four and
+// skyscrapers.
+const DRESS_ERA: Record<EraIndex, DressEra> = { 0: 0, 1: 1, 2: 1, 3: 2, 4: 3, 5: 4, 6: 4 };
 const dressEraOf = (e: EraIndex): DressEra => DRESS_ERA[e];
 
 // Roofs follow the era and the climate: thatch in the Ancient era and small

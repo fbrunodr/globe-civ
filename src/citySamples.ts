@@ -176,7 +176,7 @@ const fillPool = () => {
 };
 function sample(i: number): Sample {
   const r = mulberry32(sheet * 100003 + i * 7919);
-  const era = filters.era === 'any' ? pick(r, [0, 1, 2, 3] as const) : filters.era;
+  const era = filters.era === 'any' ? pick(r, [0, 1, 2, 3, 4] as const) : filters.era;
   const nw = filters.wonders === 'none' ? 0 : filters.wonders === 'few' ? 1 + Math.floor(r() * 3) : filters.wonders === 'many' ? 4 + Math.floor(r() * (MAX_WONDERS - 3)) : (r() < 0.45 ? 0 : 1 + Math.floor(r() * r() * MAX_WONDERS));
   // (Wonders standing beside their city, on the sea or flat land, are not in it.)
   const kinds = SITE_MODELS.filter((m) => m !== 'scaffold' && !wonderBeside(m)), start = Math.floor(r() * kinds.length);
@@ -210,7 +210,7 @@ const options = <T extends string | number>(id: string, xs: readonly T[], name: 
   el.addEventListener('change', () => { set(el.value === 'any' ? 'any' : (xs.find((x) => String(x) === el.value) as T)); build(); el.blur(); });
 };
 options('fCiv', ARCH_CIVS, (c) => c, (v) => { filters.civ = v; });
-options('fEra', [0, 1, 2, 3] as const, (e) => DRESS_ERA_NAME[e]!, (v) => { filters.era = v; });
+options('fEra', [0, 1, 2, 3, 4] as const, (e) => DRESS_ERA_NAME[e]!, (v) => { filters.era = v; });
 options('fGround', GROUNDS, (g) => g, (v) => { filters.ground = v; });
 options('fWonders', ['none', 'few', 'many'] as const, (w) => ({ none: 'none', few: '1–3', many: '4–10' })[w], (v) => { filters.wonders = v; });
 options('fWalls', ['yes', 'no'] as const, (w) => w, (v) => { filters.walls = v; });

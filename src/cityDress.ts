@@ -74,20 +74,21 @@ function wallRound(p: Painting): Pt[] | null {
 }
 // The eras a city is dressed for, the game's seven in four: Ancient,
 // Classical and Medieval, Renaissance and Industrial, Modern and Information
-// (cityProps.ts DRESS_ERA). Each builds a floor higher than the last.
-export type DressEra = 0 | 1 | 2 | 3;
-export const DRESS_ERA_NAME: readonly string[] = ['Ancient', 'Classical–Medieval', 'Renaissance–Industrial', 'Modern–Information'];
+// (cityProps.ts DRESS_ERA). Each builds a floor higher than the last, but
+// the Modern era, which raises skyscrapers over the Industrial's four floors.
+export type DressEra = 0 | 1 | 2 | 3 | 4;
+export const DRESS_ERA_NAME: readonly string[] = ['Ancient', 'Classical–Medieval', 'Renaissance', 'Industrial', 'Modern–Information'];
 // Roads by era: dirt, paving, asphalt.
-const ROAD_RGB: Record<DressEra, RGB> = { 0: [0.55, 0.49, 0.39], 1: [0.58, 0.57, 0.54], 2: [0.58, 0.57, 0.54], 3: [0.3, 0.3, 0.31] };
+const ROAD_RGB: Record<DressEra, RGB> = { 0: [0.55, 0.49, 0.39], 1: [0.58, 0.57, 0.54], 2: [0.58, 0.57, 0.54], 3: [0.58, 0.57, 0.54], 4: [0.3, 0.3, 0.31] };
 // Skyscrapers: one per this many citizens, from the Modern era (none
 // before) and from this size (none in a smaller city).
 const SKYSCRAPER_PER = 3;
 const SKYSCRAPER_FROM = 10;
 
 // The heights each era builds (floorsOf below; the Buildings page shows them).
-export const ERA_HEIGHTS: Record<DressEra, readonly Floors[]> = { 0: [1], 1: [1, 2], 2: [1, 2, 3], 3: [2, 3, 4, 12] };
+export const ERA_HEIGHTS: Record<DressEra, readonly Floors[]> = { 0: [1], 1: [1, 2], 2: [1, 2, 3], 3: [2, 3, 4], 4: [2, 3, 4, 12] };
 // The first era that builds a height.
-export const firstEra = (f: Floors): DressEra => ([0, 1, 2, 3] as const).find((e) => ERA_HEIGHTS[e].includes(f)) ?? 3;
+export const firstEra = (f: Floors): DressEra => ([0, 1, 2, 3, 4] as const).find((e) => ERA_HEIGHTS[e].includes(f)) ?? 4;
 // The house model for a painted rectangle (front × depth, units): the
 // footprint of whole cells that covers it (UNITS_PER_CELL units a cell),
 // squeezed to it across its floor plan where it falls short (by a sixth at most).
@@ -111,9 +112,9 @@ const halfExtents = (k: LotModelKind): readonly [number, number] => {
 
 // How many of a city's n buildings stand at each height, by its era and
 // size (`tall`: a share that grows with the city): Classical–Medieval, the
-// tall share two floors, the rest one; Renaissance–Industrial, half of it
-// three floors, the rest of it and a fifth more two, the rest one;
-// Modern–Information, half of it four, the rest of it three, the rest two.
+// tall share two floors, the rest one; Renaissance, half of it three
+// floors, the rest of it and a fifth more two, the rest one; Industrial
+// and on, half of it four, the rest of it three, the rest two.
 export function heightsOf(era: DressEra, pop: number, n: number): Record<Height, number> {
   const tall = Math.min(0.8, Math.max(0.15, pop / 20));
   // (Shares, tallest first, each the share at that height or taller.)
@@ -130,7 +131,7 @@ const MAX_BUILDINGS = 50;
 export function dressCity(c: CityLook): DressedCity {
   const wonders = c.wonders.slice(0, MAX_WONDERS);
   const total = Math.min(MAX_BUILDINGS, Math.round(4 + 3 * c.pop));
-  const skyscrapers = c.era >= 3 && c.pop >= SKYSCRAPER_FROM ? Math.min(total, Math.floor(c.pop / SKYSCRAPER_PER)) : 0;
+  const skyscrapers = c.era >= 4 && c.pop >= SKYSCRAPER_FROM ? Math.min(total, Math.floor(c.pop / SKYSCRAPER_PER)) : 0;
   // The town on its land (`free`: its tile's painted land, padded), its
   // buildings' heights decided up front (heightsOf), then its walls round it.
   const painting = paintCity({ wonders: wonders.length, skyscrapers, buildings: heightsOf(c.era, c.pop, total - skyscrapers), seed: c.seed, free: c.free });

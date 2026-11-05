@@ -17,7 +17,7 @@ const CASES: PaintInput[] = [];
 for (let seed = 1; seed <= 24; seed++) {
   const wonders = seed % (MAX_WONDERS + 1), pop = 1 + ((seed * 7) % 22);
   const total = Math.round(4 + 3 * pop), skyscrapers = Math.floor(pop / 4);
-  const buildings = heightsOf((seed % 4) as 0 | 1 | 2 | 3, pop, total - skyscrapers);
+  const buildings = heightsOf((seed % 5) as 0 | 1 | 2 | 3 | 4, pop, total - skyscrapers);
   for (const free of [open, river, lake]) CASES.push({ wonders, skyscrapers, buildings, seed, free });
 }
 const paint = CASES.map((c) => ({ c, p: paintCity(c) }));
@@ -102,7 +102,7 @@ describe('CP1: buildings', () => {
     expect(nearer / pairs).toBeGreaterThan(0.75);
   });
   it('heightsOf shares out every building', () => {
-    for (const era of [0, 1, 2, 3] as const) for (const pop of [1, 5, 12, 25]) for (const n of [4, 19, 50]) expect(Object.values(heightsOf(era, pop, n)).reduce((a, k) => a + k, 0)).toBe(n);
+    for (const era of [0, 1, 2, 3, 4] as const) for (const pop of [1, 5, 12, 25]) for (const n of [4, 19, 50]) expect(Object.values(heightsOf(era, pop, n)).reduce((a, k) => a + k, 0)).toBe(n);
   });
   it('nothing stands on water; a city on open land gets every building asked for', () => {
     for (const { c, p } of paint) {

@@ -68,6 +68,8 @@ const PROP_CHUNKS = 48;
 const FAR_PX = 16;
 // A town's buildings go far this much farther off than the trees (they stand taller).
 const HOUSE_FAR = 1.6;
+// Before the industrial age, the share of a chimney's puffs that show (a fire lit now and then).
+const PREINDUSTRIAL_SMOKE = 0.1;
 // What lies on the ground is drawn before what stands on it (the opaque
 // pass, by renderOrder): after the sky (-10, sky.ts: drawn first, no depth
 // test), the ground and the roads over it, then everything else (0).
@@ -1468,7 +1470,8 @@ export class GlobeRenderer {
         for (const b of this.cityProps.place(t)) {
           if (!isHouseKind(b.kind)) continue;
           const works = parseHouseKind(b.kind).variant === WORKS_VARIANT;
-          for (const [x, y, z] of houseSmoke(b.kind)) out.push({ pos: p.set(x, y, z).applyMatrix4(b.matrix).clone(), kind: works && industrial ? 'factory' : 'chimney' });
+          // (Before the industrial age, a puff now and then: PREINDUSTRIAL_SMOKE.)
+          for (const [x, y, z] of houseSmoke(b.kind)) out.push({ pos: p.set(x, y, z).applyMatrix4(b.matrix).clone(), kind: works && industrial ? 'factory' : 'chimney', rate: industrial ? 1 : PREINDUSTRIAL_SMOKE });
         }
       }
     }
