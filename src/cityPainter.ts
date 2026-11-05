@@ -90,7 +90,7 @@ export interface PaintInput {
 // is pulled toward the middle where it goes (paintCity).
 type Pick = 'wonder' | 'skyscraper' | Height;
 const PICKS: readonly Pick[] = ['wonder', 'skyscraper', ...HEIGHTS];
-const WEIGHT: Record<Pick, number> = { wonder: 7, skyscraper: 5, 4: 4, 3: 3, 2: 2, 1: 1 };
+const WEIGHT: Record<Pick, number> = { wonder: 32, skyscraper: 16, 4: 8, 3: 4, 2: 2, 1: 1 };
 const PULL: Record<Kind, number> = { wonder: 1, skyscraper: 3, building: 1 };
 const kindOf = (k: Pick): Kind => (typeof k === 'number' ? 'building' : k);
 // Gaps in a town this narrow or less (units, each side) are paved over.

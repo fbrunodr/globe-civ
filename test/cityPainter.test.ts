@@ -86,16 +86,20 @@ describe('CP1: buildings', () => {
     const mean = (xs: number[]) => xs.reduce((a, x) => a + x, 0) / xs.length;
     expect(mean(share.skyscraper)).toBeLessThan(mean(share.building) - 0.05);
   });
-  it('every height asked for is built (on open land), the taller nearer the middle, over all cities', () => {
-    const at: Record<number, number[]> = { 1: [], 2: [], 3: [], 4: [] };
+  // (Within each city: across cities a height is the tallest in one era and
+  // the lowest in another.)
+  it('every height asked for is built (on open land); in a city, the taller mostly nearer the middle', () => {
+    let pairs = 0, nearer = 0;
     for (const { c, p } of paint) {
       if (c.free !== open) continue;
       for (const h of [1, 2, 3, 4] as const) expect(p.buildings.filter((b) => b.kind === 'building' && b.height === h).length, `seed ${c.seed}`).toBe(c.buildings[h]);
-      for (const b of p.buildings) if (b.kind === 'building') at[b.height]!.push(Math.hypot(b.at.x, b.at.y) / p.reach);
+      const at: Record<number, number[]> = { 1: [], 2: [], 3: [], 4: [] };
+      for (const b of p.buildings) if (b.kind === 'building') at[b.height]!.push(Math.hypot(b.at.x, b.at.y));
+      const mean = (xs: number[]) => xs.reduce((a, x) => a + x, 0) / xs.length;
+      for (const h of [2, 3, 4]) if (at[h]!.length && at[h - 1]!.length) { pairs++; if (mean(at[h]!) < mean(at[h - 1]!)) nearer++; }
     }
-    const mean = (xs: number[]) => xs.reduce((a, x) => a + x, 0) / xs.length;
-    expect(mean(at[4]!)).toBeLessThan(mean(at[3]!));
-    expect(mean(at[2]!)).toBeLessThan(mean(at[1]!));
+    expect(pairs).toBeGreaterThan(5);
+    expect(nearer / pairs).toBeGreaterThan(0.75);
   });
   it('heightsOf shares out every building', () => {
     for (const era of [0, 1, 2, 3] as const) for (const pop of [1, 5, 12, 25]) for (const n of [4, 19, 50]) expect(Object.values(heightsOf(era, pop, n)).reduce((a, k) => a + k, 0)).toBe(n);
