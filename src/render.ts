@@ -635,6 +635,31 @@ export class GlobeRenderer {
     this.updateCities();
     this.updateResources();
     this.updateUnits(sel);
+    if (!this.warmed) { this.warmed = true; this.warmUp(); }
+  }
+
+  // Everything drawn once as the world is ready (still loading), so nothing
+  // stalls the first time a stretch of the globe comes into sight: the
+  // first draw of each kind of mesh compiles its programs, uploads its
+  // buffers and builds the GPU's pipeline for it (ANGLE on Metal makes
+  // those at the first draw), seconds for a whole new region in one frame.
+  // Every mesh, hidden and out of view as much as in it, and a city wall's
+  // piece (walls have their own material) even if no city has walls yet.
+  private warmed = false;
+  private warmUp(): void {
+    const wall = new THREE.InstancedMesh(instanceGeometry(this.geometryOf('wallSegment'), 1), this.wallMat, 1);
+    wall.setColorAt(0, new THREE.Color(1, 1, 1));
+    this.scene.add(wall);
+    const hidden: THREE.Object3D[] = [], culled: THREE.Object3D[] = [];
+    this.scene.traverse((o) => {
+      if (!o.visible) { hidden.push(o); o.visible = true; }
+      if (o.frustumCulled) { culled.push(o); o.frustumCulled = false; }
+    });
+    this.renderer.render(this.scene, this.camera);
+    for (const o of hidden) o.visible = false;
+    for (const o of culled) o.frustumCulled = true;
+    this.scene.remove(wall);
+    wall.geometry.dispose();
   }
 
   // Redraw selection ring, hover ring, path preview and tile marks.
