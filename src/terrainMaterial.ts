@@ -473,54 +473,43 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
           vec4 w = paintWeights(fan, P, ids, sEdge, soft);
           vec4 m0 = vec4(0.0), m1 = vec4(0.0), m2 = vec4(0.0), m3 = vec4(0.0), m4 = vec4(0.0);
           vec4 g0 = vec4(0.0), g1 = vec4(0.0), g2 = vec4(0.0);
+          // Land blends softly into land: its color and ground material take
+          // the unsharpened weights, so biomes fade into each other over
+          // about a tile radius. (Water tiles are left out, so the seabed
+          // doesn't bleed ashore; the sharpened mix stays where water is.)
+          // Wetness and coast data come from the soft (unsharpened) weights
+          // too, so shores keep a gradient. (Each tile's rows read once, for all three.)
+          vec4 c0 = vec4(0.0), h0 = vec4(0.0), h1 = vec4(0.0), h2 = vec4(0.0);
+          float ls = 0.0, landShare = 0.0;
+          vWet = 0.0;
+          float vBeach = 0.0;
           for (int k = 0; k < 4; k++) {
-            if (w[k] > 0.001) {
+            if (w[k] > 0.001 || soft[k] > 0.001) {
               int tt = int(ids[k]);
-              m0 += w[k] * tileRow(tt, 0); m1 += w[k] * tileRow(tt, 1); m2 += w[k] * tileRow(tt, 2);
-              m3 += w[k] * tileRow(tt, 3); m4 += w[k] * tileRow(tt, 4);
-              g0 += w[k] * tileRow(tt, 10); g1 += w[k] * tileRow(tt, 11); g2 += w[k] * tileRow(tt, 12);
+              vec4 r0 = tileRow(tt, 0), r4 = tileRow(tt, 4), r10 = tileRow(tt, 10), r11 = tileRow(tt, 11), r12 = tileRow(tt, 12);
+              if (w[k] > 0.001) {
+                m0 += w[k] * r0; m1 += w[k] * tileRow(tt, 1); m2 += w[k] * tileRow(tt, 2);
+                m3 += w[k] * tileRow(tt, 3); m4 += w[k] * r4;
+                g0 += w[k] * r10; g1 += w[k] * r11; g2 += w[k] * r12;
+              }
+              float land = 1.0 - step(0.9, r0.a);
+              landShare += w[k] * land;
+              float wk = soft[k] * land;
+              if (wk > 0.001) { c0 += wk * r0; h0 += wk * r10; h1 += wk * r11; h2 += wk * r12; ls += wk; }
+              if (soft[k] > 0.001) { vWet += soft[k] * r0.a; vBeach += soft[k] * r4.a; }
             }
           }
           float wsum = w.x * step(0.001, w.x) + w.y * step(0.001, w.y) + w.z * step(0.001, w.z) + w.w * step(0.001, w.w);
           m0 /= wsum; m1 /= wsum; m2 /= wsum; m3 /= wsum; m4 /= wsum;
           g0 /= wsum; g1 /= wsum; g2 /= wsum;
-          // Land blends softly into land: its color and ground material take
-          // the unsharpened weights, so biomes fade into each other over
-          // about a tile radius. (Water tiles are left out, so the seabed
-          // doesn't bleed ashore; the sharpened mix stays where water is.)
-          {
-            vec4 c0 = vec4(0.0), h0 = vec4(0.0), h1 = vec4(0.0), h2 = vec4(0.0);
-            float ls = 0.0, landShare = 0.0;
-            for (int k = 0; k < 4; k++) {
-              if (soft[k] > 0.001 || w[k] > 0.001) {
-                int tt = int(ids[k]);
-                vec4 r0 = tileRow(tt, 0);
-                float land = 1.0 - step(0.9, r0.a);
-                landShare += w[k] * land;
-                float wk = soft[k] * land;
-                if (wk > 0.001) { c0 += wk * r0; h0 += wk * tileRow(tt, 10); h1 += wk * tileRow(tt, 11); h2 += wk * tileRow(tt, 12); ls += wk; }
-              }
-            }
-            if (ls > 0.001) {
-              float k = landShare / wsum;
-              m0.rgb = mix(m0.rgb, c0.rgb / ls, k);
-              g0 = mix(g0, h0 / ls, k); g1 = mix(g1, h1 / ls, k); g2 = mix(g2, h2 / ls, k);
-            }
+          if (ls > 0.001) {
+            float k = landShare / wsum;
+            m0.rgb = mix(m0.rgb, c0.rgb / ls, k);
+            g0 = mix(g0, h0 / ls, k); g1 = mix(g1, h1 / ls, k); g2 = mix(g2, h2 / ls, k);
           }
           gSetup(P, vObjNormal);
           vDetail = m1; vBump = m2.a;
           vec4 vRock = m3;
-          // Wetness and coast data come from the soft (unsharpened) weights, so
-          // shores keep a gradient.
-          vWet = 0.0;
-          float vBeach = 0.0;
-          for (int k = 0; k < 4; k++) {
-            if (soft[k] > 0.001) {
-              int tt = int(ids[k]);
-              vWet += soft[k] * tileRow(tt, 0).a;
-              vBeach += soft[k] * tileRow(tt, 4).a;
-            }
-          }
           // Snow: a crisp, ragged edge where the interpolated cover crosses one
           // half; it slides off steep faces (bare rock shows there).
           float steepness = 1.0 - dot(normalize(vObjNormal), normalize(P));
@@ -593,9 +582,15 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
             diffuseColor.rgb = mix(diffuseColor.rgb, m2.rgb, pm);
           }
 
-          // City ground (CITY_GLSL): urban ground and rural patterns.
+          // City ground (CITY_GLSL): urban ground and rural patterns. (Only
+          // where a town or a worked tile reaches: most of the globe has
+          // neither, and skips all of it.)
           float urban = 0.0;
-          {
+          bool townHere = false;
+          for (int k = 0; k < 4; k++) {
+            if (w[k] > 0.001 || soft[k] > 0.001) { vec4 r5 = tileRow(int(ids[k]), 5); townHere = townHere || r5.x > 0.5 || r5.z > 0.5 || r5.w > 0.5; }
+          }
+          if (townHere) {
             float uS = 0.0, cS = 0.0, quarryS = 0.0, burntS = 0.0;
             for (int k = 0; k < 4; k++) {
               if (soft[k] > 0.001) {
