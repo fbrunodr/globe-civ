@@ -442,6 +442,9 @@ export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Ve
         ${day ? `#ifdef USE_INSTANCING
           // The sun's height over this prop's horizon (the globe is centered on the origin).
           vDay = smoothstep(-0.03, 0.08, dot(normalize((modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz), uSunDir));
+        #else
+          // (Merged models, placed in the world: by where each vertex stands.)
+          vDay = smoothstep(-0.03, 0.08, dot(normalize((modelMatrix * vec4(position, 1.0)).xyz), uSunDir));
         #endif` : ''}`);
     let frag = shader.fragmentShader
       .replace('#include <common>', `#include <common>

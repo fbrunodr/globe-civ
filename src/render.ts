@@ -37,6 +37,7 @@ import { mulberry32, makePerlin } from './rng.ts';
 import { USE, WONDERS, type EraIndex } from './cities.ts';
 import { farGeometry, makeFloraDepthMaterial, makePropMaterial, makeRoamDepthMaterial, instanceGeometry } from './propMaterial.ts';
 import { GpuTimer } from './gpuTimer.ts';
+import { Billboards, type Billboard } from './billboards.ts';
 import { resourceDef } from './resources.ts';
 import { UnitView, type FightResult, type ShownUnit } from './unitView.ts';
 import { loadGroundTextures, groundUniform, GROUND_LAYER } from './groundTextures.ts';
@@ -69,6 +70,9 @@ const PROP_CHUNKS = 48;
 const FAR_PX = 16;
 // A town's buildings go far this much farther off than the trees (they stand taller).
 const HOUSE_FAR = 1.6;
+// The countryside's small models (haystacks, herds, heaps, fences) go when
+// a tree would be this many times smaller than FAR_PX: a pixel or two.
+const RURAL_GONE = 2.5;
 // A cap on the frame rate (0: none): frames evenly spaced on whole
 // refreshes (a 120 Hz screen shows each for two) look smoother than more of
 // them, unevenly (a frame of 10–14 ms held for one refresh, then two or three).
@@ -104,6 +108,7 @@ interface PropChunk {
   tiles: number[];
   meshes: Map<PropKind, THREE.InstancedMesh>;
   surface: THREE.Mesh[]; // its ground and water
+  farHouses: THREE.Mesh | null; // its houses' far models, all in one (mergeFarHouses)
 }
 
 interface PlacedProp {
@@ -280,6 +285,12 @@ export class GlobeRenderer {
   private unitView!: UnitView;
   private selUnit: Unit | null = null;
   private readonly citiesGroup = new THREE.Group();
+  // Labels drawn a kind at a time (billboards.ts): units' flags, cities' labels, resources' badges.
+  private readonly unitFlags = new Billboards(128, 128, 16, [0.026, 0.026], 5);
+  private readonly cityLabels = new Billboards(512, 96, 4, [0.13, 0.0244], 10);
+  private readonly resourceBadges = new Billboards(96, 48, 21, [0.024, 0.012], 4);
+  private cityBoards: Billboard[] = [];
+  private resourceBoards: Billboard[] = [];
   // Resource badges (resources.ts) on explored tiles, shown from play distance.
   private readonly resourcesGroup = new THREE.Group();
   private resourcesShown = -1;
@@ -307,7 +318,6 @@ export class GlobeRenderer {
   private readonly origHeight: Float32Array;
   private reshaped = new Set<number>();
   private groundKey = '';
-  private readonly textures = new Map<string, THREE.CanvasTexture>();
 
   private pointer = { x: 0, y: 0, dirty: false };
   private downAt: { x: number; y: number } | null = null;
@@ -483,7 +493,7 @@ export class GlobeRenderer {
     const golden = Math.PI * (3 - Math.sqrt(5));
     for (let k = 0; k < PROP_CHUNKS; k++) {
       const y = 1 - (2 * (k + 0.5)) / PROP_CHUNKS, rr = Math.sqrt(1 - y * y);
-      this.chunks.push({ dir: new THREE.Vector3(Math.cos(golden * k) * rr, y, Math.sin(golden * k) * rr), radius: 0, tiles: [], meshes: new Map(), surface: [] });
+      this.chunks.push({ dir: new THREE.Vector3(Math.cos(golden * k) * rr, y, Math.sin(golden * k) * rr), radius: 0, tiles: [], meshes: new Map(), surface: [], farHouses: null });
     }
     for (const tile of g.tiles) {
       let best = 0;
@@ -555,7 +565,9 @@ export class GlobeRenderer {
       },
       step: g.globe.avgEdgeAngle,
     }, (u) => this.unitFlag(u));
-    this.unitsGroup.add(this.unitView.group);
+    this.unitsGroup.add(this.unitView.group, this.unitFlags.mesh);
+    this.citiesGroup.add(this.cityLabels.mesh);
+    this.resourcesGroup.add(this.resourceBadges.mesh);
     g.onBattle = (u, t, style, result) => this.unitView.fight(u.id, t, style, performance.now() / 1000, result);
     g.onStep = (u, from, to) => this.unitView.step(u.id, from, to);
     this.citiesGroup.userData['stat'] = 'city markers';
@@ -1176,6 +1188,7 @@ export class GlobeRenderer {
           mesh.userData['hideAbove'] = isFloraKind(kind) ? HIDE_ABOVE[CATALOG[kind].layer] : Infinity;
           // (Crops hide once the camera is higher than they reach, cullProps.)
           if (crop) mesh.userData['crop'] = true;
+          if (isRuralModelKind(kind) && !cards) mesh.userData['goneAt'] = RURAL_GONE;
           // Everything casts shadows but the farms' crops (a sea of stalks
           // the eye reads as a field anyway); flora's cut to its leaves and
           // swaying with them (makeFloraDepthMaterial). Everything receives
@@ -1227,8 +1240,58 @@ export class GlobeRenderer {
           far.boundingSphere = mesh.boundingSphere;
         }
       }
+      this.mergeFarHouses(chunk);
     }
     this.updateCraters();
+  }
+
+  // A chunk's houses' far models merged into one mesh, placed (each house's
+  // matrix applied, its colours baked in): far off, a town of a hundred
+  // kinds of house is one draw, not a hundred. (Their instanced far twins
+  // stay, for the shadow map's sake and as a fallback; they aren't drawn.)
+  private mergeFarHouses(chunk: PropChunk): void {
+    if (chunk.farHouses) { this.scene.remove(chunk.farHouses); chunk.farHouses.geometry.dispose(); chunk.farHouses = null; }
+    let n = 0;
+    const parts: { geo: THREE.BufferGeometry; mesh: THREE.InstancedMesh }[] = [];
+    for (const [kind, mesh] of chunk.meshes) {
+      if (!isHouseKind(kind) || mesh.count === 0) continue;
+      const geo = houseFarGeometry(kind);
+      parts.push({ geo, mesh });
+      n += geo.getAttribute('position').count * mesh.count;
+    }
+    if (n === 0) return;
+    const pos = new Float32Array(n * 3), col = new Uint8Array(n * 4);
+    const m = new THREE.Matrix4(), v = new THREE.Vector3(), ic = new THREE.Color(), lt = new THREE.Vector3();
+    let o = 0;
+    for (const { geo, mesh } of parts) {
+      const p = geo.getAttribute('position'), c = geo.getAttribute('color'), mask = geo.getAttribute('leafMask'), shade = geo.getAttribute('leafShade');
+      const leaf = mesh.geometry.getAttribute('leafTint') as THREE.InstancedBufferAttribute;
+      for (let i = 0; i < mesh.count; i++) {
+        mesh.getMatrixAt(i, m);
+        mesh.getColorAt(i, ic);
+        lt.fromBufferAttribute(leaf, i);
+        for (let k = 0; k < p.count; k++, o++) {
+          v.fromBufferAttribute(p, k).applyMatrix4(m);
+          pos[o * 3] = v.x; pos[o * 3 + 1] = v.y; pos[o * 3 + 2] = v.z;
+          // (As the prop material colours an instance: the model's colour, its leaves tinted, times the instance's.)
+          const lm = mask ? mask.getX(k) : 0, f = 1 - (shade ? shade.getX(k) : 0);
+          col[o * 4] = Math.round(255 * Math.min(1, (c.getX(k) + (lt.x - c.getX(k)) * lm) * ic.r * f));
+          col[o * 4 + 1] = Math.round(255 * Math.min(1, (c.getY(k) + (lt.y - c.getY(k)) * lm) * ic.g * f));
+          col[o * 4 + 2] = Math.round(255 * Math.min(1, (c.getZ(k) + (lt.z - c.getZ(k)) * lm) * ic.b * f));
+          col[o * 4 + 3] = 255;
+        }
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 4, true));
+    geo.computeBoundingSphere();
+    const mesh = new THREE.Mesh(geo, this.buildingMat);
+    mesh.receiveShadow = true;
+    mesh.visible = false;
+    mesh.userData['stat'] = 'houses (far)';
+    chunk.farHouses = mesh;
+    this.scene.add(mesh);
   }
 
   // A geometry drawn whole, split into one mesh per chunk: the meshes share
@@ -1295,9 +1358,12 @@ export class GlobeRenderer {
           && (mesh.userData['crop'] !== true || dist - 1 < this.cropFar.value);
         const twin = mesh.userData['far'] as THREE.InstancedMesh | undefined;
         const far = away > farDist * ((mesh.userData['farAt'] as number | undefined) ?? 1);
-        mesh.visible = show && !(twin && far);
-        if (twin) twin.visible = show && far;
+        const gone = away > farDist * ((mesh.userData['goneAt'] as number | undefined) ?? Infinity);
+        // (Houses far off are drawn merged, chunk.farHouses.)
+        mesh.visible = show && !gone && !(twin && far);
+        if (twin) twin.visible = show && far && !(chunk.farHouses && mesh.userData['farAt'] === HOUSE_FAR);
       }
+      if (chunk.farHouses) chunk.farHouses.visible = this.view === 'normal' && seen && away > farDist * HOUSE_FAR;
     }
   }
 
@@ -1915,21 +1981,6 @@ export class GlobeRenderer {
 
   // ---------- units & cities ----------
 
-  private texture(key: string, w: number, h: number, draw: (ctx: CanvasRenderingContext2D) => void): THREE.CanvasTexture {
-    let tex = this.textures.get(key);
-    if (!tex) {
-      const canvas = document.createElement('canvas');
-      canvas.width = w;
-      canvas.height = h;
-      draw(canvas.getContext('2d')!);
-      tex = new THREE.CanvasTexture(canvas);
-      tex.colorSpace = THREE.SRGBColorSpace;
-      tex.anisotropy = 4;
-      this.textures.set(key, tex);
-    }
-    return tex;
-  }
-
   // A fight shown without the game's rules (dev views): a unit attacking a tile.
   showBattle(unit: number, tile: number, style: AttackStyle, result?: FightResult): void { this.unitView.fight(unit, tile, style, performance.now() / 1000, result); }
 
@@ -1951,17 +2002,13 @@ export class GlobeRenderer {
 
   // A unit's flag: its icon and health in its owner's colour, a fixed size
   // on screen.
-  private unitFlag(s: ShownUnit): THREE.Sprite {
+  private unitFlag(s: ShownUnit): Billboard {
     const g = this.game, u = g.units.find((x) => x.id === s.id);
     const icon = unitDef(s.type).icon, selected = u !== undefined && u === this.selUnit, fortified = u?.fortified ?? false;
     // (A commander's flag counts it and its army.)
     const count = u?.type === 'commander' ? 1 + g.armyOf(u).length : 1;
     const key = `u|${s.color}|${icon}|${count}|${Math.ceil(s.hp / 10)}|${selected}|${fortified}`;
-    const tex = this.texture(key, 128, 128, (ctx) => drawUnitIcon(ctx, s.color, icon, count, s.hp, selected, fortified));
-    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, sizeAttenuation: false }));
-    sprite.scale.setScalar(0.026);
-    sprite.renderOrder = 5;
-    return sprite;
+    return this.unitFlags.add(key, (ctx) => drawUnitIcon(ctx, s.color, icon, count, s.hp, selected, fortified));
   }
 
   // A badge over each explored tile's resource the player knows of (a
@@ -1976,29 +2023,25 @@ export class GlobeRenderer {
     // (More known: their models too.)
     if (this.resourcesShown >= 0) this.updateProps();
     this.resourcesShown = n;
-    for (const o of this.resourcesGroup.children) if (o instanceof THREE.Sprite) o.material.dispose();
-    this.resourcesGroup.clear();
+    for (const b of this.resourceBoards) b.dispose();
+    this.resourceBoards = [];
     for (let t = 0; t < g.N; t++) {
       const r = g.explored[t] ? g.resourceFor(t, HUMAN) : null;
       if (!r) continue;
       const d = resourceDef(r);
-      const tex = this.texture(`res|${r}`, 96, 48, (ctx) => drawResourceBadge(ctx, d.abbr, RESOURCE_COLORS[d.kind]));
-      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, sizeAttenuation: false, depthTest: true }));
-      sprite.scale.set(0.024, 0.012, 1);
+      const badge = this.resourceBadges.add(`res|${r}`, (ctx) => drawResourceBadge(ctx, d.abbr, RESOURCE_COLORS[d.kind]));
       // (Off the center, toward a corner: units and cities stand in the middle.)
       const tile = g.tiles[t];
       const dir = tile.center.clone().lerp(g.globe.triCenters[tile.corners[2 % tile.corners.length]!]!, 0.45).normalize();
-      sprite.position.copy(dir).multiplyScalar(this.terrain.centerRadius[t] + 0.006 * this.scale);
-      sprite.renderOrder = 4;
-      sprite.userData['tile'] = t;
-      this.resourcesGroup.add(sprite);
+      badge.position.copy(dir).multiplyScalar(this.terrain.centerRadius[t] + 0.006 * this.scale);
+      this.resourceBoards.push(badge);
     }
   }
 
   private updateCities(): void {
     const g = this.game;
-    for (const o of this.citiesGroup.children) if (o instanceof THREE.Sprite) o.material.dispose();
-    this.citiesGroup.clear();
+    for (const b of this.cityBoards) b.dispose();
+    this.cityBoards = [];
     const s = this.scale;
     for (const city of g.cities) {
       if (!g.explored[city.tile]) continue;
@@ -2007,12 +2050,9 @@ export class GlobeRenderer {
       const label = `${city.pop}  ${city.name}`;
       const hp = Math.round((10 * city.hp) / g.cityMaxHp(city)) / 10;
       const key = `c|${color}|${label}|${hp}`;
-      const tex = this.texture(key, 512, 96, (ctx) => drawCityLabel(ctx, color, label, hp));
-      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, sizeAttenuation: false }));
-      sprite.scale.set(0.13, 0.0244, 1);
-      sprite.position.copy(tile.center).multiplyScalar(this.terrain.centerRadius[city.tile] + 0.03 * s);
-      sprite.renderOrder = 10;
-      this.citiesGroup.add(sprite);
+      const board = this.cityLabels.add(key, (ctx) => drawCityLabel(ctx, color, label, hp));
+      board.position.copy(tile.center).multiplyScalar(this.terrain.centerRadius[city.tile] + 0.03 * s);
+      this.cityBoards.push(board);
     }
   }
 
@@ -2159,6 +2199,8 @@ export class GlobeRenderer {
     this.unitView.update(now / 1000, this.camera, this.renderer.domElement.height / (2 * Math.tan((this.camera.fov * Math.PI) / 360)));
     this.terrainMat.setTime(now / 1000);
     this.floraTime.value = now / 1000;
+    this.camera.updateMatrixWorld();
+    for (const b of [this.unitFlags, this.cityLabels, this.resourceBadges]) b.update(this.camera);
     this.smoke.update(now / 1000, this.renderer.domElement.height / (2 * Math.tan((this.camera.fov * Math.PI) / 360)));
     this.smoke.points.visible = this.view === 'normal';
     this.waterMat.setTime(now / 1000);

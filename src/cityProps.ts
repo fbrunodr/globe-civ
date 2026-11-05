@@ -292,8 +292,9 @@ export class CityProps {
     const e2 = P.clone().cross(e1);
     const dirAt = (x: number, y: number) => P.clone().addScaledVector(e1, x * k).addScaledVector(e2, y * k).normalize();
     let ox = 0, oy = 0, found = false;
-    for (const step of [0.045, 0.008, 0.0015, 0.0003]) {
-      const N = 8, id: (number | undefined)[][] = [];
+    // (The first grid wide; the finer ones need only reach past the cell found before.)
+    for (const [step, N] of [[0.045, 8], [0.008, 4], [0.0015, 4], [0.0003, 4]] as const) {
+      const id: (number | undefined)[][] = [];
       for (let a = -N; a <= N; a++) { const row: (number | undefined)[] = []; for (let b = -N; b <= N; b++) row.push(this.sampleDir(dirAt(ox + a * step, oy + b * step)).owner); id.push(row); }
       let best: [number, number] | null = null, bd = Infinity;
       for (let a = 0; a < 2 * N; a++) for (let b = 0; b < 2 * N; b++) {
@@ -428,8 +429,7 @@ export class CityProps {
     // Nothing may stand on the roads between cities: every building's
     // footprint is checked (shrunk a little if it touches one, left out if
     // it still does). Roads run up to the city's diorama.
-    const roads = this.roadLines().map((pts) => ({ points: pts, halfWidth: pts.map(() => ROAD_HALF_WIDTH * D), paved: false }));
-    const clear = new StreetIndex(roads, D);
+    const clear = this.roadIndex();
     // Nor at the water: a land building's footprint, and a margin round it,
     // stays dry (no house touching a river or the sea). Walls may follow a bank.
     const dryAround = (b: PlacedBuilding) => {
@@ -535,35 +535,37 @@ export class CityProps {
       const r0 = g.resourceFor(t, city.owner), res = r0 && RESOURCE_IMPROVEMENT[r0] === imp ? r0 : null;
       const { toDir: toT } = onTile(g, t);
       const ko = keep.get(t);
-      const clearHere = new StreetIndex([...streets, ...roads], D);
+      // (The farm's painting samples its points more than once: what the ground is at each, remembered.)
+      const seen = new Map<string, CitySpot>();
+      const spotAt = (p: Pt2): CitySpot => { const key = `${p.x},${p.y}`; let s = seen.get(key); if (!s) { s = this.sampleDir(toT(p)); seen.set(key, s); } return s; };
       const inp: RuralInput = { imp, stage, res, region: cropRegion(imp, g.biome[t]!, g.feature[t] ?? null, g.map.temperature[t]!, res), axis: farmAxis(t), salt: t, seed: mix(t, 0x51),
         yard: (i) => areaLook(imp, g.biome[t]!, g.feature[t] ?? null, g.map.temperature[t]!, i, t) };
       const site: RuralSite = {
         free: (p) => (!ko || len2(sub2(p, ko.p)) > ko.r) && clear.free([toT(p)]),
         // (Water this near under the ground counts as water: a river's banks, under its surface as drawn.)
-        depth: (p) => { const smp = this.sampleDir(toT(p)); return (smp.water - smp.ground - DRY) / D; },
+        depth: (p) => { const smp = spotAt(p); return (smp.water - smp.ground - DRY) / D; },
         wade: (0.0004 * this.scale) / D,
         // (The farm goes where the land is painted as this tile's, a little in
         // from its border (FIELD_PAD), off a beach, and on the tile's side of
         // a river: no water between it and the tile's middle.)
         ours: (p) => {
           if (imp !== 'pasture' && this.farmShape(t).some((sd) => !sd.water && sd.nx * p.x + sd.ny * p.y - sd.c < FARM_BAND)) return false;
-          const s = this.sampleDir(toT(p));
+          const s = spotAt(p);
           if (s.owner !== undefined && (s.owner !== t || (s.own ?? 1) < FIELD_PAD)) return false;
           if ((s.coast ?? 9) < BEACH) return false;
-          if ((s.bank ?? 0) > 0.02) for (let k = 1; k < 8; k++) { const q = this.sampleDir(toT({ x: (p.x * k) / 8, y: (p.y * k) / 8 })); if (q.water - q.ground > 0.0003) return false; }
+          if ((s.bank ?? 0) > 0.02) for (let k = 1; k < 8; k++) { const q = spotAt({ x: (p.x * k) / 8, y: (p.y * k) / 8 }); if (q.water - q.ground > 0.0003) return false; }
           return true;
         },
         // (A fence keeps INSET in from that, and from the water.)
         inner: imp === 'pasture' ? innerMask(toT, (d) => this.sampleDir(d), (s) => (s.owner === undefined || s.owner === t) && s.water - s.ground <= DRY) : () => false,
         // (A paddy's water is its own pools: not a river running by, nor the sea.)
-        pool: (p) => { const s = this.sampleDir(toT(p)); return (s.bank ?? 0) < 0.05 && (s.coast ?? 1) > 0.3; },
+        pool: (p) => { const s = spotAt(p); return (s.bank ?? 0) < 0.05 && (s.coast ?? 1) > 0.3; },
         field: imp === 'pasture' ? this.farmRect(t) : null,
       };
       const farm = planFarm(inp, site);
       if (!farm) continue;
       const settleHere = (make: (shrink: number) => PlacedBuilding[]): PlacedBuilding[] => {
-        for (const shrink of [1, 0.85]) { const bs = make(shrink); if (clearHere.free(this.footprint(bs[0]!)) && dryAround(bs[0]!)) return bs; }
+        for (const shrink of [1, 0.85]) { const bs = make(shrink); if (clear.free(this.footprint(bs[0]!)) && dryAround(bs[0]!)) return bs; }
         return [];
       };
       // One model at p, facing `heading` (the hex's frame), never on a road crossing the farm.
@@ -573,7 +575,7 @@ export class CityProps {
         const q = new THREE.Quaternion().setFromUnitVectors(UP, dir).multiply(new THREE.Quaternion().setFromAxisAngle(UP, yaw));
         const pos = dir.clone().multiplyScalar(1 + smp.ground - 0.00005 * this.scale);
         const b: PlacedBuilding = { kind: ruralModelKind(m), matrix: new THREE.Matrix4().compose(pos, q, new THREE.Vector3(size[0] * D, size[1] * D, size[2] * D)), color: new THREE.Color(shade, shade, shade), leaf: new THREE.Color(leaf) };
-        if (!clearHere.free(this.footprint(b))) return false;
+        if (!clear.free(this.footprint(b))) return false;
         put(t, b);
         return true;
       };
@@ -842,6 +844,16 @@ export class CityProps {
     }
     return this.roads;
   }
+  // The roads between cities, indexed (shared by every city's layout).
+  private roadIdx: { key: string; idx: StreetIndex } | null = null;
+  private roadIndex(): StreetIndex {
+    const roads = this.roadLines();
+    if (this.roadIdx?.key !== this.roadsKey) {
+      const D = this.game.globe.avgEdgeAngle;
+      this.roadIdx = { key: this.roadsKey, idx: new StreetIndex(roads.map((pts) => ({ points: pts, halfWidth: pts.map(() => ROAD_HALF_WIDTH * D), paved: false })), D) };
+    }
+    return this.roadIdx.idx;
+  }
   private onRoad(dir: THREE.Vector3, kind: BuildingKind): boolean {
     const g = this.game;
     this.roadLines();
@@ -1042,43 +1054,45 @@ export class CityProps {
 // buildings on either.
 // Streets in buckets, to ask quickly whether points are clear of all of them.
 class StreetIndex {
-  private readonly cells = new Map<string, { a: THREE.Vector3; b: THREE.Vector3; wa: number; wb: number }[]>();
+  // (Cells keyed by their integer coordinates packed in one number; segments
+  // as flat numbers: a, b, half widths.)
+  private readonly cells = new Map<number, number[]>();
   private readonly size: number;
   constructor(streets: readonly Street[], D: number) {
     this.size = 0.12 * D;
+    const mid = new THREE.Vector3();
     for (const s of streets) {
       for (let i = 0; i + 1 < s.points.length; i++) {
-        const seg = { a: s.points[i]!, b: s.points[i + 1]!, wa: s.halfWidth[i]!, wb: s.halfWidth[i + 1]! };
-        const keys = new Set([this.key(seg.a), this.key(seg.b), this.key(seg.a.clone().add(seg.b).normalize())]);
-        for (const k of keys) { const l = this.cells.get(k); if (l) l.push(seg); else this.cells.set(k, [seg]); }
+        const a = s.points[i]!, b = s.points[i + 1]!;
+        const seg = [a.x, a.y, a.z, b.x, b.y, b.z, s.halfWidth[i]!, s.halfWidth[i + 1]!];
+        const keys = new Set([this.key(a.x, a.y, a.z), this.key(b.x, b.y, b.z), this.key(...mid.copy(a).add(b).normalize().toArray())]);
+        for (const k of keys) { const l = this.cells.get(k); if (l) l.push(...seg); else this.cells.set(k, seg.slice()); }
       }
     }
   }
-  private key(d: THREE.Vector3, dx = 0, dy = 0, dz = 0): string {
-    return `${Math.floor(d.x / this.size) + dx},${Math.floor(d.y / this.size) + dy},${Math.floor(d.z / this.size) + dz}`;
+  private key(x: number, y: number, z: number): number {
+    // (Cells within ±512 of the origin on each axis: the globe's radius is 1, a cell at least 0.12 D.)
+    return ((Math.floor(x / this.size) + 512) * 1024 + Math.floor(y / this.size) + 512) * 1024 + Math.floor(z / this.size) + 512;
   }
   // Whether p is clear of every street by `gap` beyond its half width.
   clear(p: THREE.Vector3, gap: number): boolean {
+    const cx = Math.floor(p.x / this.size), cy = Math.floor(p.y / this.size), cz = Math.floor(p.z / this.size);
     for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
-      for (const s of this.cells.get(this.key(p, dx, dy, dz)) ?? []) {
-        const ab = s.b.clone().sub(s.a), l2 = ab.lengthSq();
-        const u = l2 > 0 ? Math.max(0, Math.min(1, p.clone().sub(s.a).dot(ab) / l2)) : 0;
-        if (s.a.clone().addScaledVector(ab, u).distanceTo(p) < s.wa + (s.wb - s.wa) * u + gap) return false;
+      const l = this.cells.get(((cx + dx + 512) * 1024 + cy + dy + 512) * 1024 + cz + dz + 512);
+      if (!l) continue;
+      for (let i = 0; i < l.length; i += 8) {
+        const ax = l[i]!, ay = l[i + 1]!, az = l[i + 2]!, bx = l[i + 3]! - ax, by = l[i + 4]! - ay, bz = l[i + 5]! - az;
+        const px = p.x - ax, py = p.y - ay, pz = p.z - az, l2 = bx * bx + by * by + bz * bz;
+        const u = l2 > 0 ? Math.max(0, Math.min(1, (px * bx + py * by + pz * bz) / l2)) : 0;
+        const ex = px - bx * u, ey = py - by * u, ez = pz - bz * u, r = l[i + 6]! + (l[i + 7]! - l[i + 6]!) * u + gap;
+        if (ex * ex + ey * ey + ez * ez < r * r) return false;
       }
     }
     return true;
   }
   // Every point clear of every street (beyond its half width).
   free(pts: readonly THREE.Vector3[]): boolean {
-    for (const p of pts) {
-      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
-        for (const s of this.cells.get(this.key(p, dx, dy, dz)) ?? []) {
-          const ab = s.b.clone().sub(s.a), l2 = ab.lengthSq();
-          const u = l2 > 0 ? Math.max(0, Math.min(1, p.clone().sub(s.a).dot(ab) / l2)) : 0;
-          if (s.a.clone().addScaledVector(ab, u).distanceTo(p) < s.wa + (s.wb - s.wa) * u) return false;
-        }
-      }
-    }
+    for (const p of pts) if (!this.clear(p, 0)) return false;
     return true;
   }
 }

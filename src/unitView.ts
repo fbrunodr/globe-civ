@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { Billboard } from './billboards.ts';
 import type { ArchCiv } from './architecture.ts';
 import { unitDef, domainOf, type UnitKey } from './rules.ts';
 import { firesAtClose, returnFire, type AttackStyle, type Projectile } from './unitClasses.ts';
@@ -61,7 +62,11 @@ const FLAG_LIFT = 1.7;
 // A figure stands on dry ground: the water there no deeper than this (world units).
 const DRY = 0.00005;
 // The figures are drawn while at least this many pixels tall; in their finer bodies (unitModels.ts unitModel `fine`) while this many.
-const MIN_PX = 3, NEAR_PX = 40;
+const MIN_PX = 3, NEAR_PX = 40, FAR_PX = 14;
+// In sight: over the horizon (its direction · the camera's position, the
+// globe's radius 1, less a margin for the hills), within this many figure
+// heights of the screen.
+const HORIZON = 0.95, SEEN_REACH = 6;
 // A fight: how long (seconds; a melee longer, durOf), and how far a melee
 // unit charges (a share of the way to the enemy's tile).
 export const FIGHT = 4.2;
@@ -208,6 +213,8 @@ interface Figure {
   // `goal`), and how far from its foe that is (world units).
   foeFig: Figure | null; reach: THREE.Vector3 | null; gap: number;
   held: boolean; // its place set by the fight (stepped up to a foe), not by its formation
+  keys?: readonly [string, string]; // its model's (UnitView.key), seen far and near
+  hairKey?: string;
 }
 // (`enemy`: the figures of the unit it is at grips with, in a melee.)
 // (`reach`: how far it goes in, times its play's charge: further at a tile no one defends, into a city's streets.)
@@ -244,9 +251,11 @@ interface Shown {
   fight: Fight | null;
   after: Fight | null;
   gone: boolean;               // no longer in the game (shown until its fight is over)
-  flag: THREE.Sprite;
+  flag: Billboard;
   k: number;                   // its place among the units on its tile (0: the middle)
   near: boolean;               // seen close: its people in their finer bodies
+  far: boolean;                // seen too small to make out its people's poses (and not busy)
+  flagAt: THREE.Vector3;       // where its flag was last stood (it is moved when the unit is)
   seen: boolean;
 }
 
@@ -447,8 +456,11 @@ export class UnitView {
   private readonly volleys: Volleys;
   readonly size: number; // a figure's height, world units
   private now = 0; // the time of the frame drawn last (seconds)
+  private readonly frustum = new THREE.Frustum();
+  private readonly projView = new THREE.Matrix4();
+  private readonly sphere = new THREE.Sphere();
 
-  constructor(private readonly env: UnitViewEnv, private readonly makeFlag: (u: ShownUnit) => THREE.Sprite) {
+  constructor(private readonly env: UnitViewEnv, private readonly makeFlag: (u: ShownUnit) => Billboard) {
     this.size = FIGURE * env.step;
     this.material = makeUnitMaterial(this.time);
     this.shadows = this.makeShadows(256);
@@ -488,10 +500,8 @@ export class UnitView {
         else if (dug && !s.march && !s.fight) this.layout(s);
       }
       // (Its flag anew: it shows the unit's health and whether it is selected.)
-      this.group.remove(s.flag);
-      s.flag.material.dispose();
+      s.flag.dispose();
       s.flag = this.makeFlag(u);
-      this.group.add(s.flag);
       s.seen = true;
     }
     for (const s of [...this.shown.values()]) {
@@ -617,6 +627,7 @@ export class UnitView {
     const dt = Math.max(0, Math.min(0.1, now - this.now));
     this.time.value = now;
     this.now = now;
+    this.frustum.setFromProjectionMatrix(this.projView.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
     const drawn: Shown[] = [], need = new Map<string, number>();
     let figures = 0;
     for (const s of [...this.shown.values()]) {
@@ -631,10 +642,20 @@ export class UnitView {
         } else this.layout(s);
       }
       if (!this.shown.has(s.unit.id)) continue;
-      this.stride(s, now, dt);
-      const ground = this.env.ground(s.dir);
-      s.flag.position.copy(s.dir).multiplyScalar(1 + Math.max(ground.ground, ground.water) + FLAG_LIFT * this.size);
-      const px = (this.size * pxPerUnit) / camera.position.distanceTo(s.flag.position);
+      // (The ground under its flag sampled again only when it has moved.)
+      if (!s.flagAt.equals(s.dir)) {
+        const ground = this.env.ground(s.dir);
+        s.flagAt.copy(s.dir);
+        s.flag.position.copy(s.dir).multiplyScalar(1 + Math.max(ground.ground, ground.water) + FLAG_LIFT * this.size);
+      }
+      // (Out of sight, behind the globe or off the screen: neither drawn nor
+      // moved, unless it is on its way somewhere or fighting. So too one
+      // seen too small to make out (FAR_PX): its figures stand as they are.)
+      const seen = s.dir.dot(camera.position) > HORIZON && this.frustum.intersectsSphere(this.sphere.set(s.flag.position, SEEN_REACH * this.size));
+      s.flag.visible = seen && !s.gone;
+      const px = seen ? (this.size * pxPerUnit) / camera.position.distanceTo(s.flag.position) : 0;
+      s.far = px < FAR_PX && !s.fight && !s.after && !s.march;
+      if (!s.far && (seen || s.fight || s.march)) this.stride(s, now, dt);
       if (px < MIN_PX) continue;
       // (Close enough to be seen in detail: its people in their finer bodies.)
       s.near = px >= NEAR_PX;
@@ -642,7 +663,7 @@ export class UnitView {
       for (const f of s.figures) {
         const key = this.key(s, f);
         need.set(key, (need.get(key) ?? 0) + 1);
-        if (f.hair >= 0) need.set(`hair|${f.hair}`, (need.get(`hair|${f.hair}`) ?? 0) + 1);
+        if (f.hair >= 0) { const hk = f.hairKey ??= `hair|${f.hair}`; need.set(hk, (need.get(hk) ?? 0) + 1); }
       }
       figures += s.figures.length;
     }
@@ -688,6 +709,9 @@ export class UnitView {
           const fold = deathBend(now - f.fall, beat);
           legs = deathLegs(now - f.fall, horse); arm = 3 + fold.arm; bends = horse ? FLAT : [fold.bend, 0, fold.crouch, 0.6, fold.aim, 1, 0.4, 0, 0];
           if (!horse) at = stepped.copy(f.pos).addScaledVector(f.up, -dropOf(fold.crouch) * this.size);
+        } else if (body && s.far) {
+          // (Too small to make out: standing as it would, no breath nor fidget.)
+          legs = walk; arm = strike;
         } else if (body) {
           const p = poseOf(this.cue(s, f, now), now, f.phase, beat, walk, horse, whirls(s.unit.type), s.unit.fortified === true && !s.march, bowman(s.unit.type));
           turned.multiply(poseTurn(tip, p));
@@ -706,7 +730,7 @@ export class UnitView {
           if (now > f.fall) f.smoke = this.volleys.burn(at, now, f.smoke, wreck === 'sea', f.phase);
         }
         put(this.key(s, f), at, color, f, legs, arm, bends, char);
-        if (f.hair >= 0) put(`hair|${f.hair}`, head.copy(at).add(lift3.set(0, lift * this.size, back * this.size).applyQuaternion(turned)), f.hairColor, f, legs, 0, bends);
+        if (f.hair >= 0) put(f.hairKey ??= `hair|${f.hair}`, head.copy(at).add(lift3.set(0, lift * this.size, back * this.size).applyQuaternion(turned)), f.hairColor, f, legs, 0, bends);
         // Its shadow: a soft disc on the ground under it (longer under a horse).
         // (On the ground under it, however high it flies: smaller the higher.)
         const high = 1 / (1 + 0.5 * s.alt);
@@ -737,15 +761,12 @@ export class UnitView {
     }
     for (const [key, mesh] of this.meshes) {
       mesh.count = counts.get(key) ?? 0;
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-      mesh.geometry.getAttribute('aAnim').needsUpdate = true;
-      mesh.geometry.getAttribute('aSkinTone').needsUpdate = true;
-      mesh.geometry.getAttribute('aPose').needsUpdate = true;
-      mesh.geometry.getAttribute('aMore').needsUpdate = true;
+      if (mesh.count === 0) continue;
+      const g = mesh.geometry;
+      for (const a of [mesh.instanceMatrix, mesh.instanceColor, g.getAttribute('aAnim'), g.getAttribute('aSkinTone'), g.getAttribute('aPose'), g.getAttribute('aMore')]) if (a) sendUsed(a as THREE.BufferAttribute, mesh.count);
     }
     this.shadows.count = shadowN;
-    this.shadows.instanceMatrix.needsUpdate = true;
+    sendUsed(this.shadows.instanceMatrix, shadowN);
     this.volleys.update(now);
   }
 
@@ -940,10 +961,15 @@ export class UnitView {
     if (heading.lengthSq() > 1e-14) s.forward.copy(heading.normalize());
   }
 
-  private key(s: Shown, f: Figure): string { return s.unit.embarked ? `transport|${s.unit.civ}|0|0|1` : `${s.unit.type}|${s.unit.civ}|${f.variant}|${f.female ? 1 : 0}|${s.near ? 1 : 0}`; }
+  // (Made once per figure: far and near.)
+  private key(s: Shown, f: Figure): string {
+    const ks = f.keys ??= s.unit.embarked ? [`transport|${s.unit.civ}|0|0|1`, `transport|${s.unit.civ}|0|0|1`]
+      : [`${s.unit.type}|${s.unit.civ}|${f.variant}|${f.female ? 1 : 0}|0`, `${s.unit.type}|${s.unit.civ}|${f.variant}|${f.female ? 1 : 0}|1`];
+    return ks[s.near ? 1 : 0];
+  }
 
   dispose(): void {
-    for (const s of this.shown.values()) s.flag.material.dispose();
+    for (const s of this.shown.values()) s.flag.dispose();
     for (const mesh of this.meshes.values()) mesh.geometry.dispose();
     this.material.dispose();
     this.shadowGeo.dispose();
@@ -962,17 +988,15 @@ export class UnitView {
     const north = c.clone().cross(east);
     const s: Shown = {
       unit: u, dir: c.clone(), forward: east.multiplyScalar(Math.cos(a)).addScaledVector(north, Math.sin(a)).normalize(),
-      figures: [], spread: LOOSE[0], order: 'block', laid: null, alt: 0, march: null, route: [], fight: null, after: null, gone: false, flag: this.makeFlag(u), k, seen: true, near: false,
+      figures: [], spread: LOOSE[0], order: 'block', laid: null, alt: 0, march: null, route: [], fight: null, after: null, gone: false, flag: this.makeFlag(u), k, seen: true, near: false, far: false, flagAt: new THREE.Vector3(),
     };
-    this.group.add(s.flag);
     this.shown.set(u.id, s);
     this.settle(s, k);
     return s;
   }
 
   private drop(s: Shown): void {
-    this.group.remove(s.flag);
-    s.flag.material.dispose();
+    s.flag.dispose();
     this.shown.delete(s.unit.id);
   }
 
@@ -1226,6 +1250,14 @@ export class UnitView {
     this.shadows = next;
     this.group.add(next);
   }
+}
+
+// An instance attribute sent to the GPU, only as far as the instances in use
+// (`n`): the rest of its room is never drawn.
+function sendUsed(a: THREE.BufferAttribute, n: number): void {
+  a.clearUpdateRanges();
+  a.addUpdateRange(0, n * a.itemSize);
+  a.needsUpdate = true;
 }
 
 const smooth = (t: number) => t * t * (3 - 2 * t);
