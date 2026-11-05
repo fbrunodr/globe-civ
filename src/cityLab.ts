@@ -16,7 +16,7 @@ import {
   specialistYield, wonderBeside, MAX_CITY_WONDERS, type BuildingKey, type WonderKey, type EraIndex, type FocusKey, type Output, type SpecialistKind,
 } from './cities.ts';
 import { specialistName } from './ui.ts';
-import { buildPresets, foundCity, grow, shrink, setEra, addBuilding, addWonder, improveWorked } from './sandbox.ts';
+import { buildPresets, stressWorld, STRESS_SEED, foundCity, grow, shrink, setEra, addBuilding, addWonder, improveWorked } from './sandbox.ts';
 
 const isMapSize = (s: string): s is MapSizeKey => s in MAP_SIZES;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -47,11 +47,15 @@ const rebuild = () => {
 $('rebuild').addEventListener('click', rebuild);
 seedEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') rebuild(); });
 
-const game = new Game({ size, seed, script, everyCiv: true });
+// (?stress: the worst case to measure, sandbox.ts stressWorld: the large map
+// with the most land, packed with cities and units, unless a size or seed is given.)
+const stress = params.has('stress');
+const game = new Game({ size: stress && !params.get('size') ? 'large' : size, seed: stress && !params.get('seed') ? STRESS_SEED : seed, script, everyCiv: true });
 game.units.length = 0;
 game.explored.fill(1);
 game.visible.fill(1);
-const built = buildPresets(game);
+const built = stress ? [] : buildPresets(game);
+if (stress) console.log('stress world:', stressWorld(game));
 const view = new GlobeRenderer($<HTMLCanvasElement>('c'), game);
 view.setClouds(false);
 if (import.meta.env.DEV) Object.assign(window, { __globe: { game, view } });

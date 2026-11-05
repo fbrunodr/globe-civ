@@ -6,7 +6,8 @@
 import { TECH_KEYS, techDef } from './techs.ts';
 import { POLITICS_KEYS, politicsDef } from './politics.ts';
 import type { Game, City } from './game.ts';
-import { USE, WONDERS, type BuildingKey, type WonderKey, type FocusKey, type EraIndex } from './cities.ts';
+import { USE, WONDERS, WONDER_KEYS, BUILDING_KEYS, type BuildingKey, type WonderKey, type FocusKey, type EraIndex } from './cities.ts';
+import { domainOf, isUnitKey, unitDef, type UnitKey } from './rules.ts';
 
 export function foundCity(g: Game, tile: number, owner: number): City | null {
   const settler = g.createUnit('settler', owner, tile);
@@ -159,3 +160,57 @@ export function buildPresets(g: Game, presets: readonly Preset[] = PRESETS): Bui
   return out;
 }
 
+
+// ---------- worst case ----------
+
+// A world built to measure the worst the game can draw (city_lab.html?stress):
+// as many cities as fit with their radius-2 lands apart (no city within 4
+// tiles of another), owned by every civ in turn of their regions (each the
+// nearest of 18 seats spread over the cities found), their civs across the
+// eras; each city grown to STRESS_POP (its land worked and improved), with
+// every building it may have, the wonders handed round; then a land unit of
+// its civ's era on every other tile one could stand on.
+export const STRESS_SEED = 2217; // (scripts/stressSeed.ts: the large map with the most land to settle, of 10,000)
+const STRESS_POP = 16;
+export function stressWorld(g: Game): { cities: number; units: number } {
+  g.units.length = 0;
+  const civs = g.players.length;
+  // The sites: every tile a city may stand on, packed from the first.
+  const sites: number[] = [], taken = new Set<number>();
+  for (let t = 0; t < g.N; t++) {
+    if (g.isPentagon(t) || g.isWater(t) || g.relief[t] === 'mountains' || g.biome[t] === 'iceSheet' || g.feature[t] === 'glacier' || g.feature[t] === 'volcano') continue;
+    if (g.tilesWithin(t, 4).some((x) => taken.has(x))) continue;
+    sites.push(t); taken.add(t);
+  }
+  // Each civ's seat, spread over them (each next the farthest from the rest); every site the nearest seat's.
+  const seats = [sites[0]!];
+  while (seats.length < civs) {
+    let best = sites[0]!, bd = -1;
+    for (const s of sites) { const d = Math.min(...seats.map((x) => g.approxDist(x, s))); if (d > bd) { bd = d; best = s; } }
+    seats.push(best);
+  }
+  const ownerOf = (t: number) => { let o = 0, od = Infinity; seats.forEach((s, i) => { const d = g.approxDist(s, t); if (d < od) { od = d; o = i; } }); return o; };
+  for (let o = 0; o < civs; o++) setEra(g, o, (o % 7) as EraIndex);
+  const cities: City[] = [];
+  for (const t of sites) { const c = foundCity(g, t, ownerOf(t)); if (c) cities.push(c); }
+  const wonders = [...WONDER_KEYS];
+  for (const c of cities) {
+    grow(g, c, STRESS_POP - c.pop);
+    for (const k of BUILDING_KEYS) addBuilding(g, c, k);
+  }
+  for (const c of cities) { if (!wonders.length) break; const w = wonders.find((k) => g.canBuild(c, k, true)); if (w && addWonder(g, c, w)) wonders.splice(wonders.indexOf(w), 1); }
+  for (let o = 0; o < civs; o++) setEra(g, o, (o % 7) as EraIndex);
+  // The units: on every other tile one could stand on, its owner's (or the
+  // nearest seat's), of what its civ's era fields on land.
+  const fields = Array.from({ length: civs }, (_, o) => [...g.unlocked(g.players[o]!)].filter((k): k is UnitKey => isUnitKey(k) && domainOf(unitDef(k)) === 'land' && !unitDef(k).civilian));
+  let units = 0;
+  for (let t = 0; t < g.N; t++) {
+    if (g.isWater(t) || g.relief[t] === 'mountains' || g.biome[t] === 'iceSheet' || g.cityByTile.has(t)) continue;
+    const o = g.ownerOf(t) >= 0 ? g.ownerOf(t) : ownerOf(t), kinds = fields[o]!;
+    if (!kinds.length) continue;
+    g.createUnit(kinds[(t * 7919) % kinds.length]!, o, t);
+    units++;
+  }
+  g.useVersion++;
+  return { cities: cities.length, units };
+}
