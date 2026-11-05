@@ -4,6 +4,7 @@ import type { ImprovementKey } from './cities.ts';
 import type { CropRegion } from './rural/look.ts';
 import type { BiomeKey, FeatureKey, ReliefKey } from './terrain.ts';
 import { CROP_INDEX_GLSL, CROP_PALETTE, CROP_SATURATION, PLOTS_GLSL, MAX_STAGE, PLANT_ROW_W, FARM_LANE } from './rural/plots.ts';
+import { WEAR_GLSL, WEAR_CODE } from './rural/wear.ts';
 import { GROUND_LAYER, GROUND_TEX, groundUniform } from './groundTextures.ts';
 // One repeat of the furrows' scan on a farm's ploughed plots (tile steps).
 const FURROW_REPEAT = 0.045;
@@ -302,6 +303,7 @@ const hexVec = (h: number) => {
 const CROP_GLSL = /* glsl */ `
 const vec3 CROPS[${Object.keys(CROP_CODE).length * 5}] = vec3[](${(Object.keys(CROP_CODE) as CropRegion[]).sort((a, b) => CROP_CODE[a] - CROP_CODE[b]).flatMap((k) => CROP_PALETTE[k].map(hexVec)).join(', ')});
 ${PLOTS_GLSL}
+${WEAR_GLSL}
 ${CROP_INDEX_GLSL}
 vec3 cropColor(int region, float h, int stage) { return CROPS[region * 5 + cropIndex(h, stage)]; }
 `;
@@ -594,22 +596,19 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
           // City ground (CITY_GLSL): urban ground and rural patterns.
           float urban = 0.0;
           {
-            float uS = 0.0, cS = 0.0, campS = 0.0, quarryS = 0.0, burntS = 0.0;
+            float uS = 0.0, cS = 0.0, quarryS = 0.0, burntS = 0.0;
             for (int k = 0; k < 4; k++) {
               if (soft[k] > 0.001) {
                 vec4 r5 = tileRow(int(ids[k]), 5);
                 uS += soft[k] * r5.x; cS += soft[k] * r5.w;
                 int code = int(r5.z + 0.5);
-                // (Mines keep the land's own ground: the models are enough. A
-                // camp's clearings fill its tile as the land is painted.)
-                if (code == 3) campS += owned(w, k);
-                else if (code == 4) quarryS += soft[k];
+                if (code == 4) quarryS += soft[k];
                 else if (code == ${BURNT_CODE}) burntS += soft[k];
               }
             }
             float keep = dry * (1.0 - snowCover);
             // (Their edges' noise, only where a town or a worked tile reaches.)
-            float edgeN = max(max(uS, campS), max(quarryS, burntS)) > 0.02 ? tFbm(P / (0.45 * uR0) + 4.1, 2) - 0.5 : 0.0;
+            float edgeN = max(uS, max(quarryS, burntS)) > 0.02 ? tFbm(P / (0.45 * uR0) + 4.1, 2) - 0.5 : 0.0;
             if (uS > 0.02) {
               urban = smoothstep(0.36, 0.5, uS + 0.5 * edgeN) * keep;
               // No paving: the town keeps its own ground (gardens and yards
@@ -745,6 +744,38 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
                 diffuseColor.rgb = mix(diffuseColor.rgb, gTone(packed, 0.5 + 0.5 * (st.r - 0.5)) * vShade, pad * 0.95);
                 gN = mix(gN, sn * 0.5, pad);
               }
+            } else if ((meCode == ${WEAR_CODE.mine} || meCode == ${WEAR_CODE.camp}) && farmK < 0) {
+              // Worn ground (rural/wear.ts): patches over its painted land,
+              // thicker toward its middle, fading out toward its border;
+              // a farm's fields reaching here win.
+              vec4 fr0 = tileRow(me, 7), fr1 = tileRow(me, 8), fr2 = tileRow(me, 9);
+              vec3 d = normalize(P);
+              vec2 lp = vec2(dot(d, fr1.xyz), dot(d, fr2.xyz)) / (dot(d, fr0.xyz) * fr0.w);
+              float at = owned(w, k) * smoothstep(0.5, 0.6, soft[k]) * keep;
+              vec2 wr = wearAt(meCode, lp, mod(float(me) * 7.31, 64.0)) * at;
+              vec3 land = diffuseColor.rgb / max(vShade, 0.05), soil = tileRow(me, 10).rgb;
+              if (meCode == ${WEAR_CODE.camp}) {
+                // A camp's: trodden earth, the soil toward the roads' dirt,
+                // tufts of grass still breaking through it.
+                vec3 sn;
+                vec4 st = gSample(${GROUND_LAYER.soil}.0, sn, 1.0);
+                float tuft = smoothstep(0.42, 0.62, tFbm(P / (0.018 * uR0) + 2.2, 2));
+                float a = wr.x * (1.0 - 0.45 * tuft * tFade(1.0 / (0.018 * uR0)));
+                vec3 trodden = mix(land, mix(soil, vec3(${ROAD_DIRT.join(', ')}), 0.55), 0.78);
+                diffuseColor.rgb = mix(diffuseColor.rgb, gTone(trodden, 0.5 + 0.6 * (st.r - 0.5)) * vShade, a * 0.92);
+                gN = mix(gN, sn * 0.6, a);
+              } else {
+                // A mine's: grey spoil, rubble and gravel (the rock scan,
+                // fine), streaked darker with ore; pale dust round it.
+                vec3 rn;
+                vec4 rt = gSample(${GROUND_LAYER.rock}.0, rn, 1.6);
+                float streak = smoothstep(0.55, 0.7, tFbm(P / (0.06 * uR0) + 6.6, 2));
+                vec3 spoil = mix(vec3(0.5, 0.48, 0.44), soil, 0.25) * (1.0 - 0.3 * streak);
+                vec3 dust = mix(land, vec3(0.6, 0.57, 0.5), 0.6);
+                diffuseColor.rgb = mix(diffuseColor.rgb, dust * vShade, wr.y * (1.0 - wr.x) * 0.75);
+                diffuseColor.rgb = mix(diffuseColor.rgb, gTone(spoil, 0.5 + 0.8 * (rt.r - 0.5)) * vShade, wr.x * 0.96);
+                gN = mix(gN, rn, wr.x);
+              }
             }
             }
             if (quarryS > 0.02) {
@@ -772,11 +803,6 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               float h = cPlots(P, vec2(0.38, 0.17), 0.0, f, edge);
               vec3 ash = mix(vec3(0.13, 0.12, 0.1), vec3(0.32, 0.29, 0.25), tFbm(P / (0.06 * uR0) + 2.0, 2)) * (0.9 + 0.2 * h);
               diffuseColor.rgb = mix(diffuseColor.rgb, ash * vShade, burnt * 0.9);
-            }
-            if (campS > 0.02) {
-              float camp = smoothstep(0.4, 0.6, campS) * keep * fieldMask;
-              float clearing = smoothstep(0.58, 0.7, tFbm(P / (0.2 * uR0) + 3.3, 2));
-              diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.5, 0.45, 0.34) * vShade, camp * clearing * 0.55);
             }
           }
 

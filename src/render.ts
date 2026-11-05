@@ -985,6 +985,8 @@ export class GlobeRenderer {
             if (use !== USE.center && g.builtAt(u) && g.ownerOf(u) >= 0 && !inWater) {
               const imp = g.builtAt(u);
               if (rand() >= FLORA_KEEP[imp ?? 'urban'][CATALOG[prop.kind].layer]) continue;
+              // (Nothing grows on a mine's spoil, nor near it: rural/wear.ts.)
+              if (imp === 'mine' && this.cityProps.nearWear(u, d)) continue;
             }
             if (this.cityProps.keepsFloraClear(u) && !inWater) {
               if (!this.cityProps.floraClear(u, d)) continue;

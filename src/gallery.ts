@@ -14,6 +14,7 @@ import { kitBoost, FIGURES, SPECIES_OF, KIT_BOOST, type KitModel } from './rural
 import { CREATURE_SCALE } from './creatures.ts';
 import { plotAt, cropIndex, CROP_PALETTE, PLOT_SIZES, PLANT_ROW_W, FARM_LANE } from './rural/plots.ts';
 import { ROAD_DIRT } from './terrainMaterial.ts';
+import { wearAt, wearSalt, wornNear, type WearKind } from './rural/wear.ts';
 import { valueNoise } from './paint.ts';
 import { areaLook, cropRegion, type CropRegion } from './rural/look.ts';
 import { rhoOf, INR, type Pt } from './town/geometry.ts';
@@ -356,6 +357,25 @@ function farmGround(imp: ImprovementKey, region: CropRegion, stage: number, salt
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
+// A mine's or a camp's ground: its worn patches (rural/wear.ts, as the
+// terrain shader paints them) inside the hexagon, the land's own outside.
+function wearGround(kind: WearKind, base: number, salt: number): THREE.CanvasTexture {
+  const N = 256, cv = document.createElement('canvas');
+  cv.width = cv.height = N;
+  const ctx = cv.getContext('2d')!, img = ctx.createImageData(N, N), bg = new THREE.Color(base);
+  const worn = kind === 'camp' ? bg.clone().lerp(new THREE.Color(...ROAD_DIRT), 0.75) : new THREE.Color(0.5, 0.48, 0.44).lerp(bg, 0.2);
+  const dust = bg.clone().lerp(new THREE.Color(0.6, 0.57, 0.5), 0.6);
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+    const x = (i / N - 0.5) * 1.24, y = (j / N - 0.5) * 1.24;
+    const [a, d] = rhoOf(6, { x, y }) < 1 ? wearAt(kind, x, y, salt) : [0, 0];
+    const c = bg.clone().lerp(dust, d * (1 - a) * 0.75).lerp(worn, a * 0.92), o = (j * N + i) * 4;
+    img.data[o] = Math.round(Math.min(1, c.r) ** (1 / 2.2) * 255); img.data[o + 1] = Math.round(Math.min(1, c.g) ** (1 / 2.2) * 255); img.data[o + 2] = Math.round(Math.min(1, c.b) ** (1 / 2.2) * 255); img.data[o + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
 function groundHex(tex: THREE.Texture, at: THREE.Vector3): THREE.Mesh {
   const g = new THREE.CircleGeometry(R, 6, HEX_TURN).rotateX(-Math.PI / 2);
   // (uv from the patch's x and z: the texture spans ±0.62 tile steps.)
@@ -451,7 +471,9 @@ function buildTerrains(): void {
     const set = land ? TERRAINS.get(land)! : null, v = set?.variants.find((x) => x.mix.length > 0), rk = mulberry32(seed ^ 0x4b);
     const items = v ? placeVariant({ ...v, density: Math.round(v.density * 0.5) }, { ...o, seed }).filter((p) => {
       const at = new THREE.Vector3().setFromMatrixPosition(p.m), layer = CATALOG[p.key as CatalogKind]?.layer;
-      return Math.hypot(at.x, at.z) > clearR * STEP && (!imp || !layer || rk() < FLORA_KEEP[imp][layer]);
+      return Math.hypot(at.x, at.z) > clearR * STEP && (!imp || !layer || rk() < FLORA_KEEP[imp][layer])
+        // (Nothing grows on a mine's spoil, nor near it: render.ts.)
+        && !(imp === 'mine' && wornNear('mine', at.x / STEP, at.z / STEP, wearSalt(seed)));
     }) : [];
     // (Bananas grow only on their resource's tile: a third of its trees, as render.ts.)
     const rb = mulberry32(seed ^ 0xba);
@@ -495,7 +517,8 @@ function buildTerrains(): void {
       else wet(center);
       const i = patches.length;
       const tris = addInstances(items, center, world);
-      if (!farmed) { world.add(hex(imp === 'mine' ? 0x5a5248 : imp === 'quarry' ? 0xb8b0a0 : set?.ground ?? 0x8a8a70, center)); world.add(rim(center)); if (water !== undefined) world.add(waterSheet(center, water)); }
+      if (imp === 'mine' || imp === 'camp') { world.add(groundHex(wearGround(imp, set?.ground ?? 0x8a8a70, wearSalt(seed)), center)); world.add(rim(center)); if (water !== undefined) world.add(waterSheet(center, water)); }
+      else if (!farmed) { world.add(hex(imp === 'quarry' ? 0xb8b0a0 : set?.ground ?? 0x8a8a70, center)); world.add(rim(center)); if (water !== undefined) world.add(waterSheet(center, water)); }
       const div = label(`${IMPROVEMENTS[imp].name} · stage ${st}`, `${stageText(imp, st)} · ${Math.round(tris).toLocaleString()} tris`, center.clone().add(new THREE.Vector3(0, 0, R * 0.95)), () => { state.focus = i; refreshFocus(); setCam('close'); });
       patches.push({ center, label: div, mix: `<h4>${name}: ${IMPROVEMENTS[imp].name}, stage ${st}</h4><div class="row">${stageText(imp, st)}</div>` });
     }

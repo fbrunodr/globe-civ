@@ -33,6 +33,7 @@ import { FARM_LANE } from './rural/plots.ts';
 import { len as len2, sub as sub2, type Pt as Pt2 } from './town/geometry.ts';
 import { mulberry32, type Rng } from './rng.ts';
 import { dressCity, type DressEra } from './cityDress.ts';
+import { wearSalt, wornNear } from './rural/wear.ts';
 import { paintCity, CITY_CELL } from './cityPainter.ts';
 
 // The ground at a spot of a tile (render.ts samples the terrain).
@@ -258,6 +259,15 @@ export class CityProps {
     }
     this.shapes.set(t, sides);
     return sides;
+  }
+
+  // Whether direction d is on, or near, tile t's worn ground (rural/wear.ts:
+  // a mine's spoil and its dust, a camp's trodden earth), on its painted land.
+  nearWear(t: number, d: THREE.Vector3): boolean {
+    const g = this.game, imp = g.builtAt(t);
+    if (imp !== 'mine' && imp !== 'camp') return false;
+    const { c, e1, e2, k } = tileFrame(g, t), { toDir } = onTile(g, t), s = d.dot(c) * k;
+    return wornNear(imp, d.dot(e1) / s, d.dot(e2) / s, wearSalt(t), (x, y) => { const o = this.sampleDir(toDir({ x, y })).owner; return o === undefined || o === t; });
   }
 
   // The middle of tile t's painted hexagon: the mean of its painted corners
