@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { cone, cyl } from '../propCatalog.ts';
 import {
-  E, P, arch, bands, box, chamfered, disc, dome, drum, faceWidth, gable, onFace, palm, patch, pick, place, prism, ring, shade, shrub,
+  E, P, arch, bands, box, chamfered, disc, dome, drum, faceWidth, gable, onFace, palm, patch, pick, place, prism, ring, shade, shrub, smokeFrom,
   storeys, strips, tree, windows, yard, ALL, type Body, type Build, type Face, type G, type Lot,
 } from '../houseKit.ts';
 
@@ -71,6 +71,7 @@ export const QUAD_STYLES = {
       out.push(P(g, tiles[(i + l.v) % tiles.length]!, { x: b.x - (b.w - 2 * k) / 2 + hw * (i + 0.5), y: b.h, z: b.z + b.d * 0.18 }));
     }
     // Mushroom chimneys in mosaic.
+    for (const x of [-b.w * 0.25, b.w * 0.22]) smokeFrom(b.x + x, b.h + 0.0061, b.z - b.d * 0.25); // (over the cap)
     for (const x of [-b.w * 0.25, b.w * 0.22]) out.push(cyl(0.0009, 0.0011, 0.004, 5, stone, { x: b.x + x, y: b.h, z: b.z - b.d * 0.25 }), P(new THREE.SphereGeometry(0.0016, 5, 3), tiles[(l.v + 1) % 4]!, { x: b.x + x, y: b.h + 0.0045, z: b.z - b.d * 0.25 }));
     return out;
   },
@@ -160,6 +161,7 @@ export const QUAD_STYLES = {
     out.push(...box(b.w * 0.18, 0.004, b.d * 0.4, panel, { x: b.x + b.w * 0.2, y: b.h, z: b.z }));
     // A ger behind the block.
     const gx = -l.lw * 0.5, gz = -l.ld * 0.72, r = Math.min(0.0045, l.ld * 0.2);
+    smokeFrom(gx, r * 1.45, gz); // (its stovepipe through the crown)
     out.push(cyl(r, r, r * 0.9, 9, 0xefe7d6, { x: gx, z: gz }), cone(r * 1.04, r * 0.55, 9, 0xe9e0cc, { x: gx, y: r * 0.9, z: gz }));
     return out;
   },

@@ -18,6 +18,7 @@ import { makeWeather, type Weather } from './weather.ts';
 import { buildPropGeometry, catalogEntry, CATALOG, CATALOG_KINDS, type CatalogKind, type Layer } from './propCatalog.ts';
 import { FLORA_KEEP } from './floraData.ts';
 import { BUILDING_KINDS, buildBuildingGeometry, type BuildingKind } from './buildingCatalog.ts';
+import { useOf } from './houseKit.ts';
 import { WORKS_VARIANT, houseFarGeometry, houseGeometry, houseSmoke, isHouseKind, parseHouseKind, type HouseKind } from './houses.ts';
 import { isWonderModelKind, wonderGeometry, type WonderModelKind } from './wonderModels.ts';
 import { isFloraRural, isCropRural, isSmoothRural, roamOf, isRuralModelKind, ruralGeometry, ruralModelKind, type RuralModelKind } from './rural/models.ts';
@@ -33,7 +34,7 @@ import { cropRegion } from './rural/look.ts';
 import { roadLines, ROAD_HALF_WIDTH } from './roads.ts';
 import { Vegetation, type SpotEnv } from './vegetation.ts';
 import { mulberry32, makePerlin } from './rng.ts';
-import { USE, WONDERS } from './cities.ts';
+import { USE, WONDERS, type EraIndex } from './cities.ts';
 import { farGeometry, makeFloraDepthMaterial, makePropMaterial, makeRoamDepthMaterial, instanceGeometry } from './propMaterial.ts';
 import { GpuTimer } from './gpuTimer.ts';
 import { resourceDef } from './resources.ts';
@@ -68,8 +69,12 @@ const PROP_CHUNKS = 48;
 const FAR_PX = 16;
 // A town's buildings go far this much farther off than the trees (they stand taller).
 const HOUSE_FAR = 1.6;
-// Before the industrial age, the share of a chimney's puffs that show (a fire lit now and then).
-const PREINDUSTRIAL_SMOKE = 0.1;
+// The share of a chimney's puffs that show, by its owner's era: a fire lit
+// now and then before the industrial age, every stack pouring in it, less
+// as the modern and information ages clean up.
+const SMOKE_RATE: Record<EraIndex, number> = { 0: 0.1, 1: 0.1, 2: 0.1, 3: 0.1, 4: 1, 5: 0.5, 6: 0.2 };
+// A home's chimney, in any era: a white wisp now and then (homes never look like works).
+const HOME_SMOKE = 1 / 30;
 // What lies on the ground is drawn before what stands on it (the opaque
 // pass, by renderOrder): after the sky (-10, sky.ts: drawn first, no depth
 // test), the ground and the roads over it, then everything else (0).
@@ -1464,14 +1469,17 @@ export class GlobeRenderer {
     // houseSmoke); a works' stacks in the industrial age pour it out.
     const p = new THREE.Vector3();
     for (const c of g.cities) {
-      const industrial = g.players[c.owner]!.era >= 4;
+      const era = g.players[c.owner]!.era, industrial = era >= 4, rate = SMOKE_RATE[era];
+      // (A works' plume: soot from the industrial age, white steam in the information age.)
+      const plume = era >= 6 ? 'steam' : 'factory';
       for (const t of [c.tile, ...g.cityTiles(c, USE.rural)]) {
         if (!g.visible[t]) continue;
         for (const b of this.cityProps.place(t)) {
           if (!isHouseKind(b.kind)) continue;
-          const works = parseHouseKind(b.kind).variant === WORKS_VARIANT;
-          // (Before the industrial age, a puff now and then: PREINDUSTRIAL_SMOKE.)
-          for (const [x, y, z] of houseSmoke(b.kind)) out.push({ pos: p.set(x, y, z).applyMatrix4(b.matrix).clone(), kind: works && industrial ? 'factory' : 'chimney', rate: industrial ? 1 : PREINDUSTRIAL_SMOKE });
+          const hk = parseHouseKind(b.kind), works = hk.variant === WORKS_VARIANT, home = useOf(hk.variant, hk.floors) === 'home';
+          // (How often a chimney puffs: a home's HOME_SMOKE, always; a shop's or
+          // a works' SMOKE_RATE, by its owner's era.)
+          for (const [x, y, z] of houseSmoke(b.kind)) out.push({ pos: p.set(x, y, z).applyMatrix4(b.matrix).clone(), kind: works && industrial ? plume : 'chimney', rate: home ? HOME_SMOKE : rate });
         }
       }
     }

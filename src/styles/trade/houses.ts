@@ -7,7 +7,7 @@ import * as THREE from 'three';
 import { cone, cyl, seg, type Tf } from '../../propCatalog.ts';
 import { wallHeight } from '../../town/geometry.ts';
 import {
-  E, BAND, FACE_TURN, P, arch, bands, birch, box, disc, dome, drum, fence, frustum, gable, hip, merlons, palm, shade, onFace, patch, pick, place, ring, shrub, steps, storeys, strips, tilted, tree, windows, yard, faceWidth,
+  E, BAND, FACE_TURN, P, arch, bands, birch, box, chimney, disc, dome, drum, fence, frustum, gable, hip, merlons, palm, shade, onFace, patch, pick, place, ring, shrub, steps, storeys, strips, tilted, tree, windows, yard, faceWidth,
   SEEN, type Body, type Build, type Face, type G, type Lot, type Trade, smokeFrom,
 } from '../../houseKit.ts';
 import { anvil, awning, barrels, cart, crates, doubleDoor, hangingSign, lantern, leanTo, logs, sacks, signBoard, stall } from '../../tradeKit.ts';
@@ -126,7 +126,7 @@ const kapileio: Build = (l) => {
   out.push(...barrels(2, 0.0013, 0x7a5a3a, { x: b.x - b.w / 2 + 0.0026, z: front + 0.0018 }));
   // A chimney on the roof, as the islands build them: a little white stack under a blue cap.
   const cx = b.x + b.w * 0.3, cz = b.z - b.d * 0.2;
-  out.push(...box(0.0028, 0.004, 0.0028, white, { x: cx, y: b.h, z: cz }), ...box(0.0036, 0.0006, 0.0036, blue, { x: cx, y: b.h + 0.004, z: cz }));
+  out.push(...chimney(0.0028, 0.004, 0.0028, white, { x: cx, y: b.h, z: cz }), ...box(0.0036, 0.0006, 0.0036, blue, { x: cx, y: b.h + 0.004, z: cz }));
   out.push(shrub(-l.lw * 0.76, -l.ld * 0.7, 0.0032, 0xc2398a), shrub(l.lw * 0.74, -l.ld * 0.72, 0.0028, 0x4f7a32));
   return out;
 };
@@ -920,7 +920,7 @@ const kalachnaya: Build = (l) => {
   // Carved bargeboards: white along the eaves' ends.
   for (const k of [-1, 1]) out.push(...box(0.0005, 0.0012, b.d + 0.005, IZ_WHITE, { x: b.x + k * (b.w / 2 + 0.0021), y: b.h - 0.0004, z: b.z }));
   // The stove's chimney, whitewashed brick.
-  out.push(...box(0.0034, rh + 0.004, 0.0034, 0xe8e2d6, { x: b.x - b.w * 0.18, y: b.h, z: b.z - b.d * 0.08 }, 0x4a4440));
+  out.push(...chimney(0.0034, rh + 0.004, 0.0034, 0xe8e2d6, { x: b.x - b.w * 0.18, y: b.h, z: b.z - b.d * 0.08 }, 0x4a4440));
   // Windows with loaves on trays inside; the door.
   const wy = s.storey * 0.32;
   for (const k of [-0.34, 0.3]) {
@@ -961,7 +961,7 @@ const kuznitsa: Build = (l) => {
   const hx = b.x - b.w * 0.2;
   out.push(onFace(b, 'front', 0, 0, b.w * 0.7, b.h * 0.82, IZ_DARK, E * 2));
   out.push(...box(0.0074, 0.0034, 0.0052, 0x8a7a6a, { x: hx, z: front - 0.0026 + 0.0003 }), patch(0.0046, 0.0028, 0xff7a1a, hx, front - 0.0024, 0.00345));
-  out.push(...box(0.0028, rh + b.h - 0.0034 + 0.003, 0.0028, 0x8a7a6a, { x: hx, y: 0.0034, z: front - 0.004 }, 0x3a3430));
+  out.push(...chimney(0.0028, rh + b.h - 0.0034 + 0.003, 0.0028, 0x8a7a6a, { x: hx, y: 0.0034, z: front - 0.004 }, 0x3a3430));
   // The bellows beside it, leather and wood.
   out.push(P(new THREE.ConeGeometry(0.0024, 0.006, 4).rotateZ(Math.PI / 2), 0x5a3a24, { x: hx + 0.0062, y: 0.0032, z: front - 0.0022, sy: 0.5 }));
   // The anvil on its stump, out on the floor; a quench tub.
@@ -1265,7 +1265,7 @@ const toilier: Build = (l) => {
   for (const f of ['left', 'right'] as Face[]) out.push(...windows(b, f, { ...s, w: 0.0026, h: s.storey * 0.4, spacing: 0.013, sill: s.storey * 0.32, color: SL_GLASS }));
   const rh = Math.min(b.w, b.d) * 0.78;
   out.push(...gable(b.w + 0.003, b.d + 0.004, rh, slate, { x: b.x, y: b.h, z: b.z }, false, granite));
-  for (const sx of [-1, 1]) out.push(...box(0.0042, rh + 0.004, 0.003, granite, { x: b.x + sx * (b.w / 2 - 0.0016), y: b.h, z: b.z }));
+  for (const sx of [-1, 1]) out.push(...chimney(0.0042, rh + 0.004, 0.003, granite, { x: b.x + sx * (b.w / 2 - 0.0016), y: b.h, z: b.z }));
   const zd = b.z + b.d * 0.28, yd = b.h + rh * (1 - 0.56) - 0.0008, db: Body = { x: b.x, z: zd - 0.0018, w: 0.0052, d: 0.0036, y: yd, h: 0.0046 };
   out.push(...box(db.w, db.h, db.d, granite, { x: db.x, y: yd, z: db.z }), onFace(db, 'front', 0, yd + 0.0008, 0.0028, 0.003, SL_GLASS));
   out.push(...gable(0.0064, 0.0046, 0.0026, slate, { x: db.x, y: yd + db.h, z: db.z }, true, granite));

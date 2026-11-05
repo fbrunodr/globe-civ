@@ -8,7 +8,7 @@
 import * as THREE from 'three';
 import { cone, cyl, type Tf } from '../../propCatalog.ts';
 import {
-  E, P, BAND, FRAME, arch, bands, box, chamfered, disc, dome, drum, gable, hip, onFace, palm, patch, pick, place, prism, ring, shrub, spire, storeys, strips, tree, windows, yard,
+  E, P, BAND, FRAME, arch, bands, box, chamfered, chimney, smokeFrom, disc, dome, drum, gable, hip, onFace, palm, patch, pick, place, prism, ring, shrub, spire, storeys, strips, tree, windows, yard,
   type Body, type Build, type Face, type G, type Trade,
 } from '../../houseKit.ts';
 import { awning, barrels, cart, counter, crates, doubleDoor, hangingSign, lantern, roundStack, sacks, sawtooth, signBoard, stack, valance } from '../../tradeKit.ts';
@@ -282,7 +282,7 @@ const brasserie: Build = (l) => {
   out.push(...prism(plan(0.0008), 0.0013, stone, { y: b.h - 0.0012 }));
   const mh = Math.max(0.006, s.storey * 0.9), t = 0.0028;
   out.push(...loft(plan(0), [[x0 + t, z1 - t], [x1 - k - t * 0.4 + 0.0002, z1 - t], [x1 - t, z1 - k + t * 0.4 - 0.0002], [x1 - t, z0 + t], [x0 + t, z0 + t]], b.h + 0.0001, mh, zinc));
-  for (const sx of [-0.3, 0.1]) out.push(...box(0.003, mh * 1.2, 0.0022, 0xa86a4a, { x: b.x + sx * b.w, y: b.h, z: b.z - b.d * 0.25 }));
+  for (const sx of [-0.3, 0.1]) out.push(...chimney(0.003, mh * 1.2, 0.0022, 0xa86a4a, { x: b.x + sx * b.w, y: b.h, z: b.z - b.d * 0.25 }));
   // The Morris column at the lot's front corner.
   const mx = x0 + 0.0028, mz = Math.min(l.ld - 0.0028, z1 + 0.009);
   out.push(cyl(0.0021, 0.0021, 0.0115, 8, 0x2f4a3a, { x: mx, z: mz }), cyl(0.00222, 0.00222, 0.007, 8, 0xe8d8b0, { x: mx, y: 0.0026, z: mz }));
@@ -983,6 +983,7 @@ const guanz: Build = (l) => {
   out.push(cyl(r + 0.0002, r + 0.0002, 0.0005, 12, 0x8a6a4a, { x: gx, y: wh * 0.45, z: gz }));
   out.push(cone(r * 1.06, r * 0.46, 12, 0xe9e0cc, { x: gx, y: wh, z: gz }), cyl(r * 1.061, r * 1.03, r * 0.06, 12, PA_BLUE, { x: gx, y: wh, z: gz }));
   out.push(cyl(r * 0.2, r * 0.2, 0.0012, 8, door, { x: gx, y: wh + r * 0.37, z: gz }), cyl(0.0005, 0.0005, 0.007, 5, 0x4a4a4a, { x: gx + r * 0.25, y: wh + r * 0.2, z: gz }));
+  smokeFrom(gx + r * 0.25, wh + r * 0.2 + 0.007, gz); // the stove pipe
   // The door and its painted frame, facing the street; small windows round.
   const dz = gz + r, db: Body = { x: gx, z: dz, w: 0, d: 0, y: 0, h: 0 };
   out.push(...box(0.0068, Math.min(wh * 0.85, 0.0098), 0.0022, door, { x: gx, z: dz - 0.0004 }, door), onFace({ ...db, d: 0.0036, z: dz - 0.0004 }, 'front', 0, 0.0004, 0.0042, Math.min(wh * 0.75, 0.0084), 0xb04a28, E));
@@ -1020,6 +1021,7 @@ const tets: Build = (l) => {
   // The bunker house on top, the chimney behind.
   out.push(...box(bw * 0.5, 0.008, bd * 0.6, panel, { x: bb.x - bw * 0.2, y: bh, z: bb.z }, 0x8a8680));
   const cx = bb.x + bw * 0.28, cz = bb.z - bd * 0.2, ch = l.H * 1.35, cr = 0.0034;
+  smokeFrom(cx, bh + ch, cz);
   for (let i = 0; i < 6; i++) out.push(cyl(cr - i * 0.00022, cr - (i + 1) * 0.00022, ch / 6, 8, i % 2 ? 0xf2f0ea : 0xc8322a, { x: cx, y: bh + (i * ch) / 6 - bh * (i === 0 ? 1 : 0) * 0, z: cz }));
   // The coal heap and the conveyor up to the bunkers.
   const hx = -l.lw + 0.0075, hz = -l.ld * 0.25;

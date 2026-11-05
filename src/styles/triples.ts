@@ -6,8 +6,8 @@
 import * as THREE from 'three';
 import { cone, cyl } from '../propCatalog.ts';
 import {
-  E, P, arch, bands, box, dome, faceWidth, fence, flatTree, frustum, gable, hip, merlons, onFace, onion, palm, patch, pick, place,
-  ring, shade, spire, storeys, strips, tilted, tree, windows, yard, cypress, birch, ALL, SEEN, type Body, type Build, type G, type Lot,
+  E, P, arch, bands, box, chimney, dome, faceWidth, fence, flatTree, frustum, gable, hip, merlons, onFace, onion, palm, patch, pick, place,
+  ring, rise, shade, smokeFrom, spire, storeys, strips, tilted, tree, windows, yard, cypress, birch, ALL, SEEN, type Body, type Build, type G, type Lot,
 } from '../houseKit.ts';
 
 const DOOR = 0x3a2a20;
@@ -276,7 +276,9 @@ export const TRIPLE_STYLES = {
     }
     for (let k = 0; k <= nH; k++) {
       const x = Math.max(-b.w / 2 + 0.0015, Math.min(b.w / 2 - 0.0015, -b.w / 2 + k * hw));
-      out.push(...box(0.003, 0.005, 0.006, brick, { x: b.x + x, y: b.h, z: b.z }), cyl(0.0005, 0.0005, 0.0016, 4, 0xc4703f, { x: b.x + x, y: b.h + 0.005, z: b.z - 0.0012 }), cyl(0.0005, 0.0005, 0.0016, 4, 0xc4703f, { x: b.x + x, y: b.h + 0.005, z: b.z + 0.0012 }));
+      const sh = rise(b.h, 0.005); // (taller under a steeper roof)
+      smokeFrom(b.x + x, b.h + sh + 0.0016, b.z); // (between its two pots)
+      out.push(...box(0.003, sh, 0.006, brick, { x: b.x + x, y: b.h, z: b.z }), cyl(0.0005, 0.0005, 0.0016, 4, 0xc4703f, { x: b.x + x, y: b.h + sh, z: b.z - 0.0012 }), cyl(0.0005, 0.0005, 0.0016, 4, 0xc4703f, { x: b.x + x, y: b.h + sh, z: b.z + 0.0012 }));
     }
     out.push(...box(b.w, 0.0025, 0.0004, 0x1a1a1a, { x: b.x, z: b.z + b.d / 2 + 0.004 }));
     out.push(...tree(l.lw * 0.5, -l.ld * 0.84, 0.8, 0x4f6e38));
@@ -309,7 +311,7 @@ export const TRIPLE_STYLES = {
       out.push(...box(db.w, db.h, db.d, stone, { x: db.x, y: yd, z: db.z }), onFace(db, 'front', 0, yd + 0.001, 0.0024, 0.0036, 0x2a3038));
       out.push(...gable(0.005, 0.0046, 0.0026, slate, { x: db.x, y: yd + db.h, z: db.z }, true, stone));
     }
-    for (const sx of [-1, 1]) out.push(...box(0.0035, rh + 0.006, 0.0025, brick, { x: b.x + sx * b.w * 0.32, y: b.h, z: b.z - b.d * 0.12 }));
+    for (const sx of [-1, 1]) out.push(...chimney(0.0035, rh + 0.006, 0.0025, brick, { x: b.x + sx * b.w * 0.32, y: b.h, z: b.z - b.d * 0.12 }));
     return out;
   },
 

@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import { cone, cyl, type Tf } from '../../propCatalog.ts';
 import { wallHeight } from '../../town/geometry.ts';
 import {
-  E, BAND, FRAME, P, arch, bands, box, dome, frustum, gable, hip, merlons, onFace, palm, patch, pick, place, ring, storeys, tilted, windows, yard, shade,
+  E, BAND, FRAME, P, arch, bands, box, chimney, dome, smokeFrom, frustum, gable, hip, merlons, onFace, palm, patch, pick, place, ring, storeys, tilted, windows, yard, shade,
   type Body, type Build, type Face, type G, type Trade,
 } from '../../houseKit.ts';
 import { anvil, awning, cart, counter, crates, doubleDoor, hangingSign, kiln, leanTo, logs, sacks, signBoard, stack, stall, valance } from '../../tradeKit.ts';
@@ -161,6 +161,7 @@ const figlina: Build = (l) => {
   for (const k of [-0.22, 0.22]) out.push(...arch(kb, 'front', k * kw, 0, kw * 0.22, kh * 0.25, 0x1e1a16, false, E));
   out.push(...box(kw - 0.0016, 0.0012, kd - 0.0016, 0xb86a48, { x: kx, y: kh, z: kz }, 0x9a7a6a)); // the load under sherds
   for (const [i, j] of [[-1, -1], [1, -1], [-1, 1], [1, 1], [0, 0]] as const) out.push(patch(0.0012, 0.0012, 0x2a1e1a, kx + i * kw * 0.25, kz + j * kd * 0.25, kh + 0.00125));
+  smokeFrom(kx, kh + 0.0012, kz); // (up through the load, an updraft kiln)
   out.push(...logs(6, 0.0075, 0.0006, 0x7a5a3a, { x: kx - kw / 2 - 0.0035, z: kz - 0.002, ry: Math.PI / 2 }));
   // The drying shed: a tiled roof on posts, unfired tiles and bricks in stacks under it.
   const sx = -l.lw * 0.42, sz = l.ld * 0.1, sw = Math.min(0.016, l.lw * 0.8), sd = 0.012;
@@ -298,6 +299,7 @@ const kapnapothiki: Build = (l) => {
   out.push(...box(0.0105, 0.0085, 0.0095, wall, { x: ex, z: ez }), hip(0.0115, 0.0105, 0.0032, GR_ROOF, { x: ex, y: 0.0085, z: ez }));
   out.push(onFace({ x: ex, z: ez, w: 0.0105, d: 0.0095, y: 0, h: 0.0085 }, 'front', 0, 0, 0.0036, 0.0058, 0x5a3e28, E));
   out.push(cyl(0.0024, 0.0024, 0.003, 8, 0xa85c40, { x: ex - 0.0072, z: ez - 0.002 }), cyl(0.0018, 0.0011, b.h * 1.25, 8, 0xa85c40, { x: ex - 0.0072, y: 0.003, z: ez - 0.002 }), cyl(0.0013, 0.0013, 0.0012, 8, 0x5a3e28, { x: ex - 0.0072, y: 0.003 + b.h * 1.2, z: ez - 0.002 }));
+  smokeFrom(ex - 0.0072, 0.003 + b.h * 1.25, ez - 0.002);
   // The leaf on its frames, drying; bales; a cart loaded for the port.
   const leaf = [0xb8923a, 0x9a7430, 0xc8a24a, 0x8a6a2a];
   for (const k of [0, 1]) out.push(...rack(Math.min(0.018, l.lw * 0.9), 0.0068, leaf, 0x6a4a30, { x: -l.lw * 0.38, z: fz + 0.006 + k * 0.006 }));
@@ -409,7 +411,7 @@ const espaderia: Build = (l) => {
   out.push(onFace(b, 'front', -b.w * 0.12, hh * 0.25, 0.003, 0.0016, 0xd8642a, E * 3)); // the forge's glow within
   for (const k of [0.22, 0.38]) out.push(onFace(b, 'front', k * b.w, hh * 0.6, 0.0026, 0.0034, ES_DARK, E));
   out.push(...gable(b.w + 0.004, b.d + 0.004, b.d * 0.34, roof, { x: b.x, y: hh, z: b.z }, false, stone));
-  out.push(...box(0.0042, hh * 1.55, 0.0042, stone, { x: b.x + b.w * 0.3, z: b.z - b.d * 0.12 }, 0x2a2420), ...box(0.0052, 0.0012, 0.0052, ES_GRANITE, { x: b.x + b.w * 0.3, y: hh * 1.55, z: b.z - b.d * 0.12 }, 0x1e1a16));
+  out.push(...chimney(0.0042, hh * 1.55, 0.0042, stone, { x: b.x + b.w * 0.3, z: b.z - b.d * 0.12 }, 0x2a2420), ...box(0.0052, 0.0012, 0.0052, ES_GRANITE, { x: b.x + b.w * 0.3, y: hh * 1.55, z: b.z - b.d * 0.12 }, 0x1e1a16));
   // The mill race along the hall's side, the wheel in it.
   const rx = b.x - b.w / 2 - 0.0028, rw = 0.0034;
   out.push(...box(rw + 0.0012, 0.0012, 2 * l.ld * 0.96, ES_GRANITE, { x: rx, z: 0 }, 0x3a6a8a));
@@ -1173,6 +1175,7 @@ const sakagura: Build = (l) => {
   }
   // The chimney: brick, tall, tapering.
   out.push(...box(0.0048, 0.003, 0.0048, 0x8a4a34, { x: b.x + b.w * 0.36, z: b.z - b.d / 2 - 0.0032 }), cyl(0.0021, 0.0013, hh * 1.9, 4, 0x9a4e36, { x: b.x + b.w * 0.36, y: 0.003, z: b.z - b.d / 2 - 0.0032, ry: Math.PI / 4 }));
+  smokeFrom(b.x + b.w * 0.36, 0.003 + hh * 1.9, b.z - b.d / 2 - 0.0032);
   // Casks stacked in a pyramid; vats upside down; rice bales; the well.
   const cx = -l.lw * 0.4, cz = l.ld * 0.62;
   for (const [x, y] of [[-1, 0], [0, 0], [1, 0], [-0.5, 1], [0.5, 1], [0, 2]] as const) out.push(cyl(0.0012, 0.0012, 0.0026, 7, 0xd8c890, { x: cx + x * 0.0026, y: 0.0012 + y * 0.0022, z: cz, rx: Math.PI / 2 }), P(new THREE.CircleGeometry(0.0011, 7), 0xb8302a, { x: cx + x * 0.0026, y: 0.0012 + y * 0.0022, z: cz + 0.00132 }));

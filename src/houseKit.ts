@@ -64,6 +64,7 @@ export function frustum(w0: number, d0: number, w1: number, d1: number, h: numbe
 export function gable(w: number, d: number, h: number, c: number, o: Tf = {}, alongZ = false, end = c): G[] {
   if (VARIANT.free) {
     VARIANT.roof ??= c;
+    VARIANT.roofY ??= o.y ?? 0;
     const m = VARIANT_LOOK[VARIANT.v % VARIANTS]!;
     if (m.roof === 'hip') return [freeHip(w, d, h * m.pitch, c, o)];
     h *= m.pitch;
@@ -86,6 +87,7 @@ function gableShape(w: number, d: number, h: number, c: number, o: Tf = {}, alon
 export function hip(w: number, d: number, h: number, c: number, o: Tf = {}): G {
   if (VARIANT.free) {
     VARIANT.roof ??= c;
+    VARIANT.roofY ??= o.y ?? 0;
     const m = VARIANT_LOOK[VARIANT.v % VARIANTS]!;
     if (m.roof === 'gable' || m.roof === 'gableAcross') {
       // (Its ends in the walls' colour, as a gable's are.)
@@ -202,6 +204,22 @@ export const pick = <T>(l: Lot, xs: readonly T[]): T => xs[(l.v * 2) % xs.length
 // flue: houses.ts houseSmoke), in the lot's frame; render.ts sends it up.
 export const SMOKE: { at: [number, number, number][] | null } = { at: null };
 export function smokeFrom(x: number, y: number, z: number): void { SMOKE.at?.push([x, y, z]); }
+// A chimney's height (from y, h high) on a home whose variant pitches its
+// roofs steeper: what stands above the roof's foot stretched as the roof
+// is, so the chimney still clears it.
+export function rise(y: number, h: number): number {
+  const m = VARIANT_LOOK[VARIANT.v % VARIANTS]!, foot = VARIANT.roofY ?? VARIANT.body?.h;
+  if (!VARIANT.free || foot === undefined || m.pitch <= 1 || y + h <= foot) return h;
+  return foot + (y + h - foot) * m.pitch + 0.0008 - y; // (and a hair more: out of the roof)
+}
+// A chimney: a stack w × d, h high, on o.y (its top `cap`, darker if
+// given), its smoke declared at its top. (Every chimney is built so, or
+// declares its top with smokeFrom: only a declared chimney smokes.)
+export function chimney(w: number, h: number, d: number, c: number, o: Tf = {}, cap = c): G[] {
+  h = rise(o.y ?? 0, h);
+  smokeFrom(o.x ?? 0, (o.y ?? 0) + h, o.z ?? 0);
+  return box(w, h, d, c, o, cap);
+}
 
 // ---------- variants ----------
 
@@ -229,7 +247,7 @@ export const VARIANT_LOOK: readonly VariantLook[] = [
 // and what its style gave it so far: its main body, walls' and roofs'
 // colours. (free: the variant's shape is taken; off for anything else
 // built with the kit.)
-export const VARIANT: { free: boolean; v: number; body: Body | null; wall: number | null; roof: number | null } = { free: false, v: 0, body: null, wall: null, roof: null };
+export const VARIANT: { free: boolean; v: number; body: Body | null; wall: number | null; roof: number | null; roofY: number | null } = { free: false, v: 0, body: null, wall: null, roof: null, roofY: null };
 
 
 // The storey layout of a body: floor heights from the walls' height.

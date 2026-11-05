@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import { cone, cyl, type Tf } from '../../propCatalog.ts';
 import { wallHeight } from '../../town/geometry.ts';
 import {
-  E, BAND, FACE_TURN, P, arch, bands, birch, box, chamfered, dome, drum, fence, flatTree, frustum, gable, hip, merlons, onFace, patch, pick, place, prism, ring, shade, spire, storeys, strips, tilted, windows, yard,
+  E, BAND, FACE_TURN, P, arch, bands, birch, box, chamfered, chimney, smokeFrom, dome, drum, fence, flatTree, frustum, gable, hip, merlons, onFace, patch, pick, place, prism, ring, shade, spire, storeys, strips, tilted, windows, yard,
   type Body, type Build, type Face, type G, type Trade,
 } from '../../houseKit.ts';
 import { anvil, awning, barrels, cart, counter, crates, dryingRack, hangingSign, kiln, lantern, logs, roundStack, sacks, signBoard, stack, stall, valance } from '../../tradeKit.ts';
@@ -175,7 +175,7 @@ const templeGoods: Build = (l) => {
   // The sang: a whitewashed incense burner, juniper smoke over it.
   const ix = b.x + l.lw * 0.1, iz = l.ld * 0.84;
   out.push(...box(0.0034, 0.0022, 0.0034, white, { x: ix, z: iz }), ...frustum(0.0028, 0.0028, 0.0016, 0.0016, 0.0026, white, { x: ix, y: 0.0022, z: iz }), cone(0.0007, 0.0016, 5, MO_GOLD, { x: ix, y: 0.0048, z: iz }));
-  out.push(P(new THREE.OctahedronGeometry(0.0016, 0), 0xc8c4bc, { x: ix + 0.0006, y: 0.0078, z: iz, sy: 1.4 }));
+  smokeFrom(ix, 0.0064, iz);
   // Khadag scarves, blue and white, hung out on a rail.
   out.push(...dryingRack(0.009, 0.006, [0x6a9ad8, 0xf4f0e8, 0x6a9ad8, 0xf4f0e8], 0x6a4a30, { x: b.x + l.lw * 0.62, z: l.ld * 0.78 }));
   return out;
@@ -196,6 +196,7 @@ const feltWorks: Build = (l) => {
   out.push(...frustum(b.w + 0.006, b.d + 0.007, b.w + 0.001, b.d + 0.001, 0.0016, green, { x: b.x, y: b.h, z: b.z }));
   out.push(...gable(b.w + 0.001, b.d + 0.001, b.d * 0.3, green, { x: b.x, y: b.h + 0.0016, z: b.z }, false, white));
   out.push(cyl(0.0009, 0.0009, b.d * 0.3 + 0.008, 6, 0x2a2826, { x: b.x + b.w * 0.36, y: b.h, z: b.z - b.d * 0.15 }));
+  smokeFrom(b.x + b.w * 0.36, b.h + b.d * 0.3 + 0.008, b.z - b.d * 0.15); // the stovepipe
   // The ger: a white felt drum, its roof of felt over the poles, the orange door to the south.
   const gx = -l.lw * 0.56, gz = l.ld * 0.48, gr = Math.min(0.0085, l.lw * 0.36);
   out.push(cyl(gr, gr, 0.0052, 9, 0xf0ece0, { x: gx, z: gz }), cone(gr * 1.06, 0.0042, 9, 0xe2dccc, { x: gx, y: 0.0052, z: gz }));
@@ -506,6 +507,7 @@ function terraceTop(b: Body, l: Parameters<Build>[0], brick: number, s: ReturnTy
   out.push(...box(b.w + 0.0016, 0.001, b.d + 0.0016, GE_WHITE, { x: b.x, y: b.h - 0.0008, z: b.z }), ring(b.w, 0.0026, b.d, brick, { x: b.x, y: b.h, z: b.z }));
   out.push(hip(b.w * 0.9, b.d * 0.9, Math.min(b.w, b.d) * 0.2, GE_SLATE, { x: b.x, y: b.h, z: b.z }));
   for (const f of ['front', 'back'] as const) out.push(...windows(b, f, { ...s, floors: l.floors - 1, base: s.base + s.storey, w: 0.0028, h: s.storey * 0.55, spacing: 0.0078, sill: s.storey * 0.22, color: 0x2a3038, frame: GE_WHITE }));
+  for (const x of stacks) smokeFrom(b.x + x, b.h + 0.0066, b.z); // (out of its pots)
   for (const x of stacks) out.push(...box(0.003, 0.005, 0.006, brick, { x: b.x + x, y: b.h, z: b.z }), cyl(0.0005, 0.0005, 0.0016, 4, 0xc4703f, { x: b.x + x, y: b.h + 0.005, z: b.z - 0.0012 }), cyl(0.0005, 0.0005, 0.0016, 4, 0xc4703f, { x: b.x + x, y: b.h + 0.005, z: b.z + 0.0012 }));
   return out;
 }
@@ -564,7 +566,7 @@ const coachingInn: Build = (l) => {
     const db: Body = { x: b.x + k * b.w, z: b.z + b.d * 0.3, w: 0.0042, d: 0.004, y: b.h + rh * 0.2, h: 0.0042 };
     out.push(...box(db.w, db.h, db.d, GE_WHITE, { x: db.x, y: db.y, z: db.z }), onFace(db, 'front', 0, db.y + 0.0008, 0.0026, 0.0028, GE_GLASS), ...gable(0.005, 0.0048, 0.0018, GE_SLATE, { x: db.x, y: db.y + db.h, z: db.z }, true, GE_WHITE));
   }
-  for (const k of [-1, 1]) out.push(...box(0.0034, rh + 0.006, 0.006, pick(l, GE_BRICK), { x: b.x + k * (b.w / 2 - 0.0028), y: b.h, z: b.z }));
+  for (const k of [-1, 1]) out.push(...chimney(0.0034, rh + 0.006, 0.006, pick(l, GE_BRICK), { x: b.x + k * (b.w / 2 - 0.0028), y: b.h, z: b.z }));
   // The sign on its gallows post at the kerb; barrels; the trough.
   const gx = b.x + b.w / 2 - 0.0022, gz = l.ld - 0.003, gh = 0.0175;
   out.push(cyl(0.0004, 0.0004, gh, 5, 0x2a2a2a, { x: gx, z: gz }), ...box(0.0074, 0.0004, 0.0004, 0x2a2a2a, { x: gx - 0.0035, y: gh - 0.0006, z: gz }));
@@ -592,6 +594,7 @@ const potbank: Build = (l) => {
     out.push(lathe(pts, 10, brick, { x, z }));
     for (const y of [0.004, 0.0085]) out.push(cyl(0.0075 * k, 0.0075 * k, 0.0005, 10, 0x2a2624, { x, y: y * k, z }));
     out.push(pane(0.003, 0.0052, 0x1e1a18, { x, z: z + 0.0072 * k + 0.0002 }));
+    smokeFrom(x, 0.0302 * k, z);
   };
   oven(-l.lw * 0.48, l.ld * 0.1, 1);
   if (l.lw > 0.03 || l.ld > 0.03) oven(l.lw * 0.5, -l.ld * 0.05, 0.88);
@@ -627,7 +630,7 @@ function placeRoyaleTop(b: Body, l: Parameters<Build>[0], brick: number, s: Retu
     out.push(...box(db.w, db.h, db.d, VO_STONE, { x: db.x, y: yd, z: db.z }), onFace(db, 'front', 0, yd + 0.001, 0.0024, 0.0036, VO_GLASS));
     out.push(...gable(0.005, 0.0046, 0.0026, VO_SLATE, { x: db.x, y: yd + db.h, z: db.z }, true, VO_STONE));
   }
-  for (const sx of [-1, 1]) out.push(...box(0.0035, rh + 0.006, 0.0025, brick, { x: b.x + sx * b.w * 0.32, y: b.h, z: b.z - b.d * 0.12 }));
+  for (const sx of [-1, 1]) out.push(...chimney(0.0035, rh + 0.006, 0.0025, brick, { x: b.x + sx * b.w * 0.32, y: b.h, z: b.z - b.d * 0.12 }));
   return out;
 }
 // A café on the square, after the Procope (1686) and those that followed
@@ -795,7 +798,7 @@ const apotheke: Build = (l) => {
   out.push(...gable(up.w + 0.003, up.d + 0.003, rh, roof, { x: b.x, y: b.h, z: b.z }, true, plaster));
   const gb: Body = { ...up, d: up.d + 0.003 };
   out.push(onFace(gb, 'front', 0, b.h + rh * 0.2, up.w * 0.6, 0.0008, GT_TIMBER, E), onFace(gb, 'front', 0, b.h + rh * 0.3, 0.0034, 0.0042, GT_GLASS, E));
-  out.push(...box(0.0032, rh * 0.45, 0.0032, 0x8a5a44, { x: b.x - b.w * 0.2, y: b.h + rh * 0.5, z: b.z - b.d * 0.2 }));
+  out.push(...chimney(0.0032, rh * 0.45, 0.0032, 0x8a5a44, { x: b.x - b.w * 0.2, y: b.h + rh * 0.5, z: b.z - b.d * 0.2 }));
   // The sign: a gilt lion on a board out from the wall on its bracket.
   out.push(...hangingSign(0.0042, 0.0042, 0xe8dcc0, 0x1a1a1a, { x: b.x - b.w / 2 + 0.0012, y: g1 + 0.0002, z: f + 0.0001 }));
   out.push(pane(0.0026, 0.0028, GT_GOLD, { x: b.x - b.w / 2 + 0.0012 + 0.0003, y: g1 - 0.0036, z: f + 0.0031, ry: Math.PI / 2 }), pane(0.0026, 0.0028, GT_GOLD, { x: b.x - b.w / 2 + 0.0012 - 0.0003, y: g1 - 0.0036, z: f + 0.0031, ry: -Math.PI / 2 }));
@@ -835,7 +838,7 @@ const baeckerei: Build = (l) => {
   out.push(onFace(zb, 'front', 0, b.h + 0.0008, 0.0036, zb.h * 0.8, 0x2a2220, E));
   out.push(...box(0.0008, 0.0008, 0.0062, GT_TIMBER, { x: zb.x, y: b.h + zb.h + zh * 0.28, z: zb.z + zd / 2 + 0.0026 }), cyl(0.00012, 0.00012, 0.006, 3, 0x2a2a2a, { x: zb.x, y: b.h + zb.h + zh * 0.28 - 0.006, z: zb.z + zd / 2 + 0.0054 }));
   out.push(...sacks(1, 0.0011, 0xe8e0cc, { x: zb.x + 0.0018, y: b.h + zb.h + zh * 0.28 - 0.0076, z: zb.z + zd / 2 + 0.0054 }));
-  out.push(...box(0.0032, rh * 0.4, 0.0032, 0x8a5a44, { x: b.x + b.w * 0.3, y: b.h + rh * 0.55, z: b.z - b.d * 0.15 }));
+  out.push(...chimney(0.0032, rh * 0.4, 0.0032, 0x8a5a44, { x: b.x + b.w * 0.3, y: b.h + rh * 0.55, z: b.z - b.d * 0.15 }));
   // The guild's pretzel, gilt, on its bracket at the corner.
   const px = b.x + b.w / 2 - 0.0008, py = g1 + 0.0004;
   out.push(...box(0.0003, 0.0003, 0.0058, 0x1a1a1a, { x: px, y: py, z: f + 0.0029 }));
@@ -869,6 +872,7 @@ const brauhaus: Build = (l) => {
   out.push(...box(kw, kh, kw, GT_STONE, { x: kx, z: kz }), onFace(kb, 'front', 0, kh * 0.55, 0.0024, 0.003, GT_GLASS, E), onFace(kb, 'front', 0, 0, 0.004, 0.007, 0x3a2a20, E));
   out.push(hip(kw + 0.003, kw + 0.003, kw * 0.55, roof, { x: kx, y: kh, z: kz }));
   out.push(...box(0.0036, 0.0028, 0.0036, GT_TIMBER, { x: kx, y: kh + kw * 0.42, z: kz }), ...box(0.0026, 0.0016, 0.0039, 0x1e1a18, { x: kx, y: kh + kw * 0.42 + 0.0006, z: kz }), spire(0.0054, 0.0036, roof, { x: kx, y: kh + kw * 0.42 + 0.0028, z: kz }));
+  smokeFrom(kx, kh + kw * 0.42 + 0.0028, kz); // (out of the louvres)
   // The brewer's star over the door.
   const sx = b.x - b.w * 0.15, sy = g1 * 0.55 + 0.0072;
   out.push(...box(0.0003, 0.0003, 0.0046, 0x1a1a1a, { x: sx + 0.0048, y: sy + 0.0028, z: f + 0.0023 }));
@@ -963,6 +967,7 @@ const chandler: Build = (l) => {
   for (let i = 0; i < 5; i++) out.push(P(new THREE.OctahedronGeometry(0.0009, 0), i % 2 ? 0xa8c060 : 0x7a9a48, { x: b.x - rw * 0.4 + i * rw * 0.2, y: b.h + rh * (i % 2 ? 0.5 : 0.7) + 0.001, z: b.z + (i % 2 ? rd * 0.15 : -rd * 0.08), sy: 0.6 }));
   out.push(...box(rw + 0.0012, 0.0007, 0.0012, BR_DARK, { x: b.x, y: b.h + rh + 0.0006, z: b.z }));
   out.push(cyl(0.0012, 0.0012, 0.004, 6, 0x6a6460, { x: b.x + b.w * 0.3, y: b.h + rh * 0.4, z: b.z - b.d * 0.2 }));
+  smokeFrom(b.x + b.w * 0.3, b.h + rh * 0.4 + 0.004, b.z - b.d * 0.2); // the stove's pipe
   // Rope coils, the net rack, tar barrels, oars, the lantern.
   const gz = l.ld - 0.0046;
   for (let i = 0; i < 4; i++) out.push(cyl(0.0016, 0.0016, 0.0008, 7, i % 2 ? 0xb89a68 : 0xa08458, { x: b.x - b.w * 0.36 + (i % 2) * 0.0036, y: Math.floor(i / 2) * 0.0008, z: gz }), cyl(0.0006, 0.0006, 0.00082, 6, 0x2a2420, { x: b.x - b.w * 0.36 + (i % 2) * 0.0036, y: Math.floor(i / 2) * 0.0008 + 0.00001, z: gz }));
@@ -1000,6 +1005,7 @@ const boatyard: Build = (l) => {
   out.push(...logs(6, l.lw * 0.6, 0.0007, 0xb89868, { x: -l.lw * 0.42, z: -l.ld * 0.84 }));
   const tx = b.x, tz = (f + l.ld) / 2;
   out.push(cyl(0.002, 0.0022, 0.0006, 6, 0x5a5650, { x: tx, z: tz }), cyl(0.0017, 0.0014, 0.0022, 7, BR_TAR, { x: tx, y: 0.0012, z: tz }), P(new THREE.OctahedronGeometry(0.0008, 0), 0xe8742a, { x: tx, y: 0.0006, z: tz, sy: 0.8 }));
+  smokeFrom(tx, 0.0034, tz);
   for (const k of [-1, 1]) out.push(cyl(0.0002, 0.0002, 0.0042, 3, BR_DARK, { x: tx + k * 0.0022, z: tz }));
   out.push(rodX(0.00015, 0.0046, 3, BR_DARK, { x: tx, y: 0.0042, z: tz }));
   out.push(...barrels(2, 0.0012, BR_TAR, { x: b.x + 0.005, z: tz + 0.001 }));

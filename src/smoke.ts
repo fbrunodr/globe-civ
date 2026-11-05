@@ -5,7 +5,7 @@ import * as THREE from 'three';
 // chimneys. One point cloud; each puff loops along its column in the vertex
 // shader, so animating it costs nothing on the CPU.
 
-export type SmokeKind = 'smoke' | 'fire' | 'chimney' | 'factory';
+export type SmokeKind = 'smoke' | 'fire' | 'chimney' | 'factory' | 'steam';
 export interface Emitter {
   pos: THREE.Vector3; // on the ground (or a chimney top)
   kind: SmokeKind;
@@ -13,8 +13,9 @@ export interface Emitter {
 }
 
 // (A chimney a thin wisp; a factory's stack, from the industrial age, a thick plume.)
-const PUFFS: Record<SmokeKind, number> = { smoke: 12, fire: 6, chimney: 5, factory: 10 };
-const KIND_CODE: Record<SmokeKind, number> = { smoke: 0, fire: 1, chimney: 2, factory: 3 };
+// (steam: a works' plume in the information age, white, not soot.)
+const PUFFS: Record<SmokeKind, number> = { smoke: 12, fire: 6, chimney: 5, factory: 10, steam: 10 };
+const KIND_CODE: Record<SmokeKind, number> = { smoke: 0, fire: 1, chimney: 2, factory: 3, steam: 4 };
 
 export interface Smoke {
   points: THREE.Points;
@@ -30,12 +31,12 @@ export function makeSmoke(scale: number): Smoke {
     transparent: true,
     depthWrite: false,
     vertexShader: /* glsl */ `
-      attribute vec3 seed; // phase, kind (0 smoke, 1 fire, 2 chimney, 3 factory), rate
+      attribute vec3 seed; // phase, kind (0 smoke, 1 fire, 2 chimney, 3 factory, 4 steam), rate
       uniform float uTime, uPx, uScale;
       varying float vT;
       varying float vKind;
       void main() {
-        float fire = step(0.5, seed.y) * step(seed.y, 1.5), chimney = step(1.5, seed.y) * step(seed.y, 2.5), factory = step(2.5, seed.y);
+        float fire = step(0.5, seed.y) * step(seed.y, 1.5), chimney = step(1.5, seed.y) * step(seed.y, 2.5), factory = step(2.5, seed.y); // (steam moves as a factory's plume)
         float speed = mix(mix(mix(0.22, 1.4, fire), 0.3, chimney), 0.22, factory);
         float cycle = uTime * speed * (0.8 + 0.4 * fract(seed.x * 7.3)) + seed.x, t = fract(cycle);
         // (Each time round, a puff shows or not by its rate: a chimney
@@ -61,8 +62,9 @@ export function makeSmoke(scale: number): Smoke {
         float soft = smoothstep(0.5, 0.1, r);
         vec3 c; float a;
         if (vKind > 0.5 && vKind < 1.5) { c = mix(vec3(1.0, 0.82, 0.4), vec3(0.85, 0.25, 0.05), vT); a = soft * (1.0 - vT); }
+        else if (vKind > 3.5) { c = mix(vec3(0.92, 0.93, 0.94), vec3(0.98, 0.98, 0.99), vT); a = soft * (1.0 - vT) * 0.45; }
         else if (vKind > 2.5) { c = mix(vec3(0.3, 0.29, 0.28), vec3(0.62, 0.61, 0.6), vT); a = soft * (1.0 - vT) * 0.5; }
-        else if (vKind > 1.5) { c = vec3(0.78, 0.77, 0.75); a = soft * (1.0 - vT) * 0.35; }
+        else if (vKind > 1.5) { c = vec3(0.92, 0.92, 0.91); a = soft * (1.0 - vT) * 0.35; }
         else { c = mix(vec3(0.16, 0.15, 0.14), vec3(0.45, 0.44, 0.42), vT); a = soft * (1.0 - vT) * 0.6; }
         gl_FragColor = vec4(c, a);
       }`,

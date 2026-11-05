@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { cone, cyl, type Tf } from '../../propCatalog.ts';
 import { wallHeight } from '../../town/geometry.ts';
-import { E, BAND, FRAME, P, arch, bands, box, disc, faceWidth, flatTree, merlons, shade, strips, tilted, tree, dome, fence, frustum, gable, hip, onFace, palm, patch, pick, place, ring, shrub, storeys, windows, yard, type Body, type Build, type Face, type G, type Trade } from '../../houseKit.ts';
+import { E, BAND, FRAME, P, arch, bands, box, disc, smokeFrom, faceWidth, flatTree, merlons, shade, strips, tilted, tree, dome, fence, frustum, gable, hip, onFace, palm, patch, pick, place, ring, shrub, storeys, windows, yard, type Body, type Build, type Face, type G, type Trade } from '../../houseKit.ts';
 import { anvil, awning, barrels, cart, counter, doubleDoor, hangingSign, hourglassMill, jars, lantern, leanTo, logs, sacks, signBoard, stack, stall } from '../../tradeKit.ts';
 
 // ---------- Roman (mediterranean) ----------
@@ -295,6 +295,7 @@ const nileBakery: Build = (l) => {
     out.push(cyl(0.0024, 0.0019, 0.0055, 7, 0x9a6a48, { x: ox + dx, z: oz + dz }));
     out.push(P(new THREE.CircleGeometry(0.0019, 7).rotateX(-Math.PI / 2), 0x1e1a16, { x: ox + dx, y: 0.0055, z: oz + dz }));
   }
+  smokeFrom(ox, 0.0055, oz); // (the first oven fired)
   for (let i = 0; i < 4; i++) out.push(cone(0.0006, 0.0016, 4, 0xb06a44, { x: ox + 0.0015 + i * 0.0013, z: oz - 0.0034, rz: Math.PI, y: 0.0016 }));
   // The beer: tall crocks along the front wall, stoppered with clay, fermenting.
   for (let i = 0; i < 4; i++) {
@@ -908,6 +909,7 @@ const azDyers: Build = (l) => {
     const x = b.x - b.w * 0.35 + i! * 0.0048;
     out.push(cyl(0.0019, 0.0016, 0.0026, 7, AZ_CLAY, { x, z: pz }), P(new THREE.CircleGeometry(0.0017, 7).rotateX(-Math.PI / 2), c!, { x, y: 0.0023, z: pz }));
   });
+  smokeFrom(b.x - b.w * 0.35 + 0.0048, 0.0026, pz); // (the middle pot's fire)
   // Lines of cloth across the yard, between posts.
   const lz = Math.min(l.ld * 0.62, pz + 0.008), lw = 2 * l.lw * 0.42, lx = l.lw * 0.2, lh = 0.0075;
   for (const k of [-1, 1]) out.push(cyl(0.0003, 0.0003, lh, 4, AZ_WOOD, { x: lx + k * lw / 2, z: lz }));
@@ -1045,7 +1047,7 @@ const etPotters: Build = (l) => {
   const fx = -l.lw * 0.42, fz = l.ld * 0.3;
   out.push(P(new THREE.SphereGeometry(0.0055, 7, 3, 0, Math.PI * 2, 0, Math.PI / 2), 0x4a4440, { x: fx, z: fz, sy: 0.55 }));
   for (let i = 0; i < 3; i++) out.push(cyl(0.0009, 0.0009, 0.0006, 6, 0x8a4a2a, { x: fx + Math.cos(i * 2.1) * 0.0026, y: 0.0024, z: fz + Math.sin(i * 2.1) * 0.0026 }));
-  out.push(cone(0.0012, 0.006, 5, 0x9a948a, { x: fx, y: 0.003, z: fz }));
+  smokeFrom(fx, 0.003, fz);
   // The finished ware in rows toward the street: jebenas, mitad griddles leaning, water jars.
   const wz = Math.min(l.ld * 0.84, fz + 0.0085);
   for (let i = 0; i < 4; i++) out.push(...jebena(1.1, { x: -l.lw * 0.15 + i * 0.0032, z: wz }));

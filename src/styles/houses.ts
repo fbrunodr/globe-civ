@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { cone, cyl } from '../propCatalog.ts';
 import { FOOTPRINT_CELLS } from '../town/geometry.ts';
 import {
-  E, P, arch, bands, birch, box, disc, dome, drum, fence, frustum, gable, hip, merlons, shade, onFace, palm, patch, pick, place, ring,
+  E, P, arch, bands, birch, box, chimney, disc, dome, drum, fence, frustum, gable, hip, merlons, shade, onFace, palm, patch, pick, place, ring,
   shrub, steps, storeys, faceWidth, strips, tilted, tree, windows, yard, SEEN, type Body, type Build, type Face, type G,
 } from '../houseKit.ts';
 
@@ -210,7 +210,7 @@ export const HOUSE_STYLES = {
       const [x, z] = alongZ ? [b.x, b.z + e * (b.d / 2 + 0.003)] : [b.x + e * (b.w / 2 + 0.003), b.z];
       out.push(cone(0.0009, 0.0045, 4, 0x3d2b1e, alongZ ? { x, y: ry - 0.0012, z, rx: e * 0.7 } : { x, y: ry - 0.0012, z, rz: -e * 0.7 }));
     }
-    out.push(...box(0.0024, 0.0028, 0.0024, wood, { x: b.x + (alongZ ? 0 : b.w * 0.2), y: ry - 0.0012, z: b.z + (alongZ ? -b.d * 0.2 : 0) })); // the smoke hole's hood
+    out.push(...chimney(0.0024, 0.0028, 0.0024, wood, { x: b.x + (alongZ ? 0 : b.w * 0.2), y: ry - 0.0012, z: b.z + (alongZ ? -b.d * 0.2 : 0) })); // the smoke hole's hood
     out.push(onFace(b, 'front', 0, 0, 0.0045, Math.min(wh * 0.85, 0.008), DOOR));
     // A boat drawn up in the yard; a wattle fence.
     const boat = frustum(0.0024, 0.0095, 0.0048, 0.013, 0.0022, 0x4e3a28, alongZ ? { x: -l.lw * 0.72, z: -l.ld * 0.2 } : { x: l.lw * 0.45, z: l.ld * 0.78, ry: Math.PI / 2 });
@@ -241,7 +241,7 @@ export const HOUSE_STYLES = {
     const top = parts[parts.length - 1]!, rh = Math.min(top.w * 0.85, 0.03);
     out.push(...gable(top.w + 0.004, top.d + 0.004, rh, roof, { x: b.x, y: b.h, z: b.z }, true, infill));
     out.push(onFace(top, 'front', 0, b.h, 0.0009, rh * 0.8, oak, 0.0021), onFace(top, 'front', 0, b.h + rh * 0.3, top.w * 0.55, 0.0009, oak, 0.0021));
-    out.push(...box(0.003, rh * 0.5, 0.003, 0x8a5a44, { x: b.x - b.w * 0.2, y: b.h + rh * 0.45, z: b.z - b.d * 0.2 }));
+    out.push(...chimney(0.003, rh * 0.5, 0.003, 0x8a5a44, { x: b.x - b.w * 0.2, y: b.h + rh * 0.45, z: b.z - b.d * 0.2 }));
     out.push(...box(2 * l.lw * 0.9, 0.003, 0.003, 0x4f6e38, { z: -l.ld * 0.88 }), ...tree(l.lw * 0.62, -l.ld * 0.7, 0.85, 0x4f6e38));
     return out;
   },
@@ -259,7 +259,7 @@ export const HOUSE_STYLES = {
     const rh = Math.min(b.w, b.d) * 0.78;
     out.push(...gable(b.w + 0.003, b.d + 0.004, rh, slate, { x: b.x, y: b.h, z: b.z }, false, granite));
     // Chimneys on both gable walls, above the ridge.
-    for (const sx of [-1, 1]) out.push(...box(0.0042, rh + 0.004, 0.003, granite, { x: b.x + sx * (b.w / 2 - 0.0016), y: b.h, z: b.z }));
+    for (const sx of [-1, 1]) out.push(...chimney(0.0042, rh + 0.004, 0.003, granite, { x: b.x + sx * (b.w / 2 - 0.0016), y: b.h, z: b.z }));
     // Dormers out on the front slope.
     const nd = b.w > 0.035 ? 2 : 1, zd = b.z + b.d * 0.28, yd = b.h + rh * (1 - 0.56) - 0.0008;
     for (let i = 0; i < nd; i++) {

@@ -19,7 +19,7 @@ import { CELL, FOOTPRINT_CELLS, wallHeight, type Floors, type Footprint } from '
 import { mulberry32 } from './rng.ts';
 import type { Style } from './architecture.ts';
 import {
-  BAND, E, P, SMOKE, VARIANTS, VARIANT, VARIANT_LOOK, useOf, box, cypress, fence, frustum, gable, hip, onFace, palm, patch, pick, place, plant, ring, shrub, storeys, tree, windows, yard, faceWidth,
+  BAND, E, P, SMOKE, VARIANTS, VARIANT, VARIANT_LOOK, useOf, box, chimney, cypress, fence, frustum, gable, hip, onFace, palm, patch, pick, place, plant, ring, shrub, smokeFrom, storeys, tree, windows, yard, faceWidth,
   type Body, type Build, type Face, type G, type Lot, type Trade,
 } from './houseKit.ts';
 import { HOUSE_STYLES } from './styles/houses.ts';
@@ -142,7 +142,7 @@ export const FIRST_STYLES = {
     out.push(onFace(b, 'front', 0, 0, 0.0055, Math.min(0.0095, s.storey * 0.72), 0x5a4030));
     // A steep thatch roof, low over the walls, its ridge along the length.
     out.push(...gable(b.w + 0.009, b.d + 0.009, Math.min(b.w, b.d) * 0.6, thatch, { x: b.x, y: b.h - 0.0015, z: b.z }, long, timber));
-    out.push(...box(0.0028, 0.006, 0.0028, 0x7a7068, { x: b.x + b.w * 0.25, y: b.h + Math.min(b.w, b.d) * 0.3, z: b.z - b.d * 0.1 })); // smoke hole / chimney
+    out.push(...chimney(0.0028, 0.006, 0.0028, 0x7a7068, { x: b.x + b.w * 0.25, y: b.h + Math.min(b.w, b.d) * 0.3, z: b.z - b.d * 0.1 })); // smoke hole / chimney
     // A wattle fence, a vegetable patch and a tree.
     out.push(...fence(l, 0.0028, 0x7a6248, 0.007));
     out.push(patch(l.lw * 0.6, l.ld * 0.35, 0x6a5a3a, -l.lw * 0.4, -l.ld * 0.62, 0.0006));
@@ -155,11 +155,12 @@ export const FIRST_STYLES = {
     const out: G[] = [patch(2 * l.lw * 0.98, 2 * l.ld * 0.98, 0x8aa060)];
     // One yurt per floor's worth of room: a big one, smaller ones on larger lots.
     const big = Math.min(l.lw, l.ld) * (l.floors > 1 ? 0.62 : 0.52), h = l.H * (l.floors > 1 ? 0.55 : 0.75);
-    const yurt = (x: number, z: number, r: number, hh: number) => [
+    // (Smoke from the crown, where the stovepipe comes out.)
+    const yurt = (x: number, z: number, r: number, hh: number) => (smokeFrom(x, hh + r * 0.62, z), [
       cyl(r, r, hh, 9, felt, { x, z }), cyl(r * 1.01, r * 1.01, hh * 0.12, 9, band, { x, y: hh * 0.55, z }),
       cone(r * 1.04, r * 0.55, 9, felt, { x, y: hh, z }), cyl(r * 0.18, r * 0.18, r * 0.12, 6, 0x6a5038, { x, y: hh + r * 0.5, z }),
       onFace({ x, z, w: r * 2, d: r * 2, y: 0, h: hh }, 'front', 0, 0, r * 0.45, hh * 0.75, 0xb8603a, E * 2),
-    ];
+    ]);
     out.push(...yurt(0, l.ld * 0.1, big, h));
     if (l.lw > 0.03) out.push(...yurt(-l.lw * 0.62, -l.ld * 0.55, big * 0.55, h * 0.7));
     if (l.lw > 0.04 || l.ld > 0.04) out.push(...yurt(l.lw * 0.6, -l.ld * 0.6, big * 0.5, h * 0.65));
@@ -303,7 +304,7 @@ export const FIRST_STYLES = {
       const x = b.x + sx * (b.w + 0.004) * 0.25, y = b.h + rh * 0.5 - 0.0015;
       out.push(...box(0.0042, 0.0042, 0.005, plaster, { x: x + sx * 0.0012, y, z: b.z + b.d * 0.1 }), ...gable(0.0055, 0.0056, 0.0022, roof, { x: x + sx * 0.0012, y: y + 0.0042, z: b.z + b.d * 0.1 }, false));
     }
-    out.push(...box(0.0032, rh * 0.45, 0.0032, 0x8a5a44, { x: b.x + b.w * 0.18, y: b.h + rh * 0.55, z: b.z - b.d * 0.25 }));
+    out.push(...chimney(0.0032, rh * 0.45, 0.0032, 0x8a5a44, { x: b.x + b.w * 0.18, y: b.h + rh * 0.55, z: b.z - b.d * 0.25 }));
     // A hedge at the back.
     out.push(...box(2 * l.lw * 0.9, 0.003, 0.003, 0x4f6e38, { z: -l.ld * 0.88 }), ...tree(-l.lw * 0.6, -l.ld * 0.7, 0.85, 0x4f6e38));
     return out;
@@ -327,6 +328,7 @@ export const FIRST_STYLES = {
       out.push(...gable(b.w + 0.002, b.d + 0.003, Math.min(b.w, b.d) * 0.42, slate, { x: b.x, y: b.h, z: b.z }, false, brick));
     }
     // Chimneys with pots at both ends.
+    for (const sx of [-1, 1]) smokeFrom(b.x + sx * (b.w / 2 - 0.003), b.h + (tall ? 0.004 : Math.min(b.w, b.d) * 0.5) + 0.0018, b.z - b.d * 0.15);
     for (const sx of [-1, 1]) out.push(...box(0.0034, tall ? 0.004 : Math.min(b.w, b.d) * 0.5, 0.0024, brick, { x: b.x + sx * (b.w / 2 - 0.003), y: b.h, z: b.z - b.d * 0.15 }), cyl(0.0006, 0.0006, 0.0018, 4, 0xa86a4a, { x: b.x + sx * (b.w / 2 - 0.003), y: b.h + (tall ? 0.004 : Math.min(b.w, b.d) * 0.5), z: b.z - b.d * 0.15 }));
     // Iron railings at the front; a small back yard with a tree.
     out.push(...box(2 * l.lw * 0.92, 0.0025, 0.0005, 0x2a2a2a, { z: l.ld * 0.95 }));
@@ -354,7 +356,7 @@ export const FIRST_STYLES = {
       const x = b.x + (i - (n - 1) / 2) * (b.w / n);
       out.push(...box(0.0034, mh * 0.55, 0.003, stone, { x, y: b.h + mh * 0.15, z: b.z + b.d / 2 - 0.0035 }), ...gable(0.0042, 0.0034, 0.0016, zinc, { x, y: b.h + mh * 0.7, z: b.z + b.d / 2 - 0.0035 }, true, stone));
     }
-    for (const sx of [-1, 1]) out.push(...box(0.003, mh * 1.2, 0.0022, 0xa86a4a, { x: b.x + sx * b.w * 0.36, y: b.h, z: b.z - b.d * 0.25 }));
+    for (const sx of [-1, 1]) out.push(...chimney(0.003, mh * 1.2, 0.0022, 0xa86a4a, { x: b.x + sx * b.w * 0.36, y: b.h, z: b.z - b.d * 0.25 }));
     out.push(...tree(l.lw * 0.6, -l.ld * 0.82, 0.9, 0x5e7a44));
     return out;
   },
@@ -453,34 +455,6 @@ function mirror(g: G): void {
   }
 }
 
-// Works whose trade keeps a fire (a forge, a kiln, a furnace, a stove, a
-// boiler) but whose chimney its builder did not mark: theirs is found in
-// the model (chimneyTop). (The rest work cold: mills, presses, salt pans,
-// tanneries, an ice house, a filling station...)
-const FIRED: ReadonlySet<Style> = new Set<Style>(['izba', 'yurt', 'mesoamerican', 'african', 'insula', 'neoclassical', 'renaissance', 'kura', 'monastic', 'haveli', 'georgian', 'gothic', 'bryggen', 'panel', 'zakkyo']);
-// A chimney's top in a model: the highest point standing well clear of
-// everything round it (a narrow peak: not a roof's ridge, which runs on at
-// its height), or null.
-function chimneyTop(g: G): [number, number, number] | null {
-  const pos = g.getAttribute('position'), C = 0.0015, top = new Map<string, { y: number; x: number; z: number }>();
-  for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i), k = `${Math.floor(x / C)},${Math.floor(z / C)}`;
-    const t = top.get(k);
-    if (!t || y > t.y) top.set(k, { y, x, z });
-  }
-  let best: [number, number, number] | null = null, bestRise = 0.003;
-  for (const [k, t] of top) {
-    const [i, j] = k.split(',').map(Number) as [number, number];
-    let around = 0;
-    for (let a = -3; a <= 3; a++) for (let b = -3; b <= 3; b++) {
-      if (Math.max(Math.abs(a), Math.abs(b)) < 2) continue;
-      around = Math.max(around, top.get(`${i + a},${j + b}`)?.y ?? 0);
-    }
-    if (t.y - around > bestRise) { bestRise = t.y - around; best = [t.x, t.y, t.z]; }
-  }
-  return best;
-}
-
 // A lot model as seen from afar (render.ts swaps it in when the town is a
 // few pixels across): its small triangles left out (windows, signs, trim,
 // goods, posts: under FAR_AREA each), its walls, roofs and stacks kept.
@@ -527,14 +501,13 @@ export function houseGeometry(kind: HouseKind): G {
     try {
       if (trade) built = lot.use === 'shop' ? trade.shops[variant % VARIANTS === 2 ? 0 : 1](lot) : trade.works(lot);
       else {
-        Object.assign(VARIANT, { free: true, v: variant, body: null, wall: null, roof: null });
+        Object.assign(VARIANT, { free: true, v: variant, body: null, wall: null, roof: null, roofY: null });
         try { built = [...STYLE_BUILD[style](lot), ...wing(lot)]; } finally { VARIANT.free = false; }
       }
     } finally { SMOKE.at = null; }
     const parts = built.map((p) => p.index ? p.toNonIndexed() : p);
     g = mergeGeometries(parts)!;
     if (VARIANT_LOOK[variant % VARIANTS]!.mirror) { mirror(g); for (const p of smoke) p[0] = -p[0]; }
-    if (lot.use === 'works' && smoke.length === 0 && FIRED.has(style)) { const p = chimneyTop(g); if (p) smoke.push(p); }
     smokes.set(kind, smoke);
     if (!g) throw new Error(`house ${kind}`);
     for (const p of parts) p.dispose();
