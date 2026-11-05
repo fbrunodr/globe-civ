@@ -259,7 +259,8 @@ export class GlobeRenderer {
   // (Built surfaces textured at a storey's size: a single floor's walls, as
   // a town's houses stand, a tile step about avgEdgeAngle · √3.)
   private readonly buildingMat = makePropMaterial(0.32, 0.6, this.sunDir);
-  // (Only the walls textured, as stone: propMaterial.ts SURFACE_FRAGMENT, at a storey's size.)
+  // (Only the walls textured, as stone: propMaterial.ts SURFACE_FRAGMENT, at a storey's size; their
+  // towers plain, one colour: on their narrow faces the courses only made stripes.)
   private readonly wallMat: THREE.MeshStandardMaterial;
   // (People, animals, plants: round, smooth-shaded.)
   private readonly smoothMat = makePropMaterial(0.25, 0.7, this.sunDir, undefined, true, this.floraTime);
@@ -1171,7 +1172,7 @@ export class GlobeRenderer {
           // (A farm's crops are drawn with the flora, and hide from high up as its understory does.)
           // (Shrubs and fences of cards are drawn with it too, casting their shadows as trees do.)
           const cards = isRuralModelKind(kind) && isFloraRural(kind), crop = cards && isCropRural(kind);
-          mesh = new THREE.InstancedMesh(instanceGeometry(this.geometryOf(kind), cap), isFloraKind(kind) || cards ? this.propMat : isRuralModelKind(kind) && isSmoothRural(kind) ? this.smoothMat : kind === 'wallSegment' || kind === 'wallTower' ? this.wallMat : this.buildingMat, cap);
+          mesh = new THREE.InstancedMesh(instanceGeometry(this.geometryOf(kind), cap), isFloraKind(kind) || cards ? this.propMat : isRuralModelKind(kind) && isSmoothRural(kind) ? this.smoothMat : kind === 'wallSegment' ? this.wallMat : this.buildingMat, cap);
           mesh.userData['hideAbove'] = isFloraKind(kind) ? HIDE_ABOVE[CATALOG[kind].layer] : Infinity;
           // (Crops hide once the camera is higher than they reach, cullProps.)
           if (crop) mesh.userData['crop'] = true;

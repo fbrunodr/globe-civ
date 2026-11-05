@@ -351,7 +351,7 @@ float surfaceShade(vec3 c, vec3 P, vec3 N) {
     }
     if (sat < 0.38 && lum < 0.5) {
       // Stone: dressed blocks, each its own shade, dark joints.
-      float h = S / 3.5, show = sShow(q.y, h);
+      float h = S / 7.0, show = sShow(q.y, h);
       float m = sCourses(q + vec2(0.0, 0.0), h * (1.4 + 0.6 * sHash(vec2(floor(q.y / h), 7.0))), h, 0.07, id);
       float n = sNoise(q / (h * 0.35));
       return 1.0 + show * (mix((sHash(id) - 0.5) * 0.4 + 0.16 * (n - 0.5), -0.5, m));
