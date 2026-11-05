@@ -353,12 +353,16 @@ function rockLp(c: V3, r: V3, paint: Paint | ((p: THREE.Vector3) => Paint), lump
 }
 // Weathered boulders (stone, not yet cut).
 function boulders(): G[] { return [[0, 0, 1.3, 1.0], [1.8, 0.6, 0.9, 0.7], [-1.0, 1.4, 0.7, 0.55], [0.6, -1.5, 0.6, 0.5]].map(([x, z, r, h]) => rockLp([x!, h! * 0.6, z!], [r!, h!, r! * 0.85], (p) => (p.y > h! * 0.9 ? 0xb8b2a4 : 0xa49e90), 0.15)); }
-// A school of fish breaking the surface, ripples round them.
-function fishSchool(): G[] {
-  const out: G[] = [];
-  for (let i = 0; i < 6; i++) { const a = i * 1.1, x = Math.cos(a) * (0.6 + i * 0.2), z = Math.sin(a) * (0.6 + i * 0.2), up = 0.15 + (i % 3) * 0.12; out.push(loft(smooth([S(x - 0.25, up - 0.04, 0.01, 0.01), S(x - 0.18, up, 0.05, 0.03), S(x + 0.05, up + 0.04, 0.07, 0.035), S(x + 0.2, up + 0.02, 0.04, 0.025), S(x + 0.26, up, 0.01, 0.01)].map((s) => ({ ...s, z })), 2), 6, 0x9ab0b8)); }
-  for (const r of [0.8, 1.5, 2.1]) out.push(P(new THREE.TorusGeometry(r, 0.025, 3, 28).rotateX(Math.PI / 2), 0xd8e8ec, { y: 0.01 }));
-  return out;
+// A fish, its head toward +x, at (x, up, z): four sides, four sections, its
+// ends points (no caps): 24 triangles.
+const fishAt = (x: number, up: number, z: number, c: number): G =>
+  loft([S(x - 0.25, up - 0.03, 0.005, 0.005), S(x - 0.12, up, 0.04, 0.03), S(x + 0.08, up + 0.03, 0.07, 0.035), S(x + 0.26, up, 0.005, 0.005)].map((s) => ({ ...s, z })), 4, c, undefined, false);
+// A few fish swimming together just under the surface, all one way (they
+// roam: rural/models.ts), three times life size so they read from the board.
+export const FISH_PER_SHOAL = 5;
+function fishShoal(): G[] {
+  const big = new THREE.Matrix4().makeScale(3, 3, 3);
+  return [[0, -0.08, 0], [-0.6, -0.12, 0.32], [-0.55, -0.1, -0.36], [-1.15, -0.14, 0.05], [-1.1, -0.09, -0.62]].map(([x, y, z], i) => fishAt(x!, y!, z!, i % 2 ? 0x6a8090 : 0x8aa0aa).applyMatrix4(big));
 }
 // An oyster bed: shells on the reef rocks, at the surface.
 function oysters(): G[] {
@@ -399,7 +403,7 @@ export const KIT = {
   // water and oil
   canoe, sailboat, trawler, derrick, pumpjack, oilTank,
   // the wild
-  wildRice, outcrop: () => outcrop(), oreRock: () => outcrop(true), boulders, fishSchool, oysters, resinPine,
+  wildRice, outcrop: () => outcrop(), oreRock: () => outcrop(true), boulders, fishShoal, oysters, resinPine,
   // worked touches
   winePress, cocoonTrays, tuskPile, cottonBales, teaBaskets, saltHeaps,
 } satisfies Record<string, () => G[]>;
@@ -419,7 +423,7 @@ export const FIGURE_BOOST = 6.5, PERSON_BOOST = 3.2, SMALL_BOOST = 4, PLANT_BOOS
 const SMALL: ReadonlySet<KitModel> = new Set<KitModel>(['plough', 'tractor', 'combine', 'trough', 'brokenCart', 'stooks', 'rick', 'bales', 'hideRack', 'oreHeap', 'oreCart', 'winePress', 'cocoonTrays', 'tuskPile', 'cottonBales', 'teaBaskets', 'saltHeaps', 'canoe']);
 const PLANTS: ReadonlySet<KitModel> = new Set<KitModel>(['wildRice', 'resinPine']);
 // (The wild's rock, shells and fish: drawn as large as the resources' props were.)
-const WILD: ReadonlySet<KitModel> = new Set<KitModel>(['outcrop', 'oreRock', 'boulders', 'oysters', 'fishSchool', 'resinPine', 'campfire']);
+const WILD: ReadonlySet<KitModel> = new Set<KitModel>(['outcrop', 'oreRock', 'boulders', 'oysters', 'fishShoal', 'resinPine', 'campfire']);
 export const kitBoost = (k: KitModel): number => (PEOPLE.has(k) ? PERSON_BOOST : FIGURES.has(k) ? FIGURE_BOOST : WILD.has(k) ? WILD_BOOST : SMALL.has(k) ? SMALL_BOOST : PLANTS.has(k) ? PLANT_BOOST : KIT_BOOST);
 export const FENCE_BOOST = SMALL_BOOST;
 // A kit model in tile steps.

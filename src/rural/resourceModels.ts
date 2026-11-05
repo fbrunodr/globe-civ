@@ -80,7 +80,7 @@ export const RESOURCE_WILD: Record<ResourceKey, ResourceLook> = {
   cattle: L({ model: 'ox', n: 3, colors: [0x2a2018, 0x3a2a1e, 0x5a3a24] }),
   sheep: L({ model: 'mouflon', n: 4, colors: [0x8a5a34, 0x7a4a2a, 0x9a6a40, 0x8a5a34] }),
   deer: L({ model: 'stag', n: 1, colors: [0x8a5a34] }, { model: 'deer', n: 3, colors: [0x9a6a40, 0x8a5e38] }),
-  fish: W({ model: 'fishSchool', n: 2 }),
+  fish: W({ model: 'fishShoal', n: 4 }),
   stone: L({ model: 'boulders', n: 2 }),
   copper: L({ model: 'outcrop', n: 2, colors: ORE.copper }),
   wine: L({ model: 'wildVine', n: 6, colors: [0x4a6a2a, 0x557434] }),

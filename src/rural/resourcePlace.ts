@@ -8,12 +8,13 @@ import type { Game } from '../game.ts';
 import type { ResourceKey } from '../resources.ts';
 import { BEACH, DRY, tileFrame, type CitySpot, type DirSampler } from '../cityProps.ts';
 import { resourceLayout, type ResourceLook, type ResourceSpot } from './resourceModels.ts';
-import { roamOf } from './models.ts';
+import { roamOf, wanderMax, wanderIn } from './models.ts';
 
 export interface PlacedResource extends ResourceSpot {
   readonly dir: THREE.Vector3; // where it stands (unit direction)
   readonly spot: CitySpot;     // the ground there
   readonly k: number;          // the tile's step (radians): the model's scale is k · s
+  readonly wander: number;     // a walker's (or fish's) circle round where it stands, on its land (or in its water): tile steps (rural/models.ts wanderIn)
 }
 
 // How many points round a walker's loop are checked.
@@ -38,6 +39,6 @@ export function placeResource(g: Game, t: number, r: ResourceKey, look: Resource
   };
   return resourceLayout(r, rand, look, inside).map((m) => {
     const dir = at(m.x, m.y);
-    return { ...m, dir, spot: sampleDir(dir), k };
+    return { ...m, dir, spot: sampleDir(dir), k, wander: wanderIn(m, wanderMax(m.model), (q) => fits(sampleDir(at(q.x, q.y)))) };
   });
 }

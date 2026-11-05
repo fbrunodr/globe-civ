@@ -3,14 +3,14 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { WorldLabel, clickableLabels, disposeLabels, type LabelLine } from './worldLabel.ts';
 import { makePropMaterial, makeRoamDepthMaterial, instanceGeometry } from './propMaterial.ts';
-import { ruralGeometry, ruralModelKind, isSmoothRural, isFloraRural, roamOf, RURAL_MODELS, type RuralModel } from './rural/models.ts';
+import { ruralGeometry, ruralModelKind, isSmoothRural, isFloraRural, roamOf, wanderIn, wanderMax, RURAL_MODELS, type RuralModel } from './rural/models.ts';
 import { resourceLayout, RESOURCE_WILD, RESOURCE_WORKED, type ResourceLook } from './rural/resourceModels.ts';
 import { RESOURCES, RESOURCE_KEYS, RESOURCE_IMPROVEMENT, type ResourceKey } from './resources.ts';
 import { TECHS, TECH_KEYS, STAGE_TECHS } from './techs.ts';
 import { IMPROVEMENTS, type ImprovementKey } from './cities.ts';
 import { stageLook, waterLook, plotStage } from './rural/stages.ts';
 import { planFarm, layoutRural, largestRect, HOMESTEAD_SCALE, HOMESTEAD_LOT, type RuralInput, type RuralSite } from './rural/layout.ts';
-import { kitBoost, FIGURES, SPECIES_OF, KIT_BOOST, type KitModel } from './rural/kit.ts';
+import { kitBoost, FIGURES, SPECIES_OF, KIT_BOOST, FISH_PER_SHOAL, type KitModel } from './rural/kit.ts';
 import { CREATURE_SCALE } from './creatures.ts';
 import { plotAt, cropIndex, CROP_PALETTE, PLOT_SIZES, PLANT_ROW_W, FARM_LANE } from './rural/plots.ts';
 import { ROAD_DIRT } from './terrainMaterial.ts';
@@ -19,7 +19,7 @@ import { valueNoise } from './paint.ts';
 import { areaLook, cropRegion, type CropRegion } from './rural/look.ts';
 import { rhoOf, INR, type Pt } from './town/geometry.ts';
 import { placedGeometry } from './buildingCatalog.ts';
-import { houseKind } from './houses.ts';
+import { houseKind, WORKS_VARIANT } from './houses.ts';
 import { styleOf } from './architecture.ts';
 import { CATALOG, CATALOG_KINDS, buildCatalogGeometry, triangles, type CatalogKind } from './propCatalog.ts';
 import { BUILDINGS_CATALOG, BUILDING_KINDS, buildBuildingGeometry } from './buildingCatalog.ts';
@@ -138,7 +138,8 @@ function spots(n: number, rand: Rng, r: number): [number, number][] {
 }
 
 // (leaf: the instance's leaf colour, per instance as in the game: render.ts.)
-interface Placed { key: string; geo: THREE.BufferGeometry; m: THREE.Matrix4; c: THREE.Color; leaf: THREE.Color; mat?: THREE.Material }
+// (`wander`: a walker's circle, model units: propMaterial.ts ROAM.)
+interface Placed { key: string; geo: THREE.BufferGeometry; m: THREE.Matrix4; c: THREE.Color; leaf: THREE.Color; mat?: THREE.Material; wander?: number }
 interface Options { jitter: boolean; groves: boolean; seed: number }
 
 const pickTint = (t: Tint | undefined, rand: Rng): number | undefined =>
@@ -184,8 +185,8 @@ function addInstances(items: Placed[], at: THREE.Vector3, parent: THREE.Object3D
   for (const list of groups.values()) {
     const mesh = new THREE.InstancedMesh(instanceGeometry(list[0].geo, list.length), list[0].mat ?? propMat, list.length);
     if (list[0].mat === smoothMat) mesh.customDepthMaterial = roamDepth;
-    const leaf = mesh.geometry.getAttribute('leafTint') as THREE.InstancedBufferAttribute;
-    list.forEach((p, i) => { mesh.setMatrixAt(i, off.clone().multiply(p.m)); mesh.setColorAt(i, p.c); leaf.setXYZ(i, p.leaf.r, p.leaf.g, p.leaf.b); });
+    const leaf = mesh.geometry.getAttribute('leafTint') as THREE.InstancedBufferAttribute, wander = mesh.geometry.getAttribute('wander') as THREE.InstancedBufferAttribute;
+    list.forEach((p, i) => { mesh.setMatrixAt(i, off.clone().multiply(p.m)); mesh.setColorAt(i, p.c); leaf.setXYZ(i, p.leaf.r, p.leaf.g, p.leaf.b); wander.setX(i, p.wander ?? 0); });
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     parent.add(mesh);
@@ -292,7 +293,9 @@ function resourceItems(r: ResourceKey, seed: number, look: ResourceLook = RESOUR
     const geo = cached(`r|${m.model}`, () => ruralGeometry(ruralModelKind(m.model)));
     const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), m.yaw);
     const mm = new THREE.Matrix4().compose(new THREE.Vector3((m.x + at.x) * STEP, 0, (m.y + at.y) * STEP), q, new THREE.Vector3().setScalar(m.s * STEP));
-    return { key: `r|${m.model}`, geo, m: mm, c: new THREE.Color(1, 1, 1), leaf: new THREE.Color(m.color ?? 0xffffff), mat: matOf(m.model) };
+    // (Its wanders on the patch's land, or in its water.)
+    const wander = wanderIn({ x: m.x + at.x, y: m.y + at.y }, wanderMax(m.model), fits) / m.s;
+    return { key: `r|${m.model}`, geo, m: mm, c: new THREE.Color(1, 1, 1), leaf: new THREE.Color(m.color ?? 0xffffff), mat: matOf(m.model), wander };
   });
 }
 // A wetland's water: a sheet over its pools only.
@@ -407,12 +410,13 @@ function workedItems(imp: ImprovementKey, stage: number, res: ResourceKey | null
   if (!farm) return out;
   const plan = layoutRural(inp, farm, site);
   if (plan.house) {
-    const hk = houseKind(styleOf('Romans', plan.house.floors), HOMESTEAD_LOT, plan.house.floors, seed % 3);
+    // (As in the game: a farm's house one of its style's two homes, a mine's its works.)
+    const hk = houseKind(styleOf('Romans', plan.house.floors), HOMESTEAD_LOT, plan.house.floors, imp === 'mine' ? WORKS_VARIANT : seed % 2);
     const geo = cached(`h|${hk}`, () => placedGeometry(hk));
     out.push({ key: `h|${hk}`, geo, m: new THREE.Matrix4().compose(new THREE.Vector3(plan.house.p.x * STEP, 0, plan.house.p.y * STEP), new THREE.Quaternion(), new THREE.Vector3().setScalar(STEP * HOMESTEAD_SCALE)), c: new THREE.Color(1, 1, 1), leaf: new THREE.Color(0xa8553a), mat: ruralMat });
   }
   // (The hex's frame is the patch's x and z: a heading a turns the model by -a about y.)
-  for (const it of plan.items) out.push(kitItem(it.model, it.p, -it.heading, 0, it.leaf, new THREE.Vector3(it.size[0] * STEP, it.size[1] * STEP, it.size[2] * STEP), it.shade));
+  for (const it of plan.items) out.push({ ...kitItem(it.model, it.p, -it.heading, 0, it.leaf, new THREE.Vector3(it.size[0] * STEP, it.size[1] * STEP, it.size[2] * STEP), it.shade), wander: it.wander / it.size[0] });
   if (imp === 'mine' && stageLook(imp, stage, res).adits) out.push(kitItem('adit', { x: -0.25, y: 0.2 }, 0.6, KIT_BOOST, 0xffffff));
   return out;
 }
@@ -571,7 +575,8 @@ function buildCatalog(): void {
   });
   // The countryside's animals and people (rural/kit.ts), smooth-shaded, at
   // one scale (a person 3 units tall), so their sizes compare true.
-  const figures = [...FIGURES].filter((k) => k !== 'ploughTeam' && k !== 'haycart');
+  // (With them, the fish: a shoal, raised out of the water it swims under.)
+  const figures: KitModel[] = [...[...FIGURES].filter((k) => k !== 'ploughTeam' && k !== 'haycart'), 'fishShoal'];
   const FIG_SCALE = 3 / (1.72 * CREATURE_SCALE);
   figures.forEach((kind, j) => {
     const i = CATALOG_KINDS.length + BUILDING_KINDS.length + j;
@@ -579,7 +584,9 @@ function buildCatalog(): void {
     world.add(hex(0xb9b39a, center, 3.2));
     const geo = cached(`r|${kind}`, () => ruralGeometry(ruralModelKind(kind)));
     const mesh = new THREE.InstancedMesh(instanceGeometry(geo, 1), smoothMat, 1);
-    mesh.setMatrixAt(0, new THREE.Matrix4().compose(center, new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.6), new THREE.Vector3().setScalar(FIG_SCALE)));
+    geo.computeBoundingBox();
+    const lift = Math.max(0, -geo.boundingBox!.min.y) * FIG_SCALE;
+    mesh.setMatrixAt(0, new THREE.Matrix4().compose(center.clone().setY(center.y + lift), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.6), new THREE.Vector3().setScalar(FIG_SCALE)));
     mesh.setColorAt(0, new THREE.Color(1, 1, 1));
     // (Their coats and clothes: a typical colour, as an instance takes in the game.)
     const coat = new THREE.Color(SPECIES_OF[kind] ? ({ horse: 0x7a4a2a, cow: 0x6a4a32, pied: 0x2a2622, ox: 0x5a4a3a, sheep: 0xece6da, mouflon: 0x8a5a34, deer: 0x9a6a40, stag: 0x8a5a34, elephant: 0x8c8680, fox: 0xc8642a } as const)[SPECIES_OF[kind]!] : 0x8a6a48);
@@ -587,14 +594,15 @@ function buildCatalog(): void {
     mesh.castShadow = true;
     world.add(mesh);
     const tris = triangles(geo);
-    const div = label(kind[0]!.toUpperCase() + kind.slice(1), `${SPECIES_OF[kind] ? 'Animal' : 'Person'} · ${tris} tris`,
+    const what = kind === 'fishShoal' ? `Fish · ${tris} tris (${FISH_PER_SHOAL} × ${tris / FISH_PER_SHOAL})` : `${SPECIES_OF[kind] ? 'Animal' : 'Person'} · ${tris} tris`;
+    const div = label(kind === 'fishShoal' ? 'Fish shoal' : kind[0]!.toUpperCase() + kind.slice(1), what,
       center.clone().add(new THREE.Vector3(0, 0, 4.4)), () => { state.focus = i; refreshFocus(); setCam('close'); });
     patches.push({ center, label: div, mix: '' });
   });
   // Then the rest of the countryside: its works, machines, plants and the
   // resources' models (rural/models.ts), each fitted to its hex (the label
   // says how much it was enlarged against the people's scale).
-  const rest = RURAL_MODELS.filter((k) => !FIGURES.has(k as KitModel) || k === 'ploughTeam' || k === 'haycart');
+  const rest = RURAL_MODELS.filter((k) => k !== 'fishShoal' && (!FIGURES.has(k as KitModel) || k === 'ploughTeam' || k === 'haycart'));
   rest.forEach((kind, j) => {
     const i = CATALOG_KINDS.length + BUILDING_KINDS.length + figures.length + j;
     const center = new THREE.Vector3((i % cols) * gap, 0, Math.floor(i / cols) * rowGap);

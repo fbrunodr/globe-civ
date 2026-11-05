@@ -116,6 +116,7 @@ interface PlacedProp {
   matrix: THREE.Matrix4;
   color: THREE.Color; // per-instance shade and slight hue shift
   leaf: THREE.Color;  // leaf color (the model's own, or a variant's tint)
+  wander?: number;    // a walker's circle (model units: propMaterial.ts ROAM)
 }
 
 // Reference tile spacing (radians) that unit/city sizes were tuned for.
@@ -1143,7 +1144,7 @@ export class GlobeRenderer {
       const q = new THREE.Quaternion().setFromUnitVectors(UP, m.dir).multiply(new THREE.Quaternion().setFromAxisAngle(UP, m.yaw));
       const sc = m.k * m.s, shade = 0.92 + 0.12 * rand();
       items.push({ kind: ruralModelKind(m.model), matrix: new THREE.Matrix4().compose(m.dir.clone().multiplyScalar(1 + Math.max(m.spot.ground, m.spot.water) - 0.00004 * this.scale), q, new THREE.Vector3(sc, sc, sc)),
-        color: new THREE.Color(shade, shade, shade), leaf: new THREE.Color(m.color ?? 0xffffff) });
+        color: new THREE.Color(shade, shade, shade), leaf: new THREE.Color(m.color ?? 0xffffff), wander: m.wander / m.s });
     }
     this.resourceCache.set(t, { key, items });
     return items;
@@ -1201,9 +1202,10 @@ export class GlobeRenderer {
           chunk.meshes.set(kind, mesh);
           this.scene.add(mesh);
         }
-        const leaf = mesh.geometry.getAttribute('leafTint') as THREE.InstancedBufferAttribute;
+        const leaf = mesh.geometry.getAttribute('leafTint') as THREE.InstancedBufferAttribute, wander = mesh.geometry.getAttribute('wander') as THREE.InstancedBufferAttribute;
         items.forEach(({ p, dim }, i) => {
           mesh.setMatrixAt(i, p.matrix);
+          wander.setX(i, p.wander ?? 0);
           mesh.setColorAt(i, color.copy(p.color).multiplyScalar(dim));
           // Out of sight, leaves lose their color like the ground does.
           const k = dim < 1 ? 0.6 : 0, gray = (p.leaf.r + p.leaf.g + p.leaf.b) / 3;
@@ -1211,7 +1213,7 @@ export class GlobeRenderer {
         });
         mesh.count = items.length;
         mesh.instanceMatrix.needsUpdate = true;
-        leaf.needsUpdate = true;
+        leaf.needsUpdate = wander.needsUpdate = true;
         if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
         mesh.computeBoundingSphere();
         // Trees also get a far twin (farGeometry: a few triangles), drawn

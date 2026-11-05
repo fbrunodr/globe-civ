@@ -83,6 +83,7 @@ export interface PlacedBuilding {
   matrix: THREE.Matrix4;
   color: THREE.Color; // per-instance shade
   leaf: THREE.Color;  // roof
+  wander?: number;    // a walker's: the circle it wanders round where it stands (model units; rural/models.ts wanderIn)
 }
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -533,7 +534,7 @@ export class CityProps {
     for (const t of this.farmland(city)) {
       const imp = g.builtAt(t)!, stage = g.stageAt(t, city.owner);
       const r0 = g.resourceFor(t, city.owner), res = r0 && RESOURCE_IMPROVEMENT[r0] === imp ? r0 : null;
-      const { toDir: toT } = onTile(g, t);
+      const { toDir: toT, k: kT } = onTile(g, t);
       const ko = keep.get(t);
       // (The farm's painting samples its points more than once: what the ground is at each, remembered.)
       const seen = new Map<string, CitySpot>();
@@ -569,12 +570,13 @@ export class CityProps {
         return [];
       };
       // One model at p, facing `heading` (the hex's frame), never on a road crossing the farm.
-      const one = (m: RuralModel, p: Pt2, heading: number, size: readonly [number, number, number], leaf: number, shade = 1) => {
+      const one = (m: RuralModel, p: Pt2, heading: number, size: readonly [number, number, number], leaf: number, shade = 1, wander = 0) => {
         const dir = toT(p), smp = this.sampleDir(dir);
         const yaw = facing(dir, toT({ x: p.x + 0.01 * Math.cos(heading), y: p.y + 0.01 * Math.sin(heading) }));
         const q = new THREE.Quaternion().setFromUnitVectors(UP, dir).multiply(new THREE.Quaternion().setFromAxisAngle(UP, yaw));
         const pos = dir.clone().multiplyScalar(1 + smp.ground - 0.00005 * this.scale);
-        const b: PlacedBuilding = { kind: ruralModelKind(m), matrix: new THREE.Matrix4().compose(pos, q, new THREE.Vector3(size[0] * D, size[1] * D, size[2] * D)), color: new THREE.Color(shade, shade, shade), leaf: new THREE.Color(leaf) };
+        const b: PlacedBuilding = { kind: ruralModelKind(m), matrix: new THREE.Matrix4().compose(pos, q, new THREE.Vector3(size[0] * D, size[1] * D, size[2] * D)), color: new THREE.Color(shade, shade, shade), leaf: new THREE.Color(leaf),
+          wander: (wander * kT) / (size[0] * D) };
         if (!clear.free(this.footprint(b))) return false;
         put(t, b);
         return true;
@@ -587,7 +589,7 @@ export class CityProps {
         if (fl.t === 'scatter') for (const p of scatterIn(poly, fl.per, seed, SCATTER_GAP[fl.model])) { const k = 0.8 + 0.4 * r(); one(fl.model, p, r() * 6.28, [k, k, k], fl.color); }
       }, city.owner, (p) => adits.push({ p, r: 0.09 }));
       const plan = layoutRural(inp, farm, site, adits);
-      for (const it of plan.items) one(it.model, it.p, it.heading, it.size, it.leaf, it.shade);
+      for (const it of plan.items) one(it.model, it.p, it.heading, it.size, it.leaf, it.shade, it.wander);
       // The homestead: a house in the civ's style (one floor to three as its
       // techs take it on) and its barn, facing along the grid.
       const placeLot = (kind: Footprint, floors: Floors, p: Pt2, lr: Rng) => {

@@ -222,13 +222,35 @@ export const isSmoothRural = (k: RuralModelKind): boolean => KIT_SET.has(k.slice
 // drive through what stands by it). Their whole loop lies within twice
 // that of where they stand: rural/layout.ts keeps that clear.
 const ROAM_BEAST = 1.1 * CREATURE_SCALE, ROAM_PERSON = 0.6 * CREATURE_SCALE;
-export const roamOf = (m: string): number => (SPECIES_OF[m as KitModel] ? ROAM_BEAST : FIGURES.has(m as KitModel) && m !== 'ploughTeam' && m !== 'haycart' ? ROAM_PERSON : 0);
+export const roamOf = (m: string): number => (SPECIES_OF[m as KitModel] || m === 'fishShoal' ? ROAM_BEAST : FIGURES.has(m as KitModel) && m !== 'ploughTeam' && m !== 'haycart' ? ROAM_PERSON : 0);
+// (Fish swim, never stopping: the material's `roam` negative for them.)
+const swims = (m: string): boolean => m === 'fishShoal';
+// Given room, a walker wanders further: from one spot to the next within a
+// circle round where it stands (the material's `wander`), as large as fits
+// (wanderIn): beasts over a good part of their pasture, people about their
+// work, fish about their water. At most this far (tile steps).
+const WANDER_BEAST = 0.14, WANDER_PERSON = 0.07, WANDER_FISH = 0.12;
+export const wanderMax = (m: string): number => (m === 'fishShoal' ? WANDER_FISH : SPECIES_OF[m as KitModel] ? WANDER_BEAST : roamOf(m) ? WANDER_PERSON : 0);
+// The largest circle round p (tile steps), up to `max`, that `ok` holds all
+// over (checked round its rim and halfway in); 0 if none does (it walks its
+// small loop: roamOf).
+export function wanderIn(p: { readonly x: number; readonly y: number }, max: number, ok: (q: { x: number; y: number }) => boolean): number {
+  for (let r = max; max > 0 && r >= max * 0.2; r *= 0.75) {
+    let fits = true;
+    for (let j = 0; fits && j < 16; j++) {
+      const a = (j / 8) * Math.PI, d = j % 2 ? r / 2 : r;
+      fits = ok({ x: p.x + d * Math.cos(a), y: p.y + d * Math.sin(a) });
+    }
+    if (fits) return r;
+  }
+  return 0;
+}
 // How a walker's legs swing (the material's `gait`: per vertex, how far
 // below the hips, model units, and which leg: +1 or -1). A person's legs
 // are its two sides; a beast's go in diagonal pairs, as at a walk.
 function gaitOf(g: THREE.BufferGeometry, m: string): Float32Array {
   const pos = g.getAttribute('position'), out = new Float32Array(pos.count * 2);
-  if (!roamOf(m)) return out;
+  if (!roamOf(m) || m === 'fishShoal') return out;
   g.computeBoundingBox();
   const b = g.boundingBox!, beast = !!SPECIES_OF[m as KitModel];
   const hip = b.min.y + (b.max.y - b.min.y) * (beast ? 0.42 : 0.5), mx = (b.min.x + b.max.x) / 2, half = (b.max.x - b.min.x) / 2;
@@ -271,9 +293,9 @@ export function ruralGeometry(kind: RuralModelKind): THREE.BufferGeometry {
     for (const p of parts) p.dispose();
     cache.set(kind, g);
   }
-  // (How far it roams: its walk's radius, the material's `roam`.)
+  // (How far it roams: its walk's radius, the material's `roam`; negative for a swimmer.)
   if (!g.getAttribute('roam')) {
-    g.setAttribute('roam', new THREE.Float32BufferAttribute(new Float32Array(g.getAttribute('position').count).fill(roamOf(m)), 1));
+    g.setAttribute('roam', new THREE.Float32BufferAttribute(new Float32Array(g.getAttribute('position').count).fill(roamOf(m) * (swims(m) ? -1 : 1)), 1));
     g.setAttribute('gait', new THREE.Float32BufferAttribute(gaitOf(g, m), 2));
   }
   return g;

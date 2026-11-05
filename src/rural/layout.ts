@@ -20,7 +20,7 @@ import { CROP_HEIGHT, CROP_PALETTE, CROP_STAND_SATURATION, PLOT_SIZES, MAX_STAGE
 import { SCATTER_GAP, scatterIn, type AreaLook, type CropRegion, type Fill } from './look.ts';
 import { stageLook, plotStage, pastureFences, herdSize } from './stages.ts';
 import { kitBoost, FIGURES, FENCE_BOOST } from './kit.ts';
-import { ruralGeometry, ruralModelKind, roamOf, type RuralModel } from './models.ts';
+import { ruralGeometry, ruralModelKind, roamOf, wanderMax, wanderIn, isFloraRural, type RuralModel } from './models.ts';
 
 export interface RuralItem {
   readonly model: RuralModel;
@@ -29,6 +29,7 @@ export interface RuralItem {
   readonly size: readonly [number, number, number];  // its scale: tile steps to a model unit
   readonly leaf: number;                             // its leaf parts' colour
   readonly shade: number;                            // its colour's shade
+  readonly wander: number;                           // a walker's: the circle it wanders round p (tile steps; 0: its small loop)
 }
 export interface RuralSite {
   readonly free: (p: Pt) => boolean;  // open ground: off the roads, the city, a wonder's lot
@@ -145,7 +146,9 @@ export function layoutRural(inp: RuralInput, farm: Farm, site: RuralSite, keep: 
   const kept = (p: Pt, r = 0) => keep.some((k) => d2(p, k.p) < k.r + r);
   const dry = (p: Pt) => site.depth(p) <= 0;
   const add = (model: RuralModel, p: Pt, heading: number, s: number | readonly [number, number, number], leaf = 0xffffff, shade = 1) =>
-    items.push({ model, p, heading, size: typeof s === 'number' ? [s, s, s] : s, leaf, shade });
+    items.push({ model, p, heading, size: typeof s === 'number' ? [s, s, s] : s, leaf, shade, wander: 0 });
+  // (The walkers, and where each may go: their circles are found once all else stands.)
+  const walkers: { i: number; ok: (q: Pt) => boolean }[] = [];
 
   // The homestead: a house in the owner's style and its barn (none on a ruin), facing along the grid.
   // (A camp's house is its lodge, or sawmill: rural/stages.ts.)
@@ -193,6 +196,9 @@ export function layoutRural(inp: RuralInput, farm: Farm, site: RuralSite, keep: 
       const m = look.herd.models[n % look.herd.models.length]!, s = kitBoost(m) * (0.9 + 0.2 * r()), walk = walkOf(m, s);
       if (ring.length === 0 || !pointInPoly(p, ring) || toFence(p) < walk + radiusOf(m, s) * 0.6 || d2(p, farm.home) < 0.1 || inYard(p) || !site.free(p) || !dry(p) || kept(p, walk) || taken.some((q) => d2(p, q.p) < q.r + walk)) continue;
       add(m, p, r() * 6.28, s, look.herd.colors[n % look.herd.colors.length]!);
+      // (Its wanders keep inside its fences, on its dry pasture, off the roads, the yards and the homestead.)
+      const rad = radiusOf(m, s);
+      walkers.push({ i: items.length - 1, ok: (q) => pointInPoly(q, ring) && toFence(q) >= rad * 0.6 && d2(q, farm.home) >= 0.1 && !inYard(q) && site.free(q) && dry(q) });
       taken.push({ p, r: walk });
       n++;
     }
@@ -288,9 +294,21 @@ export function layoutRural(inp: RuralInput, farm: Farm, site: RuralSite, keep: 
       // (Machines and teams work along the plots; people face about.)
       // (A lodge kept low: at its full height it dwarfed the homestead.)
       add(m, p, (th.where === 'field' && !fig) || m === 'ploughTeam' ? along : r() * 6.28, m === 'lodge' ? [s, s * LODGE_SQUASH, s] : s, leaf);
+      // (A person's wanders keep on the farm's land, as dry as where it stands, off the roads.)
+      if (roamOf(m)) walkers.push({ i: items.length - 1, ok: (q) => rhoOf(6, q) <= 0.95 && site.ours(q) && site.free(q) && site.depth(q) <= (imp === 'wetland' ? site.wade : 0) });
       taken.push({ p, r: rad });
       break;
     }
+  }
+  // Each walker's circle: as large as its ground allows, clear of the
+  // homestead, the barn and whatever stands still (crops, plants and
+  // fences aside: they walk among the crops, and the herd keeps off its
+  // fences already).
+  const solid = [...(house ? [{ p: house.p, r: HOUSE_R }] : []), ...(barn ? [{ p: barn, r: BARN_R }] : []),
+    ...items.filter((it) => !roamOf(it.model) && !isFloraRural(ruralModelKind(it.model))).map((it) => ({ p: it.p, r: radiusOf(it.model, it.size[0]) }))];
+  for (const w of walkers) {
+    const it = items[w.i]!, rad = radiusOf(it.model, it.size[0]) * 0.5;
+    items[w.i] = { ...it, wander: wanderIn(it.p, wanderMax(it.model), (q) => w.ok(q) && solid.every((o) => d2(q, o.p) > o.r + rad)) };
   }
   return { house, barn, items };
 }

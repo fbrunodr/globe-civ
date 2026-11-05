@@ -216,22 +216,59 @@ export const CARD_TEXEL = `
   }`;
 
 // The countryside's beasts and people roam (`roam`, a model's: the radius
-// of its walk, model units; 0 for what stands still): each round a loop of
-// its own, a few steps at a time and a pause to graze or work between,
-// turned the way it walks, in its own phase (by where it stands).
+// of its walk, model units; 0 for what stands still), each in its own phase
+// (by where it stands). Given room (`wander`, an instance's: the circle it
+// may go about in, model units, all of it on its own ground: rural/models.ts
+// wanderIn), from one spot in it to the next: it stops a while (to graze, to
+// work), turns toward the next spot, walks there. Else round a small loop
+// of its own, a few steps at a time. Turned the way it walks. A swimmer
+// (`roam` negative: a shoal of fish) never stops: round a smooth closed loop
+// of its own in its circle (a wobbling ellipse, its own size, tilt, way
+// round and pace), facing along it.
 // uRoamTime: seconds.
 const ROAM_DECL = `
   attribute float roam;
   attribute vec2 gait;
+  attribute float wander;
   uniform float uRoamTime;
+  float roamHash(float n, float h) { return fract(sin(n * 91.3458 + h * 47.453) * 43758.5453); }
+  // (The n-th spot of its wanders: anywhere in its circle, evenly.)
+  vec2 roamSpot(float n, float h) { float a = roamHash(n, h) * 6.2831853, r = sqrt(roamHash(n + 0.5, h)); return vec2(cos(a), sin(a)) * r * wander; }
   // (The angle walked so far, signed by which way round; the loop's offset;
   // and the legs' swing now: 0 at rest, ±1 mid-stride.)
   float roamAngle(out vec3 off, out float swing) {
     off = vec3(0.0); swing = 0.0;
     #ifdef USE_INSTANCING
-      if (roam <= 0.0) return 0.0;
+      if (roam == 0.0) return 0.0;
       vec3 o = instanceMatrix[3].xyz;
       float h = fract(sin(dot(o, vec3(12.9898, 78.233, 37.719)) * 1e4) * 43758.5453);
+      if (roam < 0.0) {
+        // p(t) = R · turn(q) · (a cos t + c sin(2t + e), b sin t + d cos(2t + f)): the second terms small, so it never doubles back.
+        float R = wander > 0.0 ? wander : -2.0 * roam, way = roamHash(1.0, h) < 0.5 ? -1.0 : 1.0;
+        float a = 0.62 + 0.2 * roamHash(2.0, h), b = 0.45 + 0.3 * roamHash(3.0, h), c = 0.12 * roamHash(4.0, h), d = 0.12 * roamHash(5.0, h);
+        float e = 6.2831853 * roamHash(6.0, h), f = 6.2831853 * roamHash(7.0, h), q = 6.2831853 * roamHash(8.0, h);
+        float t = way * uRoamTime * 6.2831853 / (24.0 + 16.0 * roamHash(9.0, h)) + 6.2831853 * h;
+        vec2 p = vec2(a * cos(t) + c * sin(2.0 * t + e), b * sin(t) + d * cos(2.0 * t + f));
+        vec2 v = way * vec2(-a * sin(t) + 2.0 * c * cos(2.0 * t + e), b * cos(t) - 2.0 * d * sin(2.0 * t + f));
+        float cq = cos(q), sq = sin(q);
+        p = R * vec2(cq * p.x - sq * p.y, sq * p.x + cq * p.y);
+        v = vec2(cq * v.x - sq * v.y, sq * v.x + cq * v.y);
+        off = vec3(p.x, 0.0, p.y);
+        return atan(v.y, v.x);
+      }
+      if (wander > 0.0) {
+        // A leg: a pause (its first part), a turn, then the walk to the next spot, slowing at the end.
+        float k = uRoamTime / (8.0 + 6.0 * h) + h * 31.0, n = floor(k), f = fract(k);
+        vec2 z = roamSpot(n - 1.0, h), a = roamSpot(n, h), b = roamSpot(n + 1.0, h);
+        float s = smoothstep(0.45, 1.0, f);
+        vec2 p = mix(a, b, s);
+        off = vec3(p.x, 0.0, p.y);
+        float a0 = atan(a.y - z.y, a.x - z.x), a1 = atan(b.y - a.y, b.x - a.x), d = a1 - a0;
+        d -= 6.2831853 * floor((d + 3.14159265) / 6.2831853);
+        // (The legs swing once a stride, twice the small loop's radius: about a body's length.)
+        swing = sin(s * length(b - a) / (roam * 2.0) * 6.2831853) * smoothstep(0.45, 0.55, f) * (1.0 - smoothstep(0.92, 1.0, f));
+        return a0 + d * smoothstep(0.3, 0.45, f);
+      }
       float side = h < 0.5 ? -1.0 : 1.0;
       float k = uRoamTime / (5.0 + 4.0 * h) + h * 17.0;
       float s = smoothstep(0.55, 1.0, fract(k)), th = (floor(k) + s) * 0.8;
@@ -487,11 +524,13 @@ export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Ve
   return mat;
 }
 
-// A geometry sharing a prop model's buffers, with its own per-instance leaf colors.
+// A geometry sharing a prop model's buffers, with its own per-instance leaf
+// colors and walkers' circles (ROAM: 0, their small loop).
 export function instanceGeometry(model: THREE.BufferGeometry, capacity: number): THREE.BufferGeometry {
   const g = new THREE.BufferGeometry();
   for (const [name, attr] of Object.entries(model.attributes)) g.setAttribute(name, attr);
   g.setAttribute('leafTint', new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3));
+  g.setAttribute('wander', new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1));
   return g;
 }
 
