@@ -56,6 +56,8 @@ game.explored.fill(1);
 game.visible.fill(1);
 const built = stress ? [] : buildPresets(game);
 if (stress) console.log('stress world:', stressWorld(game));
+// (In the nav, the stress test is the page shown, not the lab.)
+if (stress) for (const a of document.querySelectorAll<HTMLAnchorElement>('.devnav a')) a.classList.toggle('active', a.getAttribute('href') === '/city_lab.html?stress');
 const view = new GlobeRenderer($<HTMLCanvasElement>('c'), game);
 view.setClouds(false);
 if (import.meta.env.DEV) Object.assign(window, { __globe: { game, view } });
