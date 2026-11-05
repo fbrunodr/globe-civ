@@ -871,7 +871,8 @@ export class CityProps {
     for (let x = -ADIT_REACH; x <= ADIT_REACH; x += ADIT_STEP) for (let y = -ADIT_REACH; y <= ADIT_REACH; y += ADIT_STEP) {
       const p = { x, y };
       if (rhoOf(6, p) > 0.8 || len2(sub2(p, home)) < ADIT_HOME_GAP || (keepOut && len2(sub2(p, keepOut.p)) < keepOut.r + ADIT_HOME_GAP)) continue;
-      const gx = h({ x: x + 0.02, y }) - h({ x: x - 0.02, y }), gy = h({ x, y: y + 0.02 }) - h({ x, y: y - 0.02 });
+      // (The hill's slope, not the ground's small bumps.)
+      const gx = h({ x: x + 0.05, y }) - h({ x: x - 0.05, y }), gy = h({ x, y: y + 0.05 }) - h({ x, y: y - 0.05 });
       const steep = Math.hypot(gx, gy);
       if (steep > 1e-9) spots.push({ p, down: { x: -gx / steep, y: -gy / steep }, steep });
     }
@@ -882,7 +883,9 @@ export class CityProps {
       if (placed.some((q) => len2(sub2(q, p)) < ADIT_GAP)) continue;
       const da = toDir(p), s = this.sampleDir(da);
       if (s.water - s.ground > DRY) continue;
-      const yaw = facing(da, toDir(at(p, down, 0.01))) + Math.PI / 2;
+      // (Its mouth is the model's +x: facing down the slope, the hill
+      // straight behind it, uphill.)
+      const yaw = facing(da, toDir(at(p, down, 0.01)));
       const bs = settle((k) => this.standLot(ruralModelKind('adit'), da, yaw, 0.004, 0.002, D * k * ADIT_SCALE, mulberry32(mix(t, placed.length)), owner), false);
       if (bs.length === 0) continue;
       put(bs);

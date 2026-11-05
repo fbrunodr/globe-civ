@@ -229,10 +229,11 @@ function sawmill(): G[] {
 }
 
 // ---- the mine and the quarry, by stage ----
-// An adit cut into the slope: its timber portal, the dark mouth, the spoil.
+// An adit cut into the slope: its timber portal, the dark mouth, the
+// spoil. (No rails or cart: they would hang off the slope in front.)
 function adit(): G[] {
   return [box(0.35, 2.6, 0.35, TIMBER, { x: 0.2, z: -1.3 }), box(0.35, 2.6, 0.35, TIMBER, { x: 0.2, z: 1.3 }), box(0.45, 0.4, 3.2, TIMBER, { x: 0.2, y: 2.5 }), box(0.1, 2.4, 2.3, 0x14110e, { x: 0.05 }),
-    box(3.0, 1.6, 4.0, 0x6a6258, { x: -1.4, y: 0, rz: 0.15 }), ...[-0.5, 0.5].map((z) => beam([0.4, 0.05, z], [5, 0.05, z], 0.04, IRON, 4)), box(1.2, 0.8, 0.9, 0x5a4a3a, { x: 2.8, y: 0.25 })];
+    box(3.0, 1.6, 4.0, 0x6a6258, { x: -1.4, y: 0, rz: 0.15 })];
 }
 // A timber headframe over a shaft, its wheel and the winding drum.
 function headframe(): G[] {
