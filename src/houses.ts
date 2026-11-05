@@ -19,13 +19,18 @@ import { CELL, FOOTPRINT_CELLS, wallHeight, type Floors, type Footprint } from '
 import { mulberry32 } from './rng.ts';
 import type { Style } from './architecture.ts';
 import {
-  BAND, E, P, VARIANTS, VARIANT, VARIANT_LOOK, box, cypress, fence, frustum, gable, hip, onFace, palm, patch, pick, place, plant, ring, shrub, storeys, tree, windows, yard, faceWidth,
-  type Body, type Build, type Face, type G, type Lot,
+  BAND, E, P, VARIANTS, VARIANT, VARIANT_LOOK, useOf, box, cypress, fence, frustum, gable, hip, onFace, palm, patch, pick, place, plant, ring, shrub, storeys, tree, windows, yard, faceWidth,
+  type Body, type Build, type Face, type G, type Lot, type Trade,
 } from './houseKit.ts';
 import { HOUSE_STYLES } from './styles/houses.ts';
 import { TRIPLE_STYLES } from './styles/triples.ts';
 import { QUAD_STYLES } from './styles/quads.ts';
 import { TOWER_STYLES } from './styles/towers.ts';
+import { FIRST_TRADE } from './styles/trade/first.ts';
+import { HOUSES_TRADE } from './styles/trade/houses.ts';
+import { TRIPLES1_TRADE } from './styles/trade/triples1.ts';
+import { TRIPLES2_TRADE } from './styles/trade/triples2.ts';
+import { QUADS_TRADE } from './styles/trade/quads.ts';
 export const HOUSE_VARIANTS = VARIANTS;
 // A skyscraper's height by its variant (its storeys taller or more of them: a skyline, not a row).
 const TOWER_HEIGHT: readonly number[] = [1, 1.3, 0.8, 1.45, 0.9];
@@ -412,7 +417,7 @@ const cache = new Map<string, G>();
 // parapet if it has none), a window or two on its front.
 function wing(l: Lot): G[] {
   const b = VARIANT.body, wall = VARIANT.wall;
-  if (!VARIANT_LOOK[l.v % VARIANTS]!.wing || !b || wall === null) return [];
+  if (!VARIANT_LOOK[VARIANT.v % VARIANTS]!.wing || !b || wall === null) return [];
   const side = b.x <= 0 ? 1 : -1, edge = b.x + side * b.w / 2, room = l.lw * 0.94 - side * edge;
   if (room < 0.012) return [];
   const w = Math.min(room - 0.002, b.w * 0.7), d = b.d * 0.62, h = Math.min(b.h * 0.55, wallHeight(1) * 0.8);
@@ -426,18 +431,43 @@ function wing(l: Lot): G[] {
   return out;
 }
 
+// Each house style's shop and works (styles/trade: every style that builds
+// below a skyscraper's height; a skyscraper is offices whatever its variant).
+type TowerStyle = 'modern' | 'screen' | 'verticalForest' | 'highTech' | 'miesian' | 'briseSoleil' | 'mural' | 'timber' | 'pagoda' | 'tokyo';
+const TRADE: Record<Exclude<Style, TowerStyle>, Trade> = { ...FIRST_TRADE, ...HOUSES_TRADE, ...TRIPLES1_TRADE, ...TRIPLES2_TRADE, ...QUADS_TRADE };
+const tradeOf = (style: Style): Trade | null => (style in TRADE ? TRADE[style as Exclude<Style, TowerStyle>] : null);
+
+// Mirrors a model across x, its triangles turned back the right way round
+// (a mirror turns them inside out: normals, and the roofs' textures, need their winding).
+function mirror(g: G): void {
+  g.scale(-1, 1, 1);
+  for (const name of Object.keys(g.attributes)) {
+    const a = g.getAttribute(name), n = a.itemSize;
+    for (let t = 0; t + 2 < a.count; t += 3) for (let k = 0; k < n; k++) {
+      const u = a.getComponent(t + 1, k);
+      a.setComponent(t + 1, k, a.getComponent(t + 2, k));
+      a.setComponent(t + 2, k, u);
+    }
+  }
+}
+
 export function houseGeometry(kind: HouseKind): G {
   let g = cache.get(kind);
   if (!g) {
     const { style, fp, floors, variant } = parseHouseKind(kind);
     const [cw, cd] = FOOTPRINT_CELLS[fp];
-    const lot: Lot = { lw: (cw * CELL) / 2, ld: (cd * CELL) / 2, floors, H: wallHeight(floors) * (floors === 12 ? TOWER_HEIGHT[variant % VARIANTS]! : 1), v: variant, fp, rand: mulberry32(variant * 7919 + cw * 31 + cd * 131 + floors) };
-    Object.assign(VARIANT, { free: true, v: variant, body: null, wall: null, roof: null });
+    const lot: Lot = { lw: (cw * CELL) / 2, ld: (cd * CELL) / 2, floors, H: wallHeight(floors) * (floors === 12 ? TOWER_HEIGHT[variant % VARIANTS]! : 1), v: variant, fp, rand: mulberry32(variant * 7919 + cw * 31 + cd * 131 + floors), use: useOf(variant, floors) };
+    // A home: the style's house in its variant's shape; a shop or a works: the style's own (styles/trade).
+    const trade = lot.use === 'home' ? null : tradeOf(style);
     let built: G[];
-    try { built = [...STYLE_BUILD[style](lot), ...wing(lot)]; } finally { VARIANT.free = false; }
+    if (trade) built = lot.use === 'shop' ? trade.shops[variant % VARIANTS === 2 ? 0 : 1](lot) : trade.works(lot);
+    else {
+      Object.assign(VARIANT, { free: true, v: variant, body: null, wall: null, roof: null });
+      try { built = [...STYLE_BUILD[style](lot), ...wing(lot)]; } finally { VARIANT.free = false; }
+    }
     const parts = built.map((p) => p.index ? p.toNonIndexed() : p);
     g = mergeGeometries(parts)!;
-    if (VARIANT_LOOK[variant % VARIANTS]!.mirror) g.scale(-1, 1, 1);
+    if (VARIANT_LOOK[variant % VARIANTS]!.mirror) mirror(g);
     if (!g) throw new Error(`house ${kind}`);
     for (const p of parts) p.dispose();
     g.setAttribute('leafMask', new THREE.BufferAttribute(new Float32Array(g.getAttribute('position').count), 1));

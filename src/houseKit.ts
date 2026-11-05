@@ -12,6 +12,8 @@ import type { Rng } from './rng.ts';
 export type G = THREE.BufferGeometry;
 // A style's model of a lot.
 export type Build = (l: Lot) => G[];
+// A style's two shops (two trades: variants 3 and 4) and its works (variant 5): styles/trade.
+export interface Trade { readonly shops: readonly [Build, Build]; readonly works: Build }
 // ---------- primitives (tile steps) ----------
 
 export const P = (g: G, c: number, o: Tf = {}) => part(g, c, tf(o));
@@ -148,15 +150,18 @@ export function windows(b: Body, face: Face, o: WinOpts): G[] {
 
 // ---------- the yard ----------
 
-export interface Lot { lw: number; ld: number; floors: Floors; H: number; v: number; rand: Rng; fp: Footprint }
+// (use: what the building is: a home, a shop, a works; styles/trade builds the last two.)
+export interface Lot { lw: number; ld: number; floors: Floors; H: number; v: number; rand: Rng; fp: Footprint; use: VariantUse }
 // The building's place on its lot: a share of the lot's width and depth,
 // set back from the front by `setback` (tile steps).
 // (Its variant's massing: VARIANT_LOOK, kept on the lot.)
 const PLACE_ROOM = 0.007;
 export function place(l: Lot, cw: number, cd: number, setback: number): Body {
-  const m = VARIANT.free ? VARIANT_LOOK[l.v % VARIANTS]! : VARIANT_LOOK[0]!;
+  const m = VARIANT.free ? VARIANT_LOOK[VARIANT.v % VARIANTS]! : VARIANT_LOOK[0]!;
   // (Its eaves and ends' details room inside the lot: PLACE_ROOM.)
-  const w = Math.min(2 * l.lw * cw * m.w, 2 * (l.lw - PLACE_ROOM)), d = Math.min(2 * l.ld * cd * m.d, 2 * (l.ld - PLACE_ROOM));
+  // (A tower no larger than its style has it: its podium round it.)
+  const mw = l.floors === 12 ? Math.min(1, m.w) : m.w, md = l.floors === 12 ? Math.min(1, m.d) : m.d;
+  const w = Math.min(2 * l.lw * cw * mw, 2 * (l.lw - PLACE_ROOM)), d = Math.min(2 * l.ld * cd * md, 2 * (l.ld - PLACE_ROOM));
   const x = Math.max(-(l.lw - PLACE_ROOM) + w / 2, Math.min(l.lw - PLACE_ROOM - w / 2, m.dx * l.lw * 2));
   const z = Math.max(-(l.ld - PLACE_ROOM) + d / 2, l.ld - setback - d / 2);
   const b = { x, z, w, d, y: 0, h: l.H };
@@ -193,19 +198,25 @@ export const pick = <T>(l: Lot, xs: readonly T[]): T => xs[(l.v * 2) % xs.length
 
 // ---------- variants ----------
 
-// A style's VARIANTS, each its own shape (not only its colours): its main
-// body's share of the width and depth and where it stands across the lot
-// (w, d, dx: place), its roofs (as the style has them, or hipped, or
-// gabled along or across: hip and gable), their pitch, mirrored or not,
-// and a lower wing beside it where the lot has room (houses.ts).
+// A style's VARIANTS and what each is: two homes, two shops, a works
+// (houses.ts). A home is the style's house in its own shape (not only its
+// colours): its main body's share of the width and depth and where it
+// stands across the lot (w, d, dx: place), its roofs (as the style has
+// them, or hipped, or gabled along or across: hip and gable), their
+// pitch, mirrored or not, a lower wing beside it where the lot has room.
+// A shop and a works are buildings of their own, each style's (styles/trade):
+// only `mirror` applies to them.
 export const VARIANTS = 5;
-export interface VariantLook { w: number; d: number; dx: number; roof: 'style' | 'hip' | 'gable' | 'gableAcross'; pitch: number; mirror: boolean; wing: boolean }
+export type VariantUse = 'home' | 'shop' | 'works';
+export interface VariantLook { use: VariantUse; w: number; d: number; dx: number; roof: 'style' | 'hip' | 'gable' | 'gableAcross'; pitch: number; mirror: boolean; wing: boolean }
+// (A skyscraper is offices whatever its variant: its five only its shapes.)
+export const useOf = (v: number, floors: Floors): VariantUse => (floors === 12 ? 'home' : VARIANT_LOOK[v % VARIANTS]!.use);
 export const VARIANT_LOOK: readonly VariantLook[] = [
-  { w: 1, d: 1, dx: 0, roof: 'style', pitch: 1, mirror: false, wing: false },
-  { w: 0.74, d: 1.08, dx: -0.1, roof: 'gable', pitch: 1.35, mirror: false, wing: true },
-  { w: 1, d: 0.78, dx: 0, roof: 'style', pitch: 0.7, mirror: true, wing: false },
-  { w: 0.8, d: 0.95, dx: 0.09, roof: 'gableAcross', pitch: 1.15, mirror: true, wing: true },
-  { w: 0.9, d: 0.86, dx: 0, roof: 'style', pitch: 1.5, mirror: false, wing: false },
+  { use: 'home', w: 1, d: 1, dx: 0, roof: 'style', pitch: 1, mirror: false, wing: false },
+  { use: 'home', w: 0.74, d: 1.08, dx: -0.1, roof: 'gable', pitch: 1.35, mirror: false, wing: true },
+  { use: 'shop', w: 1, d: 0.78, dx: 0, roof: 'style', pitch: 0.7, mirror: true, wing: false },
+  { use: 'shop', w: 0.8, d: 0.95, dx: 0.09, roof: 'gableAcross', pitch: 1.15, mirror: true, wing: true },
+  { use: 'works', w: 1, d: 1.05, dx: 0, roof: 'gable', pitch: 0.6, mirror: false, wing: false },
 ];
 // The house being built (houses.ts houseGeometry sets it): its variant,
 // and what its style gave it so far: its main body, walls' and roofs'

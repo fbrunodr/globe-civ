@@ -336,13 +336,13 @@ float surfaceShade(vec3 c, vec3 P, vec3 N) {
     vec2 t = normalize(vec2(-N.z, N.x) + 1e-5);
     vec2 q = vec2(dot(P.xz, t), P.y);
     if (lum < 0.03) return 1.0; // (windows, doors: dark glass and wood)
-    if (red && gr < 0.45 && sat > 0.5) {
+    if (red && gr < 0.33 && sat > 0.5) {
       // Brick: small courses, pale mortar, each brick its own fired shade.
       float h = S / 9.0, show = sShow(q.y, h);
       float m = sCourses(q, 2.2 * h, h, 0.12, id);
       return 1.0 + show * (mix((sHash(id) - 0.5) * 0.32, 0.3, m));
     }
-    if (red && gr >= 0.45 && sat > 0.55 && lum < 0.2) {
+    if (red && gr >= 0.33 && sat > 0.55 && lum < 0.22) {
       // Timber: boards across, a dark seam between, the grain along them.
       float h = S / 6.0, show = sShow(q.y, h);
       float seam = 1.0 - smoothstep(0.0, 0.08, min(fract(q.y / h), 1.0 - fract(q.y / h)));
@@ -380,6 +380,11 @@ float surfaceShade(vec3 c, vec3 P, vec3 N) {
       float straw = sNoise(vec2(q.x / (S * 0.025), q.y / (S * 0.6)));
       float edge = smoothstep(0.75, 1.0, fract(q.y / h));
       return 1.0 + show * (0.24 * (straw - 0.5)) - sShow(q.y, h) * 0.14 * edge;
+    }
+    if (c.g >= c.r && c.g > c.b * 1.15) {
+      // Turf (green): grass in tufts, no courses, darker in its hollows.
+      float tuft = sNoise(q / (S * 0.12)), clump = sNoise(q / (S * 0.6));
+      return 1.0 + sShow(q.x, S * 0.12) * 0.22 * (tuft - 0.5) + 0.18 * (clump - 0.5);
     }
     // Slate (or any other roof): small dark-jointed slates.
     float h = S / 7.0, show = sShow(q.y, h);
