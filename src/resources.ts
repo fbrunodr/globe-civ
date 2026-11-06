@@ -1,5 +1,5 @@
 import { out, OUTPUT_KEYS, type Output, type ImprovementKey } from './cities.ts';
-import type { BiomeKey, FeatureKey, ReliefKey } from './terrain.ts';
+import { BIOMES, type BiomeKey, type FeatureKey, type ReliefKey } from './terrain.ts';
 import type { Globe } from './goldberg.ts';
 import { mulberry32 } from './rng.ts';
 import type { TechKey } from './techs.ts';
@@ -43,15 +43,21 @@ export interface ResourceDef {
   readonly features?: readonly FeatureKey[]; // also on these features (any biome)
   readonly reveal?: TechKey;                  // hidden until its owner knows this
   readonly empire?: Output;                   // a luxury's: to the whole civ, for its first copy
+  readonly temp?: readonly [number, number];  // only where the mean annual temperature (°C) is in this range
 }
 const r = (name: string, kind: ResourceKind, abbr: string, yields: Parameters<typeof out>[0], biomes: readonly BiomeKey[], reliefs: readonly ReliefKey[] = ['flat'], features?: readonly FeatureKey[], reveal?: TechKey): ResourceDef =>
   ({ name, kind, abbr, yields: out(yields), biomes, reliefs, ...(features ? { features } : {}), ...(reveal ? { reveal } : {}) });
+// (A sea resource's waters: `temp`, °C.)
+const sea = (d: ResourceDef, temp: readonly [number, number]): ResourceDef => ({ ...d, temp });
 const lux = (name: string, abbr: string, yields: Parameters<typeof out>[0], empire: Parameters<typeof out>[0], biomes: readonly BiomeKey[], reliefs: readonly ReliefKey[] = ['flat'], features?: readonly FeatureKey[]): ResourceDef =>
   ({ ...r(name, 'luxury', abbr, yields, biomes, reliefs, features), empire: out(empire) });
 
 const WARM_FOREST: BiomeKey[] = ['jungle', 'monsoonForest'];
 const COOL_FOREST: BiomeKey[] = ['taiga', 'temperateForest', 'temperateRainforest'];
 const OPEN: BiomeKey[] = ['prairie', 'steppe', 'savanna', 'mediterranean'];
+// The seas (mean annual °C): cool below SEA_COOL (salmon), warm above it
+// (tuna, pearls, coral); whales keep out of the warmest, above SEA_WARM.
+const SEA_COOL = 16, SEA_WARM = 22;
 
 export const RESOURCES = {
   // ---- bonus ----
@@ -63,8 +69,15 @@ export const RESOURCES = {
   cattle:  r('Cattle', 'bonus', 'Ca', { food: 1, prod: 1 }, OPEN, ['flat']),
   sheep:   r('Sheep', 'bonus', 'Sh', { food: 1, prod: 1 }, ['steppe', 'prairie', 'tundra', 'mediterranean', 'coldDesert'], ['hills']),
   deer:    r('Deer', 'bonus', 'De', { food: 1, prod: 1 }, [...COOL_FOREST, 'tundra'], ['flat', 'hills']),
-  fish:    r('Fish', 'bonus', 'Fi', { food: 2 }, ['shallowSea', 'lake'], ['flat'], ['reef', 'kelp']),
   stone:   r('Stone', 'bonus', 'St', { prod: 2 }, ['hotDesert', 'coldDesert', 'steppe', 'tundra', 'mediterranean', 'prairie'], ['hills']),
+  // (The sea's: a catch by its waters, salmon in the cold, tuna in the
+  // warm, trout in lakes; crabs anywhere along the coast; whales, for their
+  // meat, oil and bone, in all but the warmest seas.)
+  salmon:  sea(r('Salmon', 'bonus', 'Sm', { food: 2 }, ['shallowSea'], ['flat'], ['kelp']), [-Infinity, SEA_COOL]),
+  tuna:    sea(r('Tuna', 'bonus', 'Tu', { food: 1, gold: 1 }, ['shallowSea'], ['flat'], ['reef']), [SEA_COOL, Infinity]),
+  trout:   r('Trout', 'bonus', 'Tr', { food: 2 }, ['lake']),
+  crabs:   r('Crabs', 'bonus', 'Cb', { food: 1, gold: 1 }, ['shallowSea'], ['flat'], ['reef', 'kelp']),
+  whales:  sea(r('Whales', 'bonus', 'Wl', { food: 1, prod: 1 }, ['shallowSea'], ['flat'], ['kelp']), [-Infinity, SEA_WARM]),
   copper:  r('Copper', 'bonus', 'Cu', { prod: 1, gold: 1 }, ['savanna', 'steppe', 'hotDesert', 'temperateForest', 'jungle'], ['hills']),
   // ---- luxury ----
   wine:    lux('Wine', 'Wn', { gold: 1, culture: 1 }, { cohesion: 1, culture: 1 }, ['mediterranean', 'temperateForest', 'prairie'], ['hills', 'flat']),
@@ -76,7 +89,8 @@ export const RESOURCES = {
   dyes:    lux('Dyes', 'Dy', { gold: 1, culture: 1 }, { cohesion: 1, culture: 1 }, ['jungle', 'temperateRainforest', 'monsoonForest'], ['flat']),
   gold:    lux('Gold ore', 'Au', { gold: 3 }, { cohesion: 1, gold: 2 }, ['hotDesert', 'coldDesert', 'steppe', 'tundra', 'savanna', 'temperateForest', 'taiga', 'mediterranean'], ['hills']),
   gems:    lux('Gems', 'Ge', { gold: 2, culture: 1 }, { cohesion: 1, culture: 1 }, ['jungle', 'monsoonForest', 'savanna', 'tundra'], ['hills']),
-  pearls:  lux('Pearls', 'Pe', { gold: 2 }, { cohesion: 1, culture: 1 }, ['shallowSea'], ['flat'], ['reef']),
+  pearls:  sea(lux('Pearls', 'Pe', { gold: 2 }, { cohesion: 1, culture: 1 }, ['shallowSea'], ['flat'], ['reef']), [SEA_COOL, Infinity]),
+  coral:   sea(lux('Coral', 'Cr', { gold: 1, culture: 1 }, { cohesion: 1, culture: 1 }, [], ['flat'], ['reef']), [SEA_COOL, Infinity]),
   salt:    lux('Salt', 'Sa', { food: 1, gold: 1 }, { cohesion: 2 }, ['hotDesert', 'coldDesert', 'steppe'], ['flat']),
   cotton:  lux('Cotton', 'Ct', { gold: 2 }, { cohesion: 2 }, ['savanna', 'mediterranean', 'prairie'], ['flat'], ['floodplain']),
   tea:     lux('Tea', 'Te', { gold: 1, science: 1 }, { cohesion: 1, science: 1 }, ['monsoonForest', 'temperateRainforest'], ['hills', 'flat']),
@@ -86,7 +100,8 @@ export const RESOURCES = {
   iron:    r('Iron', 'strategic', 'Fe', { prod: 2 }, [...OPEN, ...COOL_FOREST, ...WARM_FOREST, 'tundra', 'hotDesert', 'coldDesert'], ['hills'], undefined, 'bronzeWorking'),
   niter:   r('Niter', 'strategic', 'Ni', { prod: 1, food: 1 }, ['hotDesert', 'coldDesert', 'steppe', 'savanna', 'prairie', 'mediterranean'], ['flat', 'hills'], undefined, 'gunpowder'),
   coal:    r('Coal', 'strategic', 'Co', { prod: 2 }, [...COOL_FOREST, 'steppe', 'prairie', 'tundra', 'mediterranean', 'savanna'], ['hills'], undefined, 'industrialization'),
-  oil:     r('Oil', 'strategic', 'Oi', { prod: 1, gold: 1 }, ['hotDesert', 'coldDesert', 'tundra', 'steppe', 'taiga', 'jungle', 'savanna'], ['flat'], ['marsh', 'swamp'], 'refining'),
+  // (And offshore, under a shallow sea: a platform's well.)
+  oil:     r('Oil', 'strategic', 'Oi', { prod: 1, gold: 1 }, ['hotDesert', 'coldDesert', 'tundra', 'steppe', 'taiga', 'jungle', 'savanna', 'shallowSea'], ['flat'], ['marsh', 'swamp'], 'refining'),
 } satisfies Record<string, ResourceDef>;
 export type ResourceKey = keyof typeof RESOURCES;
 export const RESOURCE_KEYS = Object.keys(RESOURCES) as ResourceKey[];
@@ -94,9 +109,11 @@ export const resourceDef = (k: ResourceKey): ResourceDef => RESOURCES[k];
 // How each resource is worked: its tile's improvement, whatever the land
 // (cities.ts improvementFor) once its owner knows of it. Grain is farmed,
 // rice grown in paddies, animals pastured or hunted, ores and gems mined,
-// tree and bush crops planted, fish and pearls taken by boat.
+// tree and bush crops planted, the sea's catch, pearls and coral taken by
+// boat; oil drawn by a well (offshore, a platform's).
 export const RESOURCE_IMPROVEMENT: Record<ResourceKey, ImprovementKey> = {
-  wheat: 'farm', rice: 'wetland', maize: 'farm', bananas: 'plantation', cattle: 'pasture', sheep: 'pasture', deer: 'camp', fish: 'boats',
+  wheat: 'farm', rice: 'wetland', maize: 'farm', bananas: 'plantation', cattle: 'pasture', sheep: 'pasture', deer: 'camp',
+  salmon: 'boats', tuna: 'boats', trout: 'boats', crabs: 'boats', whales: 'boats', coral: 'boats',
   stone: 'quarry', copper: 'mine',
   wine: 'plantation', incense: 'plantation', silk: 'plantation', spices: 'plantation', furs: 'camp', ivory: 'camp', dyes: 'plantation',
   gold: 'mine', gems: 'mine', pearls: 'boats', salt: 'mine', cotton: 'plantation', tea: 'plantation', amber: 'camp',
@@ -117,6 +134,9 @@ export const empireBonus = (k: ResourceKey, era: number): Output => {
 const BONUS_CHANCE = 0.035;
 const FIT_PER_CLUSTER = { luxury: 700, strategic: 420 } as const;
 const CLUSTER = [1, 3] as const; // tiles a cluster has
+// What fits at sea counts this much against land for a kind found on both
+// (oil): the shallow seas are wide, and would otherwise take most of it.
+const SEA_FIT = 0.25;
 // What every start gets within reach (tiles): a bonus resource (food, its
 // first city's), a luxury, and Horses and Iron (a second city's).
 const FAIR = { bonus: { count: 1, reach: 2 }, luxury: { count: 1, reach: 3 }, strategic: { count: 1, reach: 6 } } as const;
@@ -128,11 +148,13 @@ interface TerrainView {
   readonly biome: readonly BiomeKey[];
   readonly relief: readonly ReliefKey[];
   readonly feature: readonly (FeatureKey | null)[];
+  readonly temperature?: ArrayLike<number>; // mean annual °C (mapgen.ts): a sea resource's waters
 }
 
 export const fitsResource = (k: ResourceKey, m: TerrainView, t: number): boolean => {
   const d = RESOURCES[k] as ResourceDef, f = m.feature[t];
   if (f === 'volcano' || f === 'glacier' || f === 'bog') return false;
+  if (d.temp && m.temperature) { const c = m.temperature[t]!; if (c < d.temp[0] || c >= d.temp[1]) return false; }
   if (f && d.features?.includes(f)) return true;
   if (f && f !== 'reef' && f !== 'kelp') return false;
   return d.biomes.includes(m.biome[t]!) && d.reliefs.includes(m.relief[t]!);
@@ -149,9 +171,13 @@ export function placeResources(globe: Globe, m: TerrainView, starts: readonly nu
     if (kind === 'bonus') continue;
     const fit: number[] = [];
     for (let t = 0; t < N; t++) if (fitsResource(k, m, t)) fit.push(t);
-    const clusters = Math.max(1, Math.round(fit.length / FIT_PER_CLUSTER[kind]));
+    const sea = fit.filter((t) => BIOMES[m.biome[t]!].water).length, mixed = sea > 0 && sea < fit.length;
+    const weight = mixed ? fit.length - sea + SEA_FIT * sea : fit.length;
+    const clusters = Math.max(1, Math.round(weight / FIT_PER_CLUSTER[kind]));
+    // (A seed drawn at sea, for a kind also on land, kept only SEA_FIT of the time.)
+    const draw = () => { let s = fit[Math.floor(rand() * fit.length)]!; while (mixed && BIOMES[m.biome[s]!].water && rand() >= SEA_FIT) s = fit[Math.floor(rand() * fit.length)]!; return s; };
     for (let i = 0; i < clusters && fit.length; i++) {
-      const s = fit[Math.floor(rand() * fit.length)]!;
+      const s = draw();
       const want = CLUSTER[0] + Math.floor(rand() * (CLUSTER[1] - CLUSTER[0] + 1));
       const queue = [s], seen = new Set([s]);
       let placed = 0;

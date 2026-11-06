@@ -164,7 +164,7 @@ describe('S3: resources are scarce and fair', () => {
     expect(g.resourceFor(t, HUMAN)).toBeNull();
     p.techs.add('bronzeWorking');
     expect(g.resourceFor(t, HUMAN)).toBe('iron');
-    const w = g.resources.findIndex((r) => r === 'wheat' || r === 'fish');
+    const w = g.resources.findIndex((r) => r === 'wheat' || r === 'salmon' || r === 'tuna');
     expect(g.resourceFor(w, HUMAN)).not.toBeNull();
   });
 });

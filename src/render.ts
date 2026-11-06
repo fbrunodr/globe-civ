@@ -25,7 +25,7 @@ import { isFloraRural, isCropRural, isSmoothRural, roamOf, isRuralModelKind, rur
 import { CityProps, tileFrame, SUMMIT_HOUSES, type CitySpot } from './cityProps.ts';
 import { CITY_CELL } from './cityPainter.ts';
 import { CELL, wallHeight } from './town/geometry.ts';
-import { RESOURCE_WILD, RESOURCE_WORKED } from './rural/resourceModels.ts';
+import { resourceLook } from './rural/resourceModels.ts';
 import { placeResource } from './rural/resourcePlace.ts';
 import { RESOURCE_IMPROVEMENT } from './resources.ts';
 import { plotStage } from './rural/stages.ts';
@@ -1182,7 +1182,7 @@ export class GlobeRenderer {
     const key = `${r}|${worked}`;
     const hit = this.resourceCache.get(t);
     if (hit && hit.key === key) return hit.items;
-    const look = worked ? RESOURCE_WORKED[r] : RESOURCE_WILD[r];
+    const look = resourceLook(r, worked, g.isWater(t));
     if (!look) { this.resourceCache.set(t, { key, items: [] }); return []; }
     const rand = mulberry32((t + 11) * 2246822519);
     let hint = t;

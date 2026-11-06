@@ -10,7 +10,7 @@ import { TECHS, TECH_KEYS, STAGE_TECHS } from './techs.ts';
 import { IMPROVEMENTS, type ImprovementKey } from './cities.ts';
 import { stageLook, waterLook, plotStage } from './rural/stages.ts';
 import { planFarm, layoutRural, largestRect, HOMESTEAD_SCALE, HOMESTEAD_LOT, type RuralInput, type RuralSite } from './rural/layout.ts';
-import { kitBoost, FIGURES, SPECIES_OF, KIT_BOOST, FISH_PER_SHOAL, type KitModel } from './rural/kit.ts';
+import { kitBoost, FIGURES, SPECIES_OF, KIT_BOOST, FISH_PER_SHOAL, SWIMMERS, type KitModel } from './rural/kit.ts';
 import { CREATURE_SCALE } from './creatures.ts';
 import { plotAt, cropIndex, CROP_PALETTE, PLOT_SIZES, PLANT_ROW_W, FARM_LANE } from './rural/plots.ts';
 import { ROAD_DIRT } from './terrainMaterial.ts';
@@ -227,6 +227,7 @@ const LABEL = 1;
 function label(title: string, sub: string, at: THREE.Vector3, onClick: () => void, subColor?: string): WorldLabel {
   const lines: LabelLine[] = [{ text: title, bold: true }, { text: sub, small: true, ...(subColor ? { color: subColor } : {}) }];
   const o = new WorldLabel(lines, LABEL);
+  o.userData['title'] = title;
   o.onClick = onClick;
   o.position.copy(at).setY(at.y + o.scale.y / 2 + 0.1);
   world.add(o);
@@ -575,8 +576,8 @@ function buildCatalog(): void {
   });
   // The countryside's animals and people (rural/kit.ts), smooth-shaded, at
   // one scale (a person 3 units tall), so their sizes compare true.
-  // (With them, the fish: a shoal, raised out of the water it swims under.)
-  const figures: KitModel[] = [...[...FIGURES].filter((k) => k !== 'ploughTeam' && k !== 'haycart'), 'fishShoal'];
+  // (With them, the swimmers: the shoals and the whale, raised out of the water they swim under.)
+  const figures: KitModel[] = [...[...FIGURES].filter((k) => k !== 'ploughTeam' && k !== 'haycart'), ...SWIMMERS];
   const FIG_SCALE = 3 / (1.72 * CREATURE_SCALE);
   figures.forEach((kind, j) => {
     const i = CATALOG_KINDS.length + BUILDING_KINDS.length + j;
@@ -594,15 +595,16 @@ function buildCatalog(): void {
     mesh.castShadow = true;
     world.add(mesh);
     const tris = triangles(geo);
-    const what = kind === 'fishShoal' ? `Fish · ${tris} tris (${FISH_PER_SHOAL} × ${tris / FISH_PER_SHOAL})` : `${SPECIES_OF[kind] ? 'Animal' : 'Person'} · ${tris} tris`;
-    const div = label(kind === 'fishShoal' ? 'Fish shoal' : kind[0]!.toUpperCase() + kind.slice(1), what,
+    const per = (FISH_PER_SHOAL as Partial<Record<KitModel, number>>)[kind];
+    const what = per ? `Fish · ${tris} tris (${per} × ${tris / per})` : `${SPECIES_OF[kind] || kind === 'whale' ? 'Animal' : 'Person'} · ${tris} tris`;
+    const div = label(per ? `${kind[0]!.toUpperCase()}${kind.slice(1, -'Shoal'.length)} shoal` : kind[0]!.toUpperCase() + kind.slice(1), what,
       center.clone().add(new THREE.Vector3(0, 0, 4.4)), () => { state.focus = i; refreshFocus(); setCam('close'); });
     patches.push({ center, label: div, mix: '' });
   });
   // Then the rest of the countryside: its works, machines, plants and the
   // resources' models (rural/models.ts), each fitted to its hex (the label
   // says how much it was enlarged against the people's scale).
-  const rest = RURAL_MODELS.filter((k) => k !== 'fishShoal' && (!FIGURES.has(k as KitModel) || k === 'ploughTeam' || k === 'haycart'));
+  const rest = RURAL_MODELS.filter((k) => !(SWIMMERS as readonly string[]).includes(k) && (!FIGURES.has(k as KitModel) || k === 'ploughTeam' || k === 'haycart'));
   rest.forEach((kind, j) => {
     const i = CATALOG_KINDS.length + BUILDING_KINDS.length + figures.length + j;
     const center = new THREE.Vector3((i % cols) * gap, 0, Math.floor(i / cols) * rowGap);

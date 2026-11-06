@@ -13,7 +13,7 @@ import { buildModel, burst, cone, cyl, oct, part, seg, tf, type Tf } from '../pr
 import { FENCE_BANDS } from '../propMaterial.ts';
 import { CREATURE_SCALE } from '../creatures.ts';
 import { RESOURCE_MODELS, RESOURCE_MODEL_KEYS } from './resourceModels.ts';
-import { kitModel, KIT_MODELS, FIGURES, SPECIES_OF, type KitModel } from './kit.ts';
+import { kitModel, KIT_MODELS, FIGURES, SPECIES_OF, CRAB, type KitModel } from './kit.ts';
 
 // (The flora-drawn ones first: cards, as the trees' crowns are.)
 // (The leaf-card plants: a resource's in the wild.)
@@ -222,15 +222,27 @@ export const isSmoothRural = (k: RuralModelKind): boolean => KIT_SET.has(k.slice
 // drive through what stands by it). Their whole loop lies within twice
 // that of where they stand: rural/layout.ts keeps that clear.
 const ROAM_BEAST = 1.1 * CREATURE_SCALE, ROAM_PERSON = 0.6 * CREATURE_SCALE;
-export const roamOf = (m: string): number => (SPECIES_OF[m as KitModel] || m === 'fishShoal' ? ROAM_BEAST : FIGURES.has(m as KitModel) && m !== 'ploughTeam' && m !== 'haycart' ? ROAM_PERSON : 0);
-// (Fish swim, never stopping: the material's `roam` negative for them.)
-const swims = (m: string): boolean => m === 'fishShoal';
+export const roamOf = (m: string): number => (SPECIES_OF[m as KitModel] || swims(m) ? ROAM_BEAST : FIGURES.has(m as KitModel) && m !== 'ploughTeam' && m !== 'haycart' ? ROAM_PERSON : 0);
+// Swimmers (the material's `roam` negative for them: they never stop):
+// their pace (their loop's time against a shoal's: a tuna's quicker, a
+// whale's slower), whether they dive and come up for air (a whale: its
+// back breaks the water now and then), how far they wander (tile steps).
+// (`turns`: it goes round where it stands, not off about its water: the
+// crabs round their rock, which stays: only the parts of the crab colour move.)
+const SWIM: Partial<Record<KitModel, { pace: number; dives: boolean; wander: number; turns?: true }>> = {
+  salmonShoal: { pace: 1, dives: false, wander: 0.12 }, troutShoal: { pace: 1.1, dives: false, wander: 0.1 },
+  tunaShoal: { pace: 0.6, dives: false, wander: 0.15 }, whale: { pace: 2.2, dives: true, wander: 0.22 },
+  crabRock: { pace: 1.4, dives: false, wander: 0, turns: true },
+};
+const swims = (m: string): boolean => SWIM[m as KitModel] !== undefined;
+// (How far a diver rises to breathe: a share of its height.)
+const DIVE = 0.25;
 // Given room, a walker wanders further: from one spot to the next within a
 // circle round where it stands (the material's `wander`), as large as fits
 // (wanderIn): beasts over a good part of their pasture, people about their
 // work, fish about their water. At most this far (tile steps).
-const WANDER_BEAST = 0.14, WANDER_PERSON = 0.07, WANDER_FISH = 0.12;
-export const wanderMax = (m: string): number => (m === 'fishShoal' ? WANDER_FISH : SPECIES_OF[m as KitModel] ? WANDER_BEAST : roamOf(m) ? WANDER_PERSON : 0);
+const WANDER_BEAST = 0.14, WANDER_PERSON = 0.07;
+export const wanderMax = (m: string): number => SWIM[m as KitModel]?.wander ?? (SPECIES_OF[m as KitModel] ? WANDER_BEAST : roamOf(m) ? WANDER_PERSON : 0);
 // The largest circle round p (tile steps), up to `max`, that `ok` holds all
 // over (checked round its rim and halfway in); 0 if none does (it walks its
 // small loop: roamOf).
@@ -247,10 +259,19 @@ export function wanderIn(p: { readonly x: number; readonly y: number }, max: num
 }
 // How a walker's legs swing (the material's `gait`: per vertex, how far
 // below the hips, model units, and which leg: +1 or -1). A person's legs
-// are its two sides; a beast's go in diagonal pairs, as at a walk.
+// are its two sides; a beast's go in diagonal pairs, as at a walk. A
+// swimmer's: its pace and how far it rises to breathe (SWIM; model units).
 function gaitOf(g: THREE.BufferGeometry, m: string): Float32Array {
   const pos = g.getAttribute('position'), out = new Float32Array(pos.count * 2);
-  if (!roamOf(m) || m === 'fishShoal') return out;
+  const swim = SWIM[m as KitModel];
+  if (swim) {
+    g.computeBoundingBox();
+    // (gait.y: how far it rises to breathe; negative: it turns where it stands.)
+    const rise = swim.turns ? -1 : swim.dives ? DIVE * (g.boundingBox!.max.y - g.boundingBox!.min.y) : 0;
+    for (let i = 0; i < pos.count; i++) { out[i * 2] = swim.pace; out[i * 2 + 1] = rise; }
+    return out;
+  }
+  if (!roamOf(m)) return out;
   g.computeBoundingBox();
   const b = g.boundingBox!, beast = !!SPECIES_OF[m as KitModel];
   const hip = b.min.y + (b.max.y - b.min.y) * (beast ? 0.42 : 0.5), mx = (b.min.x + b.max.x) / 2, half = (b.max.x - b.min.x) / 2;
@@ -295,7 +316,13 @@ export function ruralGeometry(kind: RuralModelKind): THREE.BufferGeometry {
   }
   // (How far it roams: its walk's radius, the material's `roam`; negative for a swimmer.)
   if (!g.getAttribute('roam')) {
-    g.setAttribute('roam', new THREE.Float32BufferAttribute(new Float32Array(g.getAttribute('position').count).fill(roamOf(m) * (swims(m) ? -1 : 1)), 1));
+    const roam = new Float32Array(g.getAttribute('position').count).fill(roamOf(m) * (swims(m) ? -1 : 1));
+    // (Of a turner, only the crabs move: their colour.)
+    if (SWIM[m as KitModel]?.turns) {
+      const col = g.getAttribute('color'), crab = new THREE.Color(CRAB);
+      for (let i = 0; i < roam.length; i++) if (Math.abs(col.getX(i) - crab.r) + Math.abs(col.getY(i) - crab.g) + Math.abs(col.getZ(i) - crab.b) > 1e-3) roam[i] = 0;
+    }
+    g.setAttribute('roam', new THREE.Float32BufferAttribute(roam, 1));
     g.setAttribute('gait', new THREE.Float32BufferAttribute(gaitOf(g, m), 2));
   }
   return g;

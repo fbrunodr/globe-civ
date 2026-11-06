@@ -1007,11 +1007,13 @@ export class CityProps {
   private works(t: number, imp: 'boats' | 'well', stage: number, rand: Rng): PlacedBuilding[] {
     const g = this.game, D = g.globe.avgEdgeAngle, out: PlacedBuilding[] = [], at: THREE.Vector3[] = [];
     const clearOf = g.wonderOn(t) || g.cities.some((c) => c.wonderTile === t) ? this.seaSpot(t) : null;
-    for (const th of waterLook(imp, stage)) for (let n = 0; n < th.n; n++) {
+    // (An oil well at sea: a platform, afloat as boats are.)
+    const sea = g.isWater(t);
+    for (const th of waterLook(imp, stage, sea)) for (let n = 0; n < th.n; n++) {
       for (let tries = 0; tries < 30; tries++) {
         const s = this.sample(t, Math.floor(rand() * g.tiles[t].corners.length), 0.12 + 0.45 * rand(), 0.1 + 0.3 * rand());
         const afloat = s.water - s.ground > 0.0003;
-        if (afloat !== (imp === 'boats') || (clearOf && s.dir.angleTo(clearOf.dir) < clearOf.r * 1.6) || at.some((d) => d.angleTo(s.dir) < D * 0.12)) continue;
+        if (afloat !== (imp === 'boats' || sea) || (clearOf && s.dir.angleTo(clearOf.dir) < clearOf.r * 1.6) || at.some((d) => d.angleTo(s.dir) < D * 0.12)) continue;
         const sc = D * kitBoost(th.model) * (0.9 + 0.2 * rand());
         const q = new THREE.Quaternion().setFromUnitVectors(UP, s.dir).multiply(new THREE.Quaternion().setFromAxisAngle(UP, rand() * Math.PI * 2));
         const b: PlacedBuilding = { kind: ruralModelKind(th.model), matrix: new THREE.Matrix4().compose(s.dir.clone().multiplyScalar(1 + (afloat ? s.water : s.ground) - 0.00004 * this.scale), q, new THREE.Vector3(sc, sc, sc)),

@@ -159,7 +159,7 @@ export type PlacedKind = ModelKind | CatalogKind;
 export const isFloraModel = (k: PlacedKind): k is CatalogKind => k in CATALOG;
 // Where a placed thing may stand on water (catalog buildings: boats, shore huts; none else).
 // (The countryside's boats float; its fish and shells are at the surface.)
-const AFLOAT = new Set(['rural|canoe', 'rural|sailboat', 'rural|trawler', 'rural|fishShoal', 'rural|oysters', 'rural|boat', 'rural|raft']);
+const AFLOAT = new Set(['rural|canoe', 'rural|sailboat', 'rural|trawler', 'rural|salmonShoal', 'rural|tunaShoal', 'rural|troutShoal', 'rural|whale', 'rural|crabRock', 'rural|coralBed', 'rural|oilSlick', 'rural|oilRig', 'rural|oysters', 'rural|boat', 'rural|raft']);
 export const waterRule = (k: PlacedKind): BuildingEntry['water'] => (AFLOAT.has(k) ? 'float' : isFloraModel(k) || isLotModel(k) ? undefined : buildingEntry(k).water);
 // Its geometry before scaling (the flora's and the catalog's at reference size; lot models in tile steps).
 export const placedGeometry = (k: PlacedKind): THREE.BufferGeometry => (isFloraModel(k) ? buildCatalogGeometry(k) : modelGeometry(k));

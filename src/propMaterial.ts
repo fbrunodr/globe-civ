@@ -222,9 +222,10 @@ export const CARD_TEXEL = `
 // wanderIn), from one spot in it to the next: it stops a while (to graze, to
 // work), turns toward the next spot, walks there. Else round a small loop
 // of its own, a few steps at a time. Turned the way it walks. A swimmer
-// (`roam` negative: a shoal of fish) never stops: round a smooth closed loop
-// of its own in its circle (a wobbling ellipse, its own size, tilt, way
-// round and pace), facing along it.
+// (`roam` negative: a shoal of fish, a whale) never stops: round a smooth
+// closed loop of its own in its circle (a wobbling ellipse, its own size,
+// tilt, way round and pace), facing along it; its `gait` its pace and, for
+// a whale, how far it rises to breathe now and then.
 // uRoamTime: seconds.
 const ROAM_DECL = `
   attribute float roam;
@@ -242,18 +243,26 @@ const ROAM_DECL = `
       if (roam == 0.0) return 0.0;
       vec3 o = instanceMatrix[3].xyz;
       float h = fract(sin(dot(o, vec3(12.9898, 78.233, 37.719)) * 1e4) * 43758.5453);
+      if (roam < 0.0 && gait.y < 0.0) {
+        // (A turner: round where it stands, slowly, always from +x toward +z,
+        // the way its model faces: the crabs round their rock.)
+        return uRoamTime * 6.2831853 / ((30.0 + 12.0 * roamHash(9.0, h)) * max(gait.x, 0.1)) + 6.2831853 * h;
+      }
       if (roam < 0.0) {
         // p(t) = R · turn(q) · (a cos t + c sin(2t + e), b sin t + d cos(2t + f)): the second terms small, so it never doubles back.
         float R = wander > 0.0 ? wander : -2.0 * roam, way = roamHash(1.0, h) < 0.5 ? -1.0 : 1.0;
         float a = 0.62 + 0.2 * roamHash(2.0, h), b = 0.45 + 0.3 * roamHash(3.0, h), c = 0.12 * roamHash(4.0, h), d = 0.12 * roamHash(5.0, h);
         float e = 6.2831853 * roamHash(6.0, h), f = 6.2831853 * roamHash(7.0, h), q = 6.2831853 * roamHash(8.0, h);
-        float t = way * uRoamTime * 6.2831853 / (24.0 + 16.0 * roamHash(9.0, h)) + 6.2831853 * h;
+        // (Its pace: gait.x, a shoal's 1.)
+        float t = way * uRoamTime * 6.2831853 / ((24.0 + 16.0 * roamHash(9.0, h)) * max(gait.x, 0.1)) + 6.2831853 * h;
         vec2 p = vec2(a * cos(t) + c * sin(2.0 * t + e), b * sin(t) + d * cos(2.0 * t + f));
         vec2 v = way * vec2(-a * sin(t) + 2.0 * c * cos(2.0 * t + e), b * cos(t) - 2.0 * d * sin(2.0 * t + f));
         float cq = cos(q), sq = sin(q);
         p = R * vec2(cq * p.x - sq * p.y, sq * p.x + cq * p.y);
         v = vec2(cq * v.x - sq * v.y, sq * v.x + cq * v.y);
-        off = vec3(p.x, 0.0, p.y);
+        // (A diver, gait.y its rise: up for air a few seconds in every twenty or so.)
+        float k = fract(uRoamTime / (18.0 + 8.0 * roamHash(10.0, h)) + h);
+        off = vec3(p.x, gait.y * smoothstep(0.0, 0.12, k) * (1.0 - smoothstep(0.28, 0.42, k)), p.y);
         return atan(v.y, v.x);
       }
       if (wander > 0.0) {

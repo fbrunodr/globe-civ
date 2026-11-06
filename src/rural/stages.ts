@@ -132,7 +132,9 @@ export const plotStage = (imp: ImprovementKey | null, stage: number): number => 
 
 // Boats on a fishing tile and the oil well's works (one tile, no farm):
 // what stands there by stage (cityProps.ts rural()).
-export function waterLook(imp: 'boats' | 'well', stage: number): readonly Placed[] {
+export function waterLook(imp: 'boats' | 'well', stage: number, offshore = false): readonly Placed[] {
+  // (Offshore: a platform; two once the field is fully worked.)
+  if (imp === 'well' && offshore) return stage <= 2 ? [at('oilRig', 1, 'home')] : [at('oilRig', 2, 'home')];
   if (imp === 'well') return stage === 0 ? [at('derrick', 1, 'home')] : stage === 1 ? [at('derrick', 1, 'home'), at('pumpjack', 1, 'home', MACHINE)] : [at('pumpjack', 2, 'home', MACHINE), at('oilTank', 2, 'home')];
   return stage === 0 ? [at('canoe', 2, 'home', CLOTHES)] : stage === 1 ? [at('canoe', 1, 'home', CLOTHES), at('sailboat', 1, 'home')]
     : stage <= 3 ? [at('sailboat', 2, 'home')] : [at('trawler', 1, 'home'), at('sailboat', 1, 'home')];

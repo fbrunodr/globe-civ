@@ -56,7 +56,7 @@ export const RESOURCE_MODELS: Record<ResourceModel, () => THREE.BufferGeometry[]
 // What a resource shows near its badge: in the wild (its tile not worked
 // for it), the resource as nature has it: wild grain, aurochs and wild
 // horses, mouflon, foxes, elephants, rock with its vein, a vine over a
-// bush, a school of fish; worked, its own touches beside its improvement's
+// bush, a shoal of salmon, whales; worked, its own touches beside its improvement's
 // look (the farm, the pasture, the mine: rural/stages.ts): a wine press, a
 // heap of its ore, tusks, bales. Models (these, the countryside's, the
 // kit's), how many, their colours (for the leaf parts), picked in turn.
@@ -80,7 +80,11 @@ export const RESOURCE_WILD: Record<ResourceKey, ResourceLook> = {
   cattle: L({ model: 'ox', n: 3, colors: [0x2a2018, 0x3a2a1e, 0x5a3a24] }),
   sheep: L({ model: 'mouflon', n: 4, colors: [0x8a5a34, 0x7a4a2a, 0x9a6a40, 0x8a5a34] }),
   deer: L({ model: 'stag', n: 1, colors: [0x8a5a34] }, { model: 'deer', n: 3, colors: [0x9a6a40, 0x8a5e38] }),
-  fish: W({ model: 'fishShoal', n: 4 }),
+  salmon: W({ model: 'salmonShoal', n: 4 }),
+  tuna: W({ model: 'tunaShoal', n: 3 }),
+  trout: W({ model: 'troutShoal', n: 4 }),
+  crabs: W({ model: 'crabRock', n: 2 }),
+  whales: W({ model: 'whale', n: 2 }),
   stone: L({ model: 'boulders', n: 2 }),
   copper: L({ model: 'outcrop', n: 2, colors: ORE.copper }),
   wine: L({ model: 'wildVine', n: 6, colors: [0x4a6a2a, 0x557434] }),
@@ -93,6 +97,7 @@ export const RESOURCE_WILD: Record<ResourceKey, ResourceLook> = {
   gold: L({ model: 'outcrop', n: 2, colors: ORE.gold }),
   gems: L({ model: 'crystals', n: 4, colors: ORE.gems }),
   pearls: W({ model: 'oysters', n: 2 }),
+  coral: W({ model: 'coralBed', n: 2 }),
   salt: L({ model: 'crust', n: 4 }),
   cotton: L({ model: 'cottonBush', n: 9, colors: [0x5a7a3a, 0x52703a] }),
   tea: L({ model: 'teaShrub', n: 9, colors: [0x3f6a2a, 0x4a7a32, 0x456e2c] }),
@@ -121,6 +126,11 @@ export const RESOURCE_WORKED: Partial<Record<ResourceKey, ResourceLook>> = {
   tea: LW({ model: 'teaBaskets', n: 1 }),
   amber: LW({ model: 'amberStump', n: 2 }),
 };
+// Oil under the sea: a sheen on the water (worked, the platform: rural/stages.ts waterLook).
+export const OFFSHORE_OIL: ResourceLook = W({ model: 'oilSlick', n: 1 });
+// What resource r shows on its tile: wild or worked, at sea or on land.
+export const resourceLook = (r: ResourceKey, worked: boolean, sea: boolean): ResourceLook | undefined =>
+  worked ? RESOURCE_WORKED[r] : r === 'oil' && sea ? OFFSHORE_OIL : RESOURCE_WILD[r];
 // (The gallery's name for the wild look, kept for its callers.)
 export const RESOURCE_LOOKS = RESOURCE_WILD;
 

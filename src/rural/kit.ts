@@ -354,15 +354,98 @@ function rockLp(c: V3, r: V3, paint: Paint | ((p: THREE.Vector3) => Paint), lump
 // Weathered boulders (stone, not yet cut).
 function boulders(): G[] { return [[0, 0, 1.3, 1.0], [1.8, 0.6, 0.9, 0.7], [-1.0, 1.4, 0.7, 0.55], [0.6, -1.5, 0.6, 0.5]].map(([x, z, r, h]) => rockLp([x!, h! * 0.6, z!], [r!, h!, r! * 0.85], (p) => (p.y > h! * 0.9 ? 0xb8b2a4 : 0xa49e90), 0.15)); }
 // A fish, its head toward +x, at (x, up, z): four sides, four sections, its
-// ends points (no caps): 24 triangles.
-const fishAt = (x: number, up: number, z: number, c: number): G =>
-  loft([S(x - 0.25, up - 0.03, 0.005, 0.005), S(x - 0.12, up, 0.04, 0.03), S(x + 0.08, up + 0.03, 0.07, 0.035), S(x + 0.26, up, 0.005, 0.005)].map((s) => ({ ...s, z })), 4, c, undefined, false);
+// ends points (no caps), its back `back` and its belly `belly`; a tail fin,
+// two triangles each side: 28 triangles. (`deep`: its body's depth to its
+// length, a tuna's deeper; `fork`: how far the tail's lobes reach.)
+const fishAt = (x: number, up: number, z: number, back: number, belly: number, deep = 1, fork = 0.07): G[] => {
+  const paint = (p: THREE.Vector3) => (p.y > up + 0.01 * deep ? back : belly);
+  const body = loft([S(x - 0.25, up - 0.03, 0.005, 0.005), S(x - 0.12, up, 0.04 * deep, 0.03), S(x + 0.08, up + 0.03 * deep, 0.07 * deep, 0.035), S(x + 0.26, up, 0.005, 0.005)].map((s) => ({ ...s, z })), 4, paint, undefined, false);
+  const t = [x - 0.25, up - 0.03, z, x - 0.25 - fork, up - 0.03 + fork * 1.2, z, x - 0.32, up - 0.03, z, x - 0.25, up - 0.03, z, x - 0.32, up - 0.03, z, x - 0.25 - fork, up - 0.03 - fork * 1.2, z];
+  // (Both windings: seen from either side.)
+  const back2 = [0, 2, 1, 3, 5, 4].flatMap((i) => [t[i * 3]!, t[i * 3 + 1]!, t[i * 3 + 2]!]);
+  return [body, P(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute([...t, ...back2], 3)), back)];
+};
 // A few fish swimming together just under the surface, all one way (they
-// roam: rural/models.ts), three times life size so they read from the board.
-export const FISH_PER_SHOAL = 5;
-function fishShoal(): G[] {
+// roam: rural/models.ts), larger than life so they read from the board:
+// salmon, silver with a blue-grey back, in the cool seas; tuna, fewer and
+// bigger, deep-bodied, dark blue over silver, their tails forked wide, in
+// the warm; trout, small, olive over gold, in lakes.
+export const FISH_PER_SHOAL = { salmonShoal: 5, tunaShoal: 3, troutShoal: 5 } as const;
+// (The swimmers: the shoals and the whale.)
+export const SWIMMERS = ['salmonShoal', 'tunaShoal', 'troutShoal', 'whale'] as const;
+const SHOAL = [[0, -0.08, 0], [-0.6, -0.12, 0.32], [-0.55, -0.1, -0.36], [-1.15, -0.14, 0.05], [-1.1, -0.09, -0.62]] as const;
+const shoal = (n: number, scale: number, colors: readonly (readonly [number, number])[], deep = 1, fork = 0.07): G[] => {
+  const big = new THREE.Matrix4().makeScale(scale, scale, scale);
+  return SHOAL.slice(0, n).flatMap(([x, y, z], i) => fishAt(x, y, z, colors[i % colors.length]![0], colors[i % colors.length]![1], deep, fork).map((g) => g.applyMatrix4(big)));
+};
+function salmonShoal(): G[] { return shoal(5, 3, [[0x5a7488, 0xc8beba], [0x667e90, 0xd2c4c0]]); }
+function tunaShoal(): G[] { return shoal(3, 4.6, [[0x1e2c48, 0xb4bcc4], [0x24345a, 0xbcc4cc]], 1.35, 0.12); }
+function troutShoal(): G[] { return shoal(5, 2.4, [[0x5e6234, 0xc8b070], [0x666a3a, 0xbca868]]); }
+// A whale (a humpback), its head toward +x, its back at the surface (it
+// dives and comes up for air as it swims: rural/models.ts SWIM): dark over
+// a pale belly, long pale flippers, its flukes spread flat.
+function whale(): G[] {
+  const up = -0.3, paint = (p: THREE.Vector3) => (p.y > up - 0.02 ? 0x2e3842 : 0x8a949c);
+  const body = loft(smooth([S(-1.35, up + 0.02, 0.035, 0.05), S(-0.95, up, 0.12, 0.13), S(-0.2, up, 0.22, 0.28), S(0.45, up - 0.01, 0.22, 0.26), S(0.95, up - 0.04, 0.1, 0.13), S(1.1, up - 0.05, 0.02, 0.03)], 2), 6, paint, undefined, false);
+  const flat = (pts: readonly number[], c: number) => {
+    const back = [];
+    for (let i = 0; i < pts.length; i += 9) back.push(...pts.slice(i, i + 3), ...pts.slice(i + 6, i + 9), ...pts.slice(i + 3, i + 6));
+    return P(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute([...pts, ...back], 3)), c);
+  };
+  // (The flukes: two lobes either side of the tail stock; the flippers, long and narrow, a little down.)
+  const y = up + 0.02;
+  const flukes = flat([-1.32, y, 0, -1.62, y, 0.38, -1.5, y, 0.05, -1.32, y, 0, -1.5, y, -0.05, -1.62, y, -0.38], 0x2e3842);
+  const flippers = flat([0.45, up - 0.1, 0.2, 0.05, up - 0.2, 0.62, 0.3, up - 0.1, 0.22, 0.45, up - 0.1, -0.2, 0.3, up - 0.1, -0.22, 0.05, up - 0.2, -0.62], 0xb8c0c4);
   const big = new THREE.Matrix4().makeScale(3, 3, 3);
-  return [[0, -0.08, 0], [-0.6, -0.12, 0.32], [-0.55, -0.1, -0.36], [-1.15, -0.14, 0.05], [-1.1, -0.09, -0.62]].map(([x, y, z], i) => fishAt(x!, y!, z!, i % 2 ? 0x6a8090 : 0x8aa0aa).applyMatrix4(big));
+  return [body, flukes, flippers].map((g) => g.applyMatrix4(big));
+}
+// Crabs on a rock just out of the water, walking round its top, each
+// facing the way it goes (round from +x toward +z, as they turn: claws
+// ahead, its shell broad across). Only the crabs move (rural/models.ts
+// SWIM: they turn round the rock's middle).
+function crabRock(): G[] {
+  const out: G[] = [rockLp([0, -0.05, 0], [0.9, 0.32, 0.7], (p) => (p.y > 0.12 ? 0x7a7466 : 0x5a564a), 0.2)];
+  for (const [a, r] of [[0.4, 0.42], [2.5, 0.36], [4.4, 0.46]] as const) {
+    const c = Math.cos(a), sn = Math.sin(a), at = (u: number, w: number): V3 => [(r + u) * c - w * sn, 0.27, (r + u) * sn + w * c];
+    out.push(ellipsoid(at(0, 0), [0.13, 0.05, 0.1], CRAB, 6, [0, -a, 0]), ...[-1, 1].map((k) => ellipsoid(at(k * 0.08, 0.15), [0.04, 0.035, 0.06], CRAB, 5, [0, -a, 0])));
+  }
+  // (Twice life size again: crabs are small, and must read beside the shoals.)
+  const big = new THREE.Matrix4().makeScale(2, 2, 2);
+  return out.map((g) => g.applyMatrix4(big));
+}
+// (A crab's shell: rural/models.ts finds the crabs by it.)
+export const CRAB = 0xc0442c;
+// Coral on a reef, just under the surface: branching red, pink and orange
+// coral and pale brain coral on the reef's dark rock.
+function coralBed(): G[] {
+  const out: G[] = [fleece([0, -0.55, 0], [1.6, 0.25, 1.3], 0x4a4e44, 0.2, 2)];
+  const cols = [0xe8443a, 0xf08ab0, 0xf0a030];
+  for (let i = 0; i < 11; i++) {
+    const a = i * 2.39, r = 0.2 + (i % 4) * 0.33, x = Math.cos(a) * r, z = Math.sin(a) * r, c = cols[i % 3]!;
+    out.push(tube([[x, -0.4, z], [x + 0.12, -0.18, z + 0.06], [x + 0.2, -0.02, z - 0.05]], [0.08, 0.055, 0.03], c, 4, 1), tube([[x + 0.12, -0.18, z + 0.06], [x - 0.06, -0.04, z + 0.18]], [0.045, 0.025], c, 4, 1));
+  }
+  for (const [x, z] of [[0.7, 0.6], [-0.8, -0.3], [0.1, -0.9]] as const) out.push(ellipsoid([x, -0.14, z], [0.26, 0.12, 0.24], 0xd8b88a, 6));
+  // (Larger than life, as the oyster beds: it must read through the water.)
+  const big = new THREE.Matrix4().makeScale(1.6, 1.6, 1.6);
+  return out.map((g) => g.applyMatrix4(big));
+}
+// Oil under the sea, known: a dark sheen spreading on the water.
+function oilSlick(): G[] {
+  return [P(new THREE.CylinderGeometry(1.6, 1.6, 0.02, 10), 0x16161c, { y: 0.03, sz: 0.6 }), P(new THREE.CylinderGeometry(0.9, 0.9, 0.02, 9), 0x34344a, { x: 0.9, y: 0.04, z: 0.3, sz: 0.7 })];
+}
+// An offshore oil platform: yellow legs down into the sea, a grey deck, a
+// derrick on it, a crane, the gas flare out on its boom.
+function oilRig(): G[] {
+  const out: G[] = [];
+  for (const [a, b] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) out.push(cyl(0.35, 0.3, 6.5, 6, 0xd8a02a, { x: a * 2.6, y: -3, z: b * 2.2 }));
+  out.push(beam([-2.6, 0.6, -2.2], [2.6, 0.6, 2.2], 0.12, 0xd8a02a, 4), beam([2.6, 0.6, -2.2], [-2.6, 0.6, 2.2], 0.12, 0xd8a02a, 4));
+  out.push(box(7, 0.6, 6, 0x6e6e6a, { y: 3.4 }), box(3, 1.6, 2.4, 0xd8d4c8, { x: -1.8, y: 4, z: -1.4 }), box(1.6, 0.1, 1.6, 0x3a5a3a, { x: -1.8, y: 5.62, z: -1.4 }));
+  const h = 7, b0 = 4;
+  for (const [a, b] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) out.push(beam([1.2 + a * 1.1, b0, 1 + b * 1.1], [1.2 + a * 0.25, b0 + h, 1 + b * 0.25], 0.08, 0xb83a2a, 4));
+  for (let y = 1.8; y < h; y += 1.8) { const r = 1.1 - (0.85 * y) / h; out.push(...[[-1, -1, 1, -1], [1, -1, 1, 1], [1, 1, -1, 1], [-1, 1, -1, -1]].map(([a, b, c, d]) => beam([1.2 + a! * r, b0 + y, 1 + b! * r], [1.2 + c! * r, b0 + y, 1 + d! * r], 0.05, 0xe8e4dc, 4))); }
+  out.push(beam([3.2, 4, -2.6], [7.2, 6.2, -3.2], 0.14, 0x9a9a96, 4), cone(0.35, 1.0, 6, 0xf08a2a, { x: 7.2, y: 6.2, z: -3.2 }), cone(0.2, 0.6, 5, 0xffd060, { x: 7.2, y: 6.6, z: -3.2 }));
+  out.push(beam([-3, 3.7, 2.4], [-1.4, 7, 2.6], 0.1, 0xd8a02a, 4));
+  return out;
 }
 // An oyster bed: shells on the reef rocks, at the surface.
 function oysters(): G[] {
@@ -403,7 +486,9 @@ export const KIT = {
   // water and oil
   canoe, sailboat, trawler, derrick, pumpjack, oilTank,
   // the wild
-  wildRice, outcrop: () => outcrop(), oreRock: () => outcrop(true), boulders, fishShoal, oysters, resinPine,
+  wildRice, outcrop: () => outcrop(), oreRock: () => outcrop(true), boulders, oysters, resinPine,
+  // the sea
+  salmonShoal, tunaShoal, troutShoal, whale, crabRock, coralBed, oilSlick, oilRig,
   // worked touches
   winePress, cocoonTrays, tuskPile, cottonBales, teaBaskets, saltHeaps,
 } satisfies Record<string, () => G[]>;
@@ -423,7 +508,7 @@ export const FIGURE_BOOST = 6.5, PERSON_BOOST = 3.2, SMALL_BOOST = 4, PLANT_BOOS
 const SMALL: ReadonlySet<KitModel> = new Set<KitModel>(['plough', 'tractor', 'combine', 'trough', 'brokenCart', 'stooks', 'rick', 'bales', 'hideRack', 'oreHeap', 'oreCart', 'winePress', 'cocoonTrays', 'tuskPile', 'cottonBales', 'teaBaskets', 'saltHeaps', 'canoe']);
 const PLANTS: ReadonlySet<KitModel> = new Set<KitModel>(['wildRice', 'resinPine']);
 // (The wild's rock, shells and fish: drawn as large as the resources' props were.)
-const WILD: ReadonlySet<KitModel> = new Set<KitModel>(['outcrop', 'oreRock', 'boulders', 'oysters', 'fishShoal', 'resinPine', 'campfire']);
+const WILD: ReadonlySet<KitModel> = new Set<KitModel>(['outcrop', 'oreRock', 'boulders', 'oysters', 'salmonShoal', 'tunaShoal', 'troutShoal', 'whale', 'crabRock', 'coralBed', 'oilSlick', 'resinPine', 'campfire']);
 export const kitBoost = (k: KitModel): number => (PEOPLE.has(k) ? PERSON_BOOST : FIGURES.has(k) ? FIGURE_BOOST : WILD.has(k) ? WILD_BOOST : SMALL.has(k) ? SMALL_BOOST : PLANTS.has(k) ? PLANT_BOOST : KIT_BOOST);
 export const FENCE_BOOST = SMALL_BOOST;
 // A kit model in tile steps.

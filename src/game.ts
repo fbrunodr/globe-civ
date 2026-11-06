@@ -1399,7 +1399,8 @@ export class Game {
     if (this.ownerOf(t) !== u.owner) return 'Not your land.';
     if (this.use[t] === USE.center || this.wondersAt(t).length) return 'Nothing to build here.';
     const k = this.improvementAt(t, u.owner);
-    if (!k || (t !== u.tile && k !== 'boats')) return 'Nothing to build here.';
+    // (Water is worked from the shore: boats, an offshore well.)
+    if (!k || (t !== u.tile && !this.isWater(t))) return 'Nothing to build here.';
     if (this.builtAt(t) === k) return 'Already improved.';
     const need = this.improvementTech(u.owner, k);
     return need ? `Needs ${TECHS[need].name}.` : null;
