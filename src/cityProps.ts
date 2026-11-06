@@ -34,7 +34,7 @@ import { len as len2, sub as sub2, type Pt as Pt2 } from './town/geometry.ts';
 import { mulberry32, type Rng } from './rng.ts';
 import { dressCity, type DressEra } from './cityDress.ts';
 import { wearSalt, wornNear } from './rural/wear.ts';
-import { paintCity, CITY_CELL } from './cityPainter.ts';
+import { paintCity, CITY_CELL, UNIT } from './cityPainter.ts';
 
 // The ground at a spot of a tile (render.ts samples the terrain).
 export interface CitySpot {
@@ -71,6 +71,7 @@ interface CityLayout {
   byTile: Map<number, PlacedBuilding[]>;
   streets: Street[];
   pavings: Paving[];
+  approaches: THREE.Vector3[][]; // the roads' ways in to the town (approach), from its tile's edge
   flora?: (d: THREE.Vector3) => boolean; // where wild flora may stay (made when first asked)
 }
 
@@ -107,6 +108,10 @@ export { PADDY_DEPTH };
 // Models are enlarged a little over true scale so towns read from afar
 // (the drawings' lot sizes assume this scale).
 const HOUSE_SCALE = 1.5;
+// A wall gate's passage and half length, and a wall tower's radius (model units: buildingCatalog.ts).
+const GATE_PASSAGE = 0.005, GATE_HALF = 0.0059, WALL_TOWER_R = 0.0022;
+// The most a gate is scaled up over the walls (the rest of its passage's room: widened).
+const GATE_GROW = 1.15;
 // Machu Picchu: the least houses its summit holds (render.ts cuts it deeper
 // until they fit), and how level ground must be to count as the cut's top.
 export const SUMMIT_HOUSES = 6;
@@ -191,6 +196,8 @@ export class CityProps {
   private readonly layouts = new Map<number, CityLayout>();
   private readonly box = new Map<PlacedKind, readonly [number, number]>();
   private roads: THREE.Vector3[][] = [];
+  // Where the roads reach each city's tile (roads.ts RoadLine ends): the middles of its edges.
+  private roadEnds = new Map<number, THREE.Vector3[]>();
   private roadsKey = '';
   private version = 0;
 
@@ -329,7 +336,7 @@ export class CityProps {
     const g = this.game;
     const wonders = g.cityWonders(city).map((w) => `${w}@${g.wondersBuilt.get(w)}`).join(',');
     const farms = this.farmland(city).map((t) => `${t}:${g.builtAt(t)}:${g.stageAt(t, city.owner)}:${g.pillaged[t]}`).join(';');
-    const sig = `${city.id}|${city.pop}|${g.players[city.owner]!.era}|${city.buildings.has('walls') && !g.wallsObsolete(city.owner) ? 'w' : ''}|${city.wonderTile ?? ''}|${city.building ?? ''}|${this.version}|${wonders}|${farms}`;
+    const sig = `${city.id}|${city.pop}|${g.players[city.owner]!.era}|${city.buildings.has('walls') && !g.wallsObsolete(city.owner) ? 'w' : ''}|${city.wonderTile ?? ''}|${city.building ?? ''}|${this.version}|${wonders}|${farms}|${this.roadsInto(city.tile).map((p) => p.x.toFixed(5)).join(',')}`;
     memo?.set(city.id, sig);
     return sig;
   }
@@ -442,9 +449,10 @@ export class CityProps {
         return !wet(this.sampleDir(l > 1e-12 ? p.clone().addScaledVector(out, (WATER_GAP * D) / l).normalize() : p));
       });
     };
-    const fits = (b: PlacedBuilding, dry: boolean) => clear.free(this.footprint(b)) && (!dry || dryAround(b));
-    const settle = (make: (shrink: number) => PlacedBuilding[], dry = true): PlacedBuilding[] => {
-      for (const shrink of [1, 0.85]) { const bs = make(shrink); if (fits(bs[0]!, dry)) return bs; }
+    // (`roads`: kept off the roads; the walls are not: a gate lets them through.)
+    const fits = (b: PlacedBuilding, dry: boolean, roads: boolean) => (!roads || clear.free(this.footprint(b))) && (!dry || dryAround(b));
+    const settle = (make: (shrink: number) => PlacedBuilding[], dry = true, roads = true): PlacedBuilding[] => {
+      for (const shrink of [1, 0.85]) { const bs = make(shrink); if (fits(bs[0]!, dry, roads)) return bs; }
       return [];
     };
 
@@ -473,21 +481,86 @@ export class CityProps {
     // (Exactly where painted: they meet the buildings' sides.)
     for (const r of dressed.painting.roads) pavings.push({ points: r.map(toDir), paved: era > 0, rgb: dressed.roadRgb, exact: true });
 
-    // Walls: a segment between each pair of the ring's points, a tower at every other.
+    // The roads into town: from where each reaches the tile's edge on to
+    // the nearest of its streets it can reach in a straight line between
+    // the buildings (or, with none, up to the buildings toward the middle).
+    const frame = tileFrame(g, city.tile), P = dressed.painting;
+    const toPt = (d: THREE.Vector3): Pt2 => { const s = d.dot(frame.c) * frame.k; return { x: d.dot(frame.e1) / s, y: d.dot(frame.e2) / s }; };
+    const gridOf = (p: Pt2): Pt2 => { const x = p.x - P.origin.x, y = p.y - P.origin.y; return { x: (x * P.u.x + y * P.u.y) / UNIT, y: (x * P.v.x + y * P.v.y) / UNIT }; };
+    const tileOf = (x: number, y: number): Pt2 => ({ x: P.origin.x + (x * P.u.x + y * P.v.x) * UNIT, y: P.origin.y + (x * P.u.y + y * P.v.y) * UNIT });
+    const inBuilding = (p: Pt2) => { const q = gridOf(p); return P.buildings.some((b) => q.x > b.x0 - 0.5 && q.x < b.x1 + 0.5 && q.y > b.y0 - 0.5 && q.y < b.y1 + 0.5); };
+    const STEP = 0.25 * UNIT;
+    const clearWay = (a: Pt2, b: Pt2) => { const n = Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / STEP); for (let i = 0; i <= n; i++) if (inBuilding({ x: a.x + ((b.x - a.x) * i) / n, y: a.y + ((b.y - a.y) * i) / n })) return false; return true; };
+    const cells: Pt2[] = P.roads.flatMap((r) => {
+      const a = gridOf(r[0]!), b = gridOf(r[2]!), out: Pt2[] = [];
+      for (let x = Math.round(Math.min(a.x, b.x)); x < Math.round(Math.max(a.x, b.x)); x++) for (let y = Math.round(Math.min(a.y, b.y)); y < Math.round(Math.max(a.y, b.y)); y++) out.push(tileOf(x + 0.5, y + 0.5));
+      return out;
+    });
+    const approaches: THREE.Vector3[][] = [], ways: [Pt2, Pt2][] = [];
+    for (const edge of this.roadsInto(city.tile)) {
+      const e = toPt(edge);
+      let to: Pt2 | null = null, best = Infinity;
+      for (const c of cells) { const d = Math.hypot(c.x - e.x, c.y - e.y); if (d < best && clearWay(e, c)) { best = d; to = c; } }
+      if (!to) {
+        // (Straight toward the middle, as far as the buildings.)
+        const l = Math.hypot(e.x, e.y), n = Math.ceil(l / STEP);
+        let i = 0;
+        while (i < n && !inBuilding({ x: e.x * (1 - (i + 1) / n), y: e.y * (1 - (i + 1) / n) })) i++;
+        to = { x: e.x * (1 - i / n), y: e.y * (1 - i / n) };
+      }
+      const n = Math.max(1, Math.ceil(Math.hypot(to.x - e.x, to.y - e.y) / (2 * STEP)));
+      approaches.push([edge.clone(), ...Array.from({ length: n }, (_, i) => toDir({ x: e.x + ((to.x - e.x) * (i + 1)) / n, y: e.y + ((to.y - e.y) * (i + 1)) / n }))]);
+      ways.push([e, to]);
+    }
+
+    // Walls: a segment between each pair of the ring's points, a tower at
+    // every other; a gate where a road runs through them (its passage a
+    // little wider than the road, its towers either side: no segment or
+    // tower stands in its way).
     if (dressed.wall) {
       const rand = mulberry32(city.id * 7919 + 5);
-      const pts = dressed.wall.map((p) => this.sampleDir(toDir(p)));
-      pts.forEach((s, n) => {
-        if (n % 2 === 0 && n < pts.length - 1 && standsAt('wallTower', s)) {
-          put(city.tile, ...settle((k) => this.stand('wallTower', s.dir, 0, HOUSE_SCALE * k, buildingEntry('wallTower').leaf, rand, city.owner), false));
-        }
-        const nx = pts[n + 1];
-        if (!nx) return;
+      const ring = dressed.wall;
+      // (The gate's size: a little larger than the walls', then widened as
+      // the road needs; its half length in tile steps.)
+      const need = (2.2 * ROAD_HALF_WIDTH * D) / (GATE_PASSAGE * this.scale * PROP_SCALE * HOUSE_SCALE);
+      const gateSize = HOUSE_SCALE * Math.min(GATE_GROW, Math.max(1, need)), gateWide = Math.max(1, need / GATE_GROW);
+      const gateHalf = (GATE_HALF * this.scale * PROP_SCALE * gateSize * gateWide) / frame.k;
+      const towerR = (WALL_TOWER_R * this.scale * PROP_SCALE * HOUSE_SCALE) / frame.k;
+      // Where each road crosses the ring: the piece and how far along it.
+      const gates: { n: number; at: Pt2 }[] = [];
+      for (const [a, b] of ways) for (let n = 0; n + 1 < ring.length; n++) {
+        const c = ring[n]!, d = ring[n + 1]!;
+        const den = (b.x - a.x) * (d.y - c.y) - (b.y - a.y) * (d.x - c.x);
+        if (Math.abs(den) < 1e-12) continue;
+        const t = ((c.x - a.x) * (d.y - c.y) - (c.y - a.y) * (d.x - c.x)) / den, u = ((c.x - a.x) * (b.y - a.y) - (c.y - a.y) * (b.x - a.x)) / den;
+        if (t >= 0 && t <= 1 && u >= 0 && u <= 1) gates.push({ n, at: { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t } });
+      }
+      const nearGate = (p: Pt2, r: number) => gates.some((q) => Math.hypot(q.at.x - p.x, q.at.y - p.y) < r);
+      const segment = (p: Pt2, q: Pt2) => {
+        const s = this.sampleDir(toDir(p)), nx = this.sampleDir(toDir(q));
         const mid = this.sampleDir(s.dir.clone().add(nx.dir).normalize());
         if (!standsAt('wallSegment', mid)) return;
         // Stretched to the gap between its ends (model length 0.01 at prop scale).
         const len = Math.max(0.3, Math.min(4, s.dir.angleTo(nx.dir) / (0.01 * HOUSE_SCALE * this.scale * PROP_SCALE)));
-        put(city.tile, ...settle((k) => this.stand('wallSegment', mid.dir, facing(mid.dir, nx.dir), HOUSE_SCALE * k, buildingEntry('wallSegment').leaf, rand, city.owner, len), false));
+        put(city.tile, ...settle((k) => this.stand('wallSegment', mid.dir, facing(mid.dir, nx.dir), HOUSE_SCALE * k, buildingEntry('wallSegment').leaf, rand, city.owner, len), false, false));
+      };
+      ring.forEach((p, n) => {
+        const s = this.sampleDir(toDir(p));
+        if (n % 2 === 0 && n < ring.length - 1 && standsAt('wallTower', s) && !nearGate(p, gateHalf + towerR)) {
+          put(city.tile, ...settle((k) => this.stand('wallTower', s.dir, 0, HOUSE_SCALE * k, buildingEntry('wallTower').leaf, rand, city.owner), false, false));
+        }
+        const q = ring[n + 1];
+        if (!q) return;
+        // (The piece in parts either side of its gates.)
+        const len = Math.hypot(q.x - p.x, q.y - p.y), along = (t: number): Pt2 => ({ x: p.x + ((q.x - p.x) * t) / len, y: p.y + ((q.y - p.y) * t) / len });
+        let from = 0;
+        for (const gt of gates.filter((x) => x.n === n).map((x) => Math.hypot(x.at.x - p.x, x.at.y - p.y)).sort((a, b) => a - b)) {
+          if (gt - gateHalf > from + 1e-4) segment(along(from), along(gt - gateHalf));
+          from = Math.max(from, gt + gateHalf);
+          const at = this.sampleDir(toDir(along(gt)));
+          put(city.tile, ...this.stand('wallGate', at.dir, facing(at.dir, toDir(q)), gateSize, buildingEntry('wallGate').leaf, rand, city.owner, gateWide));
+        }
+        if (len > from + 1e-4) segment(along(from), q);
       });
     }
 
@@ -605,7 +678,7 @@ export class CityProps {
       if (plan.house) placeLot(HOMESTEAD_LOT, plan.house.floors, plan.house.p, mulberry32(mix(t, 0x5a)));
       if (plan.barn) placeLot('b32', 1, plan.barn, mulberry32(mix(t, 0x5b)));
     }
-    return { sig, byTile, streets, pavings };
+    return { sig, byTile, streets, pavings, approaches };
   }
 
   // Half extents of a model's footprint (x, z), in model units.
@@ -790,7 +863,8 @@ export class CityProps {
       const box: Box = { inv: b.matrix.clone().invert(), hx: hx * G, hz: hz * G, gx: gap / sc.x, gz: gap / sc.z, at: pos, reach: Math.hypot(hx * G * sc.x, hz * G * sc.z) + gap };
       if (box.reach > cell) big.push(box); else { const k = key(pos); const c = cells.get(k); if (c) c.push(box); else cells.set(k, [box]); }
     }
-    const streets = new StreetIndex(l.streets, D);
+    // (And the roads' ways in.)
+    const streets = new StreetIndex([...l.streets, ...l.approaches.map((pts) => ({ points: pts, halfWidth: pts.map(() => ROAD_HALF_WIDTH * D), paved: false }))], D);
     // Squares: polygons on the tangent plane at their middle.
     const squares = l.pavings.map((p) => {
       const c = p.points.reduce((a, v) => a.add(v), new THREE.Vector3()).normalize();
@@ -841,8 +915,11 @@ export class CityProps {
     const g = this.game, key = `${g.useVersion}|${g.cities.length}`;
     if (this.roadsKey !== key) {
       this.roadsKey = key;
-      const planned = planRoads(g);
-      this.roads = roadLines(g, planned).map((r) => r.points);
+      const lines = roadLines(g, planRoads(g));
+      this.roads = lines.map((r) => r.points);
+      this.roadEnds = new Map();
+      const end = (t: number | null, p: THREE.Vector3) => { if (t === null) return; const l = this.roadEnds.get(t); if (l) l.push(p); else this.roadEnds.set(t, [p]); };
+      for (const r of lines) { end(r.ends[0], r.points[0]!); end(r.ends[1], r.points[r.points.length - 1]!); }
     }
     return this.roads;
   }
@@ -856,6 +933,18 @@ export class CityProps {
     }
     return this.roadIdx.idx;
   }
+  // The middles of the edges where roads reach city tile t.
+  private roadsInto(t: number): readonly THREE.Vector3[] { this.roadLines(); return this.roadEnds.get(t) ?? []; }
+  // A road's way on from where it reaches city tile t (`edge`, the middle
+  // of an edge: roads.ts) to its town's streets, if the town has one.
+  approach(t: number, edge: THREE.Vector3): readonly THREE.Vector3[] | null {
+    const city = this.game.cityById.get(this.game.tileCity[t]);
+    if (!city || city.tile !== t) return null;
+    return this.layout(city).approaches.find((a) => a[0]!.distanceTo(edge) < 1e-7) ?? null;
+  }
+  // Whether flora may grow at d: clear of every road between cities by a
+  // tree's reach (FLORA_GAP, as in a town).
+  offRoads(d: THREE.Vector3): boolean { return this.roadIndex().clear(d, FLORA_GAP * this.game.globe.avgEdgeAngle); }
   private onRoad(dir: THREE.Vector3, kind: BuildingKind): boolean {
     const g = this.game;
     this.roadLines();

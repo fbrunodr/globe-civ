@@ -83,10 +83,11 @@ function route(g: Game, from: number, to: number): number[] | null {
   return path.reverse();
 }
 
-// A road as drawn: smooth lines between cities. Roads stay out of a city's
-// tile (they would run over the houses): each stretch ends at the middle of
-// the edge where it reaches a city.
-export interface RoadLine { a: number; b: number; points: THREE.Vector3[] }
+// A road as drawn: smooth lines between cities. Here each stretch ends at
+// the middle of the edge where it reaches a city (`ends`: that city's tile,
+// at the start and the end, or null); the city's layout carries it on to
+// its streets, through a gate in its walls (cityProps.ts approach).
+export interface RoadLine { a: number; b: number; points: THREE.Vector3[]; ends: [number | null, number | null] }
 
 export function roadLines(g: Game, planned: readonly Road[] = planRoads(g)): RoadLine[] {
   const built = (t: number) => g.use[t] === USE.center;
@@ -98,17 +99,17 @@ export function roadLines(g: Game, planned: readonly Road[] = planRoads(g)): Roa
   const out: RoadLine[] = [];
   for (const road of planned) {
     const t = road.tiles;
-    let run: THREE.Vector3[] = [];
-    const flush = () => { if (run.length > 1) out.push({ a: road.a, b: road.b, points: smooth(run, step) }); run = []; };
+    let run: THREE.Vector3[] = [], from: number | null = null;
+    const flush = (to: number | null) => { if (run.length > 1) out.push({ a: road.a, b: road.b, points: smooth(run, step), ends: [from, to] }); run = []; from = null; };
     for (let k = 0; k < t.length; k++) {
       if (built(t[k]!)) {
-        if (run.length) { run.push(edgeMid(t[k - 1]!, t[k]!)); flush(); }
+        if (run.length) { run.push(edgeMid(t[k - 1]!, t[k]!)); flush(t[k]!); }
         continue;
       }
-      if (!run.length && k > 0 && built(t[k - 1]!)) run.push(edgeMid(t[k - 1]!, t[k]!));
+      if (!run.length && k > 0 && built(t[k - 1]!)) { run.push(edgeMid(t[k - 1]!, t[k]!)); from = t[k - 1]!; }
       run.push(g.tiles[t[k]!]!.center.clone());
     }
-    flush();
+    flush(null);
   }
   return out;
 }

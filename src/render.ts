@@ -135,7 +135,8 @@ const BANANA_IN: ReadonlySet<Layer> = new Set<Layer>(['Canopy', 'Understory']);
 
 // Roads between cities, and streets: dirt, then paving from the Classical era.
 // (A little darker than the terrain's own: the roads' material lights it brighter.)
-const ROAD_RGB = ROAD_DIRT.map((c) => c * 0.8) as unknown as readonly [number, number, number];
+const ROAD_SHADE = 0.8;
+const ROAD_RGB = ROAD_DIRT.map((c) => c * ROAD_SHADE) as unknown as readonly [number, number, number];
 const DIRT_RGB = [0.55, 0.49, 0.39] as const;
 const PAVED_RGB = [0.5, 0.46, 0.41] as const;
 // Road surfaces: points across the width (shares of the half width: edges,
@@ -148,6 +149,17 @@ const ROAD_LIFT = 0.00004; // nearly flush with the ground
 const ROAD_SURFACE = 0.84;  // the surface layer's share of the street's width (the rest shows the edges)
 const ROAD_LAYER = 0.00002; // how far the surface sits above the edges
 const ROAD_KERB = [0.62, 0.59, 0.54] as const;
+// What the road material draws (roadUv.z): a track's packed earth, paved
+// streets, a town's paving, asphalt, a railway (ballast, sleepers, rails).
+const ROAD_KIND = { dirt: 0, paved: 1, square: 2, asphalt: 3, rail: 4 } as const;
+const ASPHALT_RGB = [0.27, 0.27, 0.28] as const, ASPHALT_EDGE = [0.48, 0.46, 0.42] as const;
+const BALLAST_RGB = [0.45, 0.42, 0.38] as const, BALLAST_EDGE = [0.38, 0.35, 0.31] as const;
+// A railway's half width: this share of a road's.
+const RAIL_WIDTH = 0.8;
+// A track's packed earth, as a farm's lanes (terrainMaterial.ts): the
+// land's own colour well toward its soil and the roads' dirt; its edge
+// halfway back to the land.
+const TRACK_EARTH = 0.65, TRACK_PACKED = 0.68, TRACK_EDGE = 0.45;
 const SQUARE_GROW = 0.022; // squares reach this far (tile steps) under the streets round them
 const WALK_FOV = 55;
 // The look: a 35° lens from further back (flatter perspective, less of a
@@ -762,6 +774,8 @@ export class GlobeRenderer {
     this.waterMat.setView(m);
     this.waterMesh.visible = mode === 'normal' || mode === 'water';
     this.weather.group.visible = mode === 'normal' && this.clouds;
+    // (Units and their flags too: the views show the land alone.)
+    this.unitsGroup.visible = mode === 'normal';
   }
 
   // Clouds and rain on or off (the debug views always hide them).
@@ -1093,6 +1107,8 @@ export class GlobeRenderer {
             // (A neighbor's flora feathering in never stands among the
             // buildings of the tile it is on: a city's center keeps clear.)
             if (u !== t && !inWater && g.use[t] === USE.center && (!this.cityProps.keepsFloraClear(t) || !this.cityProps.floraClear(t, d))) continue;
+            // (Nor on a road between cities, but what grows in the water under a bridge.)
+            if (!inWater && !this.cityProps.offRoads(d)) continue;
             if (prop.ancient) ancient = false;
             q.setFromUnitVectors(UP, d);
             q.multiply(new THREE.Quaternion().setFromAxisAngle(UP, spin * Math.PI * 2));
@@ -1217,7 +1233,7 @@ export class GlobeRenderer {
           // (A farm's crops are drawn with the flora, and hide from high up as its understory does.)
           // (Shrubs and fences of cards are drawn with it too, casting their shadows as trees do.)
           const cards = isRuralModelKind(kind) && isFloraRural(kind), crop = cards && isCropRural(kind);
-          mesh = new THREE.InstancedMesh(instanceGeometry(this.geometryOf(kind), cap), isFloraKind(kind) || cards ? this.propMat : isRuralModelKind(kind) && isSmoothRural(kind) ? this.smoothMat : kind === 'wallSegment' ? this.wallMat : this.buildingMat, cap);
+          mesh = new THREE.InstancedMesh(instanceGeometry(this.geometryOf(kind), cap), isFloraKind(kind) || cards ? this.propMat : isRuralModelKind(kind) && isSmoothRural(kind) ? this.smoothMat : kind === 'wallSegment' || kind === 'wallGate' ? this.wallMat : this.buildingMat, cap);
           mesh.userData['hideAbove'] = isFloraKind(kind) ? HIDE_ABOVE[CATALOG[kind].layer] : Infinity;
           // (Crops hide once the camera is higher than they reach, cullProps.)
           if (crop) mesh.userData['crop'] = true;
@@ -1384,7 +1400,8 @@ export class GlobeRenderer {
       this.chunkSphere.center.copy(chunk.dir);
       this.chunkSphere.radius = 2 * Math.sin(Math.min(chunk.radius, Math.PI / 2) / 2) + this.maxLift + 0.01;
       const seen = camDir.angleTo(chunk.dir) < horizon + chunk.radius && this.frustum.intersectsSphere(this.chunkSphere);
-      for (const mesh of chunk.surface) mesh.visible = seen;
+      // (Roads and bridges only in the normal view: the debug views show the land.)
+      for (const mesh of chunk.surface) mesh.visible = seen && (this.view === 'normal' || mesh.userData['overlay'] !== true);
       // (Its trees go far when even its nearest are under FAR_PX tall.)
       const away = cam.distanceTo(this.chunkSphere.center) - this.chunkSphere.radius;
       for (const mesh of chunk.meshes.values()) {
@@ -1627,7 +1644,8 @@ export class GlobeRenderer {
   // with soft edges. Rebuilt when the cities change (or what is explored).
   private updateRoads(force: boolean): void {
     const g = this.game;
-    const key = g.cities.map((c) => `${c.id}:${c.owner}`).join(',');
+    // (And what each civ lays: lays below.)
+    const key = g.cities.map((c) => `${c.id}:${c.owner}`).join(',') + '|' + g.players.map((p) => `${p.techs.has('railroad') ? 'r' : ''}${p.techs.has('combustion') ? 'a' : ''}`).join(',');
     if (key === this.roadsKey && !force) return;
     this.roadsKey = key;
     const halfW = ROAD_HALF_WIDTH * g.globe.avgEdgeAngle, lift = ROAD_LIFT * this.scale;
@@ -1643,10 +1661,48 @@ export class GlobeRenderer {
       return { t: l.t, ground: lv.ground, water: lv.water, land };
     };
     const bridges: Bridges = { pos: [], col: [] };
+    // A track's packed earth on tile t (TRACK_*: the tile table's land and soil).
+    const td = this.tileTex.image.data as Float32Array;
+    const earth = new Map<number, readonly [readonly number[], readonly number[]]>();
+    const dirt = (t: number) => {
+      let e = earth.get(t);
+      if (!e) {
+        const o = t * TILE_ROWS * 4, land = [td[o]!, td[o + 1]!, td[o + 2]!], soil = [td[o + 40]!, td[o + 41]!, td[o + 42]!];
+        const packed = land.map((c, i) => (c + ((soil[i]! + (ROAD_DIRT[i]! - soil[i]!) * TRACK_EARTH) - c) * TRACK_PACKED) * ROAD_SHADE);
+        e = [packed, packed.map((c, i) => c + (land[i]! * ROAD_SHADE - c) * TRACK_EDGE)];
+        earth.set(t, e);
+      }
+      return e;
+    };
+    // What a civ lays (as in Civ V): tracks, asphalt from Combustion; a
+    // railway once it knows the Railroad, in the road's place.
+    const lays = (owner: number) => { const p = g.players[owner]; return { rail: p?.techs.has('railroad') ?? false, asphalt: p?.techs.has('combustion') ?? false }; };
     for (const road of roadLines(g)) {
       // Stone bridges once either end has left the Ancient era.
       const stone = [road.a, road.b].some((id) => { const c = g.cityById.get(id); return c !== undefined && g.players[c.owner]!.era > 0; });
-      this.drape(road.points, halfW, ROAD_RGB, batches, at, lift, bridges, stone);
+      // (On into the towns at its ends, through their gates: cityProps.ts approach.)
+      const first = road.ends[0] === null ? null : this.cityProps.approach(road.ends[0], road.points[0]!);
+      const last = road.ends[1] === null ? null : this.cityProps.approach(road.ends[1], road.points[road.points.length - 1]!);
+      const head = first ? [...first].reverse().slice(0, -1) : [], tail = last ? last.slice(1) : [];
+      const pts = [...head, ...road.points, ...tail];
+      // Each point as laid by the owner of its ground (no one's: the city nearer it).
+      const ca = g.cityById.get(road.a)!, cb = g.cityById.get(road.b)!;
+      const how = pts.map((d) => {
+        const o = g.ownerOf(at(d).t);
+        return lays(o >= 0 ? o : d.angleTo(g.tiles[ca.tile].center) < d.angleTo(g.tiles[cb.tile].center) ? ca.owner : cb.owner);
+      });
+      const middle = (k: number) => (how[k]!.rail ? ROAD_KIND.rail : how[k]!.asphalt ? ROAD_KIND.asphalt : ROAD_KIND.dirt);
+      // (In runs of one kind, each overlapping the next by a point.)
+      for (let k = 0; k < pts.length; ) {
+        let e = k;
+        while (e + 1 < pts.length && middle(e + 1) === middle(k)) e++;
+        const kind = middle(k), run = pts.slice(k, Math.min(pts.length, e + 2));
+        if (run.length > 1) {
+          if (kind === ROAD_KIND.dirt) this.drape(run, halfW, ROAD_RGB, batches, at, lift, bridges, stone, kind, dirt);
+          else this.drape(run, kind === ROAD_KIND.rail ? halfW * RAIL_WIDTH : halfW, kind === ROAD_KIND.rail ? BALLAST_RGB : ASPHALT_RGB, batches, at, lift, bridges, stone, kind);
+        }
+        k = e + 1;
+      }
     }
     // Streets and squares inside towns (cityProps.ts lays them out).
     for (const st of this.cityProps.streets()) this.drape(st.points, st.halfWidth, st.paved ? PAVED_RGB : DIRT_RGB, batches, at, lift, bridges, st.paved);
@@ -1713,6 +1769,7 @@ export class GlobeRenderer {
       }
       const mesh = new THREE.Mesh(part, mat);
       mesh.frustumCulled = false;
+      mesh.userData['overlay'] = true;
       setup(mesh);
       chunk.surface.push(mesh);
       group.add(mesh);
@@ -1767,8 +1824,11 @@ export class GlobeRenderer {
   // a deck arching gently from bank to bank, always clear of the water,
   // with parapets along it and piers down to the bed (timber, or stone).
   // Skips unexplored ground.
+  // (`kind`: the road's, as the road material draws it (ROAD_KIND); `dirt`:
+  // a track's packed earth by the tile it crosses, in place of `rgb`.)
   private drape(pts: readonly THREE.Vector3[], halfWidth: number | readonly number[], rgb: readonly [number, number, number], roads: RoadBatches,
-    at: Ground, lift: number, bridges?: Bridges, stone = false): void {
+    at: Ground, lift: number, bridges?: Bridges, stone = false, kind: number = rgb === PAVED_RGB ? ROAD_KIND.paved : ROAD_KIND.dirt,
+    dirt?: (t: number) => readonly [readonly number[], readonly number[]]): void {
     const g = this.game, s = this.scale;
     // Points close enough that the surface follows the ground between them.
     const step = ROAD_STEP * g.globe.avgEdgeAngle;
@@ -1821,7 +1881,20 @@ export class GlobeRenderer {
     // streets overlap, the surface is the same everywhere, so joins vanish;
     // the edge color only shows along the network's outer border. Both
     // follow the ground (sampled across the width) and end round.
-    const edgeRgb = rgb === PAVED_RGB ? ROAD_KERB : rgb.map((c) => c * 0.82);
+    const edgeRgb = kind === ROAD_KIND.paved ? ROAD_KERB : kind === ROAD_KIND.asphalt ? ASPHALT_EDGE : kind === ROAD_KIND.rail ? BALLAST_EDGE : rgb.map((c) => c * 0.82);
+    // (A track's colours, surface and edge, each point's averaged over its
+    // neighbours': no step where it crosses into the next tile.)
+    const SMOOTH = 12;
+    const own = dirt ? here.map((h) => dirt(h.t)) : null;
+    const colorAt = (k: number, edge: boolean): readonly number[] => {
+      if (!own) return edge ? edgeRgb : rgb;
+      const c = [0, 0, 0];
+      let w = 0;
+      for (let j = Math.max(0, k - SMOOTH); j <= Math.min(n - 1, k + SMOOTH); j++) { const o = own[j]![edge ? 1 : 0]; c[0] += o[0]!; c[1] += o[1]!; c[2] += o[2]!; w++; }
+      return [c[0]! / w, c[1]! / w, c[2]! / w];
+    };
+    const surfaceRgb = own ? Array.from({ length: n }, (_, k) => colorAt(k, false)) : null;
+    const shoulderRgb = own ? Array.from({ length: n }, (_, k) => colorAt(k, true)) : null;
     const heightAt = (k: number, q: THREE.Vector3, center: boolean) => {
       if (deck[k] !== null) return deck[k]!;
       const o = center ? here[k]! : at(q);
@@ -1830,12 +1903,11 @@ export class GlobeRenderer {
     // (How far along the road each point is, tile steps: the texture runs along it.)
     const along: number[] = [0];
     for (let k = 1; k < n; k++) along.push(along[k - 1]! + pts[k]!.angleTo(pts[k - 1]!) / g.globe.avgEdgeAngle);
-    const kind = rgb === PAVED_RGB ? 1 : 0;
-    const layer = (share: number, up: number, color: readonly number[], out: Batch) => {
+    const layer = (share: number, up: number, color: readonly number[], perPoint: readonly (readonly number[])[] | null, out: Batch) => {
       type UV = readonly [number, number];
-      const tri = (p0: THREE.Vector3, p1: THREE.Vector3, p2: THREE.Vector3, u0: UV, u1: UV, u2: UV) => {
+      const tri = (p0: THREE.Vector3, p1: THREE.Vector3, p2: THREE.Vector3, u0: UV, u1: UV, u2: UV, k0 = -1, k1 = k0, k2 = k1) => {
         out.pos.push(p0.x, p0.y, p0.z, p1.x, p1.y, p1.z, p2.x, p2.y, p2.z);
-        for (let i = 0; i < 3; i++) out.col.push(color[0]!, color[1]!, color[2]!);
+        for (const k of [k0, k1, k2]) { const c = perPoint && k >= 0 ? perPoint[k]! : color; out.col.push(c[0]!, c[1]!, c[2]!); }
         out.uv.push(u0[0], u0[1], kind, u1[0], u1[1], kind, u2[0], u2[1], kind);
       };
       const cap = (k: number, row: THREE.Vector3[], dir: number) => {
@@ -1849,7 +1921,7 @@ export class GlobeRenderer {
           ring.push(d.clone().addScaledVector(side, Math.cos(t)).addScaledVector(tan, Math.sin(t)).normalize().multiplyScalar(r));
           ruv.push([Math.cos(t), along[k]! + dir * Math.sin(t) * wt]);
         }
-        for (let i = 0; i < 8; i++) tri(mid, ring[i]!, ring[i + 1]!, [0, along[k]!], ruv[i]!, ruv[i + 1]!);
+        for (let i = 0; i < 8; i++) tri(mid, ring[i]!, ring[i + 1]!, [0, along[k]!], ruv[i]!, ruv[i + 1]!, k);
       };
       let prev: THREE.Vector3[] | null = null, prevK = 0;
       for (let k = 0; k < n; k++) {
@@ -1867,16 +1939,16 @@ export class GlobeRenderer {
           const a0 = along[prevK]!, a1 = along[k]!;
           for (let j = 0; j + 1 < row.length; j++) {
             const ua = ROAD_ACROSS[j]!, ub = ROAD_ACROSS[j + 1]!;
-            tri(prev[j]!, prev[j + 1]!, row[j + 1]!, [ua, a0], [ub, a0], [ub, a1]);
-            tri(prev[j]!, row[j + 1]!, row[j]!, [ua, a0], [ub, a1], [ua, a1]);
+            tri(prev[j]!, prev[j + 1]!, row[j + 1]!, [ua, a0], [ub, a0], [ub, a1], prevK, prevK, k);
+            tri(prev[j]!, row[j + 1]!, row[j]!, [ua, a0], [ub, a1], [ua, a1], prevK, k, k);
           }
         }
         prev = row; prevK = k;
       }
       if (prev) cap(prevK, prev, 1);
     };
-    layer(1, 0, edgeRgb, roads.edge);
-    layer(ROAD_SURFACE, ROAD_LAYER * s, rgb, roads.top);
+    layer(1, 0, edgeRgb, shoulderRgb, roads.edge);
+    layer(ROAD_SURFACE, ROAD_LAYER * s, rgb, surfaceRgb, roads.top);
   }
 
   // The solid part of a bridge over points a..b of a street (a and b on
@@ -2479,15 +2551,20 @@ function windOutward(geo: THREE.BufferGeometry): void {
   }
 }
 
-// Road material: a dirt road as a cart track is worn (the soil scan along
-// it, groundTextures.ts: two wheel ruts darker and smoother, a lighter
-// crown between them with a little grass, gravel toward the shoulders,
-// the outer edge ragged into the ground), a paved one its stones' grain,
-// a town's paving the grain alone; vertex colors. `top`: the surface
-// layer (its edge ragged too, over the shoulders below). The grain comes
+// Road material, by kind (ROAD_KIND): a track as a farm's lanes are,
+// packed earth of the land it crosses (the soil scan along it,
+// groundTextures.ts; the outer edge ragged into the ground), a paved
+// street its stones' grain, a town's paving the grain alone, asphalt, a
+// railway; vertex colors. `top`: the surface layer (its edge ragged too,
+// over the shoulders below). The grain comes
 // from the world position (the same wherever streets overlap, so joins
 // never show); polygon offset keeps it over the ground.
 const ROAD_TEX_REPEAT = 0.05; // the soil scan's repeat along a road (tile steps)
+// A railway (tile steps; across, shares of its half width): the ballast
+// scan's repeat, a sleeper every RAIL_SLEEPER, sleepers RAIL_TIE_SPAN
+// across, the rails RAIL_GAUGE out from the middle; asphalt's dashes.
+const RAIL_TEX_REPEAT = 0.03, RAIL_SLEEPER = 0.006, RAIL_TIE_SPAN = 0.62, RAIL_GAUGE = 0.36;
+const ASPHALT_DASH = 0.03;
 function makeRoadMaterial(offset: number, depthWrite: boolean): THREE.MeshLambertMaterial {
   const mat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: offset, polygonOffsetUnits: offset, depthWrite });
   const top = depthWrite;
@@ -2511,28 +2588,42 @@ function makeRoadMaterial(offset: number, depthWrite: boolean): THREE.MeshLamber
       .replace('#include <color_fragment>', `#include <color_fragment>
         float grain = 0.9 + 0.12 * roadNoise(vRoadPos * 9000.0) + 0.06 * roadNoise(vRoadPos * 1800.0);
         float kind = vRoadUv.z;
-        if (kind > 1.5) diffuseColor.rgb *= grain;
-        else {
-          float u = vRoadUv.x, a = abs(u);
+        float u = vRoadUv.x, a = abs(u);
+        if (kind > 1.5 && kind < 2.5) diffuseColor.rgb *= grain;
+        else if (kind > 3.5) {
+          // A railway: a bed of ballast (gravel), sleepers across it, two
+          // steel rails along them; seen from far, the ballast alone with a
+          // darker line where the track is.
+          vec4 t = texture(uGround, vec3(vec2(u * ${ROAD_HALF_WIDTH}, vRoadUv.y) / ${RAIL_TEX_REPEAT}, ${GROUND_LAYER.rock}.0));
+          diffuseColor.rgb *= (0.75 + 0.5 * t.r) * grain;
+          ${top ? `float fw = fwidth(vRoadUv.y) / ${RAIL_SLEEPER};
+          float sharp = 1.0 - smoothstep(0.25, 0.6, fw);
+          float sleeper = (1.0 - step(${RAIL_TIE_SPAN}, a)) * step(0.62, fract(vRoadUv.y / ${RAIL_SLEEPER}));
+          float rail = 1.0 - smoothstep(0.035, 0.035 + fwidth(u) * 1.5, abs(a - ${RAIL_GAUGE}));
+          diffuseColor.rgb = mix(diffuseColor.rgb, mix(diffuseColor.rgb * 0.72, vec3(0.3, 0.22, 0.16), sharp), sleeper * (1.0 - step(${RAIL_TIE_SPAN}, a)) * mix(0.5, 1.0, sharp));
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.62, 0.62, 0.64), rail * mix(0.4, 1.0, sharp));` : ''}
+        } else if (kind > 2.5) {
+          // Asphalt: dark and even, finely grained; a dashed pale line down
+          // its middle (gone when too fine to make out).
+          diffuseColor.rgb *= 0.94 + 0.12 * roadNoise(vRoadPos * 20000.0);
+          ${top ? `float fw = fwidth(vRoadUv.y) / ${ASPHALT_DASH};
+          float dash = (1.0 - smoothstep(0.05, 0.05 + fwidth(u) * 1.5, a)) * step(0.5, fract(vRoadUv.y / ${ASPHALT_DASH})) * (1.0 - smoothstep(0.25, 0.6, fw));
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.85, 0.82, 0.7), dash * 0.8);` : ''}
+        } else {
           // (The edge ragged: eaten in by the ground, a little more here and there.)
           float rag = 0.12 + 0.2 * roadNoise(vRoadPos * 2600.0) + 0.08 * roadNoise(vRoadPos * 9000.0);
           if (a > 1.0 - rag) discard;
-          // (The soil scan, laid along the road: across it by its width, along by its length.)
-          vec4 t = texture(uGround, vec3(vec2(u * ${ROAD_HALF_WIDTH}, vRoadUv.y) / ${ROAD_TEX_REPEAT}, ${GROUND_LAYER[ROAD_GRAIN]}.0));
-          float tone = 2.0 * t.r;
           if (kind < 0.5) {
-            ${top ? `// Two ruts worn by the wheels, darker and smoother; a crown between, lighter, a little grass on it.
-            float rut = exp(-pow((a - 0.42) / 0.12, 2.0));
-            float crown = 1.0 - smoothstep(0.08, 0.22, a);
-            tone = mix(tone, 1.0, 0.6 * rut) * (1.0 - 0.32 * rut);
-            // (The crown's grass: in tufts, green over the dirt.)
-            float tuft = smoothstep(0.35, 0.7, roadNoise(vRoadPos * 6000.0) * 0.7 + roadNoise(vRoadPos * 20000.0) * 0.3);
-            diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.3, 0.38, 0.16), crown * (0.25 + 0.6 * tuft));`
-            : `// The shoulders: lighter, gravelly, greener toward the edge.
-            diffuseColor.rgb *= 0.92;
-            diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.27, 0.32, 0.15), smoothstep(0.4, 0.9, a) * 0.75 * (0.6 + 0.4 * roadNoise(vRoadPos * 7000.0)));`}
-          } else tone = mix(tone, 1.0, 0.5);
-          diffuseColor.rgb *= tone * grain;
+            // A track: packed earth, as a farm's lanes (its colour from the
+            // land it crosses: the vertex colour), the soil's grain at half
+            // its contrast.
+            vec4 t = texture(uGround, vec3(vec2(u * ${ROAD_HALF_WIDTH}, vRoadUv.y) / ${ROAD_TEX_REPEAT}, ${GROUND_LAYER.soil}.0));
+            diffuseColor.rgb *= 1.0 + (2.0 * t.r - 1.0) * 0.5;
+          } else {
+            // (Paving: the soil scan laid along it, half its contrast.)
+            vec4 t = texture(uGround, vec3(vec2(u * ${ROAD_HALF_WIDTH}, vRoadUv.y) / ${ROAD_TEX_REPEAT}, ${GROUND_LAYER[ROAD_GRAIN]}.0));
+            diffuseColor.rgb *= mix(2.0 * t.r, 1.0, 0.5) * grain;
+          }
         }`);
   };
   mat.customProgramCacheKey = () => `road-${top}`;

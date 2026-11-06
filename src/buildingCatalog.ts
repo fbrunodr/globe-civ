@@ -124,6 +124,13 @@ export const BUILDINGS_CATALOG = {
   ] },
   // ---------- walls (around the center) ----------
   wallSegment: { name: 'Wall segment', leaf: 0xa49c8c, build: (p) => block(0.01, 0.0016, 0.0042, p.leaf) },
+  // A gate where a road runs through the walls: two square towers flanking
+  // the passage (0.005 wide, 0.0044 high), the wall walk over it.
+  wallGate: { name: 'Wall gate', leaf: 0x6a625a, build: (p) => [
+    ...[-1, 1].flatMap((s) => [...block(0.0034, 0.0032, 0.0066, 0xa49c8c, { x: s * 0.0042 }), hip(0.0038, 0.0036, 0.0022, p.leaf, { x: s * 0.0042, y: 0.0066 })]),
+    ...block(0.005, 0.0024, 0.0016, 0xa49c8c, { y: 0.0044 }),
+    part(new THREE.PlaneGeometry(0.005, 0.0024).rotateX(Math.PI / 2), 0x8a8274, tf({ y: 0.0044 })),
+  ] },
   wallTower: { name: 'Wall tower', leaf: 0x6a625a, build: (p) => [
     cyl(0.0022, 0.0022, 0.0062, 6, 0xa49c8c), cone(0.0027, 0.0028, 6, p.leaf, { y: 0.0062 }),
   ] },

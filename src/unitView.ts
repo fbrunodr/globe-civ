@@ -213,7 +213,7 @@ interface Figure {
   // `goal`), and how far from its foe that is (world units).
   foeFig: Figure | null; reach: THREE.Vector3 | null; gap: number;
   held: boolean; // its place set by the fight (stepped up to a foe), not by its formation
-  keys?: readonly [string, string]; // its model's (UnitView.key), seen far and near
+  keys?: readonly [string, string, boolean]; // its model's (UnitView.key), seen far and near, and whether embarked
   hairKey?: string;
 }
 // (`enemy`: the figures of the unit it is at grips with, in a melee.)
@@ -500,8 +500,11 @@ export class UnitView {
         else if (dug && !s.march && !s.fight) this.layout(s);
       }
       // (Its flag anew: it shows the unit's health and whether it is selected.)
-      s.flag.dispose();
+      // (Where the old one stood: it is moved only when the unit is.)
+      const was = s.flag;
       s.flag = this.makeFlag(u);
+      s.flag.position.copy(was.position);
+      was.dispose();
       s.seen = true;
     }
     for (const s of [...this.shown.values()]) {
@@ -963,9 +966,12 @@ export class UnitView {
 
   // (Made once per figure: far and near.)
   private key(s: Shown, f: Figure): string {
-    const ks = f.keys ??= s.unit.embarked ? [`transport|${s.unit.civ}|0|0|1`, `transport|${s.unit.civ}|0|0|1`]
-      : [`${s.unit.type}|${s.unit.civ}|${f.variant}|${f.female ? 1 : 0}|0`, `${s.unit.type}|${s.unit.civ}|${f.variant}|${f.female ? 1 : 0}|1`];
-    return ks[s.near ? 1 : 0];
+    // (Kept until it embarks or lands.)
+    if (!f.keys || f.keys[2] !== (s.unit.embarked === true)) {
+      f.keys = s.unit.embarked ? [`transport|${s.unit.civ}|0|0|1`, `transport|${s.unit.civ}|0|0|1`, true]
+        : [`${s.unit.type}|${s.unit.civ}|${f.variant}|${f.female ? 1 : 0}|0`, `${s.unit.type}|${s.unit.civ}|${f.variant}|${f.female ? 1 : 0}|1`, false];
+    }
+    return f.keys[s.near ? 1 : 0];
   }
 
   dispose(): void {
