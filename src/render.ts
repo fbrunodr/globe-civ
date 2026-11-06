@@ -77,6 +77,12 @@ const RURAL_GONE = 2.5;
 // refreshes (a 120 Hz screen shows each for two) look smoother than more of
 // them, unevenly (a frame of 10–14 ms held for one refresh, then two or three).
 const FPS_CAP = 60;
+// Multisampling (MSAA) off where the ground's fine triangles are under this
+// many pixels across (the camera far out): there nearly every pixel is on
+// an edge, shaded once per triangle touching it, about a third of the
+// frame, for edges too small to see. On again past MSAA_ABOVE_PX (apart, so
+// it doesn't flicker at the threshold).
+const MSAA_BELOW_PX = 10, MSAA_ABOVE_PX = 12;
 // The share of a chimney's puffs that show, by its owner's era: a fire lit
 // now and then before the industrial age, every stack pouring in it, less
 // as the modern and information ages clean up.
@@ -324,6 +330,21 @@ export class GlobeRenderer {
   private downAt: { x: number; y: number } | null = null;
   private hoverTile = -1;
 
+  // Frames drawn far off: without multisampling, then copied to the canvas
+  // (a full-screen quad: one cheap pass). Marked as an XR target so three.js
+  // gives it what it gives the canvas (sRGB out, tone mapping), stored as
+  // the canvas is (plain RGBA8: the colours already encoded). (The canvas's
+  // own multisampling costs next to nothing on tiled GPUs, Apple's; a
+  // multisampled target of our own cost the near frames twice as much.)
+  private readonly flat = Object.assign(new THREE.WebGLRenderTarget(1, 1, { colorSpace: THREE.SRGBColorSpace, internalFormat: 'RGBA8' }), { isXRRenderTarget: true });
+  private readonly flatCopy = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.RawShaderMaterial({
+    glslVersion: THREE.GLSL3, depthTest: false, depthWrite: false, uniforms: { uMap: { value: this.flat.texture } },
+    vertexShader: 'in vec3 position; in vec2 uv; out vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+    fragmentShader: 'precision highp float; uniform sampler2D uMap; in vec2 vUv; out vec4 outColor; void main() { outColor = texture(uMap, vUv); }',
+  }));
+  private readonly copyCam = new THREE.OrthographicCamera();
+  private msaaOn = true;
+  private readonly bufferSize = new THREE.Vector2();
   private readonly abort = new AbortController();
   private readonly fpsEl: HTMLElement | null = document.getElementById('fps');
   private gpuTimer!: GpuTimer;
@@ -342,6 +363,8 @@ export class GlobeRenderer {
     this.wallMat = makePropMaterial(0.32, 0.6, this.sunDir, undefined, false, undefined, wallHeight(1) * (CITY_CELL / CELL) * game.globe.avgEdgeAngle * Math.sqrt(3));
     this.scale = game.globe.avgEdgeAngle / REF_EDGE;
     this.cropFar.value = CROP_FAR * game.globe.avgEdgeAngle;
+    // (Multisampled on the canvas: near, frames are drawn straight to it;
+    // far off, into `flat` and copied to it (MSAA_BELOW_PX).)
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.gpuTimer = new GpuTimer(this.renderer.getContext() as WebGL2RenderingContext);
     // The ground's material textures, compressed for this GPU (they fill in once loaded).
@@ -685,7 +708,9 @@ export class GlobeRenderer {
     // each of their draws away, leaving them unprepared.)
     this.updateSun();
     this.renderer.shadowMap.needsUpdate = true;
-    this.renderer.render(this.scene, this.camera);
+    // (Both ways a frame is drawn: on Metal each has pipelines of its own.)
+    this.draw(false);
+    this.draw(true);
     for (const o of hidden) o.visible = false;
     for (const o of culled) o.frustumCulled = true;
     // (Drawn with everything in it, hidden too: drawn again as it should be.)
@@ -2222,9 +2247,27 @@ export class GlobeRenderer {
     const t0 = performance.now();
     this.gpuTimer.frame(t0);
     this.gpuTimer.begin();
-    this.renderer.render(this.scene, this.camera);
+    // (A fine triangle of the ground on screen: a tile's edge over the lattice's steps, SUBDIV × 2, where the camera looks.)
+    const triPx = (this.game.globe.avgEdgeAngle / (SUBDIV * 2)) * this.renderer.domElement.height / (2 * Math.tan((this.camera.fov * Math.PI) / 360)) / Math.max(1e-6, this.camera.position.length() - 1);
+    this.msaaOn = this.walk.active || triPx > (this.msaaOn ? MSAA_BELOW_PX : MSAA_ABOVE_PX);
+    const tris = this.draw(this.msaaOn);
     this.gpuTimer.end();
-    this.countFrame(performance.now() - t0, this.renderer.info.render.triangles);
+    this.countFrame(performance.now() - t0, tris);
+  }
+
+  // A frame, multisampled (straight to the canvas) or not (into `flat`,
+  // then copied to it). Its triangles (the copy's left out).
+  private draw(multisampled: boolean): number {
+    if (multisampled) { this.renderer.render(this.scene, this.camera); return this.renderer.info.render.triangles; }
+    const size = this.renderer.getDrawingBufferSize(this.bufferSize);
+    if (this.flat.width !== size.x || this.flat.height !== size.y) this.flat.setSize(size.x, size.y);
+    this.renderer.setRenderTarget(this.flat);
+    this.renderer.render(this.scene, this.camera);
+    const tris = this.renderer.info.render.triangles;
+    this.renderer.setRenderTarget(null);
+    this.flatCopy.frustumCulled = false;
+    this.renderer.render(this.flatCopy, this.copyCam);
+    return tris;
   }
 
   // FPS counter: frames drawn per second, CPU and GPU time per frame (the
