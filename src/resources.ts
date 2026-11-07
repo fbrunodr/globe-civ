@@ -57,7 +57,7 @@ const COOL_FOREST: BiomeKey[] = ['taiga', 'temperateForest', 'temperateRainfores
 const OPEN: BiomeKey[] = ['prairie', 'steppe', 'savanna', 'mediterranean'];
 // The seas (mean annual °C): cool below SEA_COOL (salmon), warm above it
 // (tuna, pearls, coral); whales keep out of the warmest, above SEA_WARM.
-const SEA_COOL = 16, SEA_WARM = 22;
+const SEA_COOL = 20, SEA_WARM = 23;
 
 export const RESOURCES = {
   // ---- bonus ----
@@ -136,7 +136,7 @@ const FIT_PER_CLUSTER = { luxury: 700, strategic: 420 } as const;
 const CLUSTER = [1, 3] as const; // tiles a cluster has
 // What fits at sea counts this much against land for a kind found on both
 // (oil): the shallow seas are wide, and would otherwise take most of it.
-const SEA_FIT = 0.25;
+const SEA_FIT = 0.6;
 // What every start gets within reach (tiles): a bonus resource (food, its
 // first city's), a luxury, and Horses and Iron (a second city's).
 const FAIR = { bonus: { count: 1, reach: 2 }, luxury: { count: 1, reach: 3 }, strategic: { count: 1, reach: 6 } } as const;
