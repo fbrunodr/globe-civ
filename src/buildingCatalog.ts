@@ -99,11 +99,19 @@ export const BUILDINGS_CATALOG = {
     ...house(0.0034, 0.0028, 0.0016, 0.0016, 0x9a805c, p.leaf, { y: 0.0016 }),
   ] },
   // ---------- Machu Picchu (on its summit, a wild tile), and a wonder's scaffolding ----------
-  machuPicchu: { name: 'Machu Picchu', leaf: 0x7a7468, build: (p) => [
-    walls(0.006, 0.0045, 0.0035, 0xa49e8e, { x: -0.003 }), hip(0.0068, 0.0052, 0.0032, p.leaf, { x: -0.003, y: 0.0035 }),
-    ...[[0.006, -0.005], [0.007, 0.004], [-0.007, 0.006], [0.0, 0.009], [-0.008, -0.006]].flatMap(([x, z]) => [
-      walls(0.0036, 0.0028, 0.0024, 0xa49e8e, { x, z }), gable(0.004, 0.0032, 0.0018, p.leaf, { x, y: 0.0024, z }),
+  // The ruined city on its saddle: terraces stepping down the summit, green
+  // on top, houses of grey granite under thatch round the plaza, the
+  // Intihuatana on its knoll, Huayna Picchu's peak behind (within the
+  // catalog's 120 triangles for a wonder: cityLook.test.ts).
+  machuPicchu: { name: 'Machu Picchu', leaf: 0x9a8458, build: (p) => [
+    ...([[0.024, 0.02, 0], [0.019, 0.016, 0.0018], [0.014, 0.012, 0.0036]] as const).flatMap(([w, d, y]) => [
+      walls(w, d, 0.0018, 0xa49e8e, { y, z: 0.001 }), flat(w, d, y === 0.0036 ? 0x8aa060 : 0x7f9a52, { y: y + 0.0018, z: 0.001 }),
     ]),
+    ...([[-0.0042, -0.0022, 0], [0.0042, -0.0024, 0], [-0.0046, 0.0036, Math.PI / 2], [0.0045, 0.0034, Math.PI / 2], [0, -0.0046, 0]] as const).flatMap(([x, z, ry]) => [
+      walls(0.003, 0.0022, 0.0018, 0x9c968a, { x, y: 0.0054, z: z + 0.001, ry }), gable(0.0034, 0.0028, 0.0016, p.leaf, { x, y: 0.0072, z: z + 0.001, ry }),
+    ]),
+    walls(0.0014, 0.0014, 0.0012, 0x8d877c, { x: 0.0, y: 0.0054, z: 0.0035 }),
+    cone(0.0065, 0.019, 5, 0x6f7a5a, { z: -0.012, x: 0.003 }),
   ] },
   scaffold: { name: 'Scaffolding', leaf: TIMBER, build: (p) => [
     ...[[-0.008, -0.008], [0.008, -0.008], [-0.008, 0.008], [0.008, 0.008]].map(([x, z]) => seg(V(x!, 0, z!), V(x! * 0.8, 0.012, z! * 0.8), 0.0003, 0.00025, 3, p.leaf)),

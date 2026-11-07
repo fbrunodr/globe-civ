@@ -71,7 +71,7 @@ describe('AR5: no faces fight for the same pixels', () => {
 // (Was AR6: city halls. A painted city has none.)
 
 describe('AR7: wonders on their site', () => {
-  it('every wonder (and the scaffolding) builds within its 7×7 site, stands up, keeps within 2000 triangles, and has no faces fighting', async () => {
+  it('every wonder (and the scaffolding) builds within its 7×7 site, stands up, keeps within 15000 triangles (wonders are showpieces), and has no faces fighting', async () => {
     const { SITE_HALF, SITE_MODELS, wonderGeometry, wonderModelKind } = await import('../src/wonderModels.ts');
     const bad: string[] = [];
     for (const m of SITE_MODELS) {
@@ -80,7 +80,7 @@ describe('AR7: wonders on their site', () => {
       const b = g.boundingBox!;
       if (Math.max(b.max.x, -b.min.x, b.max.z, -b.min.z) > SITE_HALF + 1e-6) bad.push(`${k}: off its site (${Math.max(b.max.x, -b.min.x, b.max.z, -b.min.z).toFixed(4)} > ${SITE_HALF})`);
       if (b.max.y < 0.02 || b.min.y < -0.002) bad.push(`${k}: height ${b.min.y.toFixed(4)}..${b.max.y.toFixed(4)}`);
-      if (triangles(g) > 2000) bad.push(`${k}: ${triangles(g)} triangles`);
+      if (triangles(g) > 15000) bad.push(`${k}: ${triangles(g)} triangles`);
       const c = coplanarClashes(g, 1);
       if (c.length) bad.push(`${k}: ${c[0]!.colorA} on ${c[0]!.colorB} in plane ${c[0]!.plane} at ${c[0]!.at.map((v) => v.toFixed(4))}`);
     }

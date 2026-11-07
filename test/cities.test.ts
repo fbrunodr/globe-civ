@@ -96,7 +96,8 @@ function checkCities(g: Game): string[] {
   }
   // Wonders: once in the world, in its city (on the center, meeting its
   // need), or beside it: Machu Picchu on a wild mountain, the Great
-  // Lighthouse on the sea, the Pyramids and Stonehenge on flat land.
+  // Lighthouse on the sea, the Pyramids and Stonehenge on flat land (Petra
+  // and the like, needing hills, on hills).
   for (const [w, t] of g.wondersBuilt) {
     if (t < 0) continue; // fallen with its city
     const site = WONDERS[w].site;
@@ -105,7 +106,7 @@ function checkCities(g: Game): string[] {
     const where = wonderBeside(w);
     const ok = where === 'mountain' ? beside && g.relief[t] === 'mountains' && g.use[t] === USE.wild
       : where === 'sea' ? beside && g.isSea(t)
-      : where === 'land' ? beside && !g.isWater(t) && g.relief[t] === 'flat' && g.use[t] !== USE.center
+      : where === 'land' ? beside && !g.isWater(t) && g.relief[t] === (site === 'hills' ? 'hills' : 'flat') && g.use[t] !== USE.center
       : g.use[t] === USE.center;
     if (!ok) out.push(`WN1 tile ${t}: ${w} not where it stands (${where ?? 'in the city'}, ${site})`);
   }

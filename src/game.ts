@@ -1267,13 +1267,14 @@ export class Game {
   // Where wonder k could stand: in the city (its center), if the center
   // meets its need; beside it, on a tile of the city's next to it with no
   // wonder yet: a wild mountain, the sea (shallow first; a coastal city),
-  // flat land (a hex, wild or worked) meeting its need.
+  // flat land (hills for a wonder that needs them; a hex, wild or worked)
+  // meeting its need.
   wonderSpots(city: City, k: WonderKey): number[] {
     const site = WONDERS[k].site, beside = wonderBeside(k);
     if (!beside) return this.siteOk(city.tile, site) ? [city.tile] : [];
     const ok = (t: number) => (beside === 'sea' ? this.isSea(t)
       : beside === 'mountain' ? this.use[t] === USE.wild && this.siteOk(t, 'mountainTop')
-      : !this.isWater(t) && !this.isPentagon(t) && this.relief[t] === 'flat' && this.use[t] !== USE.center && this.siteOk(t, site));
+      : !this.isWater(t) && !this.isPentagon(t) && this.relief[t] === (site === 'hills' ? 'hills' : 'flat') && this.use[t] !== USE.center && this.siteOk(t, site));
     return this.tiles[city.tile].neighbors.filter((t) => this.tileCity[t] === city.id && !this.blockedFor(city, t) && !this.wondersAt(t).length && ok(t))
       .sort((a, b) => Number(this.biome[b] === 'shallowSea') - Number(this.biome[a] === 'shallowSea') || a - b);
   }

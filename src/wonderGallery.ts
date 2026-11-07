@@ -11,7 +11,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { FlatPainter } from './flatPainter.ts';
 import { WorldLabel } from './worldLabel.ts';
 import { modelGeometry } from './buildingCatalog.ts';
-import { SITE_MODELS, wonderModelKind, type SiteModel } from './wonderModels.ts';
+import { SITE_MODELS, landHalf, seaScale, wonderModelKind, type SiteModel } from './wonderModels.ts';
 import { WONDERS, ERAS, type WonderKey, type EraIndex } from './cities.ts';
 import { TECH_KEYS, techDef } from './techs.ts';
 import { POLITICS_KEYS, politicsDef } from './politics.ts';
@@ -58,25 +58,46 @@ const HOUSE_SCALE = CITY_CELL / CELL;
 const models = SITE_MODELS.filter((m): m is Exclude<SiteModel, 'scaffold'> => m !== 'scaffold')
   .map((m) => ({ m, ...unlock(m) }))
   .sort((a, b) => a.era - b.era);
-const STEP = 0.2;
-let x = 0;
+let x = 0.05;
+const at = new Map<string, { x: number; h: number; r: number }>();
 const house = houseKind(styleOf('Romans', 3), 'b22', 3, 0);
 for (const { m, era, by } of models) {
   const kind = wonderModelKind(m), g = modelGeometry(kind);
   g.computeBoundingBox();
   const b = g.boundingBox!, hw = Math.max(-b.min.x, b.max.x, -b.min.z, b.max.z);
-  const s = (0.95 * RECT) / (2 * hw);
+  // (Its size in the game: in a city, fitted to its rectangle; beside it,
+  // its own size on land or on the sea: wonderModels.ts landHalf, seaScale.)
+  const where = WONDERS[m].beside;
+  const s = where === 'land' ? landHalf(m) / hw : where === 'sea' ? seaScale(m) : (0.95 * RECT) / (2 * hw);
+  const half = hw * s;
+  x += half;
   paint.model(kind, new THREE.Vector3(x, 0, 0), 0, new THREE.Vector3(s, s, s), 0xffffff);
-  paint.model(house, new THREE.Vector3(x + RECT / 2 + 0.03, 0, 0.02), 0, new THREE.Vector3(HOUSE_SCALE, HOUSE_SCALE, HOUSE_SCALE), 0xb5523a);
-  label(WONDERS[m].name, x + 0.015, 0.1, true);
-  label(`${ERAS[era].name} · ${by} · ${(b.max.y * s / CITY_CELL).toFixed(1)} cells tall`, x + 0.015, 0.118);
-  x += STEP;
+  paint.model(house, new THREE.Vector3(x + half + 0.03, 0, 0.02), 0, new THREE.Vector3(HOUSE_SCALE, HOUSE_SCALE, HOUSE_SCALE), 0xb5523a);
+  at.set(m, { x, h: b.max.y * s, r: half });
+  label(WONDERS[m].name, x + 0.015, half + 0.04, true);
+  label(`${ERAS[era].name} · ${by} · ${(b.max.y * s / CITY_CELL).toFixed(1)} cells tall`, x + 0.015, half + 0.058);
+  x += half + 0.09;
 }
-paint.floor(-0.15, -0.15, x + 0.05, 0.2);
+paint.floor(-0.15, -0.35, x + 0.05, 0.45);
 paint.flush(world);
 
 controls.target.set(x / 2, 0, 0);
 camera.position.set(x / 2, 0.35, 0.55);
+
+// (Scripts: frame one wonder, from an azimuth and elevation in degrees, at
+// a distance in rectangles.)
+(window as unknown as { __wonders: unknown }).__wonders = {
+  camera, controls,
+  focus(m: string, az = 30, el = 30, dist = 1.6): boolean {
+    const w = at.get(m);
+    if (!w) return false;
+    const r = dist * Math.max(RECT / 2, w.r) * 2, a = (az * Math.PI) / 180, e = (el * Math.PI) / 180;
+    controls.target.set(w.x, w.h * 0.4, 0);
+    camera.position.set(w.x + r * Math.sin(a) * Math.cos(e), w.h * 0.4 + r * Math.sin(e), r * Math.cos(a) * Math.cos(e));
+    controls.update();
+    return true;
+  },
+};
 
 const keys = new Set<string>();
 addEventListener('keydown', (e) => keys.add(e.key.toLowerCase()));

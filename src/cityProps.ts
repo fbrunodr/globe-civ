@@ -14,7 +14,7 @@ import * as THREE from 'three';
 import type { Game, City } from './game.ts';
 import { USE, BORDER_MAX, wonderBeside, isWonderKey, type ImprovementKey, type EraIndex } from './cities.ts';
 import { ROOFS, buildingEntry, isFloraModel, isLotModel, placedGeometry, waterRule, type BuildingKind, type LotModelKind, type PlacedKind } from './buildingCatalog.ts';
-import { ON_BARE_GROUND, isWonderModelKind, wonderModelKind, type SiteModel } from './wonderModels.ts';
+import { ON_BARE_GROUND, isWonderModelKind, landHalf, seaScale, wonderModelKind, type SiteModel } from './wonderModels.ts';
 import type { CatalogKind } from './propCatalog.ts';
 import { WORKS_VARIANT, houseKind } from './houses.ts';
 import { styleOf } from './architecture.ts';
@@ -89,13 +89,12 @@ export interface PlacedBuilding {
 
 const UP = new THREE.Vector3(0, 1, 0);
 export const DRY = -0.00008; // like the flora: the water this far under the ground
-// A wonder on the sea (the Great Lighthouse): its scale (model units, tile
-// steps) and its islet's radius (model units, wonderModels.ts).
-const SEA_WONDER = 0.9, SEA_ISLET = 0.075;
-// A wonder on flat land beside its city (the Pyramids, Stonehenge): half
-// its square (tile steps: twice the size it has in a city) and the ground
-// kept clear round it.
-const LAND_WONDER_HALF = 0.12, LAND_WONDER_GAP = 0.015;
+// A wonder on the sea (the Great Lighthouse): its islet's radius (model
+// units, wonders/kit.ts); its scale is its own (wonderModels.ts seaScale).
+const SEA_ISLET = 0.075;
+// A wonder on land beside its city (the Pyramids, Stonehenge): the ground
+// kept clear round it (its size is its own: wonderModels.ts landHalf).
+const LAND_WONDER_GAP = 0.015;
 // A mine's adits: how many (by how far the countryside has filled up), how
 // far apart, how far from the homestead, and the spots tried (every
 // ADIT_STEP across the tile, tile steps).
@@ -574,7 +573,7 @@ export class CityProps {
       if (!m) continue;
       const { toDir, k } = onTile(g, t);
       const kind = wonderModelKind(m), [hw, hd] = this.modelBox(kind);
-      const sc = LAND_WONDER_HALF / Math.max(hw, hd), r = Math.SQRT2 * (LAND_WONDER_HALF + LAND_WONDER_GAP);
+      const half = landHalf(m), sc = half / Math.max(hw, hd), r = Math.SQRT2 * (half + LAND_WONDER_GAP);
       const tl = g.tiles[t]!, i = tl.neighbors.indexOf(city.tile), n = tl.corners.length;
       const edge = g.globe.triCenters[tl.corners[i]!]!.clone().add(g.globe.triCenters[tl.corners[(i + 1) % n]!]!).normalize();
       // (Spots nearest the middle of its painted hexagon first; the first whose circle is
@@ -753,20 +752,21 @@ export class CityProps {
   // painted hexagon (paintedMiddle) to the middle of the edge it shares
   // with its city, as near that middle as its islet keeps wholly in the
   // water; facing the city.
-  private seaSpot(t: number): { dir: THREE.Vector3; toward: THREE.Vector3; r: number; k: number } | null {
+  private seaSpot(t: number): { dir: THREE.Vector3; toward: THREE.Vector3; r: number; k: number; scale: number } | null {
     const g = this.game, city = g.cityById.get(g.tileCity[t]!);
     if (!city) return null;
     const tl = g.tiles[t]!, i = tl.neighbors.indexOf(city.tile);
     if (i < 0) return null;
     const n = tl.corners.length, c = this.paintedMiddle(t);
     const edge = g.globe.triCenters[tl.corners[i]!]!.clone().add(g.globe.triCenters[tl.corners[(i + 1) % n]!]!).normalize();
-    const { k } = onTile(g, t), r = SEA_ISLET * SEA_WONDER * k;
+    const w = g.wonderOn(t), scale = w && w !== 'machuPicchu' && wonderBeside(w) === 'sea' ? seaScale(w) : seaScale('scaffold');
+    const { k } = onTile(g, t), r = SEA_ISLET * scale * k;
     const wet = (d: THREE.Vector3) => { const s = this.sampleDir(d); return s.water - s.ground >= 0.0003; };
     for (let f = 0; f <= 0.75; f += 0.05) {
       const dir = c.clone().lerp(edge, f).normalize();
       const q = new THREE.Quaternion().setFromUnitVectors(UP, dir);
       const ring = Array.from({ length: 8 }, (_, j) => dir.clone().add(new THREE.Vector3(Math.cos(j * Math.PI / 4) * r, 0, Math.sin(j * Math.PI / 4) * r).applyQuaternion(q)).normalize());
-      if (wet(dir) && ring.every(wet)) return { dir, toward: g.tiles[city.tile]!.center, r, k };
+      if (wet(dir) && ring.every(wet)) return { dir, toward: g.tiles[city.tile]!.center, r, k, scale };
     }
     return null;
   }
@@ -775,7 +775,7 @@ export class CityProps {
     if (!s) return [];
     const water = this.sampleDir(s.dir).water;
     const q = new THREE.Quaternion().setFromUnitVectors(UP, s.dir).multiply(new THREE.Quaternion().setFromAxisAngle(UP, facing(s.dir, s.toward) + Math.PI / 2));
-    return [{ kind, matrix: new THREE.Matrix4().compose(s.dir.clone().multiplyScalar(1 + water), q, new THREE.Vector3().setScalar(SEA_WONDER * s.k)), color: new THREE.Color(1, 1, 1), leaf: new THREE.Color(1, 1, 1) }];
+    return [{ kind, matrix: new THREE.Matrix4().compose(s.dir.clone().multiplyScalar(1 + water), q, new THREE.Vector3().setScalar(s.scale * s.k)), color: new THREE.Color(1, 1, 1), leaf: new THREE.Color(1, 1, 1) }];
   }
 
   private tileSpots(t: number, rows: number, rand: Rng): { i: number; wa: number; wb: number }[] {

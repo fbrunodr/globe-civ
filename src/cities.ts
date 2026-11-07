@@ -294,25 +294,77 @@ export interface WonderDef {
   readonly desc: string;
 }
 
-// Each is built once in the world, by one city.
+// Its description: where it stands, then what it yields.
+const OUTPUT_NAME: Record<OutputKey, string> = { food: 'food', prod: 'production', gold: 'gold', science: 'science', culture: 'culture', faith: 'faith', cohesion: 'cohesion' };
+const WHERE: Record<WonderSite, string> = { desertOrFloodplain: 'desert or floodplain', coast: 'the coast', river: 'a river', mountainTop: 'a mountain', hills: 'hills', flat: 'flat open land', any: '' };
+function wonderDesc(site: WonderSite, yields: Output, beside?: WonderDef['beside']): string {
+  const where = beside === 'sea' ? 'On the sea beside a coastal city. '
+    : beside === 'mountain' ? 'On top of a mountain next to the city. '
+    : beside === 'land' ? `On ${site === 'desertOrFloodplain' ? 'flat desert or floodplain' : site === 'hills' ? 'hills' : 'flat open land'} beside the city. `
+    : site === 'any' ? '' : site === 'river' ? 'A city by a river. ' : site === 'coast' ? 'A coastal city. ' : `A city on ${WHERE[site]}. `;
+  return where + OUTPUT_KEYS.filter((k) => yields[k]).map((k) => `+${yields[k]} ${OUTPUT_NAME[k]}`).join(', ') + '.';
+}
+const w = (name: string, cost: number, site: WonderSite, yields: Partial<Output>, beside?: WonderDef['beside']): WonderDef => {
+  const y = out(yields);
+  return { name, cost, site, yields: y, ...(beside ? { beside } : {}), desc: wonderDesc(site, y, beside) };
+};
+
+// Each is built once in the world, by one city. Most stand in their city;
+// those that stand outside towns in the real world take a tile beside it.
+// (Unlocked by techs: techs.ts.)
 export const WONDERS = {
-  pyramids:        { name: 'Pyramids',         cost: 180, site: 'desertOrFloodplain', beside: 'land', yields: out({ prod: 4, culture: 2 }), desc: 'On flat desert or floodplain beside the city. +4 production, +2 culture.' },
-  greatLighthouse: { name: 'Great Lighthouse', cost: 160, site: 'coast', beside: 'sea', yields: out({ food: 2, gold: 3, culture: 1 }), desc: 'On the sea beside a coastal city. +2 food, +3 gold, +1 culture.' },
-  hangingGardens:  { name: 'Hanging Gardens',  cost: 180, site: 'river', yields: out({ food: 4, culture: 2 }), desc: 'A city by a river. +4 food, +2 culture.' },
-  machuPicchu:     { name: 'Machu Picchu',     cost: 200, site: 'mountainTop', beside: 'mountain', yields: out({ gold: 4, faith: 2, culture: 2 }), desc: 'On top of a mountain next to the city. +4 gold, +2 faith, +2 culture.' },
-  greatLibrary:    { name: 'Great Library',    cost: 200, site: 'any', yields: out({ science: 5, culture: 2 }), desc: '+5 science, +2 culture.' },
-  stonehenge:      { name: 'Stonehenge',       cost: 140, site: 'flat', beside: 'land', yields: out({ faith: 4, culture: 1 }), desc: 'On flat open land beside the city. +4 faith, +1 culture.' },
-  colosseum:       { name: 'Colosseum',        cost: 180, site: 'any', yields: out({ culture: 5, gold: 1 }), desc: '+5 culture, +1 gold.' },
-  colossus:        { name: 'Colossus',         cost: 220, site: 'coast', beside: 'sea', yields: out({ gold: 4, culture: 1 }), desc: 'On the sea beside a coastal city. +4 gold, +1 culture.' },
-  angkorWat:       { name: 'Angkor Wat',       cost: 320, site: 'any', yields: out({ food: 3, faith: 3, culture: 2 }), desc: '+3 food, +3 faith, +2 culture.' },
-  hagiaSophia:     { name: 'Hagia Sophia',     cost: 320, site: 'any', yields: out({ faith: 5, culture: 3 }), desc: '+5 faith, +3 culture.' },
-  notreDame:       { name: 'Notre-Dame',       cost: 340, site: 'river', yields: out({ faith: 4, culture: 4 }), desc: 'A city by a river. +4 faith, +4 culture.' },
-  tajMahal:        { name: 'Taj Mahal',        cost: 460, site: 'river', yields: out({ culture: 6, gold: 3 }), desc: 'A city by a river. +6 culture, +3 gold.' },
-  bigBen:          { name: 'Big Ben',          cost: 620, site: 'any', yields: out({ gold: 8, culture: 2 }), desc: '+8 gold, +2 culture.' },
-  eiffelTower:     { name: 'Eiffel Tower',     cost: 660, site: 'any', yields: out({ culture: 8, gold: 2 }), desc: '+8 culture, +2 gold.' },
-  statueOfLiberty: { name: 'Statue of Liberty', cost: 640, site: 'coast', yields: out({ culture: 6, prod: 3 }), desc: 'A coastal city. +6 culture, +3 production.' },
-  cristoRedentor:  { name: 'Cristo Redentor',  cost: 860, site: 'hills', yields: out({ faith: 6, culture: 6 }), desc: 'A city on hills. +6 faith, +6 culture.' },
-  empireState:     { name: 'Empire State Building', cost: 900, site: 'any', yields: out({ prod: 6, gold: 6, science: 3 }), desc: '+6 production, +6 gold, +3 science.' },
+  // Ancient
+  pyramids:          w('Pyramids', 180, 'desertOrFloodplain', { prod: 4, culture: 2 }, 'land'),
+  greatLighthouse:   w('Great Lighthouse', 160, 'coast', { food: 2, gold: 3, culture: 1 }, 'sea'),
+  stonehenge:        w('Stonehenge', 140, 'flat', { faith: 4, culture: 1 }, 'land'),
+  hangingGardens:    w('Hanging Gardens', 180, 'river', { food: 4, culture: 2 }),
+  templeOfArtemis:   w('Temple of Artemis', 160, 'any', { food: 2, faith: 2, culture: 1 }),
+  // Classical
+  parthenon:         w('Parthenon', 220, 'any', { culture: 5, faith: 1 }),
+  persepolis:        w('Persepolis', 220, 'any', { cohesion: 3, gold: 2, culture: 1 }),
+  colosseum:         w('Colosseum', 180, 'any', { culture: 5, gold: 1 }),
+  greatLibrary:      w('Great Library', 200, 'any', { science: 5, culture: 2 }),
+  terracottaArmy:    w('Terracotta Army', 220, 'flat', { prod: 4, culture: 2 }, 'land'),
+  petra:             w('Petra', 200, 'hills', { gold: 4, food: 1, culture: 1 }, 'land'),
+  colossus:          w('Colossus', 220, 'coast', { gold: 4, culture: 1 }, 'sea'),
+  mausoleum:         w('Mausoleum at Halicarnassus', 200, 'any', { culture: 3, gold: 2, cohesion: 1 }),
+  statueOfZeus:      w('Statue of Zeus', 200, 'any', { faith: 3, culture: 3 }),
+  templeOfSolomon:   w('Temple of Solomon', 220, 'any', { faith: 4, culture: 2, gold: 1 }),
+  // Medieval
+  hagiaSophia:       w('Hagia Sophia', 320, 'any', { faith: 5, culture: 3 }),
+  machuPicchu:       w('Machu Picchu', 300, 'mountainTop', { gold: 4, faith: 2, culture: 2 }, 'mountain'),
+  angkorWat:         w('Angkor Wat', 320, 'any', { food: 3, faith: 3, culture: 2 }),
+  notreDame:         w('Notre-Dame', 340, 'river', { faith: 4, culture: 4 }),
+  staveChurch:       w('Stave Church', 300, 'any', { faith: 4, prod: 2, culture: 1 }),
+  chichenItza:       w('Chichén Itzá', 320, 'any', { faith: 3, culture: 3, science: 2 }),
+  leaningTower:      w('Leaning Tower of Pisa', 300, 'any', { culture: 4, science: 2, gold: 1 }),
+  // Renaissance
+  tajMahal:          w('Taj Mahal', 460, 'river', { culture: 6, gold: 3 }),
+  stBasils:          w('St Basil\u2019s Cathedral', 460, 'any', { faith: 5, culture: 4 }),
+  himejiCastle:      w('Himeji Castle', 440, 'any', { culture: 5, prod: 3 }),
+  forbiddenCity:     w('Forbidden City', 500, 'any', { cohesion: 4, gold: 3, culture: 3 }),
+  florenceCathedral: w('Florence Cathedral', 440, 'any', { culture: 5, faith: 3, science: 1 }),
+  versailles:        w('Versailles', 500, 'flat', { culture: 7, cohesion: 2 }, 'land'),
+  temploMayor:       w('Templo Mayor', 440, 'any', { faith: 4, food: 3, culture: 2 }),
+  stPeters:          w('St Peter\u2019s Basilica', 480, 'any', { faith: 6, culture: 3 }),
+  // Industrial
+  eiffelTower:       w('Eiffel Tower', 660, 'any', { culture: 8, gold: 2 }),
+  neuschwanstein:    w('Neuschwanstein', 620, 'hills', { culture: 7, gold: 3 }, 'land'),
+  bigBen:            w('Big Ben', 620, 'any', { gold: 8, culture: 2 }),
+  statueOfLiberty:   w('Statue of Liberty', 640, 'coast', { culture: 6, prod: 3 }, 'sea'),
+  sagradaFamilia:    w('Sagrada Fam\u00edlia', 660, 'any', { faith: 5, culture: 5 }),
+  brandenburgGate:   w('Brandenburg Gate', 600, 'any', { cohesion: 4, culture: 4, prod: 1 }),
+  // Modern
+  cristoRedentor:    w('Cristo Redentor', 860, 'hills', { faith: 6, culture: 6 }),
+  empireState:       w('Empire State Building', 900, 'any', { prod: 6, gold: 6, science: 3 }),
+  sydneyOperaHouse:  w('Sydney Opera House', 880, 'coast', { culture: 10, gold: 3 }),
+  brasiliaCongress:  w('Bras\u00edlia Congress', 860, 'any', { cohesion: 6, prod: 3, culture: 3 }),
+  tokyoTower:        w('Tokyo Tower', 860, 'any', { culture: 8, science: 4 }),
+  maracana:          w('Maracan\u00e3', 860, 'any', { culture: 9, gold: 4 }),
+  // Information
+  burjKhalifa:       w('Burj Khalifa', 1150, 'any', { gold: 10, culture: 4 }),
+  fastTelescope:     w('FAST Radio Telescope', 1100, 'hills', { science: 12 }, 'land'),
+  cern:              w('CERN', 1200, 'any', { science: 12, culture: 2 }),
 } satisfies Record<string, WonderDef>;
 export type WonderKey = keyof typeof WONDERS;
 export const WONDER_KEYS = Object.keys(WONDERS) as WonderKey[];
