@@ -4,6 +4,7 @@
 
 import * as THREE from 'three';
 import { gable } from '../houseKit.ts';
+import type { GroundTree, WaterArea, WonderGrounds } from '../wonderModels.ts';
 import {
   P, V, archPane, ball, box, cone, drumC, figure, flat, H, pane, rnd, rod, shade, type G,
 } from './kit.ts';
@@ -71,10 +72,10 @@ const octFace = (k: number, r: number) => {
 // portals, rose window and gable; Giotto's bell tower at its corner.
 // (Alone on its pad: the baptistery and the piazza left out.)
 export function florenceCathedral(): G[] {
-  const FA = 1.6, FD = 2.6; // how much the body and dome, and the drum, are raised (see the end)
+  const FA = 1.3, FD = 1.4; // how much the body and dome, and the drum, are raised (see the end)
   const MARBLE = 0xece6d8, GREEN = 0x4d6b56, PINK = 0xcc9c8c, TILE = 0xb85f3e, PAVE = 0xcdc3b0;
   const out: G[] = [];
-  const zc = -0.035, R0 = 0.022, nave = 0.04;
+  const zc = -0.024, R0 = 0.022, nave = 0.04;
   // Panels on a vertical face: pink fields, green strips framing them, green bands, at layered offsets.
   const panels = (cx: number, cz: number, nx: number, nz: number, tx: number, tz: number, ry: number, w: number, y0: number, h: number, step: number, bands: readonly number[]) => {
     const at = (t: number, o: number) => [cx + nx * o + tx * t, cz + nz * o + tz * t] as const;
@@ -117,7 +118,7 @@ export function florenceCathedral(): G[] {
   }
   out.push(drumC(Rd * 1.06, Rd * 1.06, 0.0018, 8, shade(MARBLE, 0.95), { y: yd + hd, z: zc, ry: Math.PI / 8 }));
   // The dome: eight tiled sails rising in a pointed curve, white ribs on the corners.
-  const Rm = Rd * 1.0, ym = yd + hd + 0.0018, hm = 0.037;
+  const Rm = Rd * 1.0, ym = yd + hd + 0.0018, hm = 0.028;
   const prof: [number, number][] = [[1, 0], [0.985, 0.14], [0.945, 0.3], [0.87, 0.47], [0.75, 0.63], [0.58, 0.78], [0.37, 0.9], [0.2, 0.97], [0.14, 1]];
   out.push(lathe(prof.map(([a, b]) => [a * Rm, b * hm] as const), 8, TILE, { y: ym, z: zc }, Math.PI / 8));
   for (let k = 0; k < 8; k++) {
@@ -139,9 +140,10 @@ export function florenceCathedral(): G[] {
   out.push(P(new THREE.ConeGeometry(0.0046, 0.0075, 8).translate(0, 0.00375, 0), MARBLE, { y: yl + 0.0085, z: zc, ry: Math.PI / 8 }));
   out.push(ball(0.0012, GOLD, { y: yl + 0.0165, z: zc }, 1), rod(V(0, yl + 0.017, zc), V(0, yl + 0.0205, zc), 0.0003, GOLD, 3));
   out.push(rod(V(-0.0012, yl + 0.0194, zc), V(0.0012, yl + 0.0194, zc), 0.00025, GOLD, 3));
-  // The nave and its aisles, from the facade back to the octagon.
+  // The nave and its aisles, from the facade back to the octagon: four bays
+  // (the true nave's length squeezed to fit a square site).
   const iNave = out.length;
-  const zf = 0.03, zb = zc + R0 * Math.cos(Math.PI / 8) - 0.001, L = zf - zb, zn = (zf + zb) / 2, aw = 0.032, nw = 0.017, ah = 0.026;
+  const zb = zc + R0 * Math.cos(Math.PI / 8) - 0.001, zf = zb + 0.027, L = zf - zb, zn = (zf + zb) / 2, aw = 0.032, nw = 0.017, ah = 0.026;
   out.push(...box(aw, ah, L, MARBLE, { z: zn }, shade(TILE, 0.85)));
   out.push(...box(nw, nave, L, MARBLE, { z: zn }));
   out.push(...gable(nw + 0.0015, L + 0.0012, 0.0075, TILE, { y: nave, z: zn }, true, MARBLE));
@@ -194,8 +196,8 @@ export function florenceCathedral(): G[] {
   // of the dome's height; then fitted to its pad.
   raise([...out.slice(0, iDrum), ...out.slice(iNave, iTower)], [[1, FA]]);
   raise(out.slice(iDrum, iNave), [[nave, FA], [ym, FD], [1, FA]]);
-  raise(out.slice(iTower), [[1, 1.6]]);
-  return [flat(2 * H, 2 * H, PAVE, 0, 0, 0.0003), ...fitTo(out, 0.019, 1.36, 1, 1, 1)];
+  raise(out.slice(iTower), [[1, 1.22]]);
+  return [flat(2 * H, 2 * H, PAVE, 0, 0, 0.0003), ...fitTo(out, 0.0177, 1.68, 1, 1, 1)];
 }
 
 // ---------- St Peter's ----------
@@ -203,16 +205,18 @@ export function florenceCathedral(): G[] {
 // Michelangelo's basilica: the dome on its drum of paired columns, ribbed
 // in lead, its lantern; the two small domes beside it; the cross of nave,
 // arms and apses under a balustrade; Maderno's facade of giant columns and
-// statues; its steps. (Alone on its pad: Bernini's piazza left out.)
+// statues; its steps. (Alone on its pad: Bernini's piazza left out; the
+// nave drawn long enough to fill the square site front to back.)
 export function stPeters(): G[] {
-  const SA = 1.5, SD = 2.6; // how much the body and dome, and the drum, are raised (see the end)
-  const TRAV = 0xe6dcc6, LEAD = 0x8e979c, PAVE = 0xc9bea8, ROOF = 0x9a8f80;
+  const SA = 1.5; // how much the body is raised (see the end)
+  const S = 1.5, DZ = 0.0275; // its fit to the pad: scaled S, moved DZ back to front
+  const TRAV = 0xe6dcc6, LEAD = 0x8e979c, PAVE = 0xc9bea8, ROOF = 0x9a8f80, RIB = 0xd8d2c4;
   const out: G[] = [];
+  const zF = 0.012, fw = 0.064, fh = 0.032, fy = 0.003;
   // The steps up to the facade.
   // (Each runs back into the facade a little further than the one under it.)
-  for (let i = 0; i < 3; i++) { const zf = 0.003 - i * 0.002, zb = -0.0062 - i * 0.0004; out.push(...box(0.05 - i * 0.004, 0.001 * (i + 1), zf - zb, shade(TRAV, 1 - i * 0.02), { z: (zf + zb) / 2 })); }
+  for (let i = 0; i < 3; i++) { const zf = zF + 0.009 - i * 0.002, zb = zF - 0.0002 - i * 0.0004; out.push(...box(0.05 - i * 0.004, 0.001 * (i + 1), zf - zb, shade(TRAV, 1 - i * 0.02), { z: (zf + zb) / 2 })); }
   // The facade: giant columns and pilasters, its pediment, attic and statues, windows and the loggia, clocks at its ends.
-  const zF = -0.006, fw = 0.064, fh = 0.032, fy = 0.003;
   out.push(...box(fw, fh, 0.008, TRAV, { y: fy, z: zF - 0.004 }));
   out.push(...box(fw + 0.002, 0.0026, 0.0096, shade(TRAV, 0.95), { y: fy + fh, z: zF - 0.004 }));
   out.push(...box(fw, 0.0055, 0.008, TRAV, { y: fy + fh + 0.0026, z: zF - 0.004 }, ROOF));
@@ -237,6 +241,18 @@ export function stPeters(): G[] {
   const zc = -0.046, bh = 0.03;
   out.push(...box(0.034, bh, zF - 0.008 - zc, TRAV, { z: (zF - 0.008 + zc) / 2 }, ROOF));
   out.push(...gable(0.032, zF - 0.008 - zc, 0.006, LEAD, { y: bh, z: (zF - 0.008 + zc) / 2 }, true, TRAV));
+  // (The nave's flanks: pilasters and two rows of windows, bay by bay.)
+  {
+    const z0 = zc + 0.016, z1 = zF - 0.008, n = Math.round((z1 - z0) / 0.0062);
+    for (const s of [-1, 1]) for (let i = 0; i <= n; i++) {
+      const z = z0 + ((z1 - z0) * i) / n;
+      out.push(pane(0.0012, bh, shade(TRAV, 1.05), s * 0.0172, 0, z, s * Math.PI / 2));
+      if (i < n) {
+        const zm = z + (z1 - z0) / n / 2;
+        out.push(pane(0.0024, 0.008, DARK, s * 0.0173, 0.008, zm, s * Math.PI / 2), pane(0.0018, 0.003, DARK, s * 0.0173, 0.021, zm, s * Math.PI / 2));
+      }
+    }
+  }
   out.push(...box(0.07, bh, 0.032, TRAV, { z: zc }, ROOF));
   for (const [x, z] of [[-0.035, zc], [0.035, zc], [0, zc - 0.016]] as const) {
     const rr = 0.014;
@@ -248,51 +264,100 @@ export function stPeters(): G[] {
       if (i % 2) out.push(pane(0.0022, 0.007, DARK, x + nx * (rr + 0.0004), 0.009, z + nz * (rr + 0.0004), a), pane(0.0018, 0.003, DARK, x + nx * (rr + 0.0004), 0.021, z + nz * (rr + 0.0004), a));
     }
   }
-  // The two small domes over the side chapels.
-  for (const s of [-1, 1]) {
-    const x = s * 0.021, z = zc + 0.012;
-    out.push(drumC(0.0052, 0.0052, 0.006, 12, TRAV, { x, y: bh, z }));
-    const k = 1.1 / SA;
-    out.push(lathe([[0.0056, 0], [0.0052, 0.0022 * k], [0.0038, 0.0042 * k], [0.0016, 0.0056 * k], [0.0006, 0.0058 * k]], 12, LEAD, { x, y: bh + 0.006, z }));
-    out.push(drumC(0.0012, 0.001, 0.0025 * k, 8, TRAV, { x, y: bh + 0.006 + 0.0058 * k, z }), ball(0.0006, GOLD, { x, y: bh + 0.006 + 0.0084 * k, z, sy: k }));
-  }
-  const iDome = out.length;
-  // The great dome: its drum ringed by paired columns with windows between, the attic, the ribbed shell, the lantern.
-  const Rd = 0.0175, yd = bh, hd = 0.0125;
-  out.push(drumC(Rd * 1.1, Rd * 1.1, 0.002, 24, TRAV, { y: yd, z: zc }));
-  out.push(drumC(Rd, Rd, hd, 24, TRAV, { y: yd + 0.002, z: zc }));
-  for (let i = 0; i < 16; i++) {
-    const a = (i / 16) * Math.PI * 2, nx = Math.sin(a), nz = Math.cos(a), tx = Math.cos(a), tz = -Math.sin(a);
-    for (const s of [-1, 1]) out.push(drumC(0.0007, 0.0006, hd - 0.0015, 6, shade(TRAV, 1.04), { x: nx * (Rd + 0.0012) + tx * s * 0.0011, y: yd + 0.002, z: zc + nz * (Rd + 0.0012) + tz * s * 0.0011 }));
-    const b = a + Math.PI / 16, mx = Math.sin(b), mz = Math.cos(b);
-    out.push(pane(0.0024, 0.0055, DARK, mx * (Rd + 0.0003), yd + 0.0045, zc + mz * (Rd + 0.0003), b));
-    out.push(tri(0.0034, 0.0012, shade(TRAV, 0.95), mx * (Rd + 0.0005), yd + 0.0106, zc + mz * (Rd + 0.0005), b));
-  }
-  out.push(drumC(Rd + 0.0025, Rd + 0.0025, 0.0016, 24, TRAV, { y: yd + 0.002 + hd - 0.0015, z: zc }));
-  out.push(drumC(Rd * 0.98, Rd * 0.98, 0.0035, 24, TRAV, { y: yd + 0.002 + hd, z: zc }));
-  const ym = yd + 0.002 + hd + 0.0035, hm = 0.026, Rm = Rd * 0.98;
-  const prof: [number, number][] = [[1, 0], [0.99, 0.12], [0.95, 0.28], [0.87, 0.45], [0.75, 0.62], [0.58, 0.78], [0.38, 0.9], [0.2, 0.98], [0.14, 1]];
-  out.push(lathe(prof.map(([a, b]) => [a * Rm, b * hm] as const), 32, LEAD, { y: ym, z: zc }));
-  for (let k = 0; k < 16; k++) {
-    const a = (k / 16) * Math.PI * 2, sx = Math.sin(a), sz = Math.cos(a);
-    for (let i = 0; i < prof.length - 1; i++) {
-      const [a0, b0] = prof[i]!, [a1, b1] = prof[i + 1]!;
-      out.push(rod(V(sx * a0 * Rm * 1.01, ym + b0 * hm, zc + sz * a0 * Rm * 1.01), V(sx * a1 * Rm * 1.01, ym + b1 * hm, zc + sz * a1 * Rm * 1.01), 0.0006, 0xd8d2c4, 3));
+  // Raised (the town is drawn taller than true) and fitted to its pad;
+  // the domes are built after, at their drawn size, so keep true shape.
+  raise(out, [[1, SA]]);
+  fitTo(out, DZ, S, 1, 1, 1);
+  // A Michelangelo dome, R its drum's radius, on the roof at (cx, y, cz):
+  // a stepped base; the drum ringed by n buttresses, each fronted by a pair
+  // of columns, windows between under pediments, triangular and segmental
+  // in turn; the entablature, the attic with its pilasters; the lead shell
+  // rising a little pointed, n white ribs (tiers of lucarnes between them
+  // if `lucarnes`); the lantern of paired columns, its cupola, spike, golden
+  // ball and cross.
+  const cupola = (cx: number, cz: number, y: number, R: number, n: number, hd: number, hm: number, lucarnes: boolean) => {
+    const N = 2 * n, e = 0.0002, ap = R * Math.cos(Math.PI / N);
+    const at = (a: number, r: number) => [cx + Math.sin(a) * r, cz + Math.cos(a) * r] as const;
+    let yy = y - 0.0003;
+    out.push(drumC(R * 1.24, R * 1.24, R * 0.08, N, shade(TRAV, 0.92), { x: cx, y: yy, z: cz }));
+    yy += R * 0.08 - e;
+    out.push(drumC(R * 1.14, R * 1.14, R * 0.1, N, TRAV, { x: cx, y: yy, z: cz }));
+    yy += R * 0.1 - e;
+    // The drum.
+    const yd = yy;
+    out.push(drumC(R, R, hd, N, TRAV, { x: cx, y: yd, z: cz }));
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2, b = a + Math.PI / n;
+      { const [x, z] = at(a, R * 1.08); out.push(...box(R * 0.17, hd * 0.9, R * 0.2, shade(TRAV, 0.93), { x, y: yd, z, ry: a })); }
+      { const [x, z] = at(a, R * 1.14); out.push(...box(R * 0.24, hd * 0.08, R * 0.22, shade(TRAV, 0.97), { x, y: yd, z, ry: a })); }
+      for (const s of [-1, 1]) {
+        const [x0, z0] = at(a, R * 1.2), x = x0 + Math.cos(a) * s * R * 0.06, z = z0 - Math.sin(a) * s * R * 0.06;
+        out.push(drumC(R * 0.045, R * 0.038, hd * 0.8 + e, 6, shade(TRAV, 1.08), { x, y: yd + hd * 0.08 - e, z }));
+        out.push(...box(R * 0.1, hd * 0.045, R * 0.1, shade(TRAV, 1.04), { x, y: yd + hd * 0.84, z, ry: a }));
+      }
+      // The window between, its frame and its pediment.
+      { const [x, z] = at(b, ap + 0.0001); out.push(pane(R * 0.19, hd * 0.5, shade(TRAV, 1.07), x, yd + hd * 0.17, z, b)); }
+      { const [x, z] = at(b, ap + 0.0002); out.push(pane(R * 0.12, hd * 0.42, DARK, x, yd + hd * 0.2, z, b)); }
+      const [px, pz] = at(b, ap + 0.0003);
+      if (i % 2) out.push(tri(R * 0.24, hd * 0.08, shade(TRAV, 1.07), px, yd + hd * 0.69, pz, b));
+      else out.push(P(new THREE.CircleGeometry(R * 0.12, 8, 0, Math.PI).scale(1, 0.6, 1), shade(TRAV, 1.07), { x: px, y: yd + hd * 0.69, z: pz, ry: b }));
     }
-    // Three tiers of little dormers between the ribs.
-    const b = a + Math.PI / 16;
-    for (const [f, y] of [[0.93, 0.26], [0.8, 0.52], [0.6, 0.76]] as const) out.push(...box(0.0012, 0.0012, 0.0012, 0xd8d2c4, { x: Math.sin(b) * Rm * f, y: ym + y * hm, z: zc + Math.cos(b) * Rm * f, ry: b }));
-  }
-  const yl = ym + hm - 0.0005;
-  out.push(drumC(0.0045, 0.0045, 0.0055, 16, TRAV, { y: yl, z: zc }));
-  for (let i = 0; i < 8; i++) { const a = (i / 8) * Math.PI * 2; out.push(drumC(0.0005, 0.0005, 0.005, 5, shade(TRAV, 1.05), { x: Math.sin(a) * 0.0049, y: yl + 0.0001, z: zc + Math.cos(a) * 0.0049 })); }
-  out.push(lathe([[0.0052, 0], [0.0045, 0.0015], [0.003, 0.0032], [0.001, 0.0045], [0.0006, 0.0047]], 16, LEAD, { y: yl + 0.0055, z: zc }));
-  out.push(ball(0.0011, GOLD, { y: yl + 0.0112, z: zc }, 1), rod(V(0, yl + 0.012, zc), V(0, yl + 0.0158, zc), 0.0003, GOLD, 3), rod(V(-0.0012, yl + 0.0147, zc), V(0.0012, yl + 0.0147, zc), 0.00025, GOLD, 3));
-  // Raised (the town is drawn taller than true): the body by SA, the dome
-  // over it alike, its drum more; then fitted to its pad.
-  raise(out.slice(0, iDome), [[1, SA]]);
-  raise(out.slice(iDome), [[bh, SA], [ym, SD], [1, SA]]);
-  return [flat(2 * H, 2 * H, PAVE, 0, 0, 0.0003), ...fitTo(out, 0.0365, 1.47, 1, 1, 1)];
+    out.push(drumC(R * 1.28, R * 1.28, hd * 0.12 + 0.0001, N, shade(TRAV, 0.96), { x: cx, y: yd + hd * 0.88, z: cz }));
+    // The attic: pilasters over the buttresses, little windows between, its cornice.
+    const ya = yd + hd - e, ha = R * 0.26;
+    out.push(drumC(R * 1.02, R * 1.02, ha, N, TRAV, { x: cx, y: ya, z: cz }));
+    const apA = R * 1.02 * Math.cos(Math.PI / N);
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2, b = a + Math.PI / n;
+      { const [x, z] = at(a, apA + R * 0.02); out.push(...box(R * 0.13, ha * 0.9, R * 0.06, shade(TRAV, 1.04), { x, y: ya + e, z, ry: a })); }
+      { const [x, z] = at(b, apA + 0.0002); out.push(pane(R * 0.09, ha * 0.36, DARK, x, ya + ha * 0.3, z, b)); }
+    }
+    out.push(drumC(R * 1.08, R * 1.08, R * 0.04, N, shade(TRAV, 0.95), { x: cx, y: ya + ha - e, z: cz }));
+    // The shell, its ribs and lucarnes.
+    const ym = ya + ha + R * 0.04 - 2 * e, Rm = R * 0.99;
+    const prof: [number, number][] = [[1, 0], [0.99, 0.1], [0.96, 0.22], [0.9, 0.36], [0.8, 0.51], [0.67, 0.65], [0.5, 0.78], [0.35, 0.89], [0.25, 0.96], [0.21, 1]];
+    out.push(lathe(prof.map(([a, b]) => [a * Rm, b * hm] as const), n * 3, LEAD, { x: cx, y: ym, z: cz }));
+    for (let k = 0; k < n; k++) {
+      const a = (k / n) * Math.PI * 2, sx = Math.sin(a), sz = Math.cos(a);
+      for (let i = 0; i < prof.length - 1; i++) {
+        const [a0, b0] = prof[i]!, [a1, b1] = prof[i + 1]!;
+        out.push(rod(V(cx + sx * a0 * Rm * 1.01, ym + b0 * hm, cz + sz * a0 * Rm * 1.01), V(cx + sx * a1 * Rm * 1.01, ym + b1 * hm, cz + sz * a1 * Rm * 1.01), R * 0.035, RIB, 3));
+      }
+      if (!lucarnes) continue;
+      const b = a + Math.PI / n;
+      for (const [f, h, s] of [[0.955, 0.24, 1], [0.83, 0.47, 0.85], [0.64, 0.68, 0.7]] as const) {
+        const r = f * Rm - R * 0.03, [x, z] = at(b, r), [wx, wz] = at(b, r + R * 0.04 * s + 0.0002);
+        out.push(...box(R * 0.09 * s, R * 0.08 * s, R * 0.08 * s, RIB, { x, y: ym + h * hm, z, ry: b }));
+        out.push(pane(R * 0.05 * s, R * 0.05 * s, DARK, wx, ym + h * hm + R * 0.012 * s, wz, b));
+      }
+    }
+    // The lantern.
+    const yl = ym + hm - R * 0.02, rl = R * 0.23, hl = R * 0.42;
+    out.push(drumC(rl, rl, hl, 16, TRAV, { x: cx, y: yl, z: cz }));
+    const nl = n >= 16 ? 8 : 4;
+    for (let i = 0; i < nl; i++) {
+      const a = (i / nl) * Math.PI * 2, b = a + Math.PI / 16;
+      for (const s of [-1, 1]) {
+        const [x0, z0] = at(a, rl + R * 0.035), x = x0 + Math.cos(a) * s * R * 0.03, z = z0 - Math.sin(a) * s * R * 0.03;
+        out.push(drumC(R * 0.018, R * 0.016, hl * 0.86, 5, shade(TRAV, 1.05), { x, y: yl, z }));
+      }
+      const [x, z] = at(b, rl * Math.cos(Math.PI / 16) + 0.0002);
+      out.push(...archPane(R * 0.06, hl * 0.42, DARK, x, yl + hl * 0.2, z, b));
+    }
+    out.push(drumC(rl * 1.3, rl * 1.3, R * 0.04, 16, shade(TRAV, 0.96), { x: cx, y: yl + hl * 0.86, z: cz }));
+    const yc = yl + hl * 0.86 + R * 0.04 - e;
+    out.push(drumC(rl, rl, R * 0.05, 16, TRAV, { x: cx, y: yc, z: cz }));
+    out.push(lathe([[rl * 1.02, 0], [rl * 0.92, R * 0.06], [rl * 0.7, R * 0.12], [rl * 0.35, R * 0.16], [rl * 0.12, R * 0.175]], 16, LEAD, { x: cx, y: yc + R * 0.05 - e, z: cz }));
+    const ys = yc + R * 0.05 + R * 0.17;
+    out.push(P(new THREE.ConeGeometry(R * 0.04, R * 0.14, 6).translate(0, R * 0.07, 0), TRAV, { x: cx, y: ys, z: cz }));
+    out.push(ball(R * 0.045, GOLD, { x: cx, y: ys + R * 0.16, z: cz }, 1));
+    out.push(rod(V(cx, ys + R * 0.19, cz), V(cx, ys + R * 0.32, cz), R * 0.011, GOLD, 3), rod(V(cx - R * 0.04, ys + R * 0.27, cz), V(cx + R * 0.04, ys + R * 0.27, cz), R * 0.009, GOLD, 3));
+  };
+  const Zc = (zc + DZ) * S, Y0 = bh * SA * S;
+  cupola(0, Zc, Y0, 0.0295, 16, 0.036, 0.045, true);
+  // The two small domes over the side chapels, at the crossing's front corners.
+  for (const s of [-1, 1]) cupola(s * 0.03 * S, (zc + 0.013 + DZ) * S, Y0, 0.0085, 8, 0.009, 0.012, false);
+  return [flat(2 * H, 2 * H, PAVE, 0, 0, 0.0003), ...out];
 }
 
 // ---------- Tenochtitlan ----------
@@ -378,10 +443,12 @@ export function temploMayor(): G[] {
 // balustrade and urns; the chapel's high roof; the water parterre, Latona's
 // fountain, the long green carpet between the groves, Apollo's fountain,
 // the Grand Canal; the embroidered parterres and the
-// orangery's trees in tubs; clipped yews.
+// orangery's trees in tubs; clipped yews. Its water and its trees are the
+// game's own (versaillesGrounds): the model has only the basins' kerbs and
+// the groves' hedges.
 export function versailles(): G[] {
   const STONE = 0xe3d3b0, BRICK = 0xb06a50, SLATE = 0x5d6874, LAWN = 0x86a656, GRAVEL = 0xd9ccaa, BOX = 0x3f6a34, GROVE = 0x4f7a3a;
-  const r = rnd(55), out: G[] = [flat(2 * H, 2 * H, 0x7f9c50, 0, 0, 0.0003)];
+  const out: G[] = [];
   // Gravel: the terraces before the palace, the alleys, the town's parade ground.
   out.push(flat(0.142, 0.03, GRAVEL, 0, 0.012, 0.0005), flat(0.018, 0.075, GRAVEL, 0, -0.035, 0.00055), flat(0.07, 0.022, GRAVEL, 0, 0.063, 0.0005));
   // ---- the palace ----
@@ -446,15 +513,17 @@ export function versailles(): G[] {
   out.push(rod(V(0.033, 0.0302, 0.038), V(0.033, 0.0302, 0.051), 0.0005, GOLD, 4));
   for (let i = 0; i < 4; i++) for (const s of [-1, 1]) out.push(...archPane(0.0016, 0.009, DARK, 0.033 + s * 0.0046, 0.009, 0.0395 + i * 0.0032, s * Math.PI / 2));
   // ---- the gardens ----
+  // (The basins' kerbs stand KERB high, clear of the ground the model is
+  // sunk into, round the game's water laid on it: VERSAILLES_WATER.)
+  const KERB = 0.0026;
   // The water parterre: two great pools with their bronze figures.
   for (const s of [-1, 1]) {
-    out.push(...box(0.025, 0.0012, 0.0085, STONE, { x: s * 0.017, z: 0.017 }, shade(STONE, 1.03)));
-    out.push(flat(0.0235, 0.007, WATER, s * 0.017, 0.017, 0.00125));
-    for (let i = 0; i < 4; i++) out.push(ball(0.0006, 0x5a5040, { x: s * 0.017 - 0.009 + i * 0.006, y: 0.0016, z: 0.0132 }));
+    for (const t of [-1, 1]) out.push(...box(0.025, KERB, 0.00075, STONE, { x: s * 0.017, z: 0.017 + t * 0.0039 }, shade(STONE, 1.03)), ...box(0.00075, KERB, 0.0085, STONE, { x: s * 0.017 + t * 0.0121, z: 0.017 }, shade(STONE, 1.03)));
+    for (let i = 0; i < 4; i++) out.push(ball(0.0006, 0x5a5040, { x: s * 0.017 - 0.009 + i * 0.006, y: KERB + 0.0005, z: 0.0132 }));
   }
   // Latona's fountain: three tiers of basins, water jets, the goddess on top.
   const lz = 0.003;
-  out.push(drumC(0.0105, 0.0105, 0.0012, 24, STONE, { z: lz }), P(new THREE.CircleGeometry(0.0098, 24).rotateX(-Math.PI / 2), WATER, { y: 0.00125, z: lz }));
+  out.push(lathe([[0.0106, 0], [0.0106, KERB], [0.0098, KERB], [0.0098, 0]], 32, STONE, { z: lz }));
   for (const [rr, y] of [[0.0068, 0.0012], [0.0046, 0.0026], [0.0026, 0.004]] as const) out.push(drumC(rr, rr * 0.95, 0.0014, 16, shade(STONE, 1.02), { y, z: lz }));
   out.push(...figure(0, lz, 0.0036, GOLD, { y: 0.0054, skin: GOLD }));
   for (let i = 0; i < 10; i++) { const a = (i / 10) * Math.PI * 2; out.push(P(new THREE.ConeGeometry(0.0004, 0.004, 4, 1, true).translate(0, 0.002, 0), 0xeef6f8, { x: Math.sin(a) * 0.0082, y: 0.0012, z: lz + Math.cos(a) * 0.0082, rx: -Math.cos(a) * 0.5, rz: Math.sin(a) * 0.5 })); }
@@ -466,24 +535,15 @@ export function versailles(): G[] {
     for (let gx = 0; gx < 2; gx++) for (let gz = 0; gz < 2; gz++) {
       const cx = s * (0.0175 + gx * 0.019), cz = -0.017 - gz * 0.02, w = 0.016, d = 0.017;
       out.push(...box(w, 0.0022, d, shade(BOX, 0.95), { x: cx, z: cz }, shade(GROVE, 0.9)));
-      for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) {
-        if (i === j || i === 3 - j) continue;
-        const x = cx - w / 2 + 0.002 + (i * (w - 0.004)) / 3, z = cz - d / 2 + 0.002 + (j * (d - 0.004)) / 3;
-        out.push(ball(0.0026 + r() * 0.0006, shade(GROVE, 0.85 + r() * 0.3), { x, y: 0.0045, z, sy: 0.9 }));
-      }
       out.push(drumC(0.0016, 0.0016, 0.0024, 10, STONE, { x: cx, z: cz }), P(new THREE.CircleGeometry(0.0013, 10).rotateX(-Math.PI / 2), WATER, { x: cx, y: 0.00245, z: cz }));
     }
   }
   // Apollo's fountain: an oval basin, the sun god's gilded chariot rising from it, its jets.
   const az = -0.05;
-  out.push(P(new THREE.CylinderGeometry(1, 1, 0.0012, 28).translate(0, 0.0006, 0).scale(0.0125, 1, 0.0075), STONE, { z: az }));
-  out.push(P(new THREE.CircleGeometry(1, 28).rotateX(-Math.PI / 2).scale(0.0118, 1, 0.0068), WATER, { y: 0.00125, z: az }));
+  out.push(P(new THREE.LatheGeometry([[1, 0], [1, KERB], [0.94, KERB], [0.94, 0]].map(([x, y]) => new THREE.Vector2(x, y)), 36).scale(0.0125, 1, 0.0075), STONE, { z: az }));
   out.push(ball(0.0014, GOLD, { y: 0.0018, z: az, sx: 1.5 }), ...figure(0, az, 0.003, GOLD, { y: 0.0022, skin: GOLD, arm: 1 }));
   for (let i = 0; i < 4; i++) out.push(ball(0.0009, GOLD, { x: -0.003 + i * 0.002, y: 0.0016, z: az + 0.0028, sz: 1.6 }));
   for (const s of [-1, 1]) out.push(P(new THREE.ConeGeometry(0.0005, 0.006, 4, 1, true).translate(0, 0.003, 0), 0xeef6f8, { x: s * 0.007, y: 0.0012, z: az }));
-  // The Grand Canal, its cross arms; lines of trees along it.
-  out.push(flat(0.0085, 0.019, WATER, 0, -0.0655, 0.0011), flat(0.14, 0.0065, WATER, 0, -0.068, 0.00115));
-  for (const s of [-1, 1]) for (let i = 0; i < 12; i++) { const x = s * (0.006 + i * 0.0055); out.push(ball(0.0018, shade(GROVE, 0.9 + r() * 0.2), { x, y: 0.003, z: -0.0735 }), rod(V(x, 0, -0.0735), V(x, 0.0018, -0.0735), 0.0003, 0x5a4030, 3)); }
   // The embroidered parterres before the wings, and the orangery's trees in tubs to the south.
   for (const s of [-1, 1]) {
     const cx = s * 0.052, cz = 0.006, w = 0.034, d = 0.032;
@@ -502,4 +562,32 @@ export function versailles(): G[] {
     }
   }
   return out;
+}
+
+// Versailles's water, the game's own (wonderModels.ts WaterArea): the
+// water parterre's two pools, Latona's and Apollo's basins, the Grand
+// Canal's cross (its long arm in two pieces either side of the cross
+// arm, so no two sheets overlap).
+const VERSAILLES_WATER: readonly WaterArea[] = [
+  { x: -0.017, z: 0.017, hw: 0.01175, hd: 0.0035 }, { x: 0.017, z: 0.017, hw: 0.01175, hd: 0.0035 },
+  { x: 0, z: 0.003, hw: 0.0098, hd: 0.0098, round: true },
+  { x: 0, z: -0.05, hw: 0.0117, hd: 0.0069, round: true },
+  { x: 0, z: -0.068, hw: 0.07, hd: 0.00325 },
+  { x: 0, z: -0.061, hw: 0.00425, hd: 0.00375 }, { x: 0, z: -0.073125, hw: 0.00425, hd: 0.001875 },
+];
+// Its grounds beside its city: that water, and its trees the flora's own:
+// the groves' blocks (four each side of the green carpet, cut by diagonal
+// alleys: no tree on a block's diagonals) and a row along each side of the
+// canal's cross arm.
+export function versaillesGrounds(): WonderGrounds {
+  const r = rnd(55), trees: GroundTree[] = [];
+  for (const s of [-1, 1]) for (let gx = 0; gx < 2; gx++) for (let gz = 0; gz < 2; gz++) {
+    const cx = s * (0.0175 + gx * 0.019), cz = -0.017 - gz * 0.02, w = 0.016, d = 0.017;
+    for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) {
+      if (i === j || i === 3 - j) continue;
+      trees.push({ x: cx - w / 2 + 0.002 + (i * (w - 0.004)) / 3, z: cz - d / 2 + 0.002 + (j * (d - 0.004)) / 3, kind: r() < 0.3 ? 'oak' : 'beechMaple', height: 0.0085 + 0.0015 * r() });
+    }
+  }
+  for (const s of [-1, 1]) for (let i = 0; i < 12; i++) for (const z of [-0.0745, -0.0613]) trees.push({ x: s * (0.0065 + i * 0.0055), z, kind: 'beechMaple', height: 0.0055 });
+  return { water: VERSAILLES_WATER, trees };
 }

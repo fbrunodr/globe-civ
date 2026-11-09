@@ -149,22 +149,27 @@ function chhatri(x: number, z: number, y: number, r: number, c: number, c2: numb
 // octagonal chapels on the axes and four lesser ones between, each with
 // its tiers of kokoshnik gables, its drum and its onion dome, striped,
 // twisted, scaled and checked in its own colours, a gilded cross on each;
-// the arcaded gallery round them in red brick and white stone. (Drawn up
-// to fill its site and stand about five cells tall: stretch.)
+// the arcaded gallery round them in red brick and white stone, a town
+// storey high. (Drawn up to fill its site and stand about five and a half
+// cells tall: stretch.)
 export function stBasils(): G[] {
   const out: G[] = [];
   const BRICK = 0xa8452f, TRIM = 0xefe9dd, DARK = 0x3a2a24, GOLD = 0xd8b048;
-  const cz = 0, gy = 0.009;
-  // The gallery: an octagon of arcades, its white cornice, the terrace on top.
+  const cz = 0, gy = 0.0205;
+  // The gallery: an octagon a storey high on its basement, its white
+  // cornice, the terrace on top: small basement windows under a white
+  // band, the open arcade over it.
   out.push(...chamfered(0.104, gy, 0.1, 0.28, BRICK, { z: cz }, shade(BRICK, 0.82)));
-  out.push(...chamfered(0.1052, 0.001, 0.1012, 0.28, TRIM, { y: gy - 0.0012, z: cz }));
-  out.push(...chamfered(0.1052, 0.0008, 0.1012, 0.28, TRIM, { y: 0.0012, z: cz }));
+  out.push(...chamfered(0.1052, 0.0012, 0.1012, 0.28, TRIM, { y: gy - 0.0014, z: cz }));
+  out.push(...chamfered(0.1052, 0.0009, 0.1012, 0.28, TRIM, { y: 0.0072, z: cz }));
+  out.push(...chamfered(0.1046, 0.0012, 0.1006, 0.28, shade(BRICK, 0.8), { y: 0.0001, z: cz }));
   for (let f = 0; f < 8; f++) {
     const ry = (f * Math.PI) / 4, axis = f % 2 === 0, d = axis ? (f % 4 === 0 ? 0.05 : 0.052) : 0.0517 * 0.98;
     const len = axis ? 0.042 : 0.04, n = 5;
     for (let i = 0; i < n; i++) {
       const t = -len / 2 + (i + 0.5) * (len / n), [x, z] = onFace(0, cz, d + 0.0003, ry, t);
-      out.push(...archTop(0.0042, 0.0034, TRIM, x, 0.0022, z, ry), ...archTop(0.003, 0.003, DARK, ...sh(x, z, ry, 0.0002, 0.0024), ry));
+      out.push(...archTop(0.0044, 0.0062, TRIM, x, 0.0094, z, ry), ...archTop(0.0032, 0.0058, DARK, ...sh(x, z, ry, 0.0002, 0.0096), ry));
+      out.push(...archTop(0.0024, 0.0018, TRIM, x, 0.0026, z, ry), ...archTop(0.0014, 0.0015, DARK, ...sh(x, z, ry, 0.0002, 0.0028), ry));
     }
   }
   // The chapels.
@@ -174,17 +179,17 @@ export function stBasils(): G[] {
   ];
   // Great chapels on the axes, lesser between; the front one first.
   const axes = [[0, 0.032], [0.032, 0], [0, -0.032], [-0.032, 0]] as const;
-  axes.forEach(([x, z], i) => out.push(...chapel(x, cz + z, gy - 0.0003, 0.02, 0.026, 0.0055, 0.011, 0.0092, 0.0175, schemes[i]!, BRICK, TRIM, DARK, GOLD)));
+  axes.forEach(([x, z], i) => out.push(...chapel(x, cz + z, gy - 0.0003, 0.02, 0.029, 0.0055, 0.011, 0.0092, 0.0175, schemes[i]!, BRICK, TRIM, DARK, GOLD)));
   const diag = [[0.0235, 0.0235], [0.0235, -0.0235], [-0.0235, -0.0235], [-0.0235, 0.0235]] as const;
-  diag.forEach(([x, z], i) => out.push(...chapel(x, cz + z, gy - 0.0003, 0.0132, 0.02, 0.0039, 0.008, 0.0064, 0.012, schemes[4 + i]!, BRICK, TRIM, DARK, GOLD)));
+  diag.forEach(([x, z], i) => out.push(...chapel(x, cz + z, gy - 0.0003, 0.0132, 0.023, 0.0039, 0.008, 0.0064, 0.012, schemes[4 + i]!, BRICK, TRIM, DARK, GOLD)));
   // The central chapel: its octagon, tiers of gables, the tented spire and its little dome.
-  const cw = 0.026, ch = 0.04;
+  const cw = 0.026, ch = 0.044;
   out.push(...chamfered(cw, ch + 0.0003, cw, 0.29, BRICK, { y: gy - 0.0003, z: cz }));
-  for (const yy of [0.012, 0.026, ch - 0.0012]) out.push(...chamfered(cw + 0.001, 0.0011, cw + 0.001, 0.29, TRIM, { y: gy + yy, z: cz }));
+  for (const yy of [0.013, 0.028, ch - 0.0012]) out.push(...chamfered(cw + 0.001, 0.0011, cw + 0.001, 0.29, TRIM, { y: gy + yy, z: cz }));
   for (let f = 0; f < 8; f++) {
     const ry = (f * Math.PI) / 4, [x, z] = onFace(0, cz, cw / 2 + 0.0003, ry, 0);
-    out.push(...archTop(0.0032, 0.007, TRIM, x, gy + 0.015, z, ry), ...archTop(0.0019, 0.006, DARK, ...sh(x, z, ry, 0.0002, gy + 0.0157), ry));
-    for (const t of [-0.0035, 0.0035]) { const [x2, z2] = onFace(0, cz, cw / 2 + 0.0003, ry, t); out.push(...archTop(0.0022, 0.0035, TRIM, x2, gy + 0.029, z2, ry)); }
+    out.push(...archTop(0.0032, 0.0075, TRIM, x, gy + 0.0165, z, ry), ...archTop(0.0019, 0.0065, DARK, ...sh(x, z, ry, 0.0002, gy + 0.0172), ry));
+    for (const t of [-0.0035, 0.0035]) { const [x2, z2] = onFace(0, cz, cw / 2 + 0.0003, ry, t); out.push(...archTop(0.0022, 0.0038, TRIM, x2, gy + 0.0315, z2, ry)); }
   }
   let y = gy + ch;
   out.push(...kokoshniks(0, cz, y, cw, 8, TRIM, BRICK), ...kokoshniks(0, cz, y + 0.0032, cw * 0.82, 8, TRIM, BRICK, Math.PI / 8));

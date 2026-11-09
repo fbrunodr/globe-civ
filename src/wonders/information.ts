@@ -7,7 +7,7 @@ import {
   P, V, box, cone, cyl, drumC, flat, pane, rnd, rod, shade, type G, type Models,
 } from './kit.ts';
 
-const GRASS = 0x86a058, PAVING = 0xd8d2c4;
+const PAVING = 0xd8d2c4;
 
 // The outline of a wing of a tower's plan: from just behind the middle
 // (cx, cz) out along (dx, dz) to a round tip, w wide, L long.
@@ -92,7 +92,6 @@ function burjKhalifa(): G[] {
 function fastTelescope(): G[] {
   const r = rnd(41), out: G[] = [];
   const PANEL = 0xd6dde2, PANEL2 = 0xb9c3ca, BEAM = 0x8a929a, FOREST = 0x4f7a3a, ROCK = 0x9a978e;
-  out.push(flat(0.148, 0.148, shade(GRASS, 0.9), 0, 0, 0.0003));
   // The reflector: a spherical cap, its panels in two tones.
   const a = 0.054, theta = (56 * Math.PI) / 180, Rc = a / Math.sin(theta), sag = Rc * (1 - Math.cos(theta)), y0 = 0.0012, yr = y0 + sag;
   const cap = new THREE.SphereGeometry(Rc, 44, 11, 0, Math.PI * 2, Math.PI - theta, theta).translate(0, Rc + y0, 0);

@@ -14,8 +14,8 @@ import * as THREE from 'three';
 import type { Game, City } from './game.ts';
 import { USE, BORDER_MAX, wonderBeside, isWonderKey, type ImprovementKey, type EraIndex } from './cities.ts';
 import { ROOFS, buildingEntry, isFloraModel, isLotModel, placedGeometry, waterRule, type BuildingKind, type LotModelKind, type PlacedKind } from './buildingCatalog.ts';
-import { ON_BARE_GROUND, isWonderModelKind, landHalf, seaScale, wonderModelKind, type SiteModel } from './wonderModels.ts';
-import type { CatalogKind } from './propCatalog.ts';
+import { ON_BARE_GROUND, groundsBox, isWonderModelKind, landHalf, seaScale, wonderGrounds, wonderModelKind, type SiteModel, type WonderGrounds } from './wonderModels.ts';
+import { CATALOG, type CatalogKind } from './propCatalog.ts';
 import { WORKS_VARIANT, houseKind } from './houses.ts';
 import { styleOf } from './architecture.ts';
 import { LOT_SIZE, rhoOf, type Floors, type Footprint } from './town/geometry.ts';
@@ -65,12 +65,17 @@ export interface Street {
 // A square, drawn by render.ts as paving on the ground (or a worked rural
 // area, in its ground colour).
 export interface Paving { points: THREE.Vector3[]; paved: boolean; rgb?: RGB; exact?: boolean }
+// Standing water a wonder lays on the ground (wonderModels.ts WaterArea),
+// drawn by render.ts as the game's water: a grid of directions (rows of
+// points), its sheet laid on the ground between them.
+export interface WaterSheet { grid: THREE.Vector3[][] }
 
 interface CityLayout {
   sig: string;
   byTile: Map<number, PlacedBuilding[]>;
   streets: Street[];
   pavings: Paving[];
+  waters: WaterSheet[];
   approaches: THREE.Vector3[][]; // the roads' ways in to the town (approach), from its tile's edge
   flora?: (d: THREE.Vector3) => boolean; // where wild flora may stay (made when first asked)
 }
@@ -95,6 +100,8 @@ const SEA_ISLET = 0.075;
 // A wonder on land beside its city (the Pyramids, Stonehenge): the ground
 // kept clear round it (its size is its own: wonderModels.ts landHalf).
 const LAND_WONDER_GAP = 0.015;
+// A wonder's water sheets: a point at least every this many model units (wonderModels.ts WaterArea).
+const WATER_STEP = 0.004;
 // A mine's adits: how many (by how far the countryside has filled up), how
 // far apart, how far from the homestead, and the spots tried (every
 // ADIT_STEP across the tile, tile steps).
@@ -194,6 +201,7 @@ export class CityProps {
   private readonly cache = new Map<number, { sig: string; items: PlacedBuilding[] }>();
   private readonly layouts = new Map<number, CityLayout>();
   private readonly box = new Map<PlacedKind, readonly [number, number]>();
+  private readonly floraTall = new Map<CatalogKind, number>();
   private roads: THREE.Vector3[][] = [];
   // Where the roads reach each city's tile (roads.ts RoadLine ends): the middles of its edges.
   private roadEnds = new Map<number, THREE.Vector3[]>();
@@ -375,6 +383,9 @@ export class CityProps {
   pavings(): Paving[] {
     return this.game.cities.flatMap((c) => this.layout(c).pavings);
   }
+  waters(): WaterSheet[] {
+    return this.game.cities.flatMap((c) => this.layout(c).waters);
+  }
 
   place(t: number): PlacedBuilding[] {
     const sig = this.signature(t);
@@ -433,6 +444,7 @@ export class CityProps {
     // No streets in a city (its diorama suggests them) or a farm.
     const streets: Street[] = [];
     const pavings: Paving[] = [];
+    const waters: WaterSheet[] = [];
     // Nothing may stand on the roads between cities: every building's
     // footprint is checked (shrunk a little if it touches one, left out if
     // it still does). Roads run up to the city's diorama.
@@ -594,7 +606,10 @@ export class CityProps {
       }
       if (!best) continue;
       const dir = toDir(best);
-      put(t, ...this.standLot(kind, dir, facing(dir, edge) + Math.PI / 2, hw, hd, k * sc, mulberry32(mix(t, 0x3a)), city.owner));
+      const lot = this.standLot(kind, dir, facing(dir, edge) + Math.PI / 2, hw, hd, k * sc, mulberry32(mix(t, 0x3a)), city.owner);
+      put(t, ...lot);
+      const gr = wonderGrounds(m);
+      if (gr && lot[0]) put(t, ...this.grounds(gr, lot[0].matrix, k * sc, mulberry32(mix(t, 0x3b)), waters, (d) => clear.free([d])));
       keep.set(t, { p: best, r });
     }
 
@@ -677,7 +692,56 @@ export class CityProps {
       if (plan.house) placeLot(HOMESTEAD_LOT, plan.house.floors, plan.house.p, mulberry32(mix(t, 0x5a)));
       if (plan.barn) placeLot('b32', 1, plan.barn, mulberry32(mix(t, 0x5b)));
     }
-    return { sig, byTile, streets, pavings, approaches };
+    return { sig, byTile, streets, pavings, waters, approaches };
+  }
+
+  // A wonder's grounds (wonderModels.ts WonderGrounds) where its model
+  // stands (`frame`, its matrix; `s` its scale): its water as sheets on
+  // the ground (into `waters`, a point every WATER_STEP of the model at
+  // most), its trees the flora's own models, each as tall as its spot
+  // asks, on dry ground off the roads (`free`).
+  private grounds(gr: WonderGrounds, frame: THREE.Matrix4, s: number, rand: Rng, waters: WaterSheet[], free: (d: THREE.Vector3) => boolean): PlacedBuilding[] {
+    const at = (x: number, z: number) => new THREE.Vector3(x, 0, z).applyMatrix4(frame).normalize();
+    for (const w of gr.water) {
+      const nx = Math.max(2, Math.ceil((2 * w.hw) / WATER_STEP)), nz = Math.max(2, Math.ceil((2 * w.hd) / WATER_STEP));
+      const grid: THREE.Vector3[][] = [];
+      for (let j = 0; j <= nz; j++) {
+        const row: THREE.Vector3[] = [];
+        for (let i = 0; i <= nx; i++) {
+          let u = (2 * i) / nx - 1, v = (2 * j) / nz - 1;
+          // (An ellipse: the square's grid squeezed onto the disc.)
+          if (w.round) [u, v] = [u * Math.sqrt(1 - (v * v) / 2), v * Math.sqrt(1 - (u * u) / 2)];
+          row.push(at(w.x + u * w.hw, w.z + v * w.hd));
+        }
+        grid.push(row);
+      }
+      waters.push({ grid });
+    }
+    const out: PlacedBuilding[] = [];
+    const sink = 0.00001 * this.scale;
+    for (const tr of gr.trees) {
+      const dir = at(tr.x, tr.z), spot = this.sampleDir(dir);
+      if (spot.water - spot.ground > DRY || !free(dir)) continue;
+      // (The flora's models are drawn at PROP_SCALE of their reference size.)
+      const size = (tr.height * s) / (this.floraHeight(tr.kind) * PROP_SCALE * this.scale), stretch = 0.92 + 0.16 * rand();
+      const q = new THREE.Quaternion().setFromUnitVectors(UP, dir).multiply(new THREE.Quaternion().setFromAxisAngle(UP, rand() * Math.PI * 2));
+      const shade = 0.88 + 0.2 * rand();
+      out.push({ kind: tr.kind, matrix: new THREE.Matrix4().compose(dir.clone().multiplyScalar(1 + spot.ground - sink), q, new THREE.Vector3(size, size * stretch, size)),
+        color: new THREE.Color(shade, shade, shade * 0.97), leaf: new THREE.Color(CATALOG[tr.kind].leaf) });
+    }
+    return out;
+  }
+  // A flora model's height at its reference size.
+  private floraHeight(kind: CatalogKind): number {
+    let h = this.floraTall.get(kind);
+    if (h === undefined) {
+      const geo = placedGeometry(kind);
+      geo.computeBoundingBox();
+      h = geo.boundingBox!.max.y;
+      geo.dispose();
+      this.floraTall.set(kind, h);
+    }
+    return h;
   }
 
   // Half extents of a model's footprint (x, z), in model units.
@@ -688,6 +752,8 @@ export class CityProps {
       geo.computeBoundingBox();
       const b = geo.boundingBox!;
       r = [Math.max(-b.min.x, b.max.x), Math.max(-b.min.z, b.max.z)];
+      // (A wonder's grounds are part of its footprint.)
+      if (isWonderModelKind(kind)) { const [gx, gz] = groundsBox(kind.slice('wonder|'.length) as SiteModel); r = [Math.max(r[0], gx), Math.max(r[1], gz)]; }
       this.box.set(kind, r);
     }
     return r;
@@ -774,7 +840,9 @@ export class CityProps {
     const s = this.seaSpot(t);
     if (!s) return [];
     const water = this.sampleDir(s.dir).water;
-    const q = new THREE.Quaternion().setFromUnitVectors(UP, s.dir).multiply(new THREE.Quaternion().setFromAxisAngle(UP, facing(s.dir, s.toward) + Math.PI / 2));
+    // (Facing its city; the Colossus looks out to sea.)
+    const out = kind === wonderModelKind('colossus') ? Math.PI : 0;
+    const q = new THREE.Quaternion().setFromUnitVectors(UP, s.dir).multiply(new THREE.Quaternion().setFromAxisAngle(UP, facing(s.dir, s.toward) + Math.PI / 2 + out));
     return [{ kind, matrix: new THREE.Matrix4().compose(s.dir.clone().multiplyScalar(1 + water), q, new THREE.Vector3().setScalar(s.scale * s.k)), color: new THREE.Color(1, 1, 1), leaf: new THREE.Color(1, 1, 1) }];
   }
 
@@ -1104,11 +1172,12 @@ export class CityProps {
       const g = this.sampleDir(dir.clone().addScaledVector(X, a).addScaledVector(Z, b).normalize()).ground;
       low = Math.min(low, g); high = Math.max(high, g);
     }
-    // (A wonder on the bare ground stands at the lowest corner, sunk into
-    // the slope: no foundation.)
+    // (A wonder on the bare ground stands halfway between its lowest and
+    // highest corners, sunk into the slope: no foundation; barely sunk, so
+    // what lies flat on its ground (a garden's lawns and gravel) shows.)
     const bare = isWonderModelKind(kind) && ON_BARE_GROUND.has(kind.slice('wonder|'.length));
-    const base = bare ? low : high;
-    const sink = 0.00012 * this.scale, shade = 0.92 + 0.12 * rand();
+    const base = bare ? (low + high) / 2 : high;
+    const sink = (bare ? 0.00002 : 0.00012) * this.scale, shade = 0.92 + 0.12 * rand();
     const out: PlacedBuilding[] = [{
       kind,
       matrix: new THREE.Matrix4().compose(dir.clone().multiplyScalar(1 + base - sink), q, new THREE.Vector3(s * stretch[0], s, s * stretch[1])),

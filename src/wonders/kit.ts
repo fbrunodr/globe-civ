@@ -286,9 +286,12 @@ export function boat(x: number, z: number, l: number, ry: number, y = 0, sail?: 
 
 const ROCK = 0x7d776c, TIMBER = 0x7a5f45, IRON = 0x4a4744, STONE = 0xb8b0a0;
 // A rocky islet in the sea, its top at the water line (origin): what a
-// wonder standing on the sea stands on (cityProps.ts seaWonder).
+// wonder standing on the sea stands on (cityProps.ts seaWonder). Its rock
+// goes on down to well under any sea floor it stands on.
+export const ISLET_DEPTH = 0.3;
 export const islet = (): G[] => [
   P(new THREE.CylinderGeometry(0.068, 0.075, 0.0078, 9).translate(0, 0.0021, 0), ROCK, { ry: 0.3 }),
+  P(new THREE.CylinderGeometry(0.075, 0.078, ISLET_DEPTH, 9, 1, true).translate(0, -0.0018 - ISLET_DEPTH / 2, 0), shade(ROCK, 0.85), { ry: 0.3 }),
   ...[[0.06, 0.025, 1.1], [-0.045, 0.05, 0.9], [-0.03, -0.058, 1], [0.035, -0.055, 0.8]].map(([x, z, s]) =>
     P(new THREE.DodecahedronGeometry(0.011 * s!, 0).scale(1, 0.7, 1), shade(ROCK, 0.9 + 0.1 * s!), { x: x!, y: 0.0065, z: z!, ry: x! * 40 })),
 ];

@@ -68,18 +68,20 @@ function bar(a: THREE.Vector3, b: THREE.Vector3, r: number, c: number): G {
 // Four lattice legs on their stone piers, each a box of girders braced with
 // crosses, curving in under the great arches to the first floor, meeting at
 // the second; the tapering shaft to the top floor, its lantern and mast.
-// (Drawn to its outline, then stretched to stand about 18 cells tall on its
-// pad: KW across, KY up.)
+// Drawn in metres to the real tower's outline (125 m across its feet, 330 m
+// to the mast's tip), then scaled so its feet reach the site's corners:
+// about 10 cells tall on its pad.
 function eiffelTower(): G[] {
-  const out: G[] = [], I = 0x6b5645, KW = 1.47, KY = 2.7;
-  // The tower's outline: half its width at each height (site units).
-  const prof = [[0, 0.049], [0.022, 0.037], [0.045, 0.0276], [0.068, 0.0205], [0.0906, 0.0158], [0.12, 0.0128], [0.15, 0.0105], [0.18, 0.0086], [0.2175, 0.007]] as const;
+  const out: G[] = [], I = 0x6b5645, LIGHT = shade(I, 1.35), GLASS = 0xb9c6c4, STONE = 0xb8ae98, K = H / 63.5;
+  // The tower's outline: half its width at each height (metres).
+  const prof = [[0, 62.5], [20, 52], [40, 43], [57.6, 36.5], [80, 28.5], [115.7, 20.5], [150, 15.2], [190, 11], [230, 8.2], [276, 6.2], [282, 6]] as const;
   const W = (y: number) => {
     for (let i = 1; i < prof.length; i++) if (y <= prof[i]![0]) { const [y0, w0] = prof[i - 1]!, [y1, w1] = prof[i]!; return w0 + ((w1 - w0) * (y - y0)) / (y1 - y0); }
     return prof[prof.length - 1]![1];
   };
-  // A leg's width: wide at its foot, its inner edge meeting the others' at the second floor.
-  const L = (y: number) => (y <= 0.045 ? 0.0145 - (0.0035 * y) / 0.045 : 0.011 + ((W(0.0906) - 0.011) * (y - 0.045)) / 0.0456);
+  const f1 = 57.6, f2 = 115.7, f3 = 276;
+  // A leg's width: 26 m at its foot, 17 at the first floor, its inner edge meeting the others' at the second.
+  const L = (y: number) => (y <= f1 ? 26 - (9 * y) / f1 : 17 + ((W(f2) - 17) * (y - f1)) / (f2 - f1));
   // A box of girders between levels ys, corners at each level from corners(y): chords, crosses, struts.
   const lattice = (ys: readonly number[], corners: (y: number) => THREE.Vector3[], chord: number) => {
     for (let j = 0; j < ys.length; j++) {
@@ -93,43 +95,76 @@ function eiffelTower(): G[] {
       }
     }
   };
-  const legYs = Array.from({ length: 16 }, (_, i) => (i * 0.0906) / 15);
+  // The legs: each a box of girders in panels about as tall as it is wide, on its masonry pier.
+  const legYs = [1.5, 6, 12.5, 19.5, 27, 35, 43.5, 51, f1, 64, 71, 78.5, 86.5, 95, 105, f2];
   for (const [sx, sz] of [[1, 1], [-1, 1], [-1, -1], [1, -1]] as const) {
-    lattice(legYs, (y) => { const o = W(y), i = Math.max(0, o - L(y)); return [V(sx * o, y, sz * o), V(sx * i, y, sz * o), V(sx * i, y, sz * i), V(sx * o, y, sz * i)]; }, 0.0007);
+    lattice(legYs, (y) => { const o = W(y), i = Math.max(0, o - L(y)); return [V(sx * o, y, sz * o), V(sx * i, y, sz * o), V(sx * i, y, sz * i), V(sx * o, y, sz * i)]; }, 0.95);
     const m = W(0) - L(0) / 2;
-    out.push(...box(0.019, 0.003, 0.019, 0xb8ae98, { x: sx * m, z: sz * m }, 0xa89e88));
+    out.push(...box(28, 3.2, 28, STONE, { x: sx * m, z: sz * m }, shade(STONE, 0.92)));
+    out.push(...box(30, 0.8, 30, shade(STONE, 0.9), { x: sx * m, z: sz * m }));
   }
-  const shaftYs = Array.from({ length: 23 }, (_, i) => 0.0906 + (i * (0.2175 - 0.0906)) / 22);
-  lattice(shaftYs, (y) => { const o = W(y); return [V(o, y, o), V(-o, y, o), V(-o, y, -o), V(o, y, -o)]; }, 0.0006);
-  // The great arches under the first floor, one on each side.
+  const shaftYs = Array.from({ length: 23 }, (_, i) => f2 + (i * (f3 - f2)) / 22);
+  lattice(shaftYs, (y) => { const o = W(y); return [V(o, y, o), V(-o, y, o), V(-o, y, -o), V(o, y, -o)]; }, 0.75);
+  // The great arches between the legs, one on each side: from the legs' inner edges up under the first floor.
   for (let f = 0; f < 4; f++) {
     const ry = (f * Math.PI) / 2, c = Math.cos(ry), s = Math.sin(ry);
-    const at = (t: number, lift: number) => { const R = W(0.012) - L(0.012) + 0.001, x = Math.cos(t) * R, y = 0.013 + lift + Math.sin(t) * (0.027 - lift * 0.4), z = W(y) - 0.0004; return V(x * c + z * s, y, -x * s + z * c); };
-    const n = 14;
+    const R = W(6) - L(6) + 0.6;
+    const at = (t: number, lift: number) => { const x = Math.cos(t) * (R - lift * 0.2), y = 6 + lift + Math.sin(t) * (43 - lift * 1.3), z = W(y) + 0.25; return V(x * c + z * s, y, -x * s + z * c); };
+    const n = 18;
     for (let i = 0; i < n; i++) {
       const t0 = (i / n) * Math.PI, t1 = ((i + 1) / n) * Math.PI;
-      out.push(bar(at(t0, 0), at(t1, 0), 0.0006, I), bar(at(t0, 0.0025), at(t1, 0.0025), 0.0004, I));
-      out.push(bar(at(t0, 0), at(t1, 0.0025), 0.00025, I));
+      out.push(bar(at(t0, 0), at(t1, 0), 0.8, I), bar(at(t0, 2.6), at(t1, 2.6), 0.55, I));
+      out.push(bar(at(t0, 0), at(t1, 2.6), 0.3, I), bar(at(t1, 0), at(t1, 2.6), 0.3, I));
     }
   }
-  // The floors: the first with its gallery and pavilions, the second, the top with its lantern and mast.
-  const f1 = 0.045, w1 = W(f1) + 0.002;
-  out.push(...box(2 * w1, 0.0035, 2 * w1, I, { y: f1 }, shade(I, 0.85)));
-  out.push(ring(2 * w1, 0.0012, 2 * w1, shade(I, 0.8), { y: f1 + 0.0035 }));
-  for (let f = 0; f < 4; f++) {
-    const { nx, nz, tx, tz } = frame((f * Math.PI) / 2);
-    out.push(...box(0.016, 0.004, 0.005, 0xd8d0c0, { x: nx * (w1 - 0.004) + tx * 0.008, y: f1 + 0.0035, z: nz * (w1 - 0.004) + tz * 0.008, ry: (f * Math.PI) / 2 }, 0x8a7a68));
-    for (let k = 0; k < 18; k++) out.push(pane(0.0016, 0.0016, shade(I, 1.25), nx * (w1 + 0.0003) + tx * (-w1 + 0.0012 + (k * (2 * w1 - 0.0024)) / 17), f1 + 0.0008, nz * (w1 + 0.0003) + tz * (-w1 + 0.0012 + (k * (2 * w1 - 0.0024)) / 17), (f * Math.PI) / 2));
+  // A floor's skirt round the tower at y (h deep, half-width w): its girder band, a frieze of light arches, the railing.
+  const skirt = (y: number, h: number, w: number, arches: number) => {
+    out.push(ring(2 * w, h, 2 * w, I, { y: y - h }));
+    for (let f = 0; f < 4; f++) {
+      const ry = (f * Math.PI) / 2, { nx, nz, tx, tz } = frame(ry);
+      for (let k = 0; k < arches; k++) {
+        const t = -w + ((k + 0.5) * 2 * w) / arches, aw = ((2 * w) / arches) * 0.72;
+        out.push(...archPane(aw, h * 0.62 - aw / 2, LIGHT, nx * (w + 0.12) + tx * t, y - h * 0.82, nz * (w + 0.12) + tz * t, ry));
+      }
+    }
+    out.push(ring(2 * w, 1.3, 2 * w, shade(I, 0.8), { y }));
+  };
+  // The first floor: its deck round an open middle, its glazed pavilions between the legs.
+  const w1 = W(f1) + 1.2, hole = W(f1) - L(f1) - 1;
+  skirt(f1, 7, w1, 15);
+  for (const s of [-1, 1]) {
+    out.push(...box(2 * w1, 0.8, w1 - hole, I, { y: f1 - 0.8, z: (s * (w1 + hole)) / 2 }, shade(I, 0.85)));
+    out.push(...box(w1 - hole, 0.8, 2 * hole, I, { x: (s * (w1 + hole)) / 2, y: f1 - 0.8 }, shade(I, 0.85)));
   }
-  const f2 = 0.0906, w2 = W(f2) + 0.0018;
-  out.push(...box(2 * w2, 0.003, 2 * w2, I, { y: f2 }, shade(I, 0.85)));
-  out.push(ring(2 * w2, 0.001, 2 * w2, shade(I, 0.8), { y: f2 + 0.003 }));
-  const f3 = 0.2175;
-  out.push(...box(0.017, 0.003, 0.017, I, { y: f3 }), ...box(0.011, 0.005, 0.011, 0xd8cfc0, { y: f3 + 0.003 }, I));
-  for (const [x, z] of [[1, 1], [-1, 1], [-1, -1], [1, -1]] as const) out.push(rod(V(x * 0.005, f3 + 0.008, z * 0.005), V(x * 0.002, f3 + 0.019, z * 0.002), 0.0005, I, 3));
-  out.push(drumC(0.0028, 0.0026, 0.004, 8, I, { y: f3 + 0.019 }), ball(0.0018, 0xf6d880, { y: f3 + 0.0245 }));
-  out.push(rod(V(0, f3 + 0.026, 0), V(0, 0.262, 0), 0.0006, 0x9a9a9a, 4), rod(V(0, 0.244, 0), V(0, 0.257, 0), 0.0007, 0xc23a2a, 3));
-  for (const g of out) g.scale(KW, KY, KW);
+  for (let f = 0; f < 4; f++) {
+    const ry = (f * Math.PI) / 2, { nx, nz } = frame(ry), d = (w1 + hole) / 2;
+    out.push(...box(24, 5, 6, GLASS, { x: nx * d, y: f1, z: nz * d, ry }, shade(I, 0.75)));
+    for (let k = 0; k < 9; k++) out.push(pane(0.35, 5, I, nx * (d + 3.08) + Math.cos(ry) * (-11 + k * 2.75), f1, nz * (d + 3.08) - Math.sin(ry) * (-11 + k * 2.75), ry));
+  }
+  // The second floor: a solid deck round the shaft, a smaller skirt, a pavilion.
+  const w2 = W(f2) + 1;
+  skirt(f2, 4.5, w2, 9);
+  out.push(...box(2 * w2, 0.8, 2 * w2, I, { y: f2 - 0.8 }, shade(I, 0.85)));
+  out.push(...box(2 * W(f2 + 4) - 2, 4, 2 * W(f2 + 4) - 2, GLASS, { y: f2 }, shade(I, 0.75)));
+  // A gallery half way up the shaft.
+  const fm = 196, wm = W(fm) + 0.8;
+  out.push(ring(2 * wm, 2, 2 * wm, I, { y: fm - 2 }), ring(2 * wm, 1, 2 * wm, shade(I, 0.8), { y: fm }));
+  // The top: the glazed gallery, the open deck, the four ribs up to the lantern, the mast.
+  const w3 = 8.5;
+  out.push(...box(2 * w3, 1, 2 * w3, I, { y: f3 - 1 }, shade(I, 0.85)));
+  out.push(...box(2 * w3 - 1.5, 5, 2 * w3 - 1.5, GLASS, { y: f3 }, shade(I, 0.85)));
+  for (let f = 0; f < 4; f++) {
+    const ry = (f * Math.PI) / 2, { nx, nz, tx, tz } = frame(ry);
+    for (let k = 0; k < 7; k++) { const t = -w3 + 0.75 + (k * (2 * w3 - 1.5)) / 6; out.push(pane(0.3, 5, I, nx * (w3 - 0.7) + tx * t, f3, nz * (w3 - 0.7) + tz * t, ry)); }
+  }
+  out.push(ring(2 * w3, 1.2, 2 * w3, shade(I, 0.8), { y: f3 + 5 }));
+  for (const [x, z] of [[1, 1], [-1, 1], [-1, -1], [1, -1]] as const) out.push(rod(V(x * 6, f3 + 5, z * 6), V(x * 2.6, f3 + 17, z * 2.6), 0.6, I, 4));
+  out.push(...box(7, 1.2, 7, I, { y: f3 + 16.5 }));
+  out.push(drumC(2.6, 2.4, 5, 10, I, { y: f3 + 17.7 }), drumC(2, 1.6, 2.5, 10, shade(I, 0.9), { y: f3 + 22.75 }));
+  out.push(ball(1.6, 0xf6d880, { y: f3 + 26.5 }, 1));
+  out.push(rod(V(0, f3 + 25, 0), V(0, 312, 0), 0.75, 0x9a9a9a, 6, 0.6));
+  for (let k = 0; k < 5; k++) out.push(rod(V(0, 312 + k * 3.6, 0), V(0, 313.8 + k * 3.6, 0), 0.55, 0xc23a2a, 6), rod(V(0, 313.8 + k * 3.6, 0), V(0, 315.6 + k * 3.6, 0), 0.55, 0xeeeeee, 6));
+  for (const g of out) g.scale(K, K, K);
   return [pad(), ...out];
 }
 

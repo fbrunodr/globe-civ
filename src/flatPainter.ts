@@ -3,7 +3,8 @@
 // for the ground and roads, instanced models for what stands on them.
 
 import * as THREE from 'three';
-import { modelGeometry, type ModelKind } from './buildingCatalog.ts';
+import { isFloraModel, modelGeometry, type PlacedKind } from './buildingCatalog.ts';
+import { buildCatalogGeometry } from './propCatalog.ts';
 import { makePropMaterial, instanceGeometry } from './propMaterial.ts';
 
 // Catalog models (walls): render.ts draws them at 1.5 × PROP_SIZE (0.276)
@@ -18,7 +19,7 @@ const flatMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.
 export class FlatPainter {
   private pos: number[] = [];
   private col: number[] = [];
-  private readonly instances = new Map<string, { kind: ModelKind; roof: number; mats: THREE.Matrix4[]; cols: THREE.Color[] }>();
+  private readonly instances = new Map<string, { kind: PlacedKind; roof: number; mats: THREE.Matrix4[]; cols: THREE.Color[] }>();
 
   // A triangle of the ground.
   tri(c: THREE.Color, ...ps: THREE.Vector3[]): void { for (const p of ps) { this.pos.push(p.x, p.y, p.z); this.col.push(c.r, c.g, c.b); } }
@@ -27,8 +28,9 @@ export class FlatPainter {
     const y = -0.002, a = new THREE.Vector3(x0, y, z0), b = new THREE.Vector3(x1, y, z0), c = new THREE.Vector3(x1, y, z1), d = new THREE.Vector3(x0, y, z1);
     this.tri(OUTSIDE, a, b, c); this.tri(OUTSIDE, a, c, d);
   }
-  // A model at `at`, turned by yaw (radians, around up), scaled (x, y, z).
-  model(kind: ModelKind, at: THREE.Vector3, yaw: number, scale: THREE.Vector3, roof: number, shade = 1): void {
+  // A model at `at`, turned by yaw (radians, around up), scaled (x, y, z)
+  // (a flora's: its leaves `roof`).
+  model(kind: PlacedKind, at: THREE.Vector3, yaw: number, scale: THREE.Vector3, roof: number, shade = 1): void {
     const key = `${kind}|${roof}`;
     let e = this.instances.get(key);
     if (!e) { e = { kind, roof, mats: [], cols: [] }; this.instances.set(key, e); }
@@ -45,7 +47,7 @@ export class FlatPainter {
     group.add(new THREE.Mesh(geo, flatMat));
     let count = 0;
     for (const e of this.instances.values()) {
-      const model = modelGeometry(e.kind, { leaf: e.roof });
+      const model = isFloraModel(e.kind) ? buildCatalogGeometry(e.kind, { leaf: e.roof }) : modelGeometry(e.kind, { leaf: e.roof });
       const mesh = new THREE.InstancedMesh(instanceGeometry(model, e.mats.length), buildingMat, e.mats.length);
       const leaf = mesh.geometry.getAttribute('leafTint') as THREE.InstancedBufferAttribute;
       const lc = new THREE.Color(e.roof);

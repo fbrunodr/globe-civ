@@ -10,16 +10,15 @@ import {
   peristyle, rnd, roundTree, shade, steppedPyramid, steps, templeRoof, H, islet, type G, type Models,
 } from './kit.ts';
 
-const SAND = 0xd9c08c, WATER = 0x5f8fa3, GRASS = 0x86a058, LEAF = 0x557a36;
+const WATER = 0x5f8fa3, GRASS = 0x86a058, LEAF = 0x557a36;
 const MARBLE = 0xe6e0d2, BRONZE = 0x9a7a4a;
 
 // ---------- Giza ----------
 
 // The Great Pyramid alone on the plateau, whole as built: its courses of
-// stone rising to a gilded capstone, on its sand.
-export function pyramids(H: number): G[] {
-  const r = rnd(7), out: G[] = [flat(2 * H, 2 * H, SAND, 0, 0, 0.0003)];
-  for (let i = 0; i < 9; i++) out.push(flat(0.02 + r() * 0.03, 0.008 + r() * 0.012, shade(SAND, r() < 0.5 ? 0.93 : 1.05), (r() - 0.5) * 1.6 * H, (r() - 0.5) * 1.6 * H, 0.00036 + i * 0.00004, r() * Math.PI));
+// stone rising to a gilded capstone (on the desert itself: no base).
+export function pyramids(): G[] {
+  const out: G[] = [];
   const LIME = 0xcfb07a, base = 0.12;
   out.push(...steppedPyramid(base, 0.64 * base, 28, LIME, { smooth: 0.07, casing: 0xe2b448 }));
   return out;
@@ -278,7 +277,7 @@ export function templeOfArtemis(): G[] {
   return out;
 }
 export const ANCIENT: Models<'pyramids' | 'greatLighthouse' | 'stonehenge' | 'hangingGardens' | 'templeOfArtemis'> = {
-  pyramids: () => pyramids(H),
+  pyramids,
   greatLighthouse: () => greatLighthouse(islet),
   stonehenge,
   hangingGardens: () => hangingGardens(H),

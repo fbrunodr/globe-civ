@@ -73,13 +73,17 @@ describe('AR5: no faces fight for the same pixels', () => {
 describe('AR7: wonders on their site', () => {
   it('every wonder (and the scaffolding) builds within its 7×7 site, stands up, keeps within 15000 triangles (wonders are showpieces), and has no faces fighting', async () => {
     const { SITE_HALF, SITE_MODELS, wonderGeometry, wonderModelKind } = await import('../src/wonderModels.ts');
+    const { ISLET_DEPTH } = await import('../src/wonders/kit.ts');
+    const { WONDERS } = await import('../src/cities.ts');
     const bad: string[] = [];
     for (const m of SITE_MODELS) {
       const k = wonderModelKind(m), g = wonderGeometry(k);
       g.computeBoundingBox();
       const b = g.boundingBox!;
       if (Math.max(b.max.x, -b.min.x, b.max.z, -b.min.z) > SITE_HALF + 1e-6) bad.push(`${k}: off its site (${Math.max(b.max.x, -b.min.x, b.max.z, -b.min.z).toFixed(4)} > ${SITE_HALF})`);
-      if (b.max.y < 0.02 || b.min.y < -0.002) bad.push(`${k}: height ${b.min.y.toFixed(4)}..${b.max.y.toFixed(4)}`);
+      // (A wonder on the sea: its islet's rock goes on down to the sea floor.)
+      const floor = m !== 'scaffold' && WONDERS[m].beside === 'sea' ? -0.002 - ISLET_DEPTH : -0.002;
+      if (b.max.y < 0.02 || b.min.y < floor) bad.push(`${k}: height ${b.min.y.toFixed(4)}..${b.max.y.toFixed(4)}`);
       if (triangles(g) > 15000) bad.push(`${k}: ${triangles(g)} triangles`);
       const c = coplanarClashes(g, 1);
       if (c.length) bad.push(`${k}: ${c[0]!.colorA} on ${c[0]!.colorB} in plane ${c[0]!.plane} at ${c[0]!.at.map((v) => v.toFixed(4))}`);

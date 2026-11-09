@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { unitDef } from './rules.ts';
 import { GlobeCamera } from './camera.ts';
 import { HUMAN, type Game, type Unit, type City } from './game.ts';
-import { GROUND_COVERS, SNOW, tileLook, type GroundCover, type TileLook } from './look.ts';
+import { GROUND_COVERS, SEA_TINT, SNOW, tileLook, type GroundCover, type TileLook } from './look.ts';
 import { buildTerrainMesh, locate, newSample, type TerrainMesh } from './terrainMesh.ts';
 import { makeTerrainMaterial, makeTerrainDepthMaterial, paintViewColor, makeTable, FAN_ROWS, TILE_ROWS, IMPROVEMENT_CODE, BURNT_CODE, CROP_CODE, STAGE_STEP, ROAD_DIRT, ROAD_GRAIN, type TerrainMaterial } from './terrainMaterial.ts';
 import { makeSmoke, type Emitter, type Smoke } from './smoke.ts';
@@ -22,7 +22,7 @@ import { useOf } from './houseKit.ts';
 import { WORKS_VARIANT, houseFarGeometry, houseGeometry, houseSmoke, isHouseKind, parseHouseKind, type HouseKind } from './houses.ts';
 import { isWonderModelKind, wonderGeometry, type WonderModelKind } from './wonderModels.ts';
 import { isFloraRural, isCropRural, isSmoothRural, roamOf, isRuralModelKind, ruralGeometry, ruralModelKind, type RuralModelKind } from './rural/models.ts';
-import { CityProps, tileFrame, SUMMIT_HOUSES, type CitySpot } from './cityProps.ts';
+import { CityProps, tileFrame, SUMMIT_HOUSES, type CitySpot, type WaterSheet } from './cityProps.ts';
 import { CITY_CELL } from './cityPainter.ts';
 import { CELL, wallHeight } from './town/geometry.ts';
 import { resourceLook } from './rural/resourceModels.ts';
@@ -146,6 +146,10 @@ const ROAD_ACROSS = [-1, -0.88, -0.45, 0, 0.45, 0.88, 1] as const;
 const ROAD_MID = 3;
 const ROAD_STEP = 0.012;
 const ROAD_LIFT = 0.00004; // nearly flush with the ground
+// A wonder's water (cityProps.ts WaterSheet), laid on the ground: how deep
+// the water shader takes it to be (a formal basin's: still, a lake's
+// colour, no foam at its kerbs).
+const WONDER_WATER_DEPTH = 0.0009;
 const ROAD_SURFACE = 0.84;  // the surface layer's share of the street's width (the rest shows the edges)
 const ROAD_LAYER = 0.00002; // how far the surface sits above the edges
 const ROAD_KERB = [0.62, 0.59, 0.54] as const;
@@ -327,6 +331,8 @@ export class GlobeRenderer {
   // the joined network, never as lines across it.
   private readonly roadMats = [makeRoadMaterial(-2, false), makeRoadMaterial(-4, true)];
   private bridges: THREE.Group | null = null;
+  private wonderWater: THREE.Group | null = null;
+  private sheetMat: THREE.MeshPhysicalMaterial | null = null;
   private readonly bridgeMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
   private roadsKey = '';
   private readonly prevUse: Uint8Array;
@@ -1711,7 +1717,8 @@ export class GlobeRenderer {
       this.pave(pv.points, pv.rgb ?? (pv.paved ? PAVED_RGB : DIRT_RGB), at, lift + ROAD_LAYER * this.scale, batches.top.pos, batches.top.col, pv.exact);
       for (let i = n0; i < batches.top.pos.length; i += 3) batches.top.uv.push(0, 0, 2);
     }
-    for (const grp of [...this.roads, ...(this.bridges ? [this.bridges] : [])]) this.dropChunked(grp);
+    for (const grp of [...this.roads, ...(this.bridges ? [this.bridges] : []), ...(this.wonderWater ? [this.wonderWater] : [])]) this.dropChunked(grp);
+    this.wonderWater = this.waterSheets(this.cityProps.waters(), at, lift);
     this.roads = [batches.edge, batches.top].map((bt, i) => {
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.Float32BufferAttribute(bt.pos, 3));
@@ -1738,6 +1745,48 @@ export class GlobeRenderer {
     });
     this.bridges.userData['stat'] = 'roads & fields';
     this.scene.add(this.bridges);
+  }
+
+  // Wonders' water (cityProps.ts WaterSheet): each grid laid on the ground
+  // (or the water over it) `lift` above, drawn by the game's water material
+  // as standing water WONDER_WATER_DEPTH deep, a lake's colour.
+  private waterSheets(sheets: readonly WaterSheet[], at: Ground, lift: number): THREE.Group | null {
+    const pos: number[] = [];
+    for (const { grid } of sheets) {
+      if (!grid[0]?.[0] || !this.game.explored[at(grid[0][0]).t]) continue;
+      const on = grid.map((row) => row.map((d) => { const h = at(d); return d.clone().multiplyScalar(Math.max(h.ground, h.water) + lift); }));
+      for (let j = 0; j + 1 < on.length; j++) for (let i = 0; i + 1 < on[j]!.length; i++) {
+        const a = on[j]![i]!, b = on[j]![i + 1]!, c = on[j + 1]![i + 1]!, d = on[j + 1]![i]!;
+        pos.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z, a.x, a.y, a.z, c.x, c.y, c.z, d.x, d.y, d.z);
+      }
+    }
+    if (!pos.length) return null;
+    const n = pos.length / 3, tint = new THREE.Color(SEA_TINT.lake.deep);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('depth', new THREE.Float32BufferAttribute(new Float32Array(n).fill(WONDER_WATER_DEPTH), 1));
+    const tints = new Float32Array(n * 4);
+    for (let v = 0; v < n; v++) tints.set([tint.r, tint.g, tint.b, SEA_TINT.lake.murk], v * 4);
+    geo.setAttribute('tint', new THREE.Float32BufferAttribute(tints, 4));
+    // (Still: no flow; no grid line; in sight; a pool's, wsrc 2.)
+    geo.setAttribute('flow', new THREE.Float32BufferAttribute(new Float32Array(n * 3), 3));
+    for (const name of ['ring', 'unexplored', 'dim', 'wstep']) geo.setAttribute(name, new THREE.Float32BufferAttribute(new Float32Array(n), 1));
+    geo.setAttribute('wsrc', new THREE.Float32BufferAttribute(new Float32Array(n).fill(2), 1));
+    windOutward(geo);
+    // (The water's material, drawn over the ground it lies on as the roads are.)
+    if (!this.sheetMat) {
+      const base = this.waterMat.material;
+      this.sheetMat = base.clone();
+      this.sheetMat.onBeforeCompile = base.onBeforeCompile;
+      Object.assign(this.sheetMat, { polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+    }
+    const grp = this.chunkedSoup(geo, this.sheetMat, (m) => {
+      m.renderOrder = 1;
+      m.receiveShadow = true;
+    });
+    grp.userData['stat'] = 'water';
+    this.scene.add(grp);
+    return grp;
   }
 
   // A triangle soup (unindexed: roads, bridges), split into one mesh per

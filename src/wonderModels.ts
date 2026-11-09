@@ -14,10 +14,13 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { WonderKey } from './cities.ts';
 import type { G } from './houseKit.ts';
 import { scaffold } from './wonders/kit.ts';
+import { UNIT } from './cityPainter.ts';
 import { ANCIENT } from './wonders/ancient.ts';
 import { CLASSICAL } from './wonders/classical.ts';
 import { MEDIEVAL } from './wonders/medieval.ts';
 import { RENAISSANCE } from './wonders/renaissance.ts';
+import { versaillesGrounds } from './wonders/renaissanceB.ts';
+import type { CatalogKind } from './propCatalog.ts';
 import { INDUSTRIAL } from './wonders/industrial.ts';
 import { MODERN } from './wonders/modern.ts';
 import { INFORMATION } from './wonders/information.ts';
@@ -26,9 +29,6 @@ export { SITE_HALF } from './wonders/kit.ts';
 // What stands on a site: a wonder, or the scaffolding of one being built.
 export type SiteModel = Exclude<WonderKey, 'machuPicchu'> | 'scaffold';
 export type WonderModelKind = `wonder|${SiteModel}`;
-// Wonders that stand on the bare ground, sunk into a slope rather than
-// raised on a foundation (cityProps.ts standLot).
-export const ON_BARE_GROUND: ReadonlySet<string> = new Set<SiteModel>(['stonehenge']);
 export const wonderModelKind = (m: SiteModel): WonderModelKind => `wonder|${m}`;
 export const isWonderModelKind = (k: string): k is WonderModelKind => k.startsWith('wonder|');
 // About how tall a wonder in a city should rise (site units) to stand out
@@ -36,17 +36,43 @@ export const isWonderModelKind = (k: string): k is WonderModelKind => k.startsWi
 // models, not a rule (none is stretched to it).
 export const MIN_HEIGHT = 0.14;
 
-// How big a wonder beside its city is drawn, after its size in the world
-// (the greatest kept to what fits on its tile, a tile being one step
-// across its flats): on land, half the square it fills (tile steps; in a
-// city a wonder fills a square about 0.06 across, 4 × 4 houses); on the
-// sea, its model's scale (its islet 0.075 of it across, wonders/kit.ts).
+// How big a wonder beside its city is drawn: on land, half the square
+// its building fills (tile steps), at most twice across what the biggest
+// wonder fills in a city (CITY_HALF); on the sea, its model's scale (its
+// islet 0.075 of it across, wonders/kit.ts), near a city's.
+const CITY_HALF = 0.95 * 8 * UNIT; // (a city fits a site's pad to its rectangle, 16 units at most)
 const LAND_HALF: Partial<Record<SiteModel, number>> = {
-  pyramids: 0.24, stonehenge: 0.14, terracottaArmy: 0.2, petra: 0.15, versailles: 0.22, neuschwanstein: 0.17, fastTelescope: 0.22,
+  pyramids: 2 * CITY_HALF, versailles: 2 * CITY_HALF, fastTelescope: 1.8 * CITY_HALF, terracottaArmy: 1.6 * CITY_HALF,
+  neuschwanstein: 1.6 * CITY_HALF, petra: 1.5 * CITY_HALF, stonehenge: 1.3 * CITY_HALF,
 };
-const SEA_SCALE: Partial<Record<SiteModel, number>> = { greatLighthouse: 1.2, colossus: 0.8, statueOfLiberty: 1.1 };
-export const landHalf = (m: SiteModel): number => LAND_HALF[m] ?? 0.12;
+const SEA_SCALE: Partial<Record<SiteModel, number>> = { greatLighthouse: 1, colossus: 0.9, statueOfLiberty: 1 };
+// Wonders that stand beside a city on the bare ground, with no base: sunk
+// into a slope at its lowest corner rather than raised on a foundation
+// (cityProps.ts standLot).
+export const ON_BARE_GROUND: ReadonlySet<string> = new Set(Object.keys(LAND_HALF));
+export const landHalf = (m: SiteModel): number => LAND_HALF[m] ?? 2 * CITY_HALF;
 export const seaScale = (m: SiteModel): number => SEA_SCALE[m] ?? 0.9;
+
+// A wonder's grounds beside its city: what its model leaves to the game's
+// own systems, in the model's frame (x, z; its front +z; cityProps.ts lays
+// them out with it): its water, sheets of the game's water on the ground
+// (render.ts), each a rectangle or, if round, the ellipse in it (x, z its
+// middle, hw, hd its half sizes); its trees, the flora's own models,
+// `height` tall (model units). Part of its footprint (groundsBox).
+export interface WaterArea { readonly x: number; readonly z: number; readonly hw: number; readonly hd: number; readonly round?: boolean }
+export interface GroundTree { readonly x: number; readonly z: number; readonly kind: CatalogKind; readonly height: number }
+export interface WonderGrounds { readonly water: readonly WaterArea[]; readonly trees: readonly GroundTree[] }
+const GROUNDS: Partial<Record<SiteModel, WonderGrounds>> = { versailles: versaillesGrounds() };
+export const wonderGrounds = (m: SiteModel): WonderGrounds | null => GROUNDS[m] ?? null;
+// How far its grounds reach from its middle along x and z (model units).
+export function groundsBox(m: SiteModel): readonly [number, number] {
+  const gr = GROUNDS[m];
+  if (!gr) return [0, 0];
+  let hx = 0, hz = 0;
+  for (const w of gr.water) { hx = Math.max(hx, Math.abs(w.x) + w.hw); hz = Math.max(hz, Math.abs(w.z) + w.hd); }
+  for (const t of gr.trees) { hx = Math.max(hx, Math.abs(t.x)); hz = Math.max(hz, Math.abs(t.z)); }
+  return [hx, hz];
+}
 
 const MODELS: Record<SiteModel, () => G[]> = { ...ANCIENT, ...CLASSICAL, ...MEDIEVAL, ...RENAISSANCE, ...INDUSTRIAL, ...MODERN, ...INFORMATION, scaffold };
 

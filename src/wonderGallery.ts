@@ -10,8 +10,9 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { FlatPainter } from './flatPainter.ts';
 import { WorldLabel } from './worldLabel.ts';
-import { modelGeometry } from './buildingCatalog.ts';
-import { SITE_MODELS, landHalf, seaScale, wonderModelKind, type SiteModel } from './wonderModels.ts';
+import { modelGeometry, placedGeometry } from './buildingCatalog.ts';
+import { CATALOG } from './propCatalog.ts';
+import { SITE_MODELS, groundsBox, landHalf, seaScale, wonderGrounds, wonderModelKind, type SiteModel } from './wonderModels.ts';
 import { WONDERS, ERAS, type WonderKey, type EraIndex } from './cities.ts';
 import { TECH_KEYS, techDef } from './techs.ts';
 import { POLITICS_KEYS, politicsDef } from './politics.ts';
@@ -58,13 +59,38 @@ const HOUSE_SCALE = CITY_CELL / CELL;
 const models = SITE_MODELS.filter((m): m is Exclude<SiteModel, 'scaffold'> => m !== 'scaffold')
   .map((m) => ({ m, ...unlock(m) }))
   .sort((a, b) => a.era - b.era);
+// A wonder's grounds beside its city (wonderModels.ts wonderGrounds), as
+// the game lays them: its water (here flat, the game's water's colour) and
+// its trees, the flora's own models.
+const WATER = new THREE.Color(0x2f6a78);
+function grounds(m: SiteModel, x0: number, s: number): void {
+  const gr = wonderGrounds(m);
+  if (!gr) return;
+  const y = 0.0012 * s, P = (x: number, z: number) => new THREE.Vector3(x0 + x * s, y, z * s);
+  for (const w of gr.water) {
+    const n = w.round ? 32 : 4;
+    const ring = Array.from({ length: n }, (_, i) => {
+      const a = ((i + (w.round ? 0 : 0.5)) / n) * Math.PI * 2, k = w.round ? 1 : Math.SQRT2;
+      return P(w.x + Math.max(-1, Math.min(1, Math.cos(a) * k)) * w.hw, w.z + Math.max(-1, Math.min(1, Math.sin(a) * k)) * w.hd);
+    });
+    const mid = P(w.x, w.z);
+    ring.forEach((p, i) => paint.tri(WATER, mid, ring[(i + 1) % n]!, p));
+  }
+  const tall = new Map<string, number>();
+  for (const [i, t] of gr.trees.entries()) {
+    let h = tall.get(t.kind);
+    if (h === undefined) { const geo = placedGeometry(t.kind); geo.computeBoundingBox(); h = geo.boundingBox!.max.y; geo.dispose(); tall.set(t.kind, h); }
+    const k = (t.height * s) / h;
+    paint.model(t.kind, P(t.x, t.z).setY(0), i * 2.4, new THREE.Vector3(k, k, k), CATALOG[t.kind].leaf);
+  }
+}
 let x = 0.05;
 const at = new Map<string, { x: number; h: number; r: number }>();
 const house = houseKind(styleOf('Romans', 3), 'b22', 3, 0);
 for (const { m, era, by } of models) {
   const kind = wonderModelKind(m), g = modelGeometry(kind);
   g.computeBoundingBox();
-  const b = g.boundingBox!, hw = Math.max(-b.min.x, b.max.x, -b.min.z, b.max.z);
+  const b = g.boundingBox!, hw = Math.max(-b.min.x, b.max.x, -b.min.z, b.max.z, ...groundsBox(m));
   // (Its size in the game: in a city, fitted to its rectangle; beside it,
   // its own size on land or on the sea: wonderModels.ts landHalf, seaScale.)
   const where = WONDERS[m].beside;
@@ -72,6 +98,7 @@ for (const { m, era, by } of models) {
   const half = hw * s;
   x += half;
   paint.model(kind, new THREE.Vector3(x, 0, 0), 0, new THREE.Vector3(s, s, s), 0xffffff);
+  if (where === 'land') grounds(m, x, s);
   paint.model(house, new THREE.Vector3(x + half + 0.03, 0, 0.02), 0, new THREE.Vector3(HOUSE_SCALE, HOUSE_SCALE, HOUSE_SCALE), 0xb5523a);
   at.set(m, { x, h: b.max.y * s, r: half });
   label(WONDERS[m].name, x + 0.015, half + 0.04, true);
