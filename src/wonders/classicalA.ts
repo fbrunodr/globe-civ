@@ -1,5 +1,5 @@
 // Five of the Classical era's wonders (classical.ts): the Acropolis with
-// its Parthenon, Persepolis, the Colosseum, the Great Library and the
+// its Parthenon, the Apadana (Persepolis), the Colosseum, the Great Library and the
 // Terracotta Army. Site units (kit.ts), the front +z.
 
 import * as THREE from 'three';
@@ -211,7 +211,7 @@ function scaled(parts: G[], s: number, x: number, y: number, z: number): G[] {
   return parts;
 }
 
-// ---------- Persepolis ----------
+// ---------- Persepolis: the Apadana ----------
 
 // The terrace of the King of Kings: its great double stair; the Gate of
 // All Nations between its winged bulls; the Apadana, its porticoes of tall
