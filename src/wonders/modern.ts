@@ -4,7 +4,8 @@
 // against the town (a storey about 0.95 cell, a tall skyscraper 14.6).
 
 import * as THREE from 'three';
-import { P, V, ball, box, cone, cyl, disc, drumC, flat, pane, rnd, rod, shade, type G, type Models } from './kit.ts';
+import { P, V, ball, box, cone, cyl, disc, drumC, flat, pane, rnd, rod, shade, statue, type G, type Models } from './kit.ts';
+import { CRISTO } from './statues.ts';
 
 const PAD = 0xc9c4b8, PAVE = 0xc9c4b8;
 
@@ -94,49 +95,8 @@ function cristoRedentor(): G[] {
   const yt = CH;
   out.push(drumC(0.024, 0.025, 0.003, 16, shade(PAVE, 0.95), { y: yt - 0.001 }));
   out.push(disc(0.0245, PAVE, 0, 0, yt + 0.0021, 16));
-  // The statue on its pedestal, drawn at 1.5 × and set on the terrace.
-  const st: G[] = [];
-  {
-    const out = st;
-  // The pedestal: a stepped base, the chapel's block with its door.
-  const yp = 0;
-  out.push(...box(0.016, 0.0025, 0.016, shade(SOAP, 0.92), { y: yp }));
-  out.push(...box(0.0125, 0.011, 0.0125, shade(SOAP, 0.95), { y: yp + 0.0025 }, shade(SOAP, 0.9)));
-  out.push(pane(0.003, 0.005, 0x4a3a2c, 0, yp + 0.0025, 0.0065));
-  out.push(...box(0.0138, 0.0012, 0.0138, SOAP, { y: yp + 0.0135 }));
-  // The figure: the robe falling in straight Art Deco folds, a little
-  // wider at the shoulders; the sleeves hanging from the open arms.
-  const yf = yp + 0.0147, hRobe = 0.0285;
-  out.push(P(new THREE.CylinderGeometry(0.0056, 0.0046, hRobe, 12, 1, false).scale(1, 1, 0.72).translate(0, hRobe / 2, 0), SOAP, { y: yf }));
-  for (let k = -3; k <= 3; k++) out.push(...box(0.0007, hRobe * (0.86 - Math.abs(k) * 0.05), 0.0006, shade(SOAP, 0.93), { x: k * 0.0013, y: yf, z: 0.0034 - Math.abs(k) * 0.00022 }));
-  out.push(...box(0.0018, 0.0009, 0.0007, shade(SOAP, 0.96), { y: yf + hRobe * 0.62, z: 0.0041 })); // the heart and sash
-  const ys = yf + hRobe - 0.0012, span = 0.0165;
-  for (const s of [-1, 1]) {
-    // The arm, wrist to shoulder, and its sleeve: a long wedge hanging under it.
-    out.push(P(new THREE.BoxGeometry(span - 0.004, 0.0024, 0.0028).translate(s * (span - 0.004) / 2 + s * 0.004, 0, 0), SOAP, { y: ys }));
-    // (Its lower edge sweeping from the body down to the forearm and up to the wrist.)
-    const prof: [number, number][] = [[0.0045, -0.006], [0.008, -0.0085], [0.0115, -0.0075], [span - 0.003, -0.0038]];
-    const pts: number[] = [];
-    for (let k = 0; k < prof.length - 1; k++) {
-      const [a0, d0] = prof[k]!, [a1, d1] = prof[k + 1]!, xa = s * a0, xb = s * a1;
-      for (const zz of [0.0011, -0.0011]) pts.push(xa, 0, zz, xb, 0, zz, xb, d1, zz, xa, 0, zz, xb, d1, zz, xa, d0, zz);
-      pts.push(xa, d0, 0.0011, xb, d1, 0.0011, xb, d1, -0.0011, xa, d0, 0.0011, xb, d1, -0.0011, xa, d0, -0.0011);
-    }
-    const sl = new THREE.BufferGeometry();
-    sl.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
-    out.push(P(sl, shade(SOAP, 0.97), { y: ys }));
-    // The hand, open, palm forward.
-    out.push(...box(0.0028, 0.0026, 0.0012, SOAP, { x: s * (span + 0.0012), y: ys - 0.0013 }));
-  }
-  out.push(P(new THREE.CylinderGeometry(0.0047, 0.0058, 0.0034, 12).scale(1, 1, 0.72).translate(0, 0.0017, 0), SOAP, { y: ys - 0.0017 })); // the shoulders
-  // The head bowed a little forward, its hair falling behind, the beard.
-  out.push(cyl(0.0013, 0.0012, 0.0022, 6, SOAP, { y: ys + 0.0014 }));
-  out.push(ball(0.0024, SOAP, { y: ys + 0.0055, z: 0.0004, sy: 1.22 }, 1));
-  out.push(ball(0.0025, shade(SOAP, 0.92), { y: ys + 0.006, z: -0.0006, sy: 1.15, sz: 0.9 }, 1));
-  out.push(ball(0.0012, shade(SOAP, 0.95), { y: ys + 0.0036, z: 0.0019, sy: 1.15 }));
-  }
-  const s14 = 1.5, m = new THREE.Matrix4().makeScale(s14, s14, s14).premultiply(new THREE.Matrix4().makeTranslation(0, yt + 0.002, 0));
-  out.push(...st.map((g) => g.applyMatrix4(m)));
+  // The statue on its pedestal, set on the terrace.
+  out.push(statue(CRISTO, 0.08, SOAP, { y: yt + 0.002 }));
   return out;
 }
 

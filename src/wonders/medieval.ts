@@ -204,34 +204,37 @@ function gallery(cx: number, cz: number, w: number, d: number, t: number, y: num
 function angkorWat(): G[] {
   const out: G[] = [];
   const S = 0xa39478, ROOF = 0x857a66;
-  // The temple: its three galleries on their terraces.
-  const cz = -0.006;
-  out.push(...box(0.09, 0.006, 0.076, shade(S, 0.9), { z: cz }, shade(S, 1.05)));
-  out.push(...gallery(0, cz, 0.086, 0.072, 0.006, 0.006, 0.0055, S, ROOF));
-  for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) out.push(...lotus(x * 0.04, 0.0115, cz + z * 0.033, 0.014, 0.0028, S));
+  // The temple: its three galleries on their terraces (each storey a
+  // little taller than true, to stand by the town's).
+  const cz = -0.006, T0 = 0.008, G0 = 0.0075, T1 = 0.011, G1 = 0.0082, G2 = 0.0082;
+  out.push(...box(0.09, T0, 0.076, shade(S, 0.9), { z: cz }, shade(S, 1.05)));
+  out.push(...gallery(0, cz, 0.086, 0.072, 0.006, T0, G0, S, ROOF));
+  const yl0 = T0 + G0;
+  for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) out.push(...lotus(x * 0.04, yl0, cz + z * 0.033, 0.014, 0.0028, S));
   for (const a of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
     const along = Math.abs(Math.sin(a)) > 0.5, x = Math.sin(a) * (along ? 0.04 : 0), z = cz + Math.cos(a) * (along ? 0 : 0.033);
-    out.push(...lotus(x, 0.0115, z, 0.016, 0.0034, S));
+    out.push(...lotus(x, yl0, z, 0.016, 0.0034, S));
   }
-  out.push(...box(0.062, 0.008, 0.052, shade(S, 0.88), { y: 0.006, z: cz }, shade(S, 1.04)));
-  out.push(...gallery(0, cz, 0.058, 0.048, 0.005, 0.014, 0.006, S, ROOF));
-  for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) out.push(...lotus(x * 0.0265, 0.02, cz + z * 0.0215, 0.016, 0.0026, S));
+  out.push(...box(0.062, T1, 0.052, shade(S, 0.88), { y: T0, z: cz }, shade(S, 1.04)));
+  const y2 = T0 + T1;
+  out.push(...gallery(0, cz, 0.058, 0.048, 0.005, y2, G1, S, ROOF));
+  for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) out.push(...lotus(x * 0.0265, y2 + G1, cz + z * 0.0215, 0.016, 0.0026, S));
   // The highest terrace, banded, its steep stairs, the inner gallery and its cross.
-  const yt = 0.014, ht = 0.016;
+  const yt = y2, ht = 0.021;
   out.push(...frustum(0.04, 0.036, 0.034, 0.03, ht, shade(S, 0.92), { y: yt, z: cz }, shade(S, 1.05)));
   for (let k = 1; k < 5; k++) { const f = k / 5; out.push(...frustum(0.04 - 0.006 * f + 0.0006, 0.036 - 0.006 * f + 0.0006, 0.04 - 0.006 * (f + 0.03) + 0.0006, 0.036 - 0.006 * (f + 0.03) + 0.0006, ht * 0.03, shade(S, 0.8), { y: yt + ht * f, z: cz })); }
   for (const a of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
     const along = Math.abs(Math.sin(a)) > 0.5, half = along ? 0.017 : 0.015;
-    out.push(...turned(stair(0, 0.005, cz + half + 0.009, yt, cz + half - 0.0005, yt + ht, shade(S, 1.05), 12), a, 0, cz));
+    out.push(...turned(stair(0, 0.005, cz + half + 0.009, yt, cz + half - 0.0005, yt + ht, shade(S, 1.05), 14), a, 0, cz));
   }
   const y1 = yt + ht;
-  out.push(...gallery(0, cz, 0.034, 0.03, 0.004, y1, 0.006, S, ROOF));
-  out.push(...box(0.004, 0.006, 0.022, shade(S, 0.85), { y: y1, z: cz }), ...box(0.026, 0.006, 0.004, shade(S, 0.85), { y: y1, z: cz }));
-  out.push(...gable(0.0048, 0.0228, 0.002, ROOF, { y: y1 + 0.006, z: cz }, true, S), ...gable(0.0268, 0.0048, 0.002, ROOF, { y: y1 + 0.006, z: cz }));
+  out.push(...gallery(0, cz, 0.034, 0.03, 0.004, y1, G2, S, ROOF));
+  out.push(...box(0.004, G2, 0.022, shade(S, 0.85), { y: y1, z: cz }), ...box(0.026, G2, 0.004, shade(S, 0.85), { y: y1, z: cz }));
+  out.push(...gable(0.0048, 0.0228, 0.002, ROOF, { y: y1 + G2, z: cz }, true, S), ...gable(0.0268, 0.0048, 0.002, ROOF, { y: y1 + G2, z: cz }));
   // The five towers.
   for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) out.push(...lotus(x * 0.015, y1, cz + z * 0.013, 0.036, 0.0042, S));
   out.push(...lotus(0, y1, cz, 0.062, 0.0058, shade(S, 1.03)));
-  return onPad(out, 5);
+  return onPad(out, 5.6);
 }
 
 // ---------- Paris ----------

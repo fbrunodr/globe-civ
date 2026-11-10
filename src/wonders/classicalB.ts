@@ -6,10 +6,11 @@ import * as THREE from 'three';
 import { prism } from '../houseKit.ts';
 import {
   P, V, archPane, ball, box, column, cone, cyl, drumC, figure, flat, islet, pane, peristyle, rnd, rod,
-  shade, steps, H, type G,
+  shade, statue, steps, H, type G,
 } from './kit.ts';
+import { COLOSSUS, ZEUS } from './statues.ts';
 
-const MARBLE = 0xe6e0d2, GOLD = 0xd8b040, IVORY = 0xeadcc0, BRONZE = 0xa8783e;
+const MARBLE = 0xe6e0d2, GOLD = 0xd8b040, BRONZE = 0xa8783e;
 
 // A wonder in a city stands on a plain pad over its whole site (which fixes
 // the city's fit: a city cell is then about 0.039 site units), the monument
@@ -116,142 +117,13 @@ export function colossus(): G[] {
   out.push(...sqFrustum(0.039, 0.034, 0.0012, shade(M, 0.96), y, shade(M, 0.96))); y += 0.0012;
   out.push(...box(0.026, 0.0016, 0.021, shade(0xb88a4e, 0.72), { y, z: 0.001 })); y += 0.0016;
   // The god himself.
-  out.push(...helios(y, 0.125, 0xa87238));
+  out.push(statue(COLOSSUS, 0.14, 0xa87238, { y }));
   return out;
 }
 // A square frustum (a moulding) from w0 across at y to w1 at y + h; its top in `top`, if given.
 function sqFrustum(w0: number, w1: number, h: number, c: number, y: number, top?: number): G[] {
   const out = [P(new THREE.CylinderGeometry(w1 * Math.SQRT1_2, w0 * Math.SQRT1_2, h, 4, 1, true).rotateY(Math.PI / 4).translate(0, h / 2, 0), c, { y })];
   if (top !== undefined) out.push(P(new THREE.PlaneGeometry(w1, w1).rotateX(-Math.PI / 2), top, { y: y + h }));
-  return out;
-}
-// A unit ball squared off into a rounded capsule (its sides fuller than a
-// sphere's, so limbs meet without pinching at the joints): sides (1 - |y|^3)^⅓.
-function hRound(): THREE.BufferGeometry {
-  const g = new THREE.SphereGeometry(1, 12, 9), pos = g.getAttribute('position');
-  for (let i = 0; i < pos.count; i++) {
-    const y = pos.getY(i), s0 = Math.sqrt(Math.max(0, 1 - y * y));
-    const f = s0 < 1e-6 ? 0 : Math.cbrt(Math.max(0, 1 - Math.pow(Math.abs(y), 3))) / s0;
-    pos.setXYZ(i, pos.getX(i) * f, y, pos.getZ(i) * f);
-  }
-  return g;
-}
-// A smooth body from a to b (a limb, a muscle): a rounded capsule ra round
-// at a's end, rb at b's, reaching k of the way past each end; sz flattens it front to back.
-function hLimb(a: THREE.Vector3, b: THREE.Vector3, ra: number, rb: number, c: number, k = 1.12, sz = 1): G {
-  const d = b.clone().sub(a), l = d.length(), g = hRound();
-  const pos = g.getAttribute('position');
-  for (let i = 0; i < pos.count; i++) {
-    const t = (pos.getY(i) + 1) / 2, rr = rb + (ra - rb) * t;
-    pos.setXYZ(i, pos.getX(i) * rr, pos.getY(i) * (l / 2) * k, pos.getZ(i) * rr * sz);
-  }
-  // (SphereGeometry's y runs from its top: t = 1 at the top, which goes to a.)
-  g.applyMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion().setFromUnitVectors(V(0, -1, 0), d.normalize())));
-  g.computeVertexNormals();
-  return P(g.translate((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2), c);
-}
-// A smooth blob at p, radii rx × ry × rz, turned by rz then rx.
-function hBlob(p: THREE.Vector3, rx: number, ry: number, rz: number, c: number, turn: { x?: number; z?: number; y?: number } = {}): G {
-  return P(new THREE.SphereGeometry(1, 12, 8).scale(rx, ry, rz), c, { x: p.x, y: p.y, z: p.z, rx: turn.x ?? 0, ry: turn.y ?? 0, rz: turn.z ?? 0 });
-}
-// Hanging cloth from bot up to top: a cylinder (or, given tl, part of one
-// from angle t0) rb round at the hem, rt at the top, rippled into `folds`
-// folds `depth` deep (deepest at the hem); an open sheet is drawn from both sides.
-function hDrape(bot: THREE.Vector3, top: THREE.Vector3, rb: number, rt: number, folds: number, depth: number, c: number, o: { t0?: number; tl?: number; sz?: number } = {}): G[] {
-  const l = bot.distanceTo(top), tl = o.tl ?? Math.PI * 2, open = tl < Math.PI * 2 - 1e-6;
-  const g = new THREE.CylinderGeometry(rt, rb, l, 36, 6, true, o.t0 ?? 0, tl).translate(0, l / 2, 0);
-  const pos = g.getAttribute('position');
-  for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i), th = Math.atan2(x, z);
-    const f = 1 + depth * Math.sin(folds * th + (y / l) * 1.7) * (0.35 + 0.65 * (1 - y / l));
-    pos.setXYZ(i, x * f, y, z * f * (o.sz ?? 1));
-  }
-  g.applyMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion().setFromUnitVectors(V(0, 1, 0), top.clone().sub(bot).normalize())));
-  g.translate(bot.x, bot.y, bot.z);
-  g.computeVertexNormals();
-  const out = [P(g.clone(), c)];
-  if (open) {
-    const idx = g.getIndex()!, a = idx.array, rev: number[] = [];
-    for (let i = 0; i < a.length; i += 3) rev.push(a[i]!, a[i + 2]!, a[i + 1]!);
-    const back = g.clone();
-    back.setIndex(rev);
-    back.computeVertexNormals();
-    out.push(P(back, c));
-  }
-  return out;
-}
-// A standing god, h to the crown of his head, facing +z, feet at y0, in
-// bronze c: an athlete's body modelled in smooth masses, in contrapposto
-// (his weight on his right leg, -x; the right hip up, the left knee bent
-// and forward), the right arm raised with the torch, the left lowered with
-// the cloak over it; curls, the radiant crown.
-function helios(y0: number, h: number, c: number): G[] {
-  const D = shade(c, 0.8), L = shade(c, 1.1), CL = shade(c, 0.9), out: G[] = [];
-  const p = (x: number, y: number, z: number) => V(x * h, y0 + y * h, z * h);
-  type J = readonly [number, number, number];
-  const limb = (a: J, b: J, ra: number, rb: number, col = c, k = 1.12, sz = 1) => out.push(hLimb(p(...a), p(...b), ra * h, rb * h, col, k, sz));
-  const blob = (at: J, rx: number, ry: number, rz: number, col = c, turn: { x?: number; y?: number; z?: number } = {}) => out.push(hBlob(p(...at), rx * h, ry * h, rz * h, col, turn));
-  // The legs: the right straight under him, the left at ease, its heel lifted.
-  const legs = [
-    { hip: [-0.052, 0.515, 0], knee: [-0.047, 0.285, 0.01], ankle: [-0.044, 0.048, -0.004], foot: [-0.048, 0.018, 0.03], fry: 0.12, frx: 0 },
-    { hip: [0.05, 0.497, 0], knee: [0.08, 0.278, 0.05], ankle: [0.098, 0.06, -0.012], foot: [0.104, 0.026, 0.024], fry: -0.25, frx: 0.32 },
-  ] as const;
-  for (const { hip, knee, ankle, foot, fry, frx } of legs) {
-    limb(knee, hip, 0.037, 0.062, c, 1.1);
-    blob([knee[0] * 0.55 + hip[0] * 0.45, knee[1] * 0.55 + hip[1] * 0.45, knee[2] * 0.55 + hip[2] * 0.45 + 0.012], 0.04, 0.08, 0.034); // the quadriceps
-    limb(ankle, knee, 0.022, 0.034, c, 1.08);
-    blob([ankle[0] * 0.35 + knee[0] * 0.65, ankle[1] * 0.35 + knee[1] * 0.65, ankle[2] * 0.35 + knee[2] * 0.65 - 0.017], 0.033, 0.072, 0.032); // the calf
-    blob(foot, 0.026, 0.019, 0.062, D, { x: frx, y: fry });
-  }
-  // The trunk: hips tilted (the right up), the chest turned back level; glutes, belly, ribs, chest.
-  blob([-0.008, 0.52, -0.004], 0.092, 0.07, 0.058, c, { z: -0.07 });
-  for (const s of [-1, 1]) blob([s * 0.045 - 0.008, 0.505 + (s < 0 ? 0.006 : 0), -0.032], 0.05, 0.056, 0.042, c, { z: -0.07 });
-  limb([-0.006, 0.54, 0.002], [0, 0.765, 0], 0.084, 0.108, c, 1.1, 0.66);
-  blob([0, 0.728, 0.03], 0.098, 0.044, 0.042, c, { z: 0.04 }); // the chest's shelf
-  blob([0, 0.795, -0.018], 0.1, 0.04, 0.052, c, { z: 0.04 }); // the trapezius
-  blob([-0.118, 0.79, 0], 0.04, 0.042, 0.042);
-  blob([0.114, 0.776, 0], 0.04, 0.042, 0.042);
-  // The neck and head: jaw, nose, brow; curls; the crown of rays.
-  limb([0, 0.78, -0.006], [0.002, 0.88, 0.01], 0.043, 0.037, c, 1.0);
-  blob([0.002, 0.935, 0.006], 0.05, 0.064, 0.058, c, { x: -0.05, z: 0.05 });
-  blob([0.002, 0.898, 0.03], 0.034, 0.028, 0.03);
-  blob([0.002, 0.93, 0.064], 0.008, 0.015, 0.011, L);
-  blob([0.002, 0.948, 0.05], 0.04, 0.011, 0.014, c);
-  const r = rnd(5);
-  for (let i = 0; i < 26; i++) {
-    const a = (i / 26) * Math.PI * 2, e = 0.15 + r() * 0.9, rr = 0.058;
-    const x = Math.sin(a) * Math.cos(e) * rr, y = 0.94 + Math.sin(e) * rr * 1.05, z = Math.cos(a) * Math.cos(e) * rr - 0.002;
-    if (z > 0.03 && y < 0.975) continue; // (the face clear)
-    blob([x + 0.002, y, z], 0.017, 0.016, 0.017, D);
-  }
-  const crown = p(0.002, 0.968, 0.004);
-  out.push(P(new THREE.TorusGeometry(0.057 * h, 0.006 * h, 4, 18).rotateX(Math.PI / 2 - 0.12), GOLD, xyz(crown)));
-  for (let i = 0; i < 13; i++) {
-    const a = (i / 13) * Math.PI * 2, dir = V(Math.sin(a), 0.62, Math.cos(a)).normalize();
-    const s = crown.clone().add(V(Math.sin(a) * 0.055 * h, 0, Math.cos(a) * 0.055 * h));
-    out.push(rod(s, s.clone().addScaledVector(dir, 0.07 * h), 0.011 * h, GOLD, 4, 0.0015 * h));
-  }
-  // The right arm raised, the torch high in his fist.
-  const sh: J = [-0.122, 0.79, 0], el: J = [-0.2, 0.925, 0.025], wr: J = [-0.205, 1.075, 0.05];
-  limb(el, sh, 0.03, 0.045, c, 1.15);
-  limb(wr, el, 0.021, 0.032, c, 1.12);
-  blob([-0.205, 1.1, 0.05], 0.022, 0.03, 0.024);
-  out.push(rod(p(-0.205, 1.05, 0.05), p(-0.205, 1.19, 0.05), 0.012 * h, D, 7, 0.018 * h));
-  out.push(drumC(0.02 * h, 0.034 * h, 0.03 * h, 10, shade(c, 1.05), { ...xyz(p(-0.205, 1.185, 0.05)) }));
-  blob([-0.205, 1.25, 0.05], 0.03, 0.05, 0.03, 0xf0a040);
-  blob([-0.205, 1.265, 0.052], 0.018, 0.04, 0.018, 0xffe08a);
-  // The left arm lowered, its forearm forward under the cloak.
-  const sl: J = [0.118, 0.775, 0], el2: J = [0.165, 0.625, -0.012], wr2: J = [0.2, 0.555, 0.085];
-  limb(el2, sl, 0.03, 0.045, c, 1.15);
-  limb(wr2, el2, 0.021, 0.031, c, 1.12);
-  blob([0.205, 0.545, 0.105], 0.022, 0.026, 0.026);
-  // The cloak: down his back from the shoulders, over the left shoulder, and
-  // over the forearm in a fall of folds to the plinth (which bears him up).
-  out.push(...hDrape(p(0.0, 0.3, -0.012), p(0.0, 0.8, -0.01), 0.13 * h, 0.104 * h, 9, 0.12, CL, { t0: Math.PI * 0.62, tl: Math.PI * 0.95, sz: 0.8 }));
-  blob([0.105, 0.79, 0.004], 0.05, 0.03, 0.055, CL, { z: -0.35 });
-  limb(wr2, el2, 0.04, 0.042, CL, 1.0, 0.95);
-  out.push(...hDrape(p(0.218, 0.2, 0.06), p(0.205, 0.56, 0.065), 0.058 * h, 0.042 * h, 6, 0.16, CL, { sz: 0.7 }));
-  blob([0.205, 0.56, 0.06], 0.045, 0.02, 0.04, CL);
   return out;
 }
 
@@ -368,65 +240,10 @@ export function statueOfZeus(): G[] {
   out.push(...figure(0, zc + hd, 0.01, GOLD, { y: ye + 0.011, skin: GOLD, arm: 1 }));
   // The pool of olive oil before the god, its white rim.
   out.push(flat(0.022, 0.024, 0xf2ece0, 0, zc + 0.014, y + 0.0002), flat(0.018, 0.02, 0xa89a5a, 0, zc + 0.014, y + 0.0004));
-  // The throne's base, carved with gold reliefs; the footstool.
-  const zt = zc - 0.03;
-  out.push(...box(0.04, 0.011, 0.034, 0x2a2420, { y, z: zt }, shade(0x2a2420, 1.2)));
-  for (let k = 0; k < 7; k++) out.push(pane(0.0035, 0.007, GOLD, -0.0165 + k * 0.0055, y + 0.002, zt + 0.0172));
-  const yb = y + 0.011;
-  out.push(...zeus(yb, zt));
+  // The god on his throne (its base and footstool carved with him).
+  const zt = zc - 0.026;
+  out.push(statue(ZEUS, 0.085, 0xd8c08a, { y, z: zt }));
   return onPad(out, 1.04);
-}
-// The seated god on his throne, the throne's seat at yb (its base's top),
-// its middle at zt, facing +z.
-function zeus(yb: number, zt: number): G[] {
-  const out: G[] = [], EB = 0x4a2e22, R = 0xe8c060;
-  const seat = yb + 0.017;
-  // The throne: gilded legs, an ebony seat and high back framed in gold, armrests on sphinxes.
-  for (const [x, z] of [[-0.014, -0.01], [0.014, -0.01], [-0.014, 0.01], [0.014, 0.01]] as const) out.push(drumC(0.0016, 0.0013, 0.017, 6, GOLD, { x, y: yb, z: zt + z }));
-  out.push(...box(0.032, 0.0035, 0.026, EB, { y: seat, z: zt }, shade(EB, 1.3)));
-  out.push(...box(0.034, 0.056, 0.004, EB, { y: seat, z: zt - 0.012 }));
-  out.push(pane(0.028, 0.048, shade(GOLD, 0.85), 0, seat + 0.004, zt - 0.0098));
-  out.push(pane(0.024, 0.044, EB, 0, seat + 0.006, zt - 0.0096));
-  for (const s of [-1, 1]) {
-    out.push(ball(0.0026, GOLD, { x: s * 0.016, y: seat + 0.058, z: zt - 0.012 }));
-    out.push(...box(0.004, 0.003, 0.024, GOLD, { x: s * 0.016, y: seat + 0.012, z: zt }));
-    out.push(...box(0.0034, 0.012, 0.004, shade(GOLD, 0.9), { x: s * 0.016, y: seat, z: zt + 0.01 }));
-    out.push(ball(0.0024, GOLD, { x: s * 0.016, y: seat + 0.014, z: zt + 0.012 }));
-  }
-  out.push(...box(0.026, 0.0045, 0.009, GOLD, { y: yb, z: zt + 0.02 }));
-  // The god: gold robe over his legs and lap, ivory body, gold hair and beard.
-  const hy = seat + 0.0045, hz = zt - 0.002;
-  for (const s of [-1, 1]) {
-    out.push(rod(V(s * 0.006, hy + 0.004, hz), V(s * 0.0068, hy + 0.004, zt + 0.018), 0.0062, GOLD, 7, 0.0056));
-    out.push(rod(V(s * 0.0068, hy + 0.004, zt + 0.018), V(s * 0.007, yb + 0.0055, zt + 0.021), 0.0052, shade(GOLD, 0.95), 7, 0.0046));
-    out.push(...box(0.004, 0.002, 0.007, IVORY, { x: s * 0.007, y: yb + 0.0045, z: zt + 0.022 }));
-  }
-  out.push(P(new THREE.BoxGeometry(0.02, 0.012, 0.004), shade(GOLD, 0.9), { y: hy - 0.0015, z: zt + 0.0205 })); // the robe falling between his knees
-  out.push(...box(0.022, 0.006, 0.02, GOLD, { y: hy, z: zt + 0.006 }));
-  out.push(P(new THREE.CylinderGeometry(0.0118, 0.0088, 0.03, 10).translate(0, 0.015, 0), IVORY, { y: hy + 0.005, z: hz, sz: 0.7 }));
-  for (const s of [-1, 1]) {
-    out.push(ball(0.0052, shade(IVORY, 1.04), { x: s * 0.0048, y: hy + 0.027, z: hz + 0.0055, sy: 0.75, sz: 0.6 }));
-    out.push(ball(0.0055, IVORY, { x: s * 0.0125, y: hy + 0.031, z: hz }));
-  }
-  out.push(rod(V(-0.012, hy + 0.033, hz), V(0.009, hy + 0.006, hz + 0.004), 0.0042, GOLD, 6)); // the robe over his left shoulder
-  out.push(rod(V(0, hy + 0.033, hz), V(0, hy + 0.039, hz + 0.001), 0.0036, IVORY, 6));
-  out.push(ball(0.0062, IVORY, { y: hy + 0.0435, z: hz + 0.0012, sy: 1.1 }, 1));
-  out.push(ball(0.0066, R, { y: hy + 0.0455, z: hz - 0.0012, sy: 0.85 }, 1));
-  out.push(ball(0.0042, R, { y: hy + 0.0385, z: hz + 0.0048, sy: 1.3, sz: 0.8 }, 1));
-  out.push(P(new THREE.TorusGeometry(0.0062, 0.0011, 4, 12).rotateX(Math.PI / 2), 0x7a9a4a, { y: hy + 0.047, z: hz }));
-  // His right arm forward, Victory standing on his hand.
-  out.push(rod(V(0.0125, hy + 0.031, hz), V(0.016, hy + 0.017, hz + 0.008), 0.0042, IVORY, 6, 0.0036), ball(0.0036, IVORY, { x: 0.016, y: hy + 0.017, z: hz + 0.008 }));
-  out.push(rod(V(0.016, hy + 0.017, hz + 0.008), V(0.016, hy + 0.019, hz + 0.022), 0.0036, IVORY, 6, 0.003), ball(0.0032, IVORY, { x: 0.016, y: hy + 0.019, z: hz + 0.023 }));
-  out.push(...figure(0.016, hz + 0.023, 0.011, GOLD, { y: hy + 0.021, skin: GOLD, arm: 1 }));
-  for (const s of [-1, 1]) out.push(P(new THREE.PlaneGeometry(0.006, 0.0045).translate(s * 0.003, 0, 0), shade(GOLD, 1.08), { x: 0.016, y: hy + 0.0295, z: hz + 0.021, ry: s * 0.5, rz: s * 0.4 }));
-  // His left arm raised on the sceptre, the eagle on its top.
-  out.push(rod(V(-0.0125, hy + 0.031, hz), V(-0.02, hy + 0.04, hz + 0.004), 0.0042, IVORY, 6, 0.0036), ball(0.0036, IVORY, { x: -0.02, y: hy + 0.04, z: hz + 0.004 }));
-  out.push(rod(V(-0.02, hy + 0.04, hz + 0.004), V(-0.021, hy + 0.05, hz + 0.008), 0.0036, IVORY, 6, 0.003), ball(0.0033, IVORY, { x: -0.021, y: hy + 0.051, z: hz + 0.008 }));
-  out.push(rod(V(-0.021, yb + 0.004, hz + 0.008), V(-0.021, hy + 0.074, hz + 0.008), 0.0011, GOLD, 5));
-  for (let k = 0; k < 6; k++) out.push(ball(0.0015, k % 2 ? 0x3d5f8f : 0xa8473a, { x: -0.021, y: yb + 0.012 + k * 0.012, z: hz + 0.008 }));
-  out.push(ball(0.0026, GOLD, { x: -0.021, y: hy + 0.077, z: hz + 0.008, sy: 0.8, sx: 1.4 }));
-  for (const s of [-1, 1]) out.push(P(new THREE.PlaneGeometry(0.0055, 0.0035).translate(s * 0.0028, 0.0015, 0), shade(GOLD, 0.92), { x: -0.021, y: hy + 0.078, z: hz + 0.008, rz: s * 0.5 }));
-  return out;
 }
 
 // ---------- Jerusalem ----------
@@ -473,15 +290,15 @@ export function templeOfSolomon(): G[] {
   const zb = -0.068, zp0 = -0.014, zp1 = 0.008, P0 = 0.006, Y0 = T + P0;
   out.push(...box(0.094, P0, zp1 + 0.004 - zb + 0.003, shade(S, 0.9), { z: (zp1 + 0.004 + zb - 0.003) / 2 }, shade(PAVE, 1.02)));
   out.push(...steps(0.03, 0.012, 3, P0 / 3, 0.0018, shade(S, 0.92), { y: T, z: zp1 + 0.004 + 0.006 }, shade(PAVE, 1.02)).parts);
-  // The side chambers: three storeys round the house, each stepping in, a cedar ledge, small windows.
-  const hw = 0.052;
-  for (let k = 0; k < 3; k++) {
+  // The side chambers: two storeys round the house, the upper stepping in, a cedar ledge, small windows.
+  const hw = 0.052, SH = 0.03;
+  for (let k = 0; k < 2; k++) {
     // (Their fronts run on into the porch.)
-    const w = 0.084 - k * 0.004, zbk = zb + k * 0.002, d = zp0 + 0.003 - zbk, y = Y0 + k * 0.02;
-    out.push(...box(w, 0.02, d, shade(S, 0.97 - k * 0.012), { y, z: zbk + d / 2 }, shade(CEDAR, 0.95)));
-    out.push(...box(w + 0.002, 0.002, d + 0.0005, CEDAR, { y: y + 0.0185, z: zbk + d / 2 - 0.001 }, shade(CEDAR, 1.1)));
-    for (const s of [-1, 1]) for (let j = 0; j < 7; j++) out.push(pane(0.0024, 0.0045, DARK, s * (w / 2 + 0.0002), y + 0.0075, zbk + 0.004 + (j * (d - 0.008)) / 6, (s * Math.PI) / 2));
-    for (let j = 0; j < 7; j++) out.push(pane(0.0024, 0.0045, DARK, -w / 2 + 0.006 + (j * (w - 0.012)) / 6, y + 0.0075, zbk - 0.0002, Math.PI));
+    const w = 0.084 - k * 0.006, zbk = zb + k * 0.003, d = zp0 + 0.003 - zbk, y = Y0 + k * SH;
+    out.push(...box(w, SH, d, shade(S, 0.97 - k * 0.012), { y, z: zbk + d / 2 }, shade(CEDAR, 0.95)));
+    out.push(...box(w + 0.002, 0.0025, d + 0.0005, CEDAR, { y: y + SH - 0.002, z: zbk + d / 2 - 0.001 }, shade(CEDAR, 1.1)));
+    for (const s of [-1, 1]) for (let j = 0; j < 7; j++) out.push(pane(0.0028, 0.0085, DARK, s * (w / 2 + 0.0002), y + 0.009, zbk + 0.004 + (j * (d - 0.008)) / 6, (s * Math.PI) / 2));
+    for (let j = 0; j < 7; j++) out.push(pane(0.0028, 0.0085, DARK, -w / 2 + 0.006 + (j * (w - 0.012)) / 6, y + 0.009, zbk - 0.0002, Math.PI));
   }
   // The house rising above them: its narrow lattice windows, the cedar roof, the gilded cresting.
   const hh = 0.125, hd = zp0 - (zb + 0.007);

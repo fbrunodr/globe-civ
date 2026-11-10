@@ -310,6 +310,7 @@ vec3 cropColor(int region, float h, int stage) { return CROPS[region * 5 + cropI
 
 export interface TerrainMaterial {
   material: THREE.MeshStandardMaterial;
+  holed: THREE.MeshStandardMaterial; // the same, cut by the holes (TerrainHole): for the chunks round them
   setTime(seconds: number): void;
   setGrid(on: boolean): void; // the hex grid lines (fog of war shows them regardless)
   setView(mode: number): void; // debug views: 0 normal, 1 height map, 2 water (ground grayed), 3 the painting's tiles
@@ -359,18 +360,73 @@ function makeNoiseTexture(): THREE.Data3DTexture {
 const FOG_FLATTEN = /* glsl */ `
   transformed = normalize(transformed) * mix(length(transformed), 1.0, smoothstep(0.5, 1.0, unexplored));`;
 
-// The ground as drawn into the sun's shadow map: flattened under fog of war like the ground itself.
-export function makeTerrainDepthMaterial(): THREE.MeshDepthMaterial {
+// The ground as drawn into the sun's shadow map: flattened under fog of war
+// like the ground itself (`holed`: and cut where wonders dig: TerrainHoles).
+export function makeTerrainDepthMaterial(holed = false): THREE.MeshDepthMaterial {
   const mat = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
   mat.onBeforeCompile = (shader) => {
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
-        attribute float unexplored;`)
+        attribute float unexplored;
+        varying vec3 vHolePos;`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
+        vHolePos = position;
         ${FOG_FLATTEN}`);
+    if (holed) holeFragment(shader, 'vHolePos');
   };
-  mat.customProgramCacheKey = () => 'terrain-depth';
+  mat.customProgramCacheKey = () => `terrain-depth-${holed}`;
   return mat;
+}
+
+// Holes in the ground: where a wonder digs down (a pit, a basin: render.ts
+// sinks), the ground's surface is not drawn (nor casts a shadow), and the
+// sink drawn below shows. Each a rectangle or ellipse on the tangent plane
+// at its middle c (axes u, v; half sizes hu, hv), at most MAX_HOLES in the
+// world. Only the ground's chunks round them take the holed material (the
+// rest keep a shader without discard: the GPU's early depth test and, on
+// tile-based GPUs, hidden surface removal stay whole); the roads' and
+// squares' material (which discards anyway, at its ragged edges) always
+// tests them.
+export interface TerrainHole { c: THREE.Vector3; u: THREE.Vector3; v: THREE.Vector3; hu: number; hv: number; round: boolean }
+export const MAX_HOLES = 16;
+const HOLES = { uHole: { value: Array.from({ length: MAX_HOLES * 3 }, () => new THREE.Vector4()) }, uHoles: { value: 0 } };
+export function setTerrainHoles(holes: readonly TerrainHole[]): void {
+  const n = Math.min(MAX_HOLES, holes.length), v = HOLES.uHole.value;
+  for (let i = 0; i < n; i++) {
+    const h = holes[i]!, reach = Math.hypot(h.hu, h.hv) * 1.01;
+    v[3 * i]!.set(h.c.x, h.c.y, h.c.z, reach * reach);
+    v[3 * i + 1]!.set(h.u.x, h.u.y, h.u.z, h.hu);
+    v[3 * i + 2]!.set(h.v.x, h.v.y, h.v.z, h.round ? -h.hv : h.hv);
+  }
+  HOLES.uHoles.value = n;
+}
+// (A shader's fragments at `pos`, the object's position (the globe's object
+// space is world space), discarded in a hole.)
+const HOLE_GLSL = /* glsl */ `
+  uniform vec4 uHole[${MAX_HOLES * 3}];
+  uniform int uHoles;
+  bool inHole(vec3 P) {
+    vec3 p = normalize(P);
+    for (int i = 0; i < ${MAX_HOLES}; i++) {
+      if (i >= uHoles) break;
+      vec4 a = uHole[3 * i];
+      vec3 d = p - a.xyz;
+      if (dot(d, d) > a.w) continue;
+      vec4 b = uHole[3 * i + 1], c = uHole[3 * i + 2];
+      float x = dot(d, b.xyz) / b.w, y = dot(d, c.xyz) / abs(c.w);
+      if (c.w < 0.0 ? x * x + y * y < 1.0 : max(abs(x), abs(y)) < 1.0) return true;
+    }
+    return false;
+  }`;
+export function holeFragment(shader: { uniforms: Record<string, THREE.IUniform>; fragmentShader: string }, pos: string, declare = true): void {
+  shader.uniforms['uHole'] = HOLES.uHole;
+  shader.uniforms['uHoles'] = HOLES.uHoles;
+  shader.fragmentShader = shader.fragmentShader
+    .replace('#include <common>', `#include <common>
+      ${declare ? `varying vec3 ${pos};` : ''}
+      ${HOLE_GLSL}`)
+    .replace('#include <clipping_planes_fragment>', `if (uHoles > 0 && inHole(${pos})) discard;
+      #include <clipping_planes_fragment>`);
 }
 
 export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
@@ -379,7 +435,7 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
   const uGrid = { value: 0 };
   const uView = { value: 0 };
   const noise = noiseTexture();
-  mat.onBeforeCompile = (shader) => {
+  const compile = (shader: THREE.WebGLProgramParametersWithUniforms, holed: boolean) => {
     shader.uniforms['uTime'] = uTime;
     shader.uniforms['uTileTex'] = { value: paint.tileTex };
     shader.uniforms['uFanTex'] = { value: paint.fanTex };
@@ -937,6 +993,11 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
           outgoingLight = mix(outgoingLight, fogCol, smoothstep(0.0, 1.0, vFog));
         }
         #include <opaque_fragment>`);
+    if (holed) holeFragment(shader, 'vObjPos', false);
   };
-  return { material: mat, setTime: (s) => { uTime.value = s; }, setGrid: (on) => { uGrid.value = on ? 1 : 0; }, setView: (m) => { uView.value = m; } };
+  mat.onBeforeCompile = (shader) => compile(shader, false);
+  const holed = mat.clone();
+  holed.onBeforeCompile = (shader) => compile(shader, true);
+  holed.customProgramCacheKey = () => 'terrain-holed';
+  return { material: mat, holed, setTime: (s) => { uTime.value = s; }, setGrid: (on) => { uGrid.value = on ? 1 : 0; }, setView: (m) => { uView.value = m; } };
 }

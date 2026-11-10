@@ -12,7 +12,7 @@ import { FlatPainter } from './flatPainter.ts';
 import { WorldLabel } from './worldLabel.ts';
 import { modelGeometry, placedGeometry } from './buildingCatalog.ts';
 import { CATALOG } from './propCatalog.ts';
-import { SITE_MODELS, groundsBox, landHalf, seaScale, wonderGrounds, wonderModelKind, type SiteModel } from './wonderModels.ts';
+import { SITE_MODELS, groundsBox, landHalf, seaScale, wonderGrounds, wonderModelKind, type GroundShape, type SiteModel } from './wonderModels.ts';
 import { WONDERS, ERAS, type WonderKey, type EraIndex } from './cities.ts';
 import { TECH_KEYS, techDef } from './techs.ts';
 import { POLITICS_KEYS, politicsDef } from './politics.ts';
@@ -59,29 +59,56 @@ const HOUSE_SCALE = CITY_CELL / CELL;
 const models = SITE_MODELS.filter((m): m is Exclude<SiteModel, 'scaffold'> => m !== 'scaffold')
   .map((m) => ({ m, ...unlock(m) }))
   .sort((a, b) => a.era - b.era);
-// A wonder's grounds beside its city (wonderModels.ts wonderGrounds), as
-// the game lays them: its water (here flat, the game's water's colour) and
-// its trees, the flora's own models.
-const WATER = new THREE.Color(0x2f6a78);
+// A wonder's grounds (wonderModels.ts wonderGrounds), as the game lays
+// them: its sinks dug into the floor (FLOOR_Y; the floor cut round them:
+// `holes`), their sides and floors, their water (flat, the game's water's
+// colour); what it lays on the floor (each layer a hair over the one
+// under it, cut round the sinks); its trees, the flora's own models, on
+// the floor or up on the model.
+const WATER = new THREE.Color(0x2f6a78), FLOOR_Y = -0.002;
+const holes: THREE.Vector2[][] = [];
 function grounds(m: SiteModel, x0: number, s: number): void {
   const gr = wonderGrounds(m);
   if (!gr) return;
-  const y = 0.0012 * s, P = (x: number, z: number) => new THREE.Vector3(x0 + x * s, y, z * s);
-  for (const w of gr.water) {
-    const n = w.round ? 32 : 4;
-    const ring = Array.from({ length: n }, (_, i) => {
-      const a = ((i + (w.round ? 0 : 0.5)) / n) * Math.PI * 2, k = w.round ? 1 : Math.SQRT2;
-      return P(w.x + Math.max(-1, Math.min(1, Math.cos(a) * k)) * w.hw, w.z + Math.max(-1, Math.min(1, Math.sin(a) * k)) * w.hd);
+  const P = (x: number, z: number, y = 0) => new THREE.Vector3(x0 + x * s, y, z * s);
+  const inShape = (c: GroundShape, x: number, z: number) => {
+    const u = (x - c.x) / c.hw, v = (z - c.z) / c.hd;
+    return c.round ? u * u + v * v < 1 : Math.abs(u) < 1 && Math.abs(v) < 1;
+  };
+  for (const sk of gr.sinks ?? []) {
+    const n = sk.outline.length, fy = -sk.depth * s, side = new THREE.Color(sk.side);
+    holes.push(sk.outline.map(([x, z]) => new THREE.Vector2(x0 + x * s, z * s)));
+    sk.outline.forEach(([x, z], i) => {
+      const [x1, z1] = sk.outline[(i + 1) % n]!;
+      paint.tri(side, P(x, z, FLOOR_Y), P(x1, z1, FLOOR_Y), P(x1, z1, fy));
+      paint.tri(side, P(x, z, FLOOR_Y), P(x1, z1, fy), P(x, z, fy));
     });
-    const mid = P(w.x, w.z);
-    ring.forEach((p, i) => paint.tri(WATER, mid, ring[(i + 1) % n]!, p));
+    const tris = THREE.ShapeUtils.triangulateShape(sk.outline.map(([x, z]) => new THREE.Vector2(x, z)), []);
+    for (const [a, b, c] of tris) {
+      const at = (k: number, y: number) => P(sk.outline[k]![0], sk.outline[k]![1], y);
+      paint.tri(new THREE.Color(sk.floor), at(a, fy), at(b, fy), at(c, fy));
+      if (sk.water !== undefined) paint.tri(WATER, at(a, -sk.water * s), at(b, -sk.water * s), at(c, -sk.water * s));
+    }
+  }
+  // (In cells CELL_W across, those over a sink left out.)
+  const CELL_W = 0.0008, cuts = (gr.sinks ?? []).flatMap((sk) => sk.cut);
+  for (const p of gr.paint ?? []) {
+    const c = new THREE.Color(p.color), y = FLOOR_Y + 0.00015 * (p.layer + 1);
+    const nx = Math.max(1, Math.round((2 * p.hw) / CELL_W)), nz = Math.max(1, Math.round((2 * p.hd) / CELL_W));
+    for (let i = 0; i < nx; i++) for (let j = 0; j < nz; j++) {
+      const xa = p.x - p.hw + (2 * p.hw * i) / nx, xb = p.x - p.hw + (2 * p.hw * (i + 1)) / nx, za = p.z - p.hd + (2 * p.hd * j) / nz, zb = p.z - p.hd + (2 * p.hd * (j + 1)) / nz;
+      const mx = (xa + xb) / 2, mz = (za + zb) / 2;
+      if ((p.round && !inShape(p, mx, mz)) || cuts.some((k) => inShape(k, mx, mz))) continue;
+      paint.tri(c, P(xa, za, y), P(xb, za, y), P(xb, zb, y));
+      paint.tri(c, P(xa, za, y), P(xb, zb, y), P(xa, zb, y));
+    }
   }
   const tall = new Map<string, number>();
-  for (const [i, t] of gr.trees.entries()) {
+  for (const [i, t] of (gr.trees ?? []).entries()) {
     let h = tall.get(t.kind);
     if (h === undefined) { const geo = placedGeometry(t.kind); geo.computeBoundingBox(); h = geo.boundingBox!.max.y; geo.dispose(); tall.set(t.kind, h); }
     const k = (t.height * s) / h;
-    paint.model(t.kind, P(t.x, t.z).setY(0), i * 2.4, new THREE.Vector3(k, k, k), CATALOG[t.kind].leaf);
+    paint.model(t.kind, P(t.x, t.z, (t.y ?? 0) * s), i * 2.4, new THREE.Vector3(k, k, k), CATALOG[t.kind].leaf);
   }
 }
 let x = 0.05;
@@ -98,14 +125,20 @@ for (const { m, era, by } of models) {
   const half = hw * s;
   x += half;
   paint.model(kind, new THREE.Vector3(x, 0, 0), 0, new THREE.Vector3(s, s, s), 0xffffff);
-  if (where === 'land') grounds(m, x, s);
+  grounds(m, x, s);
   paint.model(house, new THREE.Vector3(x + half + 0.03, 0, 0.02), 0, new THREE.Vector3(HOUSE_SCALE, HOUSE_SCALE, HOUSE_SCALE), 0xb5523a);
   at.set(m, { x, h: b.max.y * s, r: half });
   label(WONDERS[m].name, x + 0.015, half + 0.04, true);
   label(`${ERAS[era].name} · ${by} · ${(b.max.y * s / CITY_CELL).toFixed(1)} cells tall`, x + 0.015, half + 0.058);
   x += half + 0.09;
 }
-paint.floor(-0.15, -0.35, x + 0.05, 0.45);
+// (The floor, cut round the sinks.)
+{
+  const x0 = -0.15, z0 = -0.35, x1 = x + 0.05, z1 = 0.45, c = new THREE.Color(0x6f8a4b);
+  const rim = [new THREE.Vector2(x0, z0), new THREE.Vector2(x1, z0), new THREE.Vector2(x1, z1), new THREE.Vector2(x0, z1)];
+  const all = [...rim, ...holes.flat()];
+  for (const [a, b, d] of THREE.ShapeUtils.triangulateShape(rim, holes)) paint.tri(c, ...[a!, b!, d!].map((k) => new THREE.Vector3(all[k]!.x, FLOOR_Y, all[k]!.y)));
+}
 paint.flush(world);
 
 controls.target.set(x / 2, 0, 0);

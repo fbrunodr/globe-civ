@@ -7,9 +7,10 @@
 import * as THREE from 'three';
 import { chamfered, frustum, gable, prism, ring, spire } from '../houseKit.ts';
 import {
-  P, V, H, archPane, ball, box, column, cone, cyl, disc, drumC, figure, flat, islet, pane, rnd, rod, shade, steps,
+  P, V, H, archPane, ball, box, column, cone, cyl, disc, drumC, figure, flat, islet, pane, rnd, rod, shade, statue, steps,
   type G, type Models,
 } from './kit.ts';
+import { LIBERTY } from './statues.ts';
 
 const GRASS = 0x7f9a52, PAVE = 0xc9c0ae, GOLD = 0xd9b04a;
 
@@ -312,46 +313,7 @@ function statueOfLiberty(): G[] {
   out.push(...box(0.024, 0.006, 0.024, GR, { y: y0 + ph + 0.003 }));
   out.push(ring(0.027, 0.0018, 0.027, shade(GR, 0.9), { y: y0 + ph + 0.009 }));
   // The statue, standing on the pedestal's top.
-  out.push(...liberty(y0 + ph + 0.009, CU));
-  return out;
-}
-// The copper lady, her feet at y, facing +z, 0.13 tall to her torch's flame.
-function liberty(y: number, CU: number): G[] {
-  const out: G[] = [];
-  // The robe: a long tapering cylinder pressed into deep folds.
-  const robe = new THREE.CylinderGeometry(0.0085, 0.0125, 0.062, 24, 6, true);
-  const p = robe.getAttribute('position') as THREE.BufferAttribute;
-  for (let i = 0; i < p.count; i++) {
-    const x = p.getX(i), z = p.getZ(i), yy = p.getY(i), a = Math.atan2(z, x), k = 1 + 0.085 * Math.sin(a * 7 + yy * 60) + 0.04 * Math.sin(a * 13);
-    p.setXYZ(i, x * k, yy, z * k * 0.9);
-  }
-  robe.computeVertexNormals();
-  out.push(P(robe.translate(0, 0.031, 0), CU, { y }));
-  // The torso and the toga thrown over the left shoulder.
-  out.push(P(new THREE.CylinderGeometry(0.0075, 0.0088, 0.022, 12, 1, true).translate(0, 0.011, 0), shade(CU, 1.04), { y: y + 0.061, sz: 0.85 }));
-  out.push(ball(0.0062, shade(CU, 0.95), { x: -0.0035, y: y + 0.078, z: 0.001, sx: 1.2, sz: 0.9 }, 1));
-  out.push(P(new THREE.CylinderGeometry(0.004, 0.0105, 0.04, 10, 1, true).translate(0, 0.02, 0), shade(CU, 0.92), { x: -0.003, y: y + 0.04, z: 0.004, rz: -0.12, rx: 0.1, sz: 0.5 }));
-  // Neck, head, the crown and its seven rays.
-  out.push(cyl(0.0026, 0.0024, 0.005, 8, CU, { y: y + 0.083 }));
-  out.push(ball(0.0045, shade(CU, 1.06), { y: y + 0.0915, sy: 1.12 }, 1));
-  out.push(drumC(0.0047, 0.0049, 0.0022, 12, shade(CU, 0.95), { y: y + 0.0935 }));
-  for (let k = 0; k < 7; k++) {
-    const a = Math.PI / 2 + ((k - 3) / 3) * 1.45, d = V(Math.cos(a), 0.55, Math.sin(a)).normalize();
-    const b = V(Math.cos(a) * 0.0046, y + 0.0948, Math.sin(a) * 0.0046);
-    out.push(rod(b, b.clone().addScaledVector(d, 0.0072), 0.0007, shade(CU, 1.1), 3, 0.0001));
-  }
-  // The right arm raised, the torch: its handle, the gilded cup and flame.
-  const sh = V(0.0072, y + 0.08, 0.0005), el = V(0.0102, y + 0.1, 0.0015), hd = V(0.0112, y + 0.118, 0.0025);
-  out.push(rod(sh, el, 0.0024, CU, 7, 0.002), rod(el, hd, 0.002, CU, 7, 0.0018), ball(0.0019, CU, { x: hd.x, y: hd.y, z: hd.z }));
-  out.push(rod(hd, V(hd.x + 0.0006, hd.y + 0.009, hd.z), 0.0013, shade(CU, 1.05), 7, 0.0016));
-  out.push(P(new THREE.CylinderGeometry(0.0038, 0.0018, 0.0035, 12, 1, false).translate(0, 0.00175, 0), GOLD, { x: hd.x + 0.0006, y: hd.y + 0.009, z: hd.z }));
-  out.push(P(new THREE.OctahedronGeometry(0.0034, 1), 0xf3c24a, { x: hd.x + 0.0006, y: hd.y + 0.016, z: hd.z, sy: 1.6 }));
-  // The left arm bent, holding the tablet against her side.
-  const ls = V(-0.0072, y + 0.079, 0.0005), le = V(-0.0102, y + 0.066, 0.0035), lh = V(-0.0078, y + 0.07, 0.0085);
-  out.push(rod(ls, le, 0.0022, CU, 7, 0.0019), rod(le, lh, 0.0019, CU, 7, 0.0016));
-  out.push(...box(0.0034, 0.016, 0.0095, shade(CU, 1.08), { x: -0.0102, y: y + 0.058, z: 0.0055, rz: -0.18 }));
-  // Her feet showing under the hem, a broken chain.
-  out.push(ball(0.0024, CU, { x: 0.004, y: y + 0.001, z: 0.009, sz: 1.6, sy: 0.6 }));
+  out.push(statue(LIBERTY, 0.145, CU, { y: y0 + ph + 0.009 }));
   return out;
 }
 

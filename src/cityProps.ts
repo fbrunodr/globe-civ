@@ -14,7 +14,9 @@ import * as THREE from 'three';
 import type { Game, City } from './game.ts';
 import { USE, BORDER_MAX, wonderBeside, isWonderKey, type ImprovementKey, type EraIndex } from './cities.ts';
 import { ROOFS, buildingEntry, isFloraModel, isLotModel, placedGeometry, waterRule, type BuildingKind, type LotModelKind, type PlacedKind } from './buildingCatalog.ts';
-import { ON_BARE_GROUND, groundsBox, isWonderModelKind, landHalf, seaScale, wonderGrounds, wonderModelKind, type SiteModel, type WonderGrounds } from './wonderModels.ts';
+import { ON_BARE_GROUND, groundsBox, isWonderModelKind, landHalf, seaScale, siteModelOf, wonderGrounds, wonderModelKind, wonderPieces, type SiteModel, type WonderGrounds, type WonderModelKind } from './wonderModels.ts';
+import { ROUND_SIDES } from './wonders/kit.ts';
+import type { TerrainHole } from './terrainMaterial.ts';
 import { CATALOG, type CatalogKind } from './propCatalog.ts';
 import { WORKS_VARIANT, houseKind } from './houses.ts';
 import { styleOf } from './architecture.ts';
@@ -64,18 +66,22 @@ export interface Street {
 }
 // A square, drawn by render.ts as paving on the ground (or a worked rural
 // area, in its ground colour).
-export interface Paving { points: THREE.Vector3[]; paved: boolean; rgb?: RGB; exact?: boolean }
-// Standing water a wonder lays on the ground (wonderModels.ts WaterArea),
-// drawn by render.ts as the game's water: a grid of directions (rows of
-// points), its sheet laid on the ground between them.
-export interface WaterSheet { grid: THREE.Vector3[][] }
+// (`layer`: what a wonder lays on the ground, a higher layer over a lower.)
+export interface Paving { points: THREE.Vector3[]; paved: boolean; rgb?: RGB; exact?: boolean; layer?: number }
+// A wonder's sink as dug (wonderModels.ts Sink), drawn by render.ts: its
+// rim (directions, round it), its floor's triangles (indices into the
+// rim), the heights of its floor and water (as a spot's `ground`: over
+// radius 1), its colours, and the holes it cuts in the ground's surface.
+// (Its floor and water as heights at each point of its rim: level with the lie of the land.)
+export interface SinkSheet { rim: THREE.Vector3[]; tris: number[]; floor: number[]; water: number[] | null; side: RGB; bottom: RGB; holes: TerrainHole[] }
 
 interface CityLayout {
   sig: string;
   byTile: Map<number, PlacedBuilding[]>;
   streets: Street[];
   pavings: Paving[];
-  waters: WaterSheet[];
+  sinks: SinkSheet[];
+  reserved: PlacedBuilding[]; // a wonder drawn in pieces: the whole of it, not drawn (no wild flora there)
   approaches: THREE.Vector3[][]; // the roads' ways in to the town (approach), from its tile's edge
   flora?: (d: THREE.Vector3) => boolean; // where wild flora may stay (made when first asked)
 }
@@ -100,8 +106,9 @@ const SEA_ISLET = 0.075;
 // A wonder on land beside its city (the Pyramids, Stonehenge): the ground
 // kept clear round it (its size is its own: wonderModels.ts landHalf).
 const LAND_WONDER_GAP = 0.015;
-// A wonder's water sheets: a point at least every this many model units (wonderModels.ts WaterArea).
-const WATER_STEP = 0.004;
+// A wonder's sinks: a point of its rim at least every this many model
+// units; what it lays on the ground: in cells at most this wide.
+const SINK_STEP = 0.0015, PAINT_CELL = 0.012;
 // A mine's adits: how many (by how far the countryside has filled up), how
 // far apart, how far from the homestead, and the spots tried (every
 // ADIT_STEP across the tile, tile steps).
@@ -383,8 +390,8 @@ export class CityProps {
   pavings(): Paving[] {
     return this.game.cities.flatMap((c) => this.layout(c).pavings);
   }
-  waters(): WaterSheet[] {
-    return this.game.cities.flatMap((c) => this.layout(c).waters);
+  sinks(): SinkSheet[] {
+    return this.game.cities.flatMap((c) => this.layout(c).sinks);
   }
 
   place(t: number): PlacedBuilding[] {
@@ -444,7 +451,8 @@ export class CityProps {
     // No streets in a city (its diorama suggests them) or a farm.
     const streets: Street[] = [];
     const pavings: Paving[] = [];
-    const waters: WaterSheet[] = [];
+    const sinks: SinkSheet[] = [];
+    const reserved: PlacedBuilding[] = [];
     // Nothing may stand on the roads between cities: every building's
     // footprint is checked (shrunk a little if it touches one, left out if
     // it still does). Roads run up to the city's diorama.
@@ -487,7 +495,11 @@ export class CityProps {
     dressed.buildings.forEach((b, n) => {
       const s = this.sampleDir(toDir(b.at)), rand = mulberry32(mix(city.id, n + 1));
       if (wet(s)) return;
-      put(city.tile, ...this.standLot(b.model, s.dir, facing(s.dir, ahead(b.at, b.yaw)) + Math.PI / 2, b.hw, b.hd, unit * b.scale, rand, city.owner, [b.sx, b.sz]));
+      const lot = this.standLot(b.model, s.dir, facing(s.dir, ahead(b.at, b.yaw)) + Math.PI / 2, b.hw, b.hd, unit * b.scale, rand, city.owner, [b.sx, b.sz]);
+      put(city.tile, ...lot);
+      // (A wonder's grounds: the Hanging Gardens' trees on their terraces.)
+      const gr = isWonderModelKind(b.model) ? wonderGrounds(siteModelOf(b.model)) : null;
+      if (gr && lot[0]) put(city.tile, ...this.grounds(siteModelOf(b.model as WonderModelKind), gr, lot[0].matrix, unit * b.scale, mulberry32(mix(city.id, n + 0x3b)), sinks, pavings, () => true));
     });
     // (Exactly where painted: they meet the buildings' sides.)
     for (const r of dressed.painting.roads) pavings.push({ points: r.map(toDir), paved: era > 0, rgb: dressed.roadRgb, exact: true });
@@ -607,9 +619,10 @@ export class CityProps {
       if (!best) continue;
       const dir = toDir(best);
       const lot = this.standLot(kind, dir, facing(dir, edge) + Math.PI / 2, hw, hd, k * sc, mulberry32(mix(t, 0x3a)), city.owner);
-      put(t, ...lot);
       const gr = wonderGrounds(m);
-      if (gr && lot[0]) put(t, ...this.grounds(gr, lot[0].matrix, k * sc, mulberry32(mix(t, 0x3b)), waters, (d) => clear.free([d])));
+      // (A wonder in pieces: each piece where it stands, not the whole.)
+      if (gr?.pieces && lot[0]) reserved.push(lot[0]); else put(t, ...lot);
+      if (gr && lot[0]) put(t, ...this.grounds(m, gr, lot[0].matrix, k * sc, mulberry32(mix(t, 0x3b)), sinks, pavings, (d) => clear.free([d])));
       keep.set(t, { p: best, r });
     }
 
@@ -692,42 +705,109 @@ export class CityProps {
       if (plan.house) placeLot(HOMESTEAD_LOT, plan.house.floors, plan.house.p, mulberry32(mix(t, 0x5a)));
       if (plan.barn) placeLot('b32', 1, plan.barn, mulberry32(mix(t, 0x5b)));
     }
-    return { sig, byTile, streets, pavings, waters, approaches };
+    return { sig, byTile, streets, pavings, sinks, reserved, approaches };
   }
 
   // A wonder's grounds (wonderModels.ts WonderGrounds) where its model
-  // stands (`frame`, its matrix; `s` its scale): its water as sheets on
-  // the ground (into `waters`, a point every WATER_STEP of the model at
-  // most), its trees the flora's own models, each as tall as its spot
-  // asks, on dry ground off the roads (`free`).
-  private grounds(gr: WonderGrounds, frame: THREE.Matrix4, s: number, rand: Rng, waters: WaterSheet[], free: (d: THREE.Vector3) => boolean): PlacedBuilding[] {
+  // stands (`frame`, its matrix; `s` its scale): its sinks dug (into
+  // `sinks`, their rims a point every SINK_STEP of the model at most), what
+  // it lays on the ground (into `pavings`), its trees the flora's own, each
+  // as tall as its spot asks, on dry ground off the roads (`free`) or up on
+  // the model, and its pieces, each on the ground where it stands or on its
+  // sink's floor.
+  private grounds(m: SiteModel, gr: WonderGrounds, frame: THREE.Matrix4, s: number, rand: Rng, sinks: SinkSheet[], pavings: Paving[], free: (d: THREE.Vector3) => boolean): PlacedBuilding[] {
     const at = (x: number, z: number) => new THREE.Vector3(x, 0, z).applyMatrix4(frame).normalize();
-    for (const w of gr.water) {
-      const nx = Math.max(2, Math.ceil((2 * w.hw) / WATER_STEP)), nz = Math.max(2, Math.ceil((2 * w.hd) / WATER_STEP));
-      const grid: THREE.Vector3[][] = [];
-      for (let j = 0; j <= nz; j++) {
-        const row: THREE.Vector3[] = [];
-        for (let i = 0; i <= nx; i++) {
-          let u = (2 * i) / nx - 1, v = (2 * j) / nz - 1;
-          // (An ellipse: the square's grid squeezed onto the disc.)
-          if (w.round) [u, v] = [u * Math.sqrt(1 - (v * v) / 2), v * Math.sqrt(1 - (u * u) / 2)];
-          row.push(at(w.x + u * w.hw, w.z + v * w.hd));
-        }
-        grid.push(row);
+    const pos = new THREE.Vector3(), quat = new THREE.Quaternion(), scale = new THREE.Vector3();
+    frame.decompose(pos, quat, scale);
+    const middle = pos.clone().normalize();
+    // (Each sink's floor: a plane, its height over radius 1 at d, and its slope's normal there.)
+    const floors: { at: (d: THREE.Vector3) => number; up: (d: THREE.Vector3) => THREE.Vector3 }[] = [];
+    for (const sk of gr.sinks ?? []) {
+      // (Its outline, each side cut in pieces SINK_STEP long at most.)
+      const pts: [number, number][] = [];
+      sk.outline.forEach(([x0, z0], i) => {
+        const [x1, z1] = sk.outline[(i + 1) % sk.outline.length]!, n = Math.max(1, Math.ceil(Math.hypot(x1 - x0, z1 - z0) / SINK_STEP));
+        for (let j = 0; j < n; j++) pts.push([x0 + ((x1 - x0) * j) / n, z0 + ((z1 - z0) * j) / n]);
+      });
+      const rim = pts.map(([x, z]) => at(x, z));
+      // (The lie of the land round it: a plane fitted to its rim's ground
+      // (least squares). A level sink is dug flat along it, lowered to its
+      // rim's lowest point, so on a slope its sides keep about the same
+      // height all round; one that follows the ground, `depth` under it all
+      // round, its water likewise.)
+      const c = rim.reduce((a, d) => a.add(d), new THREE.Vector3()).normalize();
+      const e1 = new THREE.Vector3(0, 1, 0).cross(c).normalize(), e2 = c.clone().cross(e1);
+      const hs = rim.map((d) => this.sampleDir(d).ground), xs = rim.map((d) => d.dot(e1)), zs = rim.map((d) => d.dot(e2));
+      const plane = fitPlane(xs, zs, hs);
+      const lower = sk.follow ? 0 : Math.min(...hs.map((h, i) => h - plane(xs[i]!, zs[i]!)));
+      const lie = (d: THREE.Vector3) => plane(d.dot(e1), d.dot(e2)) + lower;
+      const [gx, gz] = [plane(1e-3, 0) - plane(0, 0), plane(0, 1e-3) - plane(0, 0)].map((v) => v / 1e-3) as [number, number];
+      floors.push({ at: (d) => lie(d) - sk.depth * s, up: (d) => d.clone().addScaledVector(e1, -gx).addScaledVector(e2, -gz).normalize() });
+      const tris = THREE.ShapeUtils.triangulateShape(pts.map(([x, z]) => new THREE.Vector2(x, z)), []).flat();
+      const holes = sk.cut.map((c): TerrainHole => {
+        const mid = at(c.x, c.z), k = c.round ? Math.cos(Math.PI / ROUND_SIDES) : 1;
+        const u = at(c.x + c.hw, c.z).sub(at(c.x - c.hw, c.z)), v = at(c.x, c.z + c.hd).sub(at(c.x, c.z - c.hd));
+        const hu = (u.length() / 2) * k, hv = (v.length() / 2) * k;
+        u.addScaledVector(mid, -u.dot(mid)).normalize();
+        v.addScaledVector(mid, -v.dot(mid)).addScaledVector(u, -v.dot(u)).normalize();
+        return { c: mid, u, v, hu, hv, round: !!c.round };
+      });
+      const rgb = (c: number): RGB => { const k = new THREE.Color(c); return [k.r, k.g, k.b]; };
+      const ground = (d: THREE.Vector3, i: number) => (sk.follow ? hs[i]! : lie(d));
+      sinks.push({ rim, tris, floor: rim.map((d, i) => ground(d, i) - sk.depth * s), water: sk.water === undefined ? null : rim.map((d, i) => ground(d, i) - sk.water! * s), side: rgb(sk.side), bottom: rgb(sk.floor), holes });
+    }
+    // What it lays on the ground: rectangles in cells PAINT_CELL across at
+    // most (so each follows the ground), ellipses as polygons.
+    for (const p of gr.paint ?? []) {
+      const c = new THREE.Color(p.color), rgb: RGB = [c.r, c.g, c.b], layer = p.layer;
+      if (p.round) {
+        pavings.push({ points: Array.from({ length: 20 }, (_, i) => { const a = (-i / 20) * Math.PI * 2; return at(p.x + Math.cos(a) * p.hw, p.z + Math.sin(a) * p.hd); }), paved: false, rgb, exact: true, layer });
+        continue;
       }
-      waters.push({ grid });
+      const nx = Math.max(1, Math.ceil((2 * p.hw) / PAINT_CELL)), nz = Math.max(1, Math.ceil((2 * p.hd) / PAINT_CELL));
+      for (let i = 0; i < nx; i++) for (let j = 0; j < nz; j++) {
+        const x0 = p.x - p.hw + (2 * p.hw * i) / nx, x1 = p.x - p.hw + (2 * p.hw * (i + 1)) / nx, z0 = p.z - p.hd + (2 * p.hd * j) / nz, z1 = p.z - p.hd + (2 * p.hd * (j + 1)) / nz;
+        pavings.push({ points: [at(x0, z0), at(x0, z1), at(x1, z1), at(x1, z0)], paved: false, rgb, exact: true, layer });
+      }
     }
     const out: PlacedBuilding[] = [];
     const sink = 0.00001 * this.scale;
-    for (const tr of gr.trees) {
-      const dir = at(tr.x, tr.z), spot = this.sampleDir(dir);
-      if (spot.water - spot.ground > DRY || !free(dir)) continue;
+    for (const tr of gr.trees ?? []) {
+      // (On the ground, dry and off the roads; or up on the model, where its frame puts it.)
+      let base: THREE.Vector3, dir: THREE.Vector3;
+      if (tr.y === undefined) {
+        dir = at(tr.x, tr.z);
+        const spot = this.sampleDir(dir);
+        if (spot.water - spot.ground > DRY || !free(dir)) continue;
+        base = dir.clone().multiplyScalar(1 + spot.ground - sink);
+      } else {
+        base = new THREE.Vector3(tr.x, tr.y, tr.z).applyMatrix4(frame);
+        dir = base.clone().normalize();
+      }
       // (The flora's models are drawn at PROP_SCALE of their reference size.)
       const size = (tr.height * s) / (this.floraHeight(tr.kind) * PROP_SCALE * this.scale), stretch = 0.92 + 0.16 * rand();
       const q = new THREE.Quaternion().setFromUnitVectors(UP, dir).multiply(new THREE.Quaternion().setFromAxisAngle(UP, rand() * Math.PI * 2));
       const shade = 0.88 + 0.2 * rand();
-      out.push({ kind: tr.kind, matrix: new THREE.Matrix4().compose(dir.clone().multiplyScalar(1 + spot.ground - sink), q, new THREE.Vector3(size, size * stretch, size)),
+      out.push({ kind: tr.kind, matrix: new THREE.Matrix4().compose(base, q, new THREE.Vector3(size, size * stretch, size)),
         color: new THREE.Color(shade, shade, shade * 0.97), leaf: new THREE.Color(CATALOG[tr.kind].leaf) });
+    }
+    // Its pieces: each level with the middle of the ground under it
+    // (between its lowest and highest corners, a little sunk), or on its
+    // sink's floor; turned as the whole is.
+    for (const pc of wonderPieces(m)) {
+      const dir = at(pc.x, pc.z);
+      let base: number, tilt = new THREE.Quaternion();
+      if (pc.sink !== undefined) { const f = floors[pc.sink]!; base = f.at(dir); tilt = new THREE.Quaternion().setFromUnitVectors(dir, f.up(dir)); }
+      else {
+        let lo = Infinity, hi = -Infinity;
+        for (const [a, b] of [[0, 0], [1, 1], [1, -1], [-1, -1], [-1, 1], [0, 1], [0, -1], [1, 0], [-1, 0]] as const) {
+          const g = this.sampleDir(at(pc.x + a * pc.hw, pc.z + b * pc.hd)).ground;
+          lo = Math.min(lo, g); hi = Math.max(hi, g);
+        }
+        base = (lo + hi) / 2 - 0.00002 * this.scale;
+      }
+      const q = tilt.multiply(new THREE.Quaternion().setFromUnitVectors(middle, dir)).multiply(quat);
+      out.push({ kind: pc.kind, matrix: new THREE.Matrix4().compose(dir.clone().multiplyScalar(1 + base), q, scale), color: new THREE.Color(1, 1, 1), leaf: new THREE.Color(1, 1, 1) });
     }
     return out;
   }
@@ -753,7 +833,7 @@ export class CityProps {
       const b = geo.boundingBox!;
       r = [Math.max(-b.min.x, b.max.x), Math.max(-b.min.z, b.max.z)];
       // (A wonder's grounds are part of its footprint.)
-      if (isWonderModelKind(kind)) { const [gx, gz] = groundsBox(kind.slice('wonder|'.length) as SiteModel); r = [Math.max(r[0], gx), Math.max(r[1], gz)]; }
+      if (isWonderModelKind(kind) && !kind.includes('#')) { const [gx, gz] = groundsBox(siteModelOf(kind)); r = [Math.max(r[0], gx), Math.max(r[1], gz)]; }
       this.box.set(kind, r);
     }
     return r;
@@ -923,7 +1003,7 @@ export class CityProps {
     const cell = 0.15 * D, key = (p: THREE.Vector3, dx = 0, dy = 0, dz = 0) => `${Math.floor(p.x / cell) + dx},${Math.floor(p.y / cell) + dy},${Math.floor(p.z / cell) + dz}`;
     interface Box { inv: THREE.Matrix4; hx: number; hz: number; gx: number; gz: number; at: THREE.Vector3; reach: number }
     const cells = new Map<string, Box[]>(), big: Box[] = [];
-    for (const b of [...l.byTile.values()].flat()) {
+    for (const b of [...l.byTile.values()].flat().concat(l.reserved)) {
       if (isFloraModel(b.kind) || b.kind === 'foundation') continue;
       const [hx, hz] = this.modelBox(b.kind), G = isLotModel(b.kind) ? 1 : PROP_SCALE * this.scale;
       const pos = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
@@ -1209,6 +1289,19 @@ export class CityProps {
       leaf: new THREE.Color(roof),
     };
   }
+}
+
+// The plane h = a + b x + c z nearest the points (least squares), as a function.
+function fitPlane(xs: readonly number[], zs: readonly number[], hs: readonly number[]): (x: number, z: number) => number {
+  const n = xs.length, mx = xs.reduce((a, v) => a + v, 0) / n, mz = zs.reduce((a, v) => a + v, 0) / n, mh = hs.reduce((a, v) => a + v, 0) / n;
+  let sxx = 0, sxz = 0, szz = 0, sxh = 0, szh = 0;
+  for (let i = 0; i < n; i++) {
+    const x = xs[i]! - mx, z = zs[i]! - mz, h = hs[i]! - mh;
+    sxx += x * x; sxz += x * z; szz += z * z; sxh += x * h; szh += z * h;
+  }
+  const det = sxx * szz - sxz * sxz;
+  const b = Math.abs(det) < 1e-30 ? 0 : (sxh * szz - szh * sxz) / det, c = Math.abs(det) < 1e-30 ? 0 : (szh * sxx - sxh * sxz) / det;
+  return (x, z) => mh + b * (x - mx) + c * (z - mz);
 }
 
 // Whether a model may stand at a spot: on dry ground (any slope: a

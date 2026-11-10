@@ -5,7 +5,7 @@ import { GlobeCamera } from './camera.ts';
 import { HUMAN, type Game, type Unit, type City } from './game.ts';
 import { GROUND_COVERS, SEA_TINT, SNOW, tileLook, type GroundCover, type TileLook } from './look.ts';
 import { buildTerrainMesh, locate, newSample, type TerrainMesh } from './terrainMesh.ts';
-import { makeTerrainMaterial, makeTerrainDepthMaterial, paintViewColor, makeTable, FAN_ROWS, TILE_ROWS, IMPROVEMENT_CODE, BURNT_CODE, CROP_CODE, STAGE_STEP, ROAD_DIRT, ROAD_GRAIN, type TerrainMaterial } from './terrainMaterial.ts';
+import { makeTerrainMaterial, makeTerrainDepthMaterial, setTerrainHoles, holeFragment, MAX_HOLES, type TerrainHole, paintViewColor, makeTable, FAN_ROWS, TILE_ROWS, IMPROVEMENT_CODE, BURNT_CODE, CROP_CODE, STAGE_STEP, ROAD_DIRT, ROAD_GRAIN, type TerrainMaterial } from './terrainMaterial.ts';
 import { makeSmoke, type Emitter, type Smoke } from './smoke.ts';
 import { buildPaintData, fanCoords, fanFrames, paintAt, paintDelta, softAt, warpAt, FAN_COORDS, FINE_MAX, FINE_WAVELENGTH, type PaintData, type FanFrame } from './paint.ts';
 import { buildRelief, CONE_RADIUS, CRATER, CRATER_DEPTH, type Relief } from './relief.ts';
@@ -22,7 +22,7 @@ import { useOf } from './houseKit.ts';
 import { WORKS_VARIANT, houseFarGeometry, houseGeometry, houseSmoke, isHouseKind, parseHouseKind, type HouseKind } from './houses.ts';
 import { isWonderModelKind, wonderGeometry, type WonderModelKind } from './wonderModels.ts';
 import { isFloraRural, isCropRural, isSmoothRural, roamOf, isRuralModelKind, ruralGeometry, ruralModelKind, type RuralModelKind } from './rural/models.ts';
-import { CityProps, tileFrame, SUMMIT_HOUSES, type CitySpot, type WaterSheet } from './cityProps.ts';
+import { CityProps, tileFrame, SUMMIT_HOUSES, type CitySpot, type SinkSheet } from './cityProps.ts';
 import { CITY_CELL } from './cityPainter.ts';
 import { CELL, wallHeight } from './town/geometry.ts';
 import { resourceLook } from './rural/resourceModels.ts';
@@ -146,12 +146,13 @@ const ROAD_ACROSS = [-1, -0.88, -0.45, 0, 0.45, 0.88, 1] as const;
 const ROAD_MID = 3;
 const ROAD_STEP = 0.012;
 const ROAD_LIFT = 0.00004; // nearly flush with the ground
-// A wonder's water (cityProps.ts WaterSheet), laid on the ground: how deep
-// the water shader takes it to be (a formal basin's: still, a lake's
-// colour, no foam at its kerbs).
+// A wonder's water (cityProps.ts SinkSheet), standing in its basin: how
+// deep the water shader takes it to be (a formal basin's: still, a lake's
+// colour, no foam at its sides).
 const WONDER_WATER_DEPTH = 0.0009;
 const ROAD_SURFACE = 0.84;  // the surface layer's share of the street's width (the rest shows the edges)
 const ROAD_LAYER = 0.00002; // how far the surface sits above the edges
+const PAINT_LAYER = 0.00001; // how far each layer of what a wonder lays on the ground sits over the one under it
 const ROAD_KERB = [0.62, 0.59, 0.54] as const;
 // What the road material draws (roadUv.z): a track's packed earth, paved
 // streets, a town's paving, asphalt, a railway (ballast, sleepers, rails).
@@ -331,7 +332,9 @@ export class GlobeRenderer {
   // the joined network, never as lines across it.
   private readonly roadMats = [makeRoadMaterial(-2, false), makeRoadMaterial(-4, true)];
   private bridges: THREE.Group | null = null;
-  private wonderWater: THREE.Group | null = null;
+  private wonderSinks: THREE.Group | null = null;
+  // The ground's shadow material: plain, and cut by wonders' holes (holeChunks).
+  private readonly groundDepth = [makeTerrainDepthMaterial(), makeTerrainDepthMaterial(true)] as const;
   private sheetMat: THREE.MeshPhysicalMaterial | null = null;
   private readonly bridgeMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
   private roadsKey = '';
@@ -547,10 +550,9 @@ export class GlobeRenderer {
     }
     // (The highest the ground reaches, for the horizon: peaks show past it.)
     this.maxLift = this.terrain.vertRadius.reduce((m, r) => Math.max(m, r), 1) - 1;
-    const groundDepth = makeTerrainDepthMaterial();
     this.globeMesh = this.chunkedSurface(this.terrain.geometry, this.terrain.triToTile, this.terrainMat.material, (m) => {
       m.renderOrder = GROUND_ORDER;
-      m.customDepthMaterial = groundDepth;
+      m.customDepthMaterial = this.groundDepth[0];
       // (Everything casts shadows but the farms' crops; everything receives them.)
       m.castShadow = true;
       m.receiveShadow = true;
@@ -1714,11 +1716,11 @@ export class GlobeRenderer {
     for (const st of this.cityProps.streets()) this.drape(st.points, st.halfWidth, st.paved ? PAVED_RGB : DIRT_RGB, batches, at, lift, bridges, st.paved);
     for (const pv of this.cityProps.pavings()) {
       const n0 = batches.top.pos.length;
-      this.pave(pv.points, pv.rgb ?? (pv.paved ? PAVED_RGB : DIRT_RGB), at, lift + ROAD_LAYER * this.scale, batches.top.pos, batches.top.col, pv.exact);
+      this.pave(pv.points, pv.rgb ?? (pv.paved ? PAVED_RGB : DIRT_RGB), at, lift + (ROAD_LAYER + (pv.layer ?? 0) * PAINT_LAYER) * this.scale, batches.top.pos, batches.top.col, pv.exact);
       for (let i = n0; i < batches.top.pos.length; i += 3) batches.top.uv.push(0, 0, 2);
     }
-    for (const grp of [...this.roads, ...(this.bridges ? [this.bridges] : []), ...(this.wonderWater ? [this.wonderWater] : [])]) this.dropChunked(grp);
-    this.wonderWater = this.waterSheets(this.cityProps.waters(), at, lift);
+    for (const grp of [...this.roads, ...(this.bridges ? [this.bridges] : []), ...(this.wonderSinks ? [this.wonderSinks] : [])]) this.dropChunked(grp);
+    this.wonderSinks = this.sinkSheets(this.cityProps.sinks(), at, lift);
     this.roads = [batches.edge, batches.top].map((bt, i) => {
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.Float32BufferAttribute(bt.pos, 3));
@@ -1747,20 +1749,44 @@ export class GlobeRenderer {
     this.scene.add(this.bridges);
   }
 
-  // Wonders' water (cityProps.ts WaterSheet): each grid laid on the ground
-  // (or the water over it) `lift` above, drawn by the game's water material
-  // as standing water WONDER_WATER_DEPTH deep, a lake's colour.
-  private waterSheets(sheets: readonly WaterSheet[], at: Ground, lift: number): THREE.Group | null {
-    const pos: number[] = [];
-    for (const { grid } of sheets) {
-      if (!grid[0]?.[0] || !this.game.explored[at(grid[0][0]).t]) continue;
-      const on = grid.map((row) => row.map((d) => { const h = at(d); return d.clone().multiplyScalar(Math.max(h.ground, h.water) + lift); }));
-      for (let j = 0; j + 1 < on.length; j++) for (let i = 0; i + 1 < on[j]!.length; i++) {
-        const a = on[j]![i]!, b = on[j]![i + 1]!, c = on[j + 1]![i + 1]!, d = on[j + 1]![i]!;
-        pos.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z, a.x, a.y, a.z, c.x, c.y, c.z, d.x, d.y, d.z);
+  // Wonders' sinks (cityProps.ts SinkSheet): the ground's surface cut over
+  // each (the terrain shader's holes: setTerrainHoles), its sides drawn
+  // from the ground's edge (`lift` over it, so no crack shows between
+  // them) down to its floor, darkening as they go down; the floor; in a
+  // basin, its water drawn by the game's water material as standing water
+  // WONDER_WATER_DEPTH deep, a lake's colour. (Explored ground only; at
+  // most MAX_HOLES holes in the world.)
+  private sinkSheets(sinks: readonly SinkSheet[], at: Ground, lift: number): THREE.Group | null {
+    const holes: TerrainHole[] = [], dug: number[] = [], dugCol: number[] = [], pos: number[] = [];
+    const push = (to: number[], ...ps: THREE.Vector3[]) => { for (const p of ps) to.push(p.x, p.y, p.z); };
+    for (const sk of sinks) {
+      if (!sk.rim[0] || !this.game.explored[at(sk.rim[0]).t] || holes.length + sk.holes.length > MAX_HOLES) continue;
+      holes.push(...sk.holes);
+      const n = sk.rim.length;
+      const top = sk.rim.map((d) => d.clone().multiplyScalar(at(d).ground + lift)), bot = sk.rim.map((d, i) => d.clone().multiplyScalar(1 + sk.floor[i]!));
+      const [r, g, b] = sk.side, dark = 0.62;
+      for (let i = 0; i < n; i++) {
+        const j = (i + 1) % n;
+        push(dug, top[i]!, top[j]!, bot[j]!, top[i]!, bot[j]!, bot[i]!);
+        for (const k of [1, 1, dark, 1, dark, dark]) dugCol.push(r * k, g * k, b * k);
       }
+      for (const k of sk.tris) { push(dug, bot[k]!); dugCol.push(...sk.bottom); }
+      if (sk.water !== null) for (const k of sk.tris) push(pos, sk.rim[k]!.clone().multiplyScalar(1 + sk.water[k]!));
     }
-    if (!pos.length) return null;
+    setTerrainHoles(holes);
+    this.holeChunks(holes);
+    if (!dug.length) return null;
+    const grp = new THREE.Group();
+    const dgeo = new THREE.BufferGeometry();
+    dgeo.setAttribute('position', new THREE.Float32BufferAttribute(dug, 3));
+    dgeo.setAttribute('color', new THREE.Float32BufferAttribute(dugCol, 3));
+    dgeo.computeVertexNormals();
+    // (Shown in the debug views too, as the ground they are dug into is.)
+    const sides = this.chunkedSoup(dgeo, this.bridgeMat, (m) => { m.castShadow = true; m.receiveShadow = true; m.userData['overlay'] = false; });
+    for (const m of [...sides.children]) grp.add(m);
+    grp.userData['stat'] = 'terrain';
+    this.scene.add(grp);
+    if (!pos.length) return grp;
     const n = pos.length / 3, tint = new THREE.Color(SEA_TINT.lake.deep);
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -1773,20 +1799,33 @@ export class GlobeRenderer {
     for (const name of ['ring', 'unexplored', 'dim', 'wstep']) geo.setAttribute(name, new THREE.Float32BufferAttribute(new Float32Array(n), 1));
     geo.setAttribute('wsrc', new THREE.Float32BufferAttribute(new Float32Array(n).fill(2), 1));
     windOutward(geo);
-    // (The water's material, drawn over the ground it lies on as the roads are.)
+    // (The water's material.)
     if (!this.sheetMat) {
       const base = this.waterMat.material;
       this.sheetMat = base.clone();
       this.sheetMat.onBeforeCompile = base.onBeforeCompile;
       Object.assign(this.sheetMat, { polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
     }
-    const grp = this.chunkedSoup(geo, this.sheetMat, (m) => {
+    const water = this.chunkedSoup(geo, this.sheetMat, (m) => {
       m.renderOrder = 1;
       m.receiveShadow = true;
+      m.userData['stat'] = 'water';
     });
-    grp.userData['stat'] = 'water';
-    this.scene.add(grp);
+    for (const m of [...water.children]) grp.add(m);
     return grp;
+  }
+
+  // The ground's chunks within reach of a hole take the holed material
+  // (and shadow material); the rest keep theirs, which never discards.
+  private holeChunks(holes: readonly TerrainHole[]): void {
+    for (const chunk of this.chunks) {
+      const near = holes.some((h) => h.c.angleTo(chunk.dir) < chunk.radius + 2 * Math.hypot(h.hu, h.hv));
+      for (const m of chunk.surface) {
+        if (m.material !== this.terrainMat.material && m.material !== this.terrainMat.holed) continue;
+        m.material = near ? this.terrainMat.holed : this.terrainMat.material;
+        m.customDepthMaterial = this.groundDepth[near ? 1 : 0];
+      }
+    }
   }
 
   // A triangle soup (unindexed: roads, bridges), split into one mesh per
@@ -2674,6 +2713,8 @@ function makeRoadMaterial(offset: number, depthWrite: boolean): THREE.MeshLamber
             diffuseColor.rgb *= mix(2.0 * t.r, 1.0, 0.5) * grain;
           }
         }`);
+    // (Cut where a wonder digs into the ground, as the ground is.)
+    holeFragment(shader, 'vRoadPos', false);
   };
   mat.customProgramCacheKey = () => `road-${top}`;
   return mat;

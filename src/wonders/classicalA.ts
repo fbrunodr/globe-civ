@@ -5,8 +5,9 @@
 import * as THREE from 'three';
 import { prism, ring, frustum } from '../houseKit.ts';
 import {
-  P, V, H, archPane, ball, box, column, cone, cyl, drumC, figure, flat, pane, peristyle, rnd, rod, shade, steps, templeRoof, type G,
+  P, V, H, archPane, assemble, ball, sinkOf, box, column, cone, cyl, drumC, figure, flat, pane, peristyle, rnd, rod, shade, steps, templeRoof, type G,
 } from './kit.ts';
+import type { WonderGrounds, WonderPiece } from '../wonderModels.ts';
 
 const MARBLE = 0xe8e2d4, PAVE = 0xc9c0ae, ROCK = 0xa49680, TILE = 0xb5603e, GOLD = 0xe2b84a;
 
@@ -390,23 +391,38 @@ export function greatLibrary(): G[] {
 // the front, the vanguard across its head, the roof beams that covered them
 // still lying at the ends; the second with chariots and their teams and
 // the cavalry; the third, the command, its officers round a chariot.
-export function terracottaArmy(): G[] {
+export const terracottaArmy = (): G[] => assemble(terracottaGrounds());
+// Its grounds (wonderModels.ts WonderGrounds): the three pits dug down
+// into the ground (sinks: their earthen sides and floor the game draws),
+// the bare loess round them, and in pieces, each where it stands: what
+// fills each pit, on its floor; the bank of spoil along the back, on the
+// ground.
+const PITS: readonly (readonly [number, number, number, number])[] = [[-0.058, 0.058, -0.058, 0.018], [-0.058, -0.006, 0.028, 0.058], [0.006, 0.04, 0.03, 0.056]];
+const LOESS = 0xb89a72, PIT_FLOOR = 0x6e5840, PIT_DEPTH = 0.0056;
+export function terracottaGrounds(): WonderGrounds {
+  const sinks = PITS.map(([x0, x1, z0, z1]) => sinkOf({ x: (x0 + x1) / 2, z: (z0 + z1) / 2, hw: (x1 - x0) / 2, hd: (z1 - z0) / 2 }, PIT_DEPTH, shade(LOESS, 0.82), PIT_FLOOR));
+  // (Each pit's figures on its floor: the old floor's few tenths of a
+  // thousandth under them taken back, so they stand on it.)
+  const down = (parts: G[]) => parts.map((g) => g.translate(0, -0.0004, 0));
+  const pieces: WonderPiece[] = [{ parts: () => down(pit1()), sink: 0 }, { parts: () => down(pit2()), sink: 1 }, { parts: () => down(pit3()), sink: 2 }];
+  // The bank of spoil thrown up along the back when the pits were dug, in three lengths.
+  for (let k = 0; k < 3; k++) pieces.push({ parts: () => berm(-0.068 + k * 0.0453, -0.0227 + k * 0.0453) });
+  return { sinks, paint: [{ x: 0, z: -0.002, hw: 0.068, hd: 0.07, color: shade(LOESS, 1.04), layer: 0 }], pieces };
+}
+// (A length of it: heaped earth, low mounds running into each other.)
+function berm(x0: number, x1: number): G[] {
+  const r = rnd(Math.round(x0 * 1000) + 77), out: G[] = [];
+  for (let x = x0 + 0.005; x < x1 - 0.003; x += 0.0045) {
+    const k = 0.85 + 0.3 * r();
+    out.push(P(new THREE.SphereGeometry(1, 10, 4, 0, Math.PI * 2, 0, Math.PI / 2).scale(0.0085 * k, 0.0062 * k, 0.0058), shade(LOESS, 0.93 + 0.08 * r()), { x: x + (r() - 0.5) * 0.0015, y: -0.0014, z: -0.0675 + (r() - 0.5) * 0.0015, ry: (r() - 0.5) * 0.4 }));
+  }
+  return out;
+}
+// Pit 1: nine corridors between earthen walls, two files of soldiers in each.
+function pit1(): G[] {
   const r = rnd(41), out: G[] = [];
-  const LOESS = 0xb89a72, FLOOR = 0x6e5840, CLAY = 0xb09884, TIMBER = 0x5a4430, D = 0.007, WH = 0.0045;
-  // The ground (a slab of loess) with the three pits cut through it.
-  const pits: [number, number, number, number][] = [[-0.058, 0.058, -0.058, 0.018], [-0.058, -0.006, 0.028, 0.058], [0.006, 0.04, 0.03, 0.056]];
-  const E = H - 0.012; // (the top's edge; banks slope from it to the site's edge)
-  const shape = new THREE.Shape([V(-E, -E, 0), V(E, -E, 0), V(E, E, 0), V(-E, E, 0)].map((v) => new THREE.Vector2(v.x, v.y)));
-  for (const [x0, x1, z0, z1] of pits) shape.holes.push(new THREE.Path([new THREE.Vector2(x0, -z0), new THREE.Vector2(x0, -z1), new THREE.Vector2(x1, -z1), new THREE.Vector2(x1, -z0)]));
-  out.push(P(new THREE.ExtrudeGeometry(shape, { depth: D, bevelEnabled: false, steps: 1 }).rotateX(-Math.PI / 2), shade(LOESS, 0.9)));
-  out.push(P(new THREE.ShapeGeometry(shape).rotateX(-Math.PI / 2).translate(0, D + 0.00005, 0), shade(LOESS, 1.04)));
-  out.push(...frustum(2 * H, 2 * H, 2 * E, 2 * E, D, shade(LOESS, 0.96)));
-  // Along the back, the bank of spoil thrown up when the pits were dug.
-  const berm = new THREE.Shape([[0.0595, D], [0.069, 0.0205], [0.0735, 0.0205], [0.0735, 0.0004], [0.0595, 0.0004]].map(([u, v]) => new THREE.Vector2(u!, v!)));
-  out.push(P(new THREE.ExtrudeGeometry(berm, { depth: 2 * E - 0.002, bevelEnabled: false, steps: 1 }).rotateY(Math.PI / 2).translate(-E + 0.001, 0, 0), shade(LOESS, 0.98)));
-  for (const [x0, x1, z0, z1] of pits) out.push(flat(x1 - x0, z1 - z0, FLOOR, (x0 + x1) / 2, (z0 + z1) / 2, 0.0004));
-  // Pit 1: nine corridors between earthen walls, two files of soldiers in each.
-  const [p0, p1, q0, q1] = pits[0]!, nC = 9, wall = 0.0032, cw = (p1 - p0 - (nC + 1) * wall) / nC, front = q1 - 0.018;
+  const CLAY = 0xb09884, TIMBER = 0x5a4430, WH = 0.0045;
+  const [p0, p1, q0, q1] = PITS[0]!, nC = 9, wall = 0.0032, cw = (p1 - p0 - (nC + 1) * wall) / nC, front = q1 - 0.018;
   for (let i = 0; i <= nC; i++) {
     const x = p0 + wall / 2 + i * (cw + wall);
     out.push(...box(wall, WH, front - q0, shade(LOESS, 0.95 + (i % 2) * 0.04), { x, z: (q0 + front) / 2 }, shade(LOESS, 1.04)));
@@ -422,16 +438,24 @@ export function terracottaArmy(): G[] {
       out.push(...soldier(cx + f * cw * 0.24, z, CLAY, r));
     }
   }
-  // The vanguard: three ranks across the head of the pit.
+  // The vanguard: ranks across the head of the pit.
   for (let row = 0; row < 2; row++) for (let i = 0; i < 24; i++) out.push(...soldier(p0 + 0.004 + i * ((p1 - p0 - 0.008) / 23), q1 - 0.004 - row * 0.005, CLAY, r));
-  // Pit 2: chariots with their teams, cavalry with their horses.
-  const [s0, , t0, t1] = pits[1]!;
+  return out;
+}
+// Pit 2: chariots with their teams, cavalry with their horses.
+function pit2(): G[] {
+  const r = rnd(42), out: G[] = [];
+  const [s0, , t0, t1] = PITS[1]!;
   for (let i = 0; i < 3; i++) for (let j = 0; j < 2; j++) out.push(...chariot(s0 + 0.01 + i * 0.016, t1 - 0.008 - j * 0.013, 0));
-  for (let i = 0; i < 5; i++) out.push(...horse(s0 + 0.006 + i * 0.01, t0 + 0.006, 0, r), ...soldier(s0 + 0.0095 + i * 0.01, t0 + 0.005, CLAY, r));
-  // Pit 3: the command, officers round their chariot.
-  const [u0, u1, v0, v1] = pits[2]!;
+  for (let i = 0; i < 5; i++) out.push(...horse(s0 + 0.006 + i * 0.01, t0 + 0.006, 0, r), ...soldier(s0 + 0.0095 + i * 0.01, t0 + 0.005, 0xb09884, r));
+  return out;
+}
+// Pit 3: the command, officers round their chariot.
+function pit3(): G[] {
+  const r = rnd(43), out: G[] = [];
+  const [u0, u1, v0, v1] = PITS[2]!;
   out.push(...chariot((u0 + u1) / 2, (v0 + v1) / 2 + 0.004, 0));
-  for (let i = 0; i < 10; i++) { const t = (i / 10) * Math.PI * 2; out.push(...soldier((u0 + u1) / 2 + Math.cos(t) * 0.012, (v0 + v1) / 2 + Math.sin(t) * 0.009, shade(CLAY, 1.05), r)); }
+  for (let i = 0; i < 10; i++) { const t = (i / 10) * Math.PI * 2; out.push(...soldier((u0 + u1) / 2 + Math.cos(t) * 0.012, (v0 + v1) / 2 + Math.sin(t) * 0.009, shade(0xb09884, 1.05), r)); }
   return out;
 }
 // A clay soldier at attention, facing +z: legs and armoured body, a head

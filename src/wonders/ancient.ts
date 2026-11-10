@@ -6,9 +6,10 @@
 import * as THREE from 'three';
 import { chamfered, frustum, ring } from '../houseKit.ts';
 import {
-  P, annulus, archPane, ball, box, bush, column, cone, cypressT, disc, drumC, figure, flat, palm, pane,
-  peristyle, rnd, roundTree, shade, steppedPyramid, steps, templeRoof, H, islet, type G, type Models,
+  P, annulus, archPane, ball, box, bush, column, cone, disc, drumC, figure, flat, pane,
+  peristyle, rnd, shade, steppedPyramid, steps, templeRoof, H, islet, type G, type Models,
 } from './kit.ts';
+import type { GroundTree, WonderGrounds } from '../wonderModels.ts';
 
 const WATER = 0x5f8fa3, GRASS = 0x86a058, LEAF = 0x557a36;
 const MARBLE = 0xe6e0d2, BRONZE = 0x9a7a4a;
@@ -152,11 +153,43 @@ export function stonehenge(): G[] {
 // cascades, terrace by terrace; a
 // pavilion on the top; at the foot, a band of blue glazed brick with
 // golden lions and dragons.
+// Its terraces' tiers (widths, each TIER tall, the stack set back GARDEN_DZ),
+// and the spots along each ledge where its plants stand: a tree (a palm,
+// a cypress, a round-headed tree) or flowering bushes (pick 3).
+const TIERS = [0.146, 0.118, 0.092, 0.068, 0.046], TIER = 0.022, GARDEN_DZ = -0.002;
+function gardenSpots(i: number): { x: number; z: number; y: number; pick: number; k: number }[] {
+  const w = TIERS[i]!, d = w * 0.94, next = TIERS[i + 1];
+  if (next === undefined) return [];
+  const yl = (i + 1) * TIER, mid = (w + next) / 4, midD = (d + next * 0.94) / 4;
+  const spots: [number, number][] = [];
+  const nAlong = Math.max(3, Math.round(w / 0.016));
+  for (let k = 0; k < nAlong; k++) {
+    const t = -w / 2 + 0.006 + (k * (w - 0.012)) / (nAlong - 1);
+    if (Math.abs(t) > 0.01) spots.push([t, midD]);
+    spots.push([t, -midD]);
+  }
+  for (let k = 1; k < nAlong - 1; k++) { const t = -d / 2 + 0.006 + (k * (d - 0.012)) / (nAlong - 1); spots.push([mid, t], [-mid, t]); }
+  return spots.map(([x, z], k) => ({ x, z: z + GARDEN_DZ, y: yl, pick: (k + i) % 4, k }));
+}
+// Its trees, the flora's own (wonderModels.ts WonderGrounds), standing on
+// its terraces: palms, cypresses and round-headed trees along the ledges,
+// two palms by the pavilion on the top.
+export function hangingGardensGrounds(): WonderGrounds {
+  const r = rnd(6), trees: GroundTree[] = [];
+  for (let i = 0; i < TIERS.length; i++) for (const sp of gardenSpots(i)) {
+    if (sp.pick === 0) trees.push({ x: sp.x, z: sp.z, y: sp.y, kind: 'palm', height: 0.018 + r() * 0.006 });
+    else if (sp.pick === 1) trees.push({ x: sp.x, z: sp.z, y: sp.y, kind: 'cypress', height: 0.016 + r() * 0.005 });
+    else if (sp.pick === 2) trees.push({ x: sp.x, z: sp.z, y: sp.y, kind: 'beechMaple', height: 0.011 + r() * 0.002 });
+  }
+  const yt = TIERS.length * TIER;
+  trees.push({ x: 0.016, z: GARDEN_DZ + 0.012, y: yt, kind: 'palm', height: 0.022 }, { x: -0.016, z: GARDEN_DZ + 0.01, y: yt, kind: 'palm', height: 0.019 });
+  return { trees };
+}
 export function hangingGardens(H: number): G[] {
   const r = rnd(5), out: G[] = [];
   const BRICK = 0xc49c66, DARK = 0x3d3026, SOIL = 0x6f8a3c, GLAZE = 0x2f5e9e, GOLD = 0xe2b84a;
   out.push(flat(2 * H, 2 * H, 0xc8b48c, 0, 0, 0.0003));
-  const tiers = [0.146, 0.118, 0.092, 0.068, 0.046], th = 0.022, dz = -0.002, CASCADE = 0.034;
+  const tiers = TIERS, th = TIER, dz = GARDEN_DZ, CASCADE = 0.034;
   const flowers = [0xd77aa0, 0xe8c84a, 0xf0ece0, 0x9a6ac0, 0xe0703a];
   tiers.forEach((w, i) => {
     const d = w * 0.94, y = i * th;
@@ -184,26 +217,12 @@ export function hangingGardens(H: number): G[] {
         if (r() < 0.25) out.push(ball(0.0011, flowers[Math.floor(r() * flowers.length)]!, { x: nx * (ov + 0.0006) + tx * t, y: y + th - l * 0.6, z: dz + nz * (ov + 0.0006) + tz * t }));
       }
     }
-    // The ledge between this terrace and the next: trees and flowers along it.
-    const next = tiers[i + 1];
-    if (next === undefined) return;
-    const yl = y + th, mid = (w + next) / 4, midD = (d + next * 0.94) / 4;
-    const spots: [number, number][] = [];
-    const nAlong = Math.max(3, Math.round(w / 0.016));
-    for (let k = 0; k < nAlong; k++) {
-      const t = -w / 2 + 0.006 + (k * (w - 0.012)) / (nAlong - 1);
-      if (Math.abs(t) > 0.01) spots.push([t, midD]);
-      spots.push([t, -midD]);
+    // The ledge between this terrace and the next: flowers along it, among
+    // its trees (the flora's own: hangingGardensGrounds).
+    for (const sp of gardenSpots(i)) if (sp.pick === 3) {
+      const k = sp.k;
+      out.push(bush(sp.x, sp.z, 0.0026, flowers[k % flowers.length]!, sp.y), bush(sp.x + 0.003, sp.z + 0.002, 0.002, shade(LEAF, 1.1), sp.y));
     }
-    for (let k = 1; k < nAlong - 1; k++) { const t = -d / 2 + 0.006 + (k * (d - 0.012)) / (nAlong - 1); spots.push([mid, t], [-mid, t]); }
-    spots.forEach(([x, z], k) => {
-      const pick = (k + i) % 4, zz = z + dz;
-      const plants = pick === 0 ? palm(x, zz, 0.018 + r() * 0.006, k + i * 31)
-        : pick === 1 ? cypressT(x, zz, 0.016 + r() * 0.005)
-        : pick === 2 ? roundTree(x, zz, 0.011, shade(0x5f8a3a, 0.9 + r() * 0.2), k)
-        : [bush(x, zz, 0.0026, flowers[k % flowers.length]!), bush(x + 0.003, zz + 0.002, 0.002, shade(LEAF, 1.1))];
-      out.push(...plants.map((g) => g.translate(0, yl, 0)));
-    });
   });
   // The stair up the front, flight by flight (the first from the ground),
   // each of its steps a block.
@@ -220,7 +239,6 @@ export function hangingGardens(H: number): G[] {
   for (let k = 0; k < 7; k++) out.push(...box(0.0028, 0.003, 0.0028, shade(BRICK, 1.02), { x: -0.0125 + k * 0.0042, y: yt + 0.012, z: dz - 0.004 + 0.0096 }));
   out.push(...archPane(0.006, 0.006, DARK, 0, yt, dz - 0.004 + 0.0113));
   out.push(P(new THREE.SphereGeometry(0.008, 10, 4, 0, Math.PI * 2, 0, Math.PI / 2), 0xb89a5e, { y: yt + 0.012, z: dz - 0.006 }));
-  out.push(...palm(0.016, dz + 0.012, 0.022, 91).map((g) => g.translate(0, yt, 0)), ...palm(-0.016, dz + 0.01, 0.019, 92).map((g) => g.translate(0, yt, 0)));
   // The water: lifted to the top (by hidden screws) and running down the front in cascades, terrace by terrace.
   for (let i = 0; i < tiers.length; i++) {
     const d = tiers[i]! * 0.94, y = i * th;

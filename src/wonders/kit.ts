@@ -10,6 +10,8 @@ import * as THREE from 'three';
 import { cone, cyl } from '../propCatalog.ts';
 import { P, box, patch, shade, type G } from '../houseKit.ts';
 import { CELL } from '../town/geometry.ts';
+import type { StatueMesh } from './statues.ts';
+import type { GroundShape, Sink, WonderGrounds } from '../wonderModels.ts';
 
 export { P, box, shade, cone, cyl, type G };
 export const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
@@ -313,3 +315,40 @@ export function scaffold(): G[] {
 }
 // (Each era's file gives its wonders' models as one of these.)
 export type Models<K extends string> = { readonly [k in K]: () => G[] };
+
+// A statue's mesh (statues.ts) as one piece of colour c, `h` tall, its base
+// at o.y, turned by o.ry (its front +z before).
+export function statue(m: StatueMesh, h: number, c: number, o: { x?: number; y?: number; z?: number; ry?: number } = {}): G {
+  const bytes = (b64: string) => { const s = atob(b64), a = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) a[i] = s.charCodeAt(i); return a.buffer; };
+  const q = new Int16Array(bytes(m.pos)), idx = new Uint16Array(bytes(m.idx));
+  let top = 0;
+  for (let i = 1; i < q.length; i += 3) top = Math.max(top, q[i]!);
+  const k = h / top, pos = new Float32Array(idx.length * 3);
+  idx.forEach((v, i) => { for (let a = 0; a < 3; a++) pos[i * 3 + a] = q[v * 3 + a]! * k; });
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  return P(g, c, o);
+}
+
+// ---------- a wonder in pieces ----------
+
+// The whole of a wonder drawn in pieces (wonderModels.ts WonderGrounds),
+// each where it stands, a sunk piece down on its sink's floor: its model
+// as the gallery shows it.
+export function assemble(gr: WonderGrounds): G[] {
+  return (gr.pieces ?? []).flatMap((p) => {
+    const parts = p.parts();
+    return p.sink === undefined ? parts : parts.map((g) => g.translate(0, -gr.sinks![p.sink!]!.depth, 0));
+  });
+}
+// A sink (wonderModels.ts Sink) over one shape: its outline a rectangle's
+// corners, or ROUND_SIDES points round an ellipse (cut by the ground's
+// hole: render.ts shrinks it to the polygon's inner edge).
+export const ROUND_SIDES = 48;
+export function sinkOf(shape: GroundShape, depth: number, side: number, floor: number, water?: number, follow = false): Sink {
+  const { x, z, hw, hd } = shape;
+  const outline: [number, number][] = shape.round
+    ? Array.from({ length: ROUND_SIDES }, (_, i) => { const a = (i / ROUND_SIDES) * Math.PI * 2; return [x + Math.cos(a) * hw, z + Math.sin(a) * hd]; })
+    : [[x - hw, z - hd], [x + hw, z - hd], [x + hw, z + hd], [x - hw, z + hd]];
+  return { outline, cut: [shape], depth, side, floor, follow, ...(water === undefined ? {} : { water }) };
+}

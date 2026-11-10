@@ -4,9 +4,9 @@
 
 import * as THREE from 'three';
 import { gable } from '../houseKit.ts';
-import type { GroundTree, WaterArea, WonderGrounds } from '../wonderModels.ts';
+import type { GroundPaint, GroundShape, GroundTree, Sink, WonderGrounds, WonderPiece } from '../wonderModels.ts';
 import {
-  P, V, archPane, ball, box, cone, drumC, figure, flat, H, pane, rnd, rod, shade, type G,
+  P, V, archPane, assemble, ball, box, cone, drumC, figure, flat, H, pane, rnd, rod, shade, sinkOf, type G,
 } from './kit.ts';
 
 const DARK = 0x3a332d, WATER = 0x5f8fa3, GOLD = 0xd9b24a;
@@ -118,7 +118,7 @@ export function florenceCathedral(): G[] {
   }
   out.push(drumC(Rd * 1.06, Rd * 1.06, 0.0018, 8, shade(MARBLE, 0.95), { y: yd + hd, z: zc, ry: Math.PI / 8 }));
   // The dome: eight tiled sails rising in a pointed curve, white ribs on the corners.
-  const Rm = Rd * 1.0, ym = yd + hd + 0.0018, hm = 0.028;
+  const Rm = Rd * 1.0, ym = yd + hd + 0.0018, hm = 0.0175;
   const prof: [number, number][] = [[1, 0], [0.985, 0.14], [0.945, 0.3], [0.87, 0.47], [0.75, 0.63], [0.58, 0.78], [0.37, 0.9], [0.2, 0.97], [0.14, 1]];
   out.push(lathe(prof.map(([a, b]) => [a * Rm, b * hm] as const), 8, TILE, { y: ym, z: zc }, Math.PI / 8));
   for (let k = 0; k < 8; k++) {
@@ -354,9 +354,9 @@ export function stPeters(): G[] {
     out.push(rod(V(cx, ys + R * 0.19, cz), V(cx, ys + R * 0.32, cz), R * 0.011, GOLD, 3), rod(V(cx - R * 0.04, ys + R * 0.27, cz), V(cx + R * 0.04, ys + R * 0.27, cz), R * 0.009, GOLD, 3));
   };
   const Zc = (zc + DZ) * S, Y0 = bh * SA * S;
-  cupola(0, Zc, Y0, 0.0295, 16, 0.036, 0.045, true);
+  cupola(0, Zc, Y0, 0.0295, 16, 0.036, 0.037, true);
   // The two small domes over the side chapels, at the crossing's front corners.
-  for (const s of [-1, 1]) cupola(s * 0.03 * S, (zc + 0.013 + DZ) * S, Y0, 0.0085, 8, 0.009, 0.012, false);
+  for (const s of [-1, 1]) cupola(s * 0.03 * S, (zc + 0.013 + DZ) * S, Y0, 0.0085, 8, 0.009, 0.0102, false);
   return [flat(2 * H, 2 * H, PAVE, 0, 0, 0.0003), ...out];
 }
 
@@ -437,21 +437,40 @@ export function temploMayor(): G[] {
 
 // ---------- Versailles ----------
 
-// The château on its rise and its gardens (beside the city, drawn large):
+// The château on its rise and its gardens (beside the city, drawn large),
+// in pieces, each standing on the ground where it is (versaillesGrounds):
 // toward the town, the courts narrowing to the marble court in brick and
-// stone under slate roofs edged with gold, the gilded gate; toward the gardens, the long stone front with its arched windows,
-// balustrade and urns; the chapel's high roof; the water parterre, Latona's
-// fountain, the long green carpet between the groves, Apollo's fountain,
-// the Grand Canal; the embroidered parterres and the
-// orangery's trees in tubs; clipped yews. Its water and its trees are the
-// game's own (versaillesGrounds): the model has only the basins' kerbs and
-// the groves' hedges.
-export function versailles(): G[] {
-  const STONE = 0xe3d3b0, BRICK = 0xb06a50, SLATE = 0x5d6874, LAWN = 0x86a656, GRAVEL = 0xd9ccaa, BOX = 0x3f6a34, GROVE = 0x4f7a3a;
+// stone under slate roofs edged with gold, the gilded gate; toward the
+// gardens, the long stone front with its arched windows, balustrade and
+// urns; the chapel's high roof; the water parterre, Latona's fountain, the
+// long green carpet between the groves, Apollo's fountain, the Grand
+// Canal; the embroidered parterres and the orangery's trees in tubs;
+// clipped yews. Its basins are dug into the ground and hold the game's
+// water, its groves are the flora's trees, its gravel and lawns lie on
+// the ground as drawn.
+export const versailles = (): G[] => assemble(versaillesGrounds());
+const V_STONE = 0xe3d3b0, V_LAWN = 0x86a656, V_GRAVEL = 0xd9ccaa, V_BOX = 0x3f6a34, V_GROVE = 0x4f7a3a;
+// Its basins: the water parterre's two pools, Latona's and Apollo's, the
+// Grand Canal's cross: dug BASIN deep, their water WATER_DOWN under the
+// ground (wonderModels.ts Sink).
+const BASIN = 0.0034, WATER_DOWN = 0.0009, BASIN_SIDE = 0xcfc3a2, BASIN_FLOOR = 0x6f6a58;
+const LATONA = { x: 0, z: 0.003, hw: 0.0098, hd: 0.0098, round: true }, APOLLO = { x: 0, z: -0.05, hw: 0.0117, hd: 0.0069, round: true };
+const CANAL: Sink = {
+  outline: [[-0.07, -0.06475], [-0.00425, -0.06475], [-0.00425, -0.05725], [0.00425, -0.05725], [0.00425, -0.06475], [0.07, -0.06475],
+    [0.07, -0.07125], [0.00425, -0.07125], [0.00425, -0.075], [-0.00425, -0.075], [-0.00425, -0.07125], [-0.07, -0.07125]],
+  cut: [{ x: 0, z: -0.068, hw: 0.07, hd: 0.00325 }, { x: 0, z: -0.061, hw: 0.00425, hd: 0.00375 }, { x: 0, z: -0.073125, hw: 0.00425, hd: 0.001875 }],
+  depth: BASIN, water: WATER_DOWN, side: BASIN_SIDE, floor: BASIN_FLOOR, follow: true,
+};
+const basin = (sh: GroundShape) => sinkOf(sh, BASIN, BASIN_SIDE, BASIN_FLOOR, WATER_DOWN, true);
+// (Sinks: 0, 1 the pools, 2 Latona's, 3 Apollo's, 4 the canal.)
+const VERSAILLES_SINKS: readonly Sink[] = [basin({ x: -0.017, z: 0.017, hw: 0.01175, hd: 0.0035 }), basin({ x: 0.017, z: 0.017, hw: 0.01175, hd: 0.0035 }), basin(LATONA), basin(APOLLO), CANAL];
+
+// The palace: one piece, on a low stone platform (its rise) that keeps it
+// clear of the ground round it.
+function versaillesPalace(): G[] {
+  const STONE = V_STONE, BRICK = 0xb06a50, SLATE = 0x5d6874;
   const out: G[] = [];
-  // Gravel: the terraces before the palace, the alleys, the town's parade ground.
-  out.push(flat(0.142, 0.03, GRAVEL, 0, 0.012, 0.0005), flat(0.018, 0.075, GRAVEL, 0, -0.035, 0.00055), flat(0.07, 0.022, GRAVEL, 0, 0.063, 0.0005));
-  // ---- the palace ----
+  out.push(...box(0.148, 0.0042, 0.0195, 0xd4c8aa, { y: -0.004, z: 0.03475 }), ...box(0.083, 0.0042, 0.0295, 0xd4c8aa, { y: -0.004, z: 0.05925 }));
   const zg = 0.027, ph = 0.0165; // the garden front's line, the palace's height
   const front = (x0: number, x1: number, z: number, h: number, ry: number, c: number, every = 0.0026) => {
     const n = Math.round((x1 - x0) / every), nz = Math.cos(ry), o = 0.0003;
@@ -512,82 +531,98 @@ export function versailles(): G[] {
   out.push(...gable(0.0095, 0.015, 0.009, SLATE, { x: 0.033, y: 0.021, z: 0.0445 }, true, STONE));
   out.push(rod(V(0.033, 0.0302, 0.038), V(0.033, 0.0302, 0.051), 0.0005, GOLD, 4));
   for (let i = 0; i < 4; i++) for (const s of [-1, 1]) out.push(...archPane(0.0016, 0.009, DARK, 0.033 + s * 0.0046, 0.009, 0.0395 + i * 0.0032, s * Math.PI / 2));
-  // ---- the gardens ----
-  // (The basins' kerbs stand KERB high, clear of the ground the model is
-  // sunk into, round the game's water laid on it: VERSAILLES_WATER.)
-  const KERB = 0.0026;
-  // The water parterre: two great pools with their bronze figures.
-  for (const s of [-1, 1]) {
-    for (const t of [-1, 1]) out.push(...box(0.025, KERB, 0.00075, STONE, { x: s * 0.017, z: 0.017 + t * 0.0039 }, shade(STONE, 1.03)), ...box(0.00075, KERB, 0.0085, STONE, { x: s * 0.017 + t * 0.0121, z: 0.017 }, shade(STONE, 1.03)));
-    for (let i = 0; i < 4; i++) out.push(ball(0.0006, 0x5a5040, { x: s * 0.017 - 0.009 + i * 0.006, y: KERB + 0.0005, z: 0.0132 }));
+  return out;
+}
+// Latona's fountain, on its basin's floor (BASIN under the ground): three
+// tiers on a plinth rising from the water, jets, the goddess on top.
+function latona(): G[] {
+  const lz = LATONA.z, y0 = BASIN - WATER_DOWN, out: G[] = [drumC(0.0058, 0.0058, y0, 20, shade(V_STONE, 0.9), { z: lz })];
+  for (const [rr, y] of [[0.0062, 0], [0.0042, 0.0014], [0.0024, 0.0028]] as const) out.push(drumC(rr, rr * 0.95, 0.0014, 16, shade(V_STONE, 1.02), { y: y0 + y, z: lz }));
+  out.push(...figure(0, lz, 0.0036, GOLD, { y: y0 + 0.0042, skin: GOLD }));
+  for (let i = 0; i < 10; i++) { const a = (i / 10) * Math.PI * 2; out.push(P(new THREE.ConeGeometry(0.0004, 0.004, 4, 1, true).translate(0, 0.002, 0), 0xeef6f8, { x: Math.sin(a) * 0.0082, y: BASIN - WATER_DOWN, z: lz + Math.cos(a) * 0.0082, rx: -Math.cos(a) * 0.5, rz: Math.sin(a) * 0.5 })); }
+  return out;
+}
+// Apollo's fountain, on its basin's floor: the sun god's gilded chariot rising from the water on its rock, its jets.
+function apollo(): G[] {
+  const az = APOLLO.z, y0 = BASIN - WATER_DOWN;
+  const out: G[] = [P(new THREE.DodecahedronGeometry(0.0034, 0).scale(1.5, 0.75, 1), 0x6e6658, { y: y0 - 0.001, z: az })];
+  out.push(ball(0.0014, GOLD, { y: y0 + 0.0018, z: az, sx: 1.5 }), ...figure(0, az, 0.003, GOLD, { y: y0 + 0.0022, skin: GOLD, arm: 1 }));
+  for (let i = 0; i < 4; i++) out.push(ball(0.0009, GOLD, { x: -0.003 + i * 0.002, y: y0 + 0.0016, z: az + 0.0028, sz: 1.6 }));
+  for (const s of [-1, 1]) out.push(P(new THREE.ConeGeometry(0.0005, 0.006, 4, 1, true).translate(0, 0.003, 0), 0xeef6f8, { x: s * 0.007, y: y0, z: az }));
+  return out;
+}
+// A grove's block of the flora's trees (versaillesGrounds), hedged, a little fountain at its heart.
+const GROVES: readonly (readonly [number, number])[] = [-1, 1].flatMap((s) => [0, 1].flatMap((gx) => [0, 1].map((gz) => [s * (0.0175 + gx * 0.019), -0.017 - gz * 0.02] as const)));
+const GROVE_W = 0.016, GROVE_D = 0.017;
+function grove(cx: number, cz: number): G[] {
+  const w = GROVE_W, d = GROVE_D, t = 0.0007, h = 0.0022, c = shade(V_BOX, 0.95);
+  // (Its hedges round it, the ground within, where the trees stand.)
+  return [
+    ...box(w, h, t, c, { x: cx, z: cz - d / 2 + t / 2 }, shade(V_GROVE, 0.9)), ...box(w, h, t, c, { x: cx, z: cz + d / 2 - t / 2 }, shade(V_GROVE, 0.9)),
+    ...box(t, h, d - 2 * t, c, { x: cx - w / 2 + t / 2, z: cz }, shade(V_GROVE, 0.9)), ...box(t, h, d - 2 * t, c, { x: cx + w / 2 - t / 2, z: cz }, shade(V_GROVE, 0.9)),
+    drumC(0.0016, 0.0016, 0.0016, 10, V_STONE, { x: cx, z: cz }), P(new THREE.CircleGeometry(0.0013, 10).rotateX(-Math.PI / 2), WATER, { x: cx, y: 0.00165, z: cz }),
+  ];
+}
+// An embroidered parterre's clipped yews, at its beds' corners; the orangery's trees in tubs.
+function parterreYews(s: number): G[] {
+  const out: G[] = [], cx = s * 0.052, cz = 0.006, w = 0.034, d = 0.032;
+  for (let i = 0; i < 2; i++) for (let j = 0; j < 2; j++) {
+    const bx = cx + (i - 0.5) * (w / 2), bz = cz + (j - 0.5) * (d / 2), bw = w / 2 - 0.003, bd = d / 2 - 0.003;
+    for (const [px, pz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) out.push(cone(0.0008, 0.0034, 6, V_BOX, { x: bx + px * (bw / 2 - 0.0008), y: 0, z: bz + pz * (bd / 2 - 0.0008) }));
   }
-  // Latona's fountain: three tiers of basins, water jets, the goddess on top.
-  const lz = 0.003;
-  out.push(lathe([[0.0106, 0], [0.0106, KERB], [0.0098, KERB], [0.0098, 0]], 32, STONE, { z: lz }));
-  for (const [rr, y] of [[0.0068, 0.0012], [0.0046, 0.0026], [0.0026, 0.004]] as const) out.push(drumC(rr, rr * 0.95, 0.0014, 16, shade(STONE, 1.02), { y, z: lz }));
-  out.push(...figure(0, lz, 0.0036, GOLD, { y: 0.0054, skin: GOLD }));
-  for (let i = 0; i < 10; i++) { const a = (i / 10) * Math.PI * 2; out.push(P(new THREE.ConeGeometry(0.0004, 0.004, 4, 1, true).translate(0, 0.002, 0), 0xeef6f8, { x: Math.sin(a) * 0.0082, y: 0.0012, z: lz + Math.cos(a) * 0.0082, rx: -Math.cos(a) * 0.5, rz: Math.sin(a) * 0.5 })); }
-  // The green carpet between the groves, its alleys of clipped yews.
-  out.push(flat(0.011, 0.04, LAWN, 0, -0.027, 0.0008));
-  for (const s of [-1, 1]) {
-    for (let i = 0; i < 9; i++) out.push(cone(0.0009, 0.0042, 6, BOX, { x: s * 0.0072, y: 0.0006, z: -0.009 - i * 0.0045 }));
-    // The groves: blocks of trees, hedged, cut by diagonal alleys.
-    for (let gx = 0; gx < 2; gx++) for (let gz = 0; gz < 2; gz++) {
-      const cx = s * (0.0175 + gx * 0.019), cz = -0.017 - gz * 0.02, w = 0.016, d = 0.017;
-      out.push(...box(w, 0.0022, d, shade(BOX, 0.95), { x: cx, z: cz }, shade(GROVE, 0.9)));
-      out.push(drumC(0.0016, 0.0016, 0.0024, 10, STONE, { x: cx, z: cz }), P(new THREE.CircleGeometry(0.0013, 10).rotateX(-Math.PI / 2), WATER, { x: cx, y: 0.00245, z: cz }));
-    }
-  }
-  // Apollo's fountain: an oval basin, the sun god's gilded chariot rising from it, its jets.
-  const az = -0.05;
-  out.push(P(new THREE.LatheGeometry([[1, 0], [1, KERB], [0.94, KERB], [0.94, 0]].map(([x, y]) => new THREE.Vector2(x, y)), 36).scale(0.0125, 1, 0.0075), STONE, { z: az }));
-  out.push(ball(0.0014, GOLD, { y: 0.0018, z: az, sx: 1.5 }), ...figure(0, az, 0.003, GOLD, { y: 0.0022, skin: GOLD, arm: 1 }));
-  for (let i = 0; i < 4; i++) out.push(ball(0.0009, GOLD, { x: -0.003 + i * 0.002, y: 0.0016, z: az + 0.0028, sz: 1.6 }));
-  for (const s of [-1, 1]) out.push(P(new THREE.ConeGeometry(0.0005, 0.006, 4, 1, true).translate(0, 0.003, 0), 0xeef6f8, { x: s * 0.007, y: 0.0012, z: az }));
-  // The embroidered parterres before the wings, and the orangery's trees in tubs to the south.
-  for (const s of [-1, 1]) {
-    const cx = s * 0.052, cz = 0.006, w = 0.034, d = 0.032;
-    out.push(flat(w, d, GRAVEL, cx, cz, 0.0006));
-    for (let i = 0; i < 2; i++) for (let j = 0; j < 2; j++) {
-      const bx = cx + (i - 0.5) * (w / 2), bz = cz + (j - 0.5) * (d / 2), bw = w / 2 - 0.003, bd = d / 2 - 0.003;
-      out.push(flat(bw, bd, LAWN, bx, bz, 0.0008));
-      // Box scrolls: rings and lines of dark green on the lawn.
-      out.push(P(new THREE.RingGeometry(0.0022, 0.0029, 14).rotateX(-Math.PI / 2), BOX, { x: bx, y: 0.00095, z: bz }));
-      for (const t of [-1, 1]) out.push(flat(bw * 0.8, 0.0006, BOX, bx, bz + t * bd * 0.33, 0.00095), flat(0.0006, bd * 0.8, BOX, bx + t * bw * 0.33, bz, 0.00096));
-      for (const [px, pz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) out.push(cone(0.0008, 0.0034, 6, BOX, { x: bx + px * (bw / 2 - 0.0008), y: 0.0006, z: bz + pz * (bd / 2 - 0.0008) }));
-    }
-    if (s > 0) for (let i = 0; i < 6; i++) for (let j = 0; j < 2; j++) {
-      const x = 0.038 + i * 0.0055, z = -0.016 - j * 0.0065;
-      out.push(...box(0.0013, 0.0013, 0.0013, 0x6a4a30, { x, z }), ball(0.0016, 0x4f7a34, { x, y: 0.0028, z }), ball(0.0004, 0xe89030, { x: x + 0.001, y: 0.0032, z: z + 0.001 }));
-    }
+  return out;
+}
+function orangery(): G[] {
+  const out: G[] = [];
+  for (let i = 0; i < 6; i++) for (let j = 0; j < 2; j++) {
+    const x = 0.038 + i * 0.0055, z = -0.016 - j * 0.0065;
+    out.push(...box(0.0013, 0.0013, 0.0013, 0x6a4a30, { x, z }), ball(0.0016, 0x4f7a34, { x, y: 0.0028, z }), ball(0.0004, 0xe89030, { x: x + 0.001, y: 0.0032, z: z + 0.001 }));
   }
   return out;
 }
 
-// Versailles's water, the game's own (wonderModels.ts WaterArea): the
-// water parterre's two pools, Latona's and Apollo's basins, the Grand
-// Canal's cross (its long arm in two pieces either side of the cross
-// arm, so no two sheets overlap).
-const VERSAILLES_WATER: readonly WaterArea[] = [
-  { x: -0.017, z: 0.017, hw: 0.01175, hd: 0.0035 }, { x: 0.017, z: 0.017, hw: 0.01175, hd: 0.0035 },
-  { x: 0, z: 0.003, hw: 0.0098, hd: 0.0098, round: true },
-  { x: 0, z: -0.05, hw: 0.0117, hd: 0.0069, round: true },
-  { x: 0, z: -0.068, hw: 0.07, hd: 0.00325 },
-  { x: 0, z: -0.061, hw: 0.00425, hd: 0.00375 }, { x: 0, z: -0.073125, hw: 0.00425, hd: 0.001875 },
-];
-// Its grounds beside its city: that water, and its trees the flora's own:
-// the groves' blocks (four each side of the green carpet, cut by diagonal
-// alleys: no tree on a block's diagonals) and a row along each side of the
-// canal's cross arm.
+// Its grounds beside its city (wonderModels.ts WonderGrounds): its basins
+// dug into the ground with the game's water in them; the gravel and lawns
+// laid on the ground; its trees the flora's own: the groves' blocks (four
+// each side of the green carpet, cut by diagonal alleys: no tree on a
+// block's diagonals) and a row along each side of the canal's cross arm;
+// and its buildings and ornaments in pieces, each on the ground where it
+// stands, its fountains on their basins' floors.
 export function versaillesGrounds(): WonderGrounds {
   const r = rnd(55), trees: GroundTree[] = [];
-  for (const s of [-1, 1]) for (let gx = 0; gx < 2; gx++) for (let gz = 0; gz < 2; gz++) {
-    const cx = s * (0.0175 + gx * 0.019), cz = -0.017 - gz * 0.02, w = 0.016, d = 0.017;
-    for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) {
-      if (i === j || i === 3 - j) continue;
-      trees.push({ x: cx - w / 2 + 0.002 + (i * (w - 0.004)) / 3, z: cz - d / 2 + 0.002 + (j * (d - 0.004)) / 3, kind: r() < 0.3 ? 'oak' : 'beechMaple', height: 0.0085 + 0.0015 * r() });
-    }
+  for (const [cx, cz] of GROVES) for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) {
+    if (i === j || i === 3 - j) continue;
+    trees.push({ x: cx - GROVE_W / 2 + 0.002 + (i * (GROVE_W - 0.004)) / 3, z: cz - GROVE_D / 2 + 0.002 + (j * (GROVE_D - 0.004)) / 3, kind: r() < 0.3 ? 'oak' : 'beechMaple', height: 0.0085 + 0.0015 * r() });
   }
   for (const s of [-1, 1]) for (let i = 0; i < 12; i++) for (const z of [-0.0745, -0.0613]) trees.push({ x: s * (0.0065 + i * 0.0055), z, kind: 'beechMaple', height: 0.0055 });
-  return { water: VERSAILLES_WATER, trees };
+  // Gravel: the terrace before the palace, the alley down the gardens, the
+  // parterres; on it the lawns: the green carpet and the parterres' beds
+  // with their scrolls of box (rings, lines) over them.
+  const paint: GroundPaint[] = [
+    { x: 0, z: 0.012, hw: 0.071, hd: 0.015, color: V_GRAVEL, layer: 0 }, { x: 0, z: -0.035, hw: 0.009, hd: 0.0375, color: V_GRAVEL, layer: 0 },
+    { x: 0, z: -0.027, hw: 0.0055, hd: 0.02, color: V_LAWN, layer: 1 },
+  ];
+  for (const s of [-1, 1]) {
+    const cx = s * 0.052, cz = 0.006, w = 0.034, d = 0.032;
+    paint.push({ x: cx, z: cz, hw: w / 2, hd: d / 2, color: V_GRAVEL, layer: 0 });
+    for (let i = 0; i < 2; i++) for (let j = 0; j < 2; j++) {
+      const bx = cx + (i - 0.5) * (w / 2), bz = cz + (j - 0.5) * (d / 2), bw = w / 2 - 0.003, bd = d / 2 - 0.003;
+      paint.push({ x: bx, z: bz, hw: bw / 2, hd: bd / 2, color: V_LAWN, layer: 1 });
+      for (const t of [-1, 1]) paint.push({ x: bx, z: bz + t * bd * 0.33, hw: bw * 0.4, hd: 0.0003, color: V_BOX, layer: 2 }, { x: bx + t * bw * 0.33, z: bz, hw: 0.0003, hd: bd * 0.4, color: V_BOX, layer: 2 });
+      paint.push({ x: bx, z: bz, hw: 0.0029, hd: 0.0029, round: true, color: V_BOX, layer: 3 }, { x: bx, z: bz, hw: 0.0022, hd: 0.0022, round: true, color: V_LAWN, layer: 4 });
+    }
+  }
+  const pieces: WonderPiece[] = [
+    { parts: versaillesPalace },
+    // The water parterre's bronzes along its pools' edges.
+    { parts: () => [-1, 1].flatMap((s) => Array.from({ length: 4 }, (_, i) => ball(0.0006, 0x5a5040, { x: s * 0.017 - 0.009 + i * 0.006, y: 0.0002, z: 0.0126, sx: 1.6 }))) },
+    { parts: latona, sink: 2 },
+    { parts: apollo, sink: 3 },
+    // The green carpet's alleys of clipped yews, a row each side.
+    ...[-1, 1].map((s) => ({ parts: () => Array.from({ length: 9 }, (_, i) => cone(0.0009, 0.0042, 6, V_BOX, { x: s * 0.0072, y: 0, z: -0.009 - i * 0.0045 })) })),
+    ...GROVES.map(([cx, cz]) => ({ parts: () => grove(cx, cz) })),
+    ...[-1, 1].map((s) => ({ parts: () => parterreYews(s) })),
+    { parts: orangery },
+  ];
+  return { sinks: VERSAILLES_SINKS, paint, trees, pieces };
 }
