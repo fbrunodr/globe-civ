@@ -5,7 +5,7 @@
 // beside it.
 
 import * as THREE from 'three';
-import { frustum, gable, prism, ring, spire } from '../houseKit.ts';
+import { frustum, gable, hip, prism, ring, spire } from '../houseKit.ts';
 import {
   P, V, H, archPane, ball, box, column, cone, cyl, disc, drumC, flat, islet, pane, rnd, rod, shade, statue, steps,
   type G, type Models,
@@ -32,30 +32,6 @@ function panes(cx: number, cz: number, o: number, ry: number, ts: readonly numbe
   return out;
 }
 const spread = (n: number, span: number) => Array.from({ length: n }, (_, i) => (n === 1 ? 0 : -span / 2 + (i * span) / (n - 1)));
-// A little round turret: its drum, a ring of corbels, a pointed roof and a finial.
-function turret(x: number, z: number, y: number, r: number, h: number, wall: number, roof: number, roofH = r * 3.2): G[] {
-  return [
-    drumC(r, r, h, 10, wall, { x, y, z }),
-    drumC(r * 0.85, r * 1.12, r * 0.6, 10, shade(wall, 0.95), { x, y: y + h - r * 0.6 + 0.0002, z }),
-    cone(r * 1.2, roofH, 10, roof, { x, y: y + h, z }),
-    rod(V(x, y + h + roofH * 0.95, z), V(x, y + h + roofH + r * 0.9, z), r * 0.08, GOLD, 3),
-  ];
-}
-// Crenellations along a line from a to b at height y.
-function merlonsAlong(ax: number, az: number, bx: number, bz: number, y: number, s: number, c: number): G[] {
-  const l = Math.hypot(bx - ax, bz - az), n = Math.max(2, Math.floor(l / (s * 2))), ry = Math.atan2(bx - ax, bz - az) + Math.PI / 2, out: G[] = [];
-  for (let i = 0; i < n; i++) { const f = (i + 0.5) / n; out.push(...box(s, s, s * 0.8, c, { x: ax + (bx - ax) * f, y, z: az + (bz - az) * f, ry })); }
-  return out;
-}
-// A conifer: a trunk and three stacked cones.
-function fir(x: number, z: number, h: number, y = 0, c = 0x3f5a3a): G[] {
-  return [
-    rod(V(x, y, z), V(x, y + h * 0.2, z), h * 0.03, 0x5a4030, 3),
-    cone(h * 0.24, h * 0.45, 7, c, { x, y: y + h * 0.15, z }),
-    cone(h * 0.19, h * 0.4, 7, shade(c, 1.06), { x, y: y + h * 0.38, z }),
-    cone(h * 0.13, h * 0.32, 7, shade(c, 1.1), { x, y: y + h * 0.62, z }),
-  ];
-}
 
 // A thin open bar from a to b (a girder of a lattice), three-sided.
 function bar(a: THREE.Vector3, b: THREE.Vector3, r: number, c: number): G {
@@ -968,88 +944,318 @@ function horse(x: number, z: number, y: number, l: number, c: number, rear = 0):
 
 // ---------- Bavaria: Neuschwanstein ----------
 
-// The castle on its crag above the gorge: the red-brick gatehouse with its
-// white corner turrets, the square tower and knights' house round the
-// courtyard, the tall white Palas at the back with its gables, rows of
-// arched windows and balconies, the slender stair tower and the north tower
-// with their blue-grey cones, turrets at every corner; a few firs at the
-// crag's foot. (Beside its city on hills.)
+const NS_WH = 0xeee8dc, NS_TRIM = 0xd2cab9, NS_ROOF = 0x56657a, NS_BRICK = 0xb06a52, NS_DARK = 0x2c2a2a, NS_GRANITE = 0x6f6b62;
+// The crag's top (the castle's terrace stands on it) and the terrace's middle.
+const NS_Y0 = 0.034, NS_ZC = -0.004;
+
+// The crag: a ridge of jagged granite, its sides steeper on the left (the
+// gorge's), its top cut flat for the terrace (a rounded rectangle that
+// holds it), its foot running on down into the hill (CRAG_DEPTH) so on a
+// slope it never shows a gap; paler ledges streaked down its faces.
+function nsCrag(): G[] {
+  const r = rnd(31), N = 44, out: G[] = [];
+  // Its rings, foot to top: height, half widths across (x) and along (z), squareness, roughness.
+  const rows: readonly (readonly [number, number, number, number, number])[] = [
+    [-0.045, 0.062, 0.068, 2.4, 0.03], [-0.02, 0.062, 0.068, 2.4, 0.06], [-0.004, 0.06, 0.0675, 2.6, 0.1], [0.005, 0.056, 0.067, 2.8, 0.12],
+    [0.012, 0.052, 0.0665, 3.1, 0.12], [0.018, 0.048, 0.066, 3.5, 0.12], [0.0245, 0.045, 0.0655, 4, 0.1], [0.029, 0.042, 0.065, 5, 0.07],
+    [0.032, 0.04, 0.0645, 6, 0.04], [NS_Y0, 0.038, 0.064, 8, 0],
+  ];
+  const top = rows.length - 1, jit = rows.map(() => Array.from({ length: N }, () => [r(), r()] as const));
+  const g = new THREE.CylinderGeometry(1, 1, 1, N, top, false), pos = g.getAttribute('position');
+  for (let i = 0; i < pos.count; i++) {
+    const row = top - Math.round((pos.getY(i) + 0.5) * top), [y, A0, B, n, j] = rows[top - row]!;
+    const ux = pos.getX(i), uz = pos.getZ(i);
+    if (Math.hypot(ux, uz) < 1e-6) { pos.setXYZ(i, 0, y, NS_ZC); continue; }
+    const a = Math.atan2(uz, ux), col = ((Math.round((Math.atan2(ux, uz) / (2 * Math.PI)) * N) % N) + N) % N, [p, q] = jit[top - row]![col]!;
+    // (The left side steeper: nearer the top's width all the way down.)
+    const A = Math.cos(a) < 0 ? rows[top]![1] + (A0 - rows[top]![1]) * 0.55 : A0;
+    const R = Math.pow(Math.abs(Math.cos(a) / A) ** n + Math.abs(Math.sin(a) / B) ** n, -1 / n);
+    // (The ring under the top only juts out, so the terrace never overhangs.)
+    const k = row === 1 ? 1 + p * 0.05 : 1 + (p - 0.5) * 2 * j;
+    const x = Math.max(-0.062, Math.min(0.062, Math.cos(a) * R * k)), z = Math.max(-0.0725, Math.min(0.0725, NS_ZC + Math.sin(a) * R * k));
+    pos.setXYZ(i, x, row > 0 && row < top - 1 ? y + (q - 0.5) * 0.003 : y, z);
+  }
+  const crag = g.toNonIndexed();
+  crag.deleteAttribute('normal');
+  crag.computeVertexNormals();
+  const rock = P(crag, NS_GRANITE), col = rock.getAttribute('color'), nrm = rock.getAttribute('normal'), cp = rock.getAttribute('position'), c = new THREE.Color();
+  // (Each facet its own shade: lit grey above, darker where it overhangs, the top weathered paler.)
+  for (let f = 0; f < col.count; f += 3) {
+    const ny = nrm.getY(f), y = cp.getY(f);
+    c.setHex(shade(NS_GRANITE, ny > 0.95 ? 1.12 : 0.82 + r() * 0.26 + Math.max(0, ny) * 0.12 + (y > 0.012 ? 0.05 : 0)));
+    for (let v = 0; v < 3; v++) col.setXYZ(f + v, c.r, c.g, c.b);
+  }
+  out.push(rock);
+  // Ledges of paler granite streaked down its faces, on its visible flanks.
+  const side: [number, number, number][] = [];
+  for (let i = 0; i < cp.count; i++) { const y = cp.getY(i); if (y > 0.002 && y < NS_Y0 - 0.004 && nrm.getY(i) < 0.9) side.push([cp.getX(i), y, cp.getZ(i)]); }
+  for (let k = 0; k < 16; k++) {
+    const [x, y, z] = side[Math.floor(r() * side.length)]!, l = Math.hypot(x, z - NS_ZC);
+    out.push(ball(0.0028 + r() * 0.0024, shade(NS_GRANITE, 1.12 + r() * 0.15), { x: x - (x / l) * 0.0012, y, z: z - ((z - NS_ZC) / l) * 0.0012, sx: 0.8, sy: 1.9, ry: r() * 6.28 }));
+  }
+  return out;
+}
+
+// A round-headed opening w wide, h tall to its crown (its head four-sided),
+// its sill's middle at (x, y, z), facing ry: five triangles.
+function nsArch(w: number, h: number, c: number, x: number, y: number, z: number, ry: number): G {
+  const r = w / 2, s = h - r, pts = [new THREE.Vector2(-r, 0), new THREE.Vector2(r, 0), new THREE.Vector2(r, s)];
+  for (let k = 1; k < 4; k++) pts.push(new THREE.Vector2(Math.cos((k * Math.PI) / 4) * r, s + Math.sin((k * Math.PI) / 4) * r));
+  pts.push(new THREE.Vector2(-r, s));
+  return P(new THREE.ShapeGeometry(new THREE.Shape(pts)), c, { x, y, z, ry });
+}
+// Windows on a face (its middle at cx, cz, `o` out from it, facing ry): at
+// tangents ts and sill heights ys, each n round-headed openings w × h set in
+// one limestone frame (n > 1: a twin or triple window, colonnettes between
+// and a tympanum over them).
+function nsWindows(cx: number, cz: number, o: number, ry: number, ts: readonly number[], ys: readonly number[], w: number, h: number, n = 1, fc = NS_TRIM): G[] {
+  const { nx, nz, tx, tz } = frame(ry), out: G[] = [], gap = w * 0.4, W = n * w + (n - 1) * gap, f = w * 0.3;
+  for (const t of ts) for (const y of ys) {
+    const at = (u: number, e: number) => [cx + nx * (o + e) + tx * (t + u), cz + nz * (o + e) + tz * (t + u)] as const;
+    const [fx, fz] = at(0, 0.00015);
+    out.push(nsArch(W + 2 * f, h - w / 2 + W / 2 + 2 * f, fc, fx, y - f, fz, ry));
+    for (let i = 0; i < n; i++) { const [x, z] = at(-W / 2 + w / 2 + i * (w + gap), 0.0003); out.push(nsArch(w, h, NS_DARK, x, y, z, ry)); }
+  }
+  return out;
+}
+// A string course round a w × d body at y, standing p proud of it.
+const nsBand = (x: number, z: number, w: number, d: number, y: number, c = NS_TRIM, t = 0.0008, p = 0.0004) => box(w + 2 * p, t, d + 2 * p, c, { x, y, z });
+// Crenellations along a line from a to b at height y.
+function merlonsAlong(ax: number, az: number, bx: number, bz: number, y: number, s: number, c: number): G[] {
+  const l = Math.hypot(bx - ax, bz - az), n = Math.max(2, Math.floor(l / (s * 2))), ry = Math.atan2(bx - ax, bz - az) + Math.PI / 2, out: G[] = [];
+  for (let i = 0; i < n; i++) { const f = (i + 0.5) / n; out.push(...box(s, s, s * 0.8, c, { x: ax + (bx - ax) * f, y, z: az + (bz - az) * f, ry })); }
+  return out;
+}
+// Battlements round a w × d top at y: a corbel table, the parapet corbelled
+// out over it, merlons on the sides named (+z, -z, +x, -x).
+function nsBattlements(x: number, z: number, w: number, d: number, y: number, s: number, c: number, sides: readonly ('f' | 'b' | 'r' | 'l')[] = ['f', 'b', 'r', 'l']): G[] {
+  const p = s * 0.45, W = w + 2 * p, D = d + 2 * p, out: G[] = [...box(w + p, s * 0.5 - 0.0001, d + p, shade(c, 0.88), { x, y: y - s * 0.5, z }), ...box(W, s, D, c, { x, y, z })];
+  const e = s * 0.4, X = W / 2 - e, Z = D / 2 - e;
+  if (sides.includes('f')) out.push(...merlonsAlong(x - X, z + Z, x + X, z + Z, y + s, s, c));
+  if (sides.includes('b')) out.push(...merlonsAlong(x - X, z - Z, x + X, z - Z, y + s, s, c));
+  if (sides.includes('r')) out.push(...merlonsAlong(x + X, z - Z + s, x + X, z + Z - s, y + s, s, c));
+  if (sides.includes('l')) out.push(...merlonsAlong(x - X, z - Z + s, x - X, z + Z - s, y + s, s, c));
+  return out;
+}
+// A gilded finial l tall from y: its rod and its orb.
+const nsFinial = (x: number, y: number, z: number, l: number): G[] => [
+  rod(V(x, y, z), V(x, y + l, z), l * 0.05, GOLD, 3),
+  P(new THREE.OctahedronGeometry(l * 0.11, 0), GOLD, { x, y: y + l * 0.45, z }),
+];
+// A round tower or turret r across, its wall rising h from y (n-sided): a
+// corbelled band near its top, its slate cone over a flared eave, a gilded
+// finial; `oriel`: corbelled out of a wall, a cone of stone under it.
+function turret(x: number, z: number, y: number, r: number, h: number, roofH: number, n: number, o: { wall?: number; oriel?: boolean } = {}): G[] {
+  const c = o.wall ?? NS_WH, out: G[] = [
+    cyl(r, r, h, n, c, { x, y, z }),
+    cyl(r, r * 1.15, r * 0.5, n, NS_TRIM, { x, y: y + h - r * 0.9, z }),
+    cyl(r * 1.15, r * 1.15, r * 0.4, n, c, { x, y: y + h - r * 0.4, z }),
+    cyl(r * 1.32, r * 1.08, r * 0.4, n, shade(NS_ROOF, 0.9), { x, y: y + h, z }),
+    cone(r * 1.08, roofH, n, NS_ROOF, { x, y: y + h + r * 0.4, z }),
+    ...nsFinial(x, y + h + r * 0.4 + roofH * 0.93, z, Math.max(0.003, r * 1.1)),
+  ];
+  if (o.oriel) out.push(cyl(r * 0.12, r, r * 1.8, n, NS_TRIM, { x, y: y - r * 1.8, z }));
+  return out;
+}
+// Slit windows round a round tower, from height y up, one every dy, winding round (a stair).
+function nsSlits(x: number, z: number, r: number, y: number, k: number, dy: number, a0: number, da: number, w: number, h: number): G[] {
+  return Array.from({ length: k }, (_, i) => { const a = a0 + i * da; return nsArch(w, h, NS_DARK, x + Math.sin(a) * (r + 0.0002), y + i * dy, z + Math.cos(a) * (r + 0.0002), a); });
+}
+// A dormer on a roof's slope, its face at (x, y, z) facing ry.
+function nsDormer(x: number, y: number, z: number, ry: number, w: number): G[] {
+  const { nx, nz } = frame(ry), cx = x - nx * w * 0.8, cz = z - nz * w * 0.8;
+  return [
+    ...box(w, w * 1.1, w * 1.6, NS_WH, { x: cx, y, z: cz, ry }),
+    ...gable(w * 1.2, w * 1.8, w * 0.8, NS_ROOF, { x: cx, y: y + w * 1.1, z: cz, ry: ry + Math.PI / 2 }, false, NS_WH),
+    nsArch(w * 0.5, w * 0.85, NS_DARK, x + nx * 0.0002, y + w * 0.1, z + nz * 0.0002, ry),
+  ];
+}
+
+// The castle on its crag above the gorge (beside its city on hills), white
+// limestone under blue-grey slate. At the front the red-brick gatehouse,
+// its white bands and window frames, battlements, its two white corner
+// towers crenellated; the lower courtyard's walls; the square tower with
+// its bartizans, the Knights' House (its arcade, its battlements under the
+// roof) and the Bower with its oriel about the upper courtyard; at the
+// back the Palas five storeys high: rows of arched windows framed in
+// limestone, twin windows of the Throne Hall, the Sängersaal's gallery
+// along its top with its balcony, the great gable to the courtyard, the
+// balcony to the gorge, dormers, oriel turrets at its corners; the slender
+// stair tower and the north tower with their cones and gilded finials.
+// No trees: the hill's own flora grows round it.
 function neuschwanstein(): G[] {
-  const out: G[] = [], WH = 0xeee8dc, ROOF = 0x56657a, BRICK = 0xb06a52, ROCK = 0x8a8478, r = rnd(71);
-  // The crag: a mass of rock rising to the castle's terrace.
-  const y0 = 0.026;
-  for (let k = 0; k < 14; k++) {
-    const a = (k / 14) * Math.PI * 2, d = 0.036 + r() * 0.012;
-    const R = 0.012 + r() * 0.006, sy = 0.5 + r() * 0.3;
-    out.push(P(new THREE.DodecahedronGeometry(R, 0), shade(ROCK, 0.85 + r() * 0.25), { x: Math.cos(a) * d * 0.75, y: R * sy, z: Math.sin(a) * d - 0.004, sy, ry: r() * 6 }));
+  const WH = NS_WH, TR = NS_TRIM, RF = NS_ROOF, BR = NS_BRICK, Y = NS_Y0 + 0.003, out: G[] = nsCrag();
+  // The terrace: its battered retaining wall rising out of the rock, paved.
+  out.push(...frustum(0.068, 0.122, 0.064, 0.118, 0.011, shade(WH, 0.9), { y: Y - 0.011, z: NS_ZC }));
+  out.push(...box(0.065, 0.0007, 0.119, TR, { y: Y - 0.0007, z: NS_ZC }, shade(PAVE, 0.95)));
+
+  // The gatehouse: red brick, white plinth, bands and frames.
+  const gz = 0.0455, gw = 0.044, gd = 0.013, gh = 0.03, gf = gz + gd / 2;
+  out.push(...box(gw, gh, gd, BR, { y: Y, z: gz }));
+  out.push(...nsBand(0, gz, gw, gd, Y, WH, 0.0035, 0.0006));
+  for (const yb of [Y + 0.012, Y + 0.0215]) out.push(...nsBand(0, gz, gw, gd, yb, WH));
+  out.push(nsArch(0.0115, 0.0155, WH, 0, Y, gf + 0.00075, 0), nsArch(0.0075, 0.0125, NS_DARK, 0, Y, gf + 0.0009, 0));
+  out.push(...nsWindows(0, gz, gd / 2, 0, [-0.0155, -0.0095, 0.0095, 0.0155], [Y + 0.005], 0.0018, 0.004, 1, WH));
+  out.push(...nsWindows(0, gz, gd / 2, 0, [-0.0135, 0.0135], [Y + 0.0138], 0.0019, 0.0055, 2, WH));
+  out.push(...nsWindows(0, gz, gd / 2, 0, [0], [Y + 0.0138], 0.0022, 0.0058, 3, WH));
+  out.push(...nsWindows(0, gz, gd / 2, 0, [-0.014, -0.0065, 0.0065, 0.014], [Y + 0.0235], 0.0019, 0.0045, 1, WH));
+  out.push(...nsWindows(0, gz, gd / 2, Math.PI, [-0.012, -0.004, 0.004, 0.012], [Y + 0.0138, Y + 0.0235], 0.0019, 0.0048, 1, WH));
+  out.push(nsArch(0.008, 0.0115, NS_DARK, 0, Y, gz - gd / 2 - 0.0003, Math.PI));
+  out.push(...nsBattlements(0, gz, gw, gd, Y + gh, 0.0018, BR, ['f', 'b']));
+  out.push(...box(gw + 0.0024, 0.0008, gd + 0.0024, WH, { y: Y + gh + 0.0011, z: gz }));
+  out.push(...gable(gw - 0.004, gd - 0.003, 0.007, RF, { y: Y + gh + 0.0018, z: gz }, false, BR));
+  // Its middle raised over the gate: a stepped gable, its steps capped in white.
+  {
+    const mz = gf - 0.0002, y = Y + gh;
+    out.push(...box(0.014, 0.008, 0.003, BR, { y, z: mz }));
+    out.push(...nsWindows(0, mz, 0.0015, 0, [0], [y + 0.0012], 0.0017, 0.0045, 2, WH));
+    for (const k of [1, 2]) out.push(...box(0.014 - k * 0.0045, 0.0026, 0.003, BR, { y: y + 0.008 + (k - 1) * 0.0026, z: mz }));
+    for (const k of [0, 1, 2]) out.push(...box(0.0146 - k * 0.0045, 0.0006, 0.0036, WH, { y: y + 0.0077 + k * 0.0026, z: mz }));
+    out.push(...nsFinial(0, y + 0.0135, mz, 0.0045));
   }
-  out.push(...frustum(0.074, 0.13, 0.06, 0.118, y0, ROCK, { z: -0.004 }, shade(ROCK, 0.95)));
-  // Its faces broken into crags and ledges, boulders at its foot.
-  for (const [ry, half0, half1, len] of [[0, 0.065, 0.059, 0.066], [Math.PI, 0.065, 0.059, 0.066], [Math.PI / 2, 0.037, 0.03, 0.12], [-Math.PI / 2, 0.037, 0.03, 0.12]] as const) {
-    const { nx, nz, tx, tz } = frame(ry), n = Math.round(len / 0.011);
-    for (const y of [0.006, 0.015, 0.022]) for (let k = 0; k < n; k++) {
-      const t = -len / 2 + ((k + 0.3 + r() * 0.4) * len) / n, o = half0 + ((half1 - half0) * y) / y0, R = 0.0055 + r() * 0.004;
-      out.push(P(new THREE.DodecahedronGeometry(R, 0).rotateY(r() * 6).rotateX(r() * 6), shade(ROCK, 0.8 + r() * 0.35), { x: nx * (o + R * 0.15) + tx * t, y, z: -0.004 + nz * (o + R * 0.15) + tz * t, sy: 0.8 }));
-    }
+  // Its corner towers: white, eight-sided, banded, crenellated.
+  for (const s of [-1, 1]) {
+    const x = s * (gw / 2 + 0.001), z = gf - 0.001, r = 0.0052, th = 0.042;
+    out.push(drumC(r, r, th, 8, WH, { x, y: Y, z, ry: Math.PI / 8 }));
+    for (const yb of [Y + 0.012, Y + 0.0215, Y + 0.031]) out.push(cyl(r + 0.0004, r + 0.0004, 0.0008, 8, TR, { x, y: yb, z, ry: Math.PI / 8 }));
+    out.push(...nsSlits(x, z, r * 0.924, Y + 0.004, 4, 0.0095, s * Math.PI / 2, 0, 0.0016, 0.0042));
+    out.push(...nsSlits(x, z, r * 0.924, Y + 0.014, 3, 0.0095, 0, 0, 0.0016, 0.0042));
+    out.push(cyl(r, r * 1.25, 0.002, 8, shade(WH, 0.88), { x, y: Y + th, z, ry: Math.PI / 8 }), drumC(r * 1.25, r * 1.25, 0.0022, 8, WH, { x, y: Y + th + 0.002, z, ry: Math.PI / 8 }));
+    for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2; out.push(...box(0.0021, 0.0021, 0.0016, WH, { x: x + Math.sin(a) * r * 1.08, y: Y + th + 0.0042, z: z + Math.cos(a) * r * 1.08, ry: a })); }
+    out.push(cone(r * 0.75, 0.011, 8, RF, { x, y: Y + th + 0.0042, z, ry: Math.PI / 8 }), ...nsFinial(x, Y + th + 0.014, z, 0.004));
   }
-  // A few firs clinging to the crag's foot.
-  const firs: [number, number][] = [];
-  for (let k = 0; k < 30 && firs.length < 12; k++) {
-    const a = r() * Math.PI * 2, d = 0.05 + r() * 0.012, x = Math.cos(a) * d, z = Math.sin(a) * d;
-    if (Math.abs(x) > H - 0.004 || Math.abs(z) > H - 0.004 || firs.some(([u, v]) => Math.hypot(u - x, v - z) < 0.007)) continue;
-    firs.push([x, z]);
-    out.push(...fir(x, z, 0.014 + r() * 0.01, 0, shade(0x3d5a38, 0.85 + r() * 0.3)));
+
+  // The lower courtyard's walls either side, crenellated.
+  for (const [x, z0, z1] of [[-0.0295, 0.009, 0.039], [0.0295, 0.0155, 0.039]] as const) {
+    out.push(...box(0.003, 0.013, z1 - z0, WH, { x, y: Y, z: (z0 + z1) / 2 }), ...nsBand(x, (z0 + z1) / 2, 0.003, z1 - z0, Y + 0.0085));
+    out.push(...merlonsAlong(x + Math.sign(x) * 0.0005, z0 + 0.001, x + Math.sign(x) * 0.0005, z1 - 0.001, Y + 0.013, 0.0017, WH));
+    out.push(...nsWindows(x, (z0 + z1) / 2, 0.0015, Math.sign(x) * Math.PI / 2, [-0.009, 0, 0.009], [Y + 0.004], 0.0014, 0.0035));
   }
-  // The curtain walls round the terrace, with merlons.
-  const tw = 0.058, td = 0.114, tzc = -0.004;
-  out.push(ring(tw, 0.006, td, shade(WH, 0.93), { y: y0, z: tzc }));
-  out.push(...merlonsAlong(-tw / 2, tzc + td / 2, tw / 2, tzc + td / 2, y0 + 0.006, 0.0016, shade(WH, 0.93)));
-  for (const s of [-1, 1]) out.push(...merlonsAlong(s * tw / 2, tzc - td / 2, s * tw / 2, tzc + td / 2, y0 + 0.006, 0.0016, shade(WH, 0.93)));
-  // The gatehouse at the front: red brick, white corner turrets, the gate.
-  const gz = 0.042;
-  out.push(...box(0.04, 0.026, 0.012, BRICK, { y: y0, z: gz }));
-  out.push(...archPane(0.007, 0.011, 0x2a2420, 0, y0, gz + 0.0063));
-  out.push(...panes(0, gz, 0.0063, 0, [-0.012, -0.006, 0.006, 0.012], [y0 + 0.012, y0 + 0.019], 0.0022, 0.004, 0x2c2a2a, true));
-  out.push(...merlonsAlong(-0.02, gz + 0.0055, 0.02, gz + 0.0055, y0 + 0.026, 0.0018, shade(BRICK, 1.05)));
-  out.push(...gable(0.03, 0.01, 0.008, ROOF, { y: y0 + 0.026, z: gz - 0.001 }, false, BRICK));
-  for (const s of [-1, 1]) out.push(...turret(s * 0.021, gz + 0.006, y0, 0.0042, 0.034, WH, ROOF));
-  // The square tower and the knights' house about the courtyard.
-  out.push(...box(0.014, 0.05, 0.014, WH, { x: -0.017, y: y0, z: 0.016 }));
-  out.push(...merlonsAlong(-0.024, 0.023, -0.010, 0.023, y0 + 0.05, 0.0017, WH), ...merlonsAlong(-0.024, 0.009, -0.024, 0.023, y0 + 0.05, 0.0017, WH));
-  out.push(...panes(-0.017, 0.016, 0.0073, 0, [-0.003, 0.003], [y0 + 0.012, y0 + 0.024, y0 + 0.036], 0.0018, 0.005, 0x2c2a2a, true));
-  out.push(...panes(-0.017, 0.016, 0.0073, Math.PI / 2, [0], [y0 + 0.018, y0 + 0.032], 0.0018, 0.005, 0x2c2a2a, true));
-  out.push(...box(0.02, 0.026, 0.03, WH, { x: 0.016, y: y0, z: 0.014 }));
-  out.push(...gable(0.022, 0.032, 0.012, ROOF, { x: 0.016, y: y0 + 0.026, z: 0.014 }, true, WH));
-  out.push(...panes(0.016, 0.014, 0.0103, -Math.PI / 2, [-0.01, -0.0035, 0.0035, 0.01], [y0 + 0.006, y0 + 0.016], 0.002, 0.005, 0x2c2a2a, true));
-  // The Palas: tall, its gables front and back, windows in rows, balconies.
-  const px = 0.0, pzc = -0.036, pw = 0.05, pd = 0.024, ph = 0.06;
-  out.push(...box(pw, ph, pd, WH, { x: px, y: y0, z: pzc }));
+
+  // The square tower: tall, banded, its battlements and corner bartizans.
+  const qx = 0.0205, qz = 0.0065, qw = 0.016, qh = 0.058;
+  out.push(...box(qw, qh, qw, WH, { x: qx, y: Y, z: qz }));
+  for (const yb of [Y + 0.0125, Y + 0.026, Y + 0.04]) out.push(...nsBand(qx, qz, qw, qw, yb));
+  for (const ry of [0, Math.PI / 2, -Math.PI / 2, Math.PI]) {
+    if (ry !== Math.PI) out.push(...nsWindows(qx, qz, qw / 2, ry, [-0.0035, 0.0035], [Y + 0.016, Y + 0.0295], 0.0018, 0.0058));
+    out.push(...nsWindows(qx, qz, qw / 2, ry, [0], [Y + 0.0435], 0.0019, 0.0068, 3));
+  }
+  out.push(...nsBattlements(qx, qz, qw, qw, Y + qh, 0.0019, WH));
+  for (const [sx, sz] of [[1, 1], [-1, 1], [1, -1], [-1, -1]] as const) out.push(...turret(qx + sx * (qw / 2 + 0.0006), qz + sz * (qw / 2 + 0.0006), Y + qh - 0.006, 0.0021, 0.0105, 0.0085, 6, { oriel: true }));
+
+  // The Knights' House along the right: its arcade to the courtyard, two
+  // storeys of windows, battlements along its eaves, a slate roof.
+  const kx = 0.019, kz = -0.0165, kw = 0.024, kd = 0.027, kh = 0.032;
+  out.push(...box(kw, kh, kd, WH, { x: kx, y: Y, z: kz }));
+  for (const yb of [Y + 0.0105, Y + 0.0215]) out.push(...nsBand(kx, kz, kw, kd, yb));
+  out.push(...nsWindows(kx, kz, kw / 2, -Math.PI / 2, [-0.0105, -0.0053, 0, 0.0053, 0.0105], [Y + 0.0015], 0.0034, 0.0078, 1));
+  out.push(...nsWindows(kx, kz, kw / 2, -Math.PI / 2, [-0.0085, 0, 0.0085], [Y + 0.0125, Y + 0.0235], 0.0021, 0.0058, 2));
+  out.push(...nsWindows(kx, kz, kw / 2, Math.PI / 2, [-0.0105, -0.0035, 0.0035, 0.0105], [Y + 0.003, Y + 0.0125, Y + 0.0235], 0.0019, 0.0055));
+  out.push(...nsBattlements(kx, kz, kw, kd, Y + kh, 0.0017, WH, ['r', 'l']));
+  out.push(...gable(kw - 0.002, kd + 0.0016, 0.012, RF, { x: kx, y: Y + kh + 0.0017, z: kz }, true, WH));
+  out.push(...nsDormer(kx + 0.0085, Y + kh + 0.0042, kz - 0.006, Math.PI / 2, 0.0034), ...nsDormer(kx + 0.0085, Y + kh + 0.0042, kz + 0.006, Math.PI / 2, 0.0034));
+
+  // The Bower along the left: its stepped front gable, rows of windows,
+  // the oriel turret at its outer corner.
+  const bx = -0.019, bz = -0.0095, bw = 0.022, bd = 0.035, bh = 0.04;
+  out.push(...box(bw, bh, bd, WH, { x: bx, y: Y, z: bz }));
+  for (const yb of [Y + 0.011, Y + 0.0225, Y + 0.033]) out.push(...nsBand(bx, bz, bw, bd, yb));
+  for (const ry of [Math.PI / 2, -Math.PI / 2]) out.push(...nsWindows(bx, bz, bw / 2, ry, [-0.0125, -0.0042, 0.0042, 0.0125], [Y + 0.003, Y + 0.0135, Y + 0.025], 0.0019, 0.0058, ry < 0 ? 1 : 2));
+  out.push(...nsWindows(bx, bz, bd / 2, 0, [-0.005, 0.005], [Y + 0.0135, Y + 0.025], 0.0019, 0.0058, 1), ...nsWindows(bx, bz, bd / 2, 0, [0], [Y + 0.003], 0.0028, 0.007, 1));
+  out.push(...gable(bw + 0.0016, bd + 0.0016, 0.013, RF, { x: bx, y: Y + bh, z: bz }, true, WH));
+  out.push(...nsWindows(bx, bz, bd / 2 + 0.0008, 0, [0], [Y + bh + 0.002], 0.0016, 0.005, 3));
+  for (const k of [0, 1, 2, 3]) { const hw = bw / 2 + 0.0008 - k * 0.003; for (const s of [-1, 1]) out.push(...box(0.0028, 0.0034, 0.0024, WH, { x: bx + s * (hw - 0.0014), y: Y + bh + k * 0.0032, z: bz + bd / 2 + 0.0002 })); }
+  out.push(...box(0.0022, 0.004, 0.0024, WH, { x: bx, y: Y + bh + 0.0125, z: bz + bd / 2 + 0.0002 }), ...nsFinial(bx, Y + bh + 0.0165, bz + bd / 2 + 0.0002, 0.004));
+  out.push(...nsDormer(bx - 0.009, Y + bh + 0.0028, bz - 0.006, -Math.PI / 2, 0.0034));
+  out.push(...turret(bx - bw / 2 - 0.0012, bz + bd / 2 + 0.0012, Y + 0.018, 0.0034, 0.028, 0.0125, 10, { oriel: true }));
+  out.push(...nsSlits(bx - bw / 2 - 0.0012, bz + bd / 2 + 0.0012, 0.0034, Y + 0.022, 2, 0.01, -0.8, 0, 0.0016, 0.0045));
+  // The wall closing the upper courtyard's left, between Bower and Palas.
+  out.push(...box(0.003, 0.016, 0.006, WH, { x: -0.0285, y: Y, z: -0.0295 }), ...merlonsAlong(-0.0293, -0.032, -0.0293, -0.027, Y + 0.016, 0.0017, WH));
+
+  // The Palas: five storeys under its steep roof.
+  const pz = -0.045, pw = 0.052, pd = 0.026, ph = 0.064, pf = pz + pd / 2, pb = pz - pd / 2;
+  out.push(...box(pw, ph, pd, WH, { y: Y, z: pz }));
+  out.push(...nsBand(0, pz, pw, pd, Y, shade(WH, 0.92), 0.0035, 0.0005));
+  for (const yb of [Y + 0.0115, Y + 0.0225, Y + 0.0335, Y + 0.0475]) out.push(...nsBand(0, pz, pw, pd, yb));
+  out.push(...nsBand(0, pz, pw, pd, Y + ph - 0.002, TR, 0.0022, 0.0009));
+  const seven = spread(7, 0.043);
   for (const ry of [0, Math.PI]) {
-    out.push(...panes(px, pzc, pd / 2 + 0.0003, ry, spread(7, pw - 0.008), [y0 + 0.008, y0 + 0.02, y0 + 0.032], 0.0024, 0.0065, 0x2c2a2a, true));
-    out.push(...panes(px, pzc, pd / 2 + 0.0003, ry, spread(9, pw - 0.008), [y0 + 0.044], 0.0018, 0.008, 0x2c2a2a, true));
-    const { nz } = frame(ry);
-    for (const yb of [y0 + 0.017, y0 + 0.041]) out.push(...box(pw - 0.0006, 0.0012, 0.0012, shade(WH, 0.9), { x: px, y: yb, z: pzc + nz * (pd / 2 + 0.0004) }));
-    out.push(...box(0.016, 0.0014, 0.004, shade(WH, 0.9), { x: px, y: y0 + 0.03, z: pzc + nz * (pd / 2 + 0.002) }));
+    out.push(...nsWindows(0, pz, pd / 2, ry, seven, [Y + 0.004], 0.002, 0.0048));
+    out.push(...nsWindows(0, pz, pd / 2, ry, seven, [Y + 0.014, Y + 0.025], 0.0022, 0.0062));
+    // The Throne Hall's tall twin windows.
+    out.push(...nsWindows(0, pz, pd / 2, ry, spread(5, 0.042), [Y + 0.036], 0.0021, 0.008, 2));
   }
-  out.push(...gable(pw + 0.002, pd + 0.002, 0.022, ROOF, { x: px, y: y0 + ph, z: pzc }, false, WH));
-  // The great gable facing the courtyard, the dormers, the chapel's crossing.
-  out.push(...box(0.016, 0.022, 0.006, WH, { x: 0, y: y0 + ph - 0.006, z: pzc + pd / 2 + 0.002 }));
-  out.push(...gable(0.016, 0.006, 0.012, ROOF, { x: 0, y: y0 + ph + 0.016, z: pzc + pd / 2 + 0.002 }, true, WH));
-  out.push(...panes(0, pzc + pd / 2 + 0.002, 0.0033, 0, [-0.004, 0, 0.004], [y0 + ph + 0.002], 0.0018, 0.008, 0x2c2a2a, true));
-  for (const t of [-0.017, 0.017]) out.push(...box(0.005, 0.005, 0.004, WH, { x: t, y: y0 + ph + 0.004, z: pzc + pd / 2 - 0.002 }), ...gable(0.006, 0.005, 0.004, ROOF, { x: t, y: y0 + ph + 0.009, z: pzc + pd / 2 - 0.002 }, true, WH));
-  out.push(...turret(0, pzc - pd / 2 - 0.002, y0 + ph + 0.012, 0.0022, 0.008, WH, ROOF));
-  // Turrets at the Palas's corners.
-  for (const [sx, sz] of [[1, 1], [-1, 1], [-1, -1], [1, -1]] as const) out.push(...turret(px + sx * (pw / 2 + 0.0008), pzc + sz * (pd / 2 + 0.0008), y0 + ph - 0.016, 0.0026, 0.022, WH, ROOF));
-  // The stair tower: tall and round, its cone, turrets round its top.
-  const sx0 = -0.02, sz0 = pzc + pd / 2 + 0.004;
-  out.push(...turret(sx0, sz0, y0, 0.0062, 0.09, WH, ROOF, 0.026));
-  for (let k = 0; k < 5; k++) out.push(pane(0.0016, 0.006, 0x2c2a2a, sx0 + Math.sin(k * 0.6 - 1.2) * 0.0064, y0 + 0.02 + k * 0.014, sz0 + Math.cos(k * 0.6 - 1.2) * 0.0064, k * 0.6 - 1.2));
-  for (let k = 0; k < 3; k++) { const a = (k / 3) * Math.PI * 2 + 0.5; out.push(...turret(sx0 + Math.cos(a) * 0.0068, sz0 + Math.sin(a) * 0.0068, y0 + 0.078, 0.0018, 0.008, WH, ROOF)); }
-  // The north tower at the back corner, the bower along the side.
-  out.push(...turret(0.026, pzc - 0.012, y0, 0.0055, 0.074, WH, ROOF, 0.022));
-  out.push(...box(0.014, 0.04, 0.026, WH, { x: -0.0205, y: y0, z: -0.008 }));
-  out.push(...gable(0.016, 0.028, 0.01, ROOF, { x: -0.0205, y: y0 + 0.04, z: -0.008 }, true, WH));
-  out.push(...panes(-0.0205, -0.008, 0.0073, -Math.PI / 2, [-0.008, 0, 0.008], [y0 + 0.012, y0 + 0.026], 0.002, 0.006, 0x2c2a2a, true));
+  for (const ry of [Math.PI / 2, -Math.PI / 2]) out.push(...nsWindows(0, pz, pw / 2, ry, [-0.0065, 0, 0.0065], [Y + 0.004, Y + 0.014, Y + 0.025, Y + 0.036, Y + 0.05], 0.0021, 0.006));
+  // The Sängersaal along the top: its gallery of arches to the courtyard,
+  // over a balcony on corbels; triple windows to the gorge.
+  {
+    const n = 11, aw = 0.0027, gap = 0.0011, W = n * aw + (n - 1) * gap, y = Y + 0.05, h = 0.0085;
+    out.push(...box(W + 0.003, h + 0.003, 0.0006, TR, { y: y - 0.0015, z: pf + 0.0003 }));
+    for (let i = 0; i < n; i++) out.push(nsArch(aw, h, NS_DARK, -W / 2 + aw / 2 + i * (aw + gap), y, pf + 0.00075, 0));
+    out.push(...box(W + 0.005, 0.0012, 0.004, TR, { y: y - 0.0012, z: pf + 0.002 }), ...box(W + 0.0046, 0.0025, 0.0005, WH, { y, z: pf + 0.0037 }));
+    for (const t of spread(6, W)) out.push(cone(0.0012, 0.003, 4, TR, { x: t, y: y - 0.0012, z: pf + 0.0012, rx: Math.PI, ry: Math.PI / 4 }));
+  }
+  out.push(...nsWindows(0, pz, pd / 2, Math.PI, spread(5, 0.042), [Y + 0.05], 0.0019, 0.0075, 3));
+  // The balcony to the gorge, on its corbels.
+  out.push(...box(0.02, 0.0012, 0.0045, TR, { y: Y + 0.0335, z: pb - 0.0022 }), ...box(0.0196, 0.0028, 0.0005, WH, { y: Y + 0.0347, z: pb - 0.0043 }));
+  for (const t of [-0.008, 0, 0.008]) out.push(cone(0.0014, 0.0035, 4, TR, { x: t, y: Y + 0.0335, z: pb - 0.0015, rx: Math.PI, ry: Math.PI / 4 }));
+  // Its roof, the gable ends' windows, dormers.
+  out.push(...gable(pw + 0.003, pd + 0.003, 0.025, RF, { y: Y + ph, z: pz }, false, WH));
+  for (const ry of [Math.PI / 2, -Math.PI / 2]) out.push(...nsWindows(0, pz, pw / 2 + 0.0015, ry, [0], [Y + ph + 0.003], 0.0018, 0.0058, 3));
+  for (const s of [-1, 1]) for (const t of [-0.015, 0.015]) out.push(...nsDormer(t, Y + ph + 0.0042, pz + s * 0.0118, s > 0 ? 0 : Math.PI, 0.0036));
+  // The great gable to the courtyard: a wall dormer over the eaves.
+  {
+    const w = 0.018, z = pf + 0.0025;
+    out.push(...box(w, 0.008, 0.005, WH, { y: Y + ph - 0.002, z: pf }), ...nsBand(0, pf, w, 0.005, Y + ph - 0.002, TR, 0.0012));
+    out.push(...gable(w + 0.0016, 0.018, 0.015, RF, { y: Y + ph + 0.006, z: z - 0.0085 }, true, WH));
+    out.push(...nsWindows(0, pf, 0.0025, 0, [0], [Y + ph + 0.0003], 0.0016, 0.0052, 3), ...nsWindows(0, pf, 0.003, 0, [0], [Y + ph + 0.0085], 0.0014, 0.004));
+    out.push(...nsFinial(0, Y + ph + 0.021, z + 0.0007, 0.005));
+    for (const s of [-1, 1]) out.push(...turret(s * (w / 2 + 0.0005), z + 0.0004, Y + ph - 0.002, 0.0017, 0.009, 0.0075, 6, { oriel: true }));
+  }
+  // The west gable over the gorge, the main portal to the courtyard.
+  out.push(...box(0.016, 0.008, 0.004, WH, { y: Y + ph - 0.002, z: pb }), ...nsBand(0, pb, 0.016, 0.004, Y + ph - 0.002, TR, 0.0012));
+  out.push(...gable(0.0176, 0.016, 0.014, RF, { y: Y + ph + 0.006, z: pb + 0.006 }, true, WH));
+  out.push(...nsWindows(0, pb, 0.002, Math.PI, [0], [Y + ph + 0.0003], 0.0017, 0.0052, 2), ...nsWindows(0, pb, 0.002, Math.PI, [0], [Y + ph + 0.0085], 0.0014, 0.0038));
+  out.push(...nsFinial(0, Y + ph + 0.02, pb - 0.002, 0.0045));
+  out.push(nsArch(0.0062, 0.0095, TR, 0.006, Y, pf + 0.00015, 0), nsArch(0.0042, 0.0082, NS_DARK, 0.006, Y, pf + 0.0003, 0));
+  // Gilded finials on the gable ends, slate cresting on the ridges.
+  for (const s of [-1, 1]) out.push(...nsFinial(s * (pw / 2 + 0.0015), Y + ph + 0.025, pz, 0.005), ...nsFinial(kx, Y + kh + 0.0137, kz + s * (kd / 2 + 0.0008), 0.004));
+  out.push(...box(pw + 0.002, 0.0012, 0.0008, shade(RF, 0.8), { y: Y + ph + 0.0245, z: pz }), ...box(0.0008, 0.001, kd + 0.001, shade(RF, 0.8), { x: kx, y: Y + kh + 0.0133, z: kz }), ...box(0.0008, 0.001, bd + 0.001, shade(RF, 0.8), { x: bx, y: Y + bh + 0.0126, z: bz }));
+  // Oriel turrets at the Palas's corners.
+  for (const [sx, sz] of [[1, 1], [-1, 1], [-1, -1]] as const) out.push(...turret(sx * (pw / 2 + 0.0009), pz + sz * (pd / 2 + 0.0009), Y + ph - 0.019, 0.0029, 0.025, 0.013, 12, { oriel: true }));
+
+  // Chimneys on the Palas's roof.
+  for (const [x, dz] of [[-0.021, -0.004], [0.021, -0.004], [-0.006, 0.004], [0.009, -0.005]] as const) {
+    const z = pz + dz, y = Y + ph + 0.025 * (1 - Math.abs(dz) / (pd / 2 + 0.0015)) - 0.001;
+    out.push(...box(0.0024, 0.007, 0.0024, WH, { x, y, z }), ...box(0.0032, 0.0008, 0.0032, TR, { x, y: y + 0.007, z }));
+  }
+  // The stair turret in the upper courtyard's corner, Knights' House to Palas.
+  out.push(...turret(0.0085, pf + 0.002, Y, 0.0036, 0.056, 0.014, 10), ...nsSlits(0.0085, pf + 0.002, 0.0036, Y + 0.008, 5, 0.0095, -1.8, 0.35, 0.0014, 0.0042));
+  // The gatehouse's stair turrets toward the lower courtyard.
+  for (const s of [-1, 1]) out.push(...turret(s * 0.0145, gz - gd / 2 - 0.0015, Y, 0.0028, 0.036, 0.011, 8), ...nsSlits(s * 0.0145, gz - gd / 2 - 0.0015, 0.0028, Y + 0.012, 2, 0.011, Math.PI, 0, 0.0012, 0.0036));
+  // The square tower's pinnacles over its battlements' middles.
+  for (const a of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+    const x = qx + Math.sin(a) * (qw / 2 + 0.0004), z = qz + Math.cos(a) * (qw / 2 + 0.0004);
+    out.push(cone(0.0012, 0.0075, 4, RF, { x, y: Y + qh + 0.0036, z, ry: Math.PI / 4 }), ...nsFinial(x, Y + qh + 0.0105, z, 0.0028));
+  }
+  // An oriel bay on the Bower's outer face, its little hipped roof.
+  out.push(...box(0.003, 0.009, 0.009, WH, { x: bx - bw / 2 - 0.0015, y: Y + 0.0235, z: bz - 0.004 }), cone(0.0026, 0.0045, 4, TR, { x: bx - bw / 2 - 0.0015, y: Y + 0.0235, z: bz - 0.004, rx: Math.PI, sx: 0.6, sz: 1.7 }));
+  out.push(hip(0.0042, 0.0104, 0.004, RF, { x: bx - bw / 2 - 0.0015, y: Y + 0.0325, z: bz - 0.004 }));
+  out.push(...nsWindows(bx - bw / 2 - 0.0015, bz - 0.004, 0.0015, -Math.PI / 2, [0], [Y + 0.0255], 0.0016, 0.005, 3));
+  // The stair tower: tall, slender, its windows winding up it, a ring of
+  // turrets round its belfry.
+  const sx0 = -0.012, sz0 = pf + 0.0045, sr = 0.0058, sh = 0.094;
+  out.push(...turret(sx0, sz0, Y, sr, sh, 0.028, 16));
+  for (const yb of [Y + 0.0225, Y + 0.0475, Y + 0.07]) out.push(cyl(sr + 0.0004, sr + 0.0004, 0.0008, 16, TR, { x: sx0, y: yb, z: sz0 }));
+  out.push(...nsSlits(sx0, sz0, sr, Y + 0.006, 8, 0.0095, -1.4, 0.45, 0.0016, 0.005));
+  out.push(...nsSlits(sx0, sz0, sr, Y + 0.081, 4, 0, 0, Math.PI / 2, 0.002, 0.007));
+  for (let k = 0; k < 3; k++) { const a = (k / 3) * Math.PI * 2 + 0.3; out.push(...turret(sx0 + Math.sin(a) * (sr + 0.0008), sz0 + Math.cos(a) * (sr + 0.0008), Y + sh - 0.006, 0.0017, 0.009, 0.0085, 6, { oriel: true })); }
+
+  // The north tower at the Palas's back corner, over the gorge.
+  const nx0 = 0.0255, nz0 = pb - 0.0005, nr = 0.0066, nh = 0.082;
+  out.push(...turret(nx0, nz0, Y, nr, nh, 0.025, 16));
+  for (const yb of [Y + 0.0225, Y + 0.0475, Y + 0.064]) out.push(cyl(nr + 0.0004, nr + 0.0004, 0.0008, 16, TR, { x: nx0, y: yb, z: nz0 }));
+  for (const a of [0.9, 2.2, 3.4]) out.push(...nsSlits(nx0, nz0, nr, Y + 0.014, 5, 0.0125, a, 0, 0.0019, 0.0058));
   return out;
 }
 

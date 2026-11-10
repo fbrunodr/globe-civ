@@ -45,7 +45,7 @@ export const MIN_HEIGHT = 0.14;
 const CITY_HALF = 0.95 * 8 * UNIT; // (a city fits a site's pad to its rectangle, 16 units at most)
 const LAND_HALF: Partial<Record<SiteModel, number>> = {
   pyramids: 2 * CITY_HALF, fastTelescope: 1.8 * CITY_HALF, terracottaArmy: 1.6 * CITY_HALF,
-  neuschwanstein: 1.6 * CITY_HALF, petra: 1.5 * CITY_HALF, stonehenge: 1.95 * CITY_HALF, cristoRedentor: 1.35 * CITY_HALF, launchComplex39: 1.4 * CITY_HALF,
+  neuschwanstein: 2 * CITY_HALF, petra: 1.5 * CITY_HALF, stonehenge: 1.95 * CITY_HALF, cristoRedentor: 1.35 * CITY_HALF, launchComplex39: 1.4 * CITY_HALF,
 };
 const SEA_SCALE: Partial<Record<SiteModel, number>> = { greatLighthouse: 1, colossus: 0.9, statueOfLiberty: 1 };
 // Wonders that stand beside a city on the bare ground, with no base: sunk

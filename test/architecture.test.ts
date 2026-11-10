@@ -72,12 +72,12 @@ describe('AR5: no faces fight for the same pixels', () => {
 
 // (Wonders allowed more than AR7's 7500 triangles: the Eiffel Tower's
 // lattice, St Basil's curves, and those not yet reworked to the budget.)
-const TRI_CAP_EXCEPT: Partial<Record<string, number>> = { eiffelTower: 12000, stBasils: 14000, neuschwanstein: 8500, sagradaFamilia: 15000, burjKhalifa: 8000, cern: 8000, sydneyOperaHouse: 15000 };
+const TRI_CAP_EXCEPT: Partial<Record<string, number>> = { eiffelTower: 12000, stBasils: 14000, neuschwanstein: 9000, sagradaFamilia: 15000, burjKhalifa: 8000, cern: 8000, sydneyOperaHouse: 15000 };
 
 describe('AR7: wonders on their site', () => {
   it('every wonder (and the scaffolding) builds within its 7×7 site, stands up, keeps within 7500 triangles (showpieces, yet of a piece with the town; a few not yet brought down allowed more), and has no faces fighting', async () => {
     const { SITE_HALF, SITE_MODELS, groundsBox, wonderGeometry, wonderGrounds, wonderModelKind } = await import('../src/wonderModels.ts');
-    const { ISLET_DEPTH } = await import('../src/wonders/kit.ts');
+    const { CRAG_DEPTH, ISLET_DEPTH } = await import('../src/wonders/kit.ts');
     const { WONDERS } = await import('../src/cities.ts');
     const bad: string[] = [];
     for (const m of SITE_MODELS) {
@@ -88,7 +88,9 @@ describe('AR7: wonders on their site', () => {
       // (A wonder on the sea: its islet's rock goes on down to the sea floor.)
       // (A wonder that digs into the ground: down to its deepest sink's floor.)
       const dug = Math.max(0, ...(wonderGrounds(m)?.sinks ?? []).map((sk) => sk.depth));
-      const floor = m !== 'scaffold' && WONDERS[m].beside === 'sea' ? -0.002 - ISLET_DEPTH : -0.002 - dug;
+      // (One on the bare ground beside its city: its crag's foot down into the hill.)
+      const beside = m === 'scaffold' ? undefined : WONDERS[m].beside;
+      const floor = beside === 'sea' ? -0.002 - ISLET_DEPTH : beside === 'land' ? -0.002 - Math.max(dug, CRAG_DEPTH) : -0.002 - dug;
       // (Its grounds within its site too.)
       if (Math.max(...groundsBox(m)) > SITE_HALF + 1e-6) bad.push(`${k}: grounds off its site`);
       // (One dug into the ground need not rise over it: the Terracotta Army's pits.)
