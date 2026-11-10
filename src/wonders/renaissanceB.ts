@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { gable } from '../houseKit.ts';
 import {
-  P, V, archPane, ball, box, drumC, figure, flat, H, pane, rod, shade, type G,
+  P, V, archPane, ball, box, cone, drumC, figure, flat, H, pane, rod, shade, type G,
 } from './kit.ts';
 
 const DARK = 0x3a332d, GOLD = 0xd9b24a;
@@ -180,16 +180,26 @@ export function florenceCathedral(): G[] {
     const f = octFace(k, rl * 0.98);
     out.push(...archPane(0.0012, 0.0045, DARK, f.nx * (f.ap + 0.0002), yl + 0.0016, zc + f.nz * (f.ap + 0.0002), f.ry));
   }
+  // Over the cornice, a low round stage ringed by little pinnacles; on it
+  // the tall fluted cone, its ribs, a short neck; the great gilded ball and
+  // the cross.
   out.push(drumC(rl + 0.0009, rl + 0.0011, 0.0009, 8, shade(MARBLE, 0.95), { y: yl + hl, z: zc, ry: Math.PI / 8 }));
-  const yc = yl + hl + 0.0009, hc = 0.0072;
-  out.push(P(new THREE.ConeGeometry(rl, hc, 8).translate(0, hc / 2, 0), MARBLE, { y: yc, z: zc, ry: Math.PI / 8 }));
+  const ys = yl + hl + 0.0009, rs = rl * 0.82, hs = 0.0018;
+  out.push(drumC(rs, rs, hs, 16, MARBLE, { y: ys, z: zc }), drumC(rs + 0.0004, rs + 0.0004, 0.0004, 16, shade(MARBLE, 0.94), { y: ys + hs, z: zc }));
   for (let k = 0; k < 8; k++) {
-    const a = Math.PI / 8 + (k * Math.PI) / 4;
-    out.push(rod(V(Math.sin(a) * rl * 1.02, yc, zc + Math.cos(a) * rl * 1.02), V(0, yc + hc * 0.92, zc), 0.00028, shade(MARBLE, 1.06), 3));
+    const a = (k * Math.PI) / 4, x = Math.sin(a) * (rl + 0.0003), z = zc + Math.cos(a) * (rl + 0.0003);
+    out.push(drumC(0.00035, 0.0003, 0.0012, 4, MARBLE, { x, y: yl + hl + 0.0009, z }), cone(0.0004, 0.0016, 4, shade(MARBLE, 1.05), { x, y: yl + hl + 0.0021, z }));
   }
-  out.push(drumC(0.0005, 0.0007, 0.0012, 8, GOLD, { y: yc + hc - 0.0004, z: zc }));
-  out.push(ball(0.0012, GOLD, { y: yc + hc + 0.0018, z: zc }, 1), rod(V(0, yc + hc + 0.0026, zc), V(0, yc + hc + 0.0062, zc), 0.0003, GOLD, 3));
-  out.push(rod(V(-0.0012, yc + hc + 0.005, zc), V(0.0012, yc + hc + 0.005, zc), 0.00025, GOLD, 3));
+  const yc = ys + hs + 0.0004, rc = rs * 0.95, hc = 0.0105;
+  out.push(P(new THREE.ConeGeometry(rc, hc, 16).translate(0, hc / 2, 0), MARBLE, { y: yc, z: zc }));
+  for (let k = 0; k < 8; k++) {
+    const a = (k * Math.PI) / 4;
+    out.push(rod(V(Math.sin(a) * rc * 1.02, yc, zc + Math.cos(a) * rc * 1.02), V(0, yc + hc * 0.97, zc), 0.00026, shade(MARBLE, 1.07), 3));
+  }
+  const BRIGHT = 0xe8bf3c, yt = yc + hc - 0.0006;
+  out.push(drumC(0.0006, 0.0004, 0.0012, 8, BRIGHT, { y: yt, z: zc }));
+  out.push(ball(0.0019, BRIGHT, { y: yt + 0.0012 + 0.0018 / FA, z: zc, sy: 1 / FA }, 2)); // (round once the whole is raised by FA)
+  out.push(rod(V(0, yt + 0.0036, zc), V(0, yt + 0.0088, zc), 0.0003, BRIGHT, 4), rod(V(-0.0015, yt + 0.0074, zc), V(0.0015, yt + 0.0074, zc), 0.00028, BRIGHT, 4));
   // The nave and its aisles, from the facade back to the octagon: four bays
   // (the true nave's length squeezed to fit a square site).
   const iNave = out.length;

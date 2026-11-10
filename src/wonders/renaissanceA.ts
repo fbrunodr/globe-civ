@@ -13,15 +13,15 @@ import { H, P, V, ball, box, cyl, drumC, flat, pane, rnd, rod, shade, steps, typ
 const lathe = (pts: readonly (readonly [number, number])[], n: number, c: number, o: { x?: number; y?: number; z?: number } = {}) =>
   P(new THREE.LatheGeometry(pts.map(([r, y]) => new THREE.Vector2(r, y)), n), c, o);
 // A pointed (Islamic or Gothic) arch, w wide, its sides h high, facing ry,
-// its bottom middle at x, y, z.
-function pointed(w: number, h: number, c: number, x: number, y: number, z: number, ry = 0): G {
+// its bottom middle at x, y, z (each curve in seg pieces).
+function pointed(w: number, h: number, c: number, x: number, y: number, z: number, ry = 0, seg = 4): G {
   const s = new THREE.Shape();
   s.moveTo(-w / 2, 0);
   s.lineTo(-w / 2, h);
   s.quadraticCurveTo(-w / 2, h + w * 0.5, 0, h + w * 0.72);
   s.quadraticCurveTo(w / 2, h + w * 0.5, w / 2, h);
   s.lineTo(w / 2, 0);
-  return P(new THREE.ShapeGeometry(s, 4), c, { x, y, z, ry });
+  return P(new THREE.ShapeGeometry(s, seg), c, { x, y, z, ry });
 }
 // A point on a face: `d` out from (cx, cz) toward ry, `t` along the face.
 const onFace = (cx: number, cz: number, d: number, ry: number, t: number): [number, number] =>
@@ -37,109 +37,259 @@ function run(ax: number, az: number, bx: number, bz: number, w: number, h: numbe
 
 // ---------- Agra ----------
 
-// The white tomb on its plinth (the monument alone, on a plain pad): an
-// octagonal-cornered block, each face's great iwan framed in its pishtaq
-// (a pointed arch in a band of black inlay), arches two high on the cut
-// corners, pinnacles at every corner; the onion dome on its drum, its
-// lotus crown and gilded finial; four domed kiosks round it; four minarets
-// with their balconies at the plinth's corners. (Built small, then drawn
-// up to fill its site and stand about six cells tall: stretch.)
+// The Taj's marbles and inlays: white marble, its shadowed tops, a niche's
+// back wall and half dome, the pale-grey and dark pietra dura lines, an
+// opening's dark, a jali's (pierced screen's) grey, the finials' gilding.
+const TAJ = { WM: 0xf3eee4, WM2: 0xe2dccd, BACK: 0xd8d0c1, SOFT: 0xe9e2d4, GREY: 0xb3aca2, INLAY: 0x3f3833, DOOR: 0x3a332c, JALI: 0x8c8579, GOLD: 0xd9b04a } as const;
+
+// The white tomb on its plinth (the monument alone, on a plain pad). The
+// plinth's sides are a blind arcade of real niches under a cornice, inlaid
+// borders on its top. The tomb is a square with cut corners, its walls
+// (nicheWall) deep enough for the niches to be real recesses: on each face
+// the great iwan in its pishtaq, the frame standing proud and rising over
+// the roof, its pointed arch with a moulded rim, the dark calligraphy band
+// round it, inlaid rosettes in the spandrels, the half dome inside over a
+// door and a jali window, a cornice and cresting on top, slim guldastas
+// (pinnacles) either side; beside it narrow niches two high, and on the cut
+// corners deeper niches two high, each in its pale inlaid frame (alfiz); a
+// cornice and crested parapet round the roof, a guldasta at every corner.
+// On the roof the drum on its base course, its blind arcade, the onion dome,
+// its lotus crown and the tall gilded finial with the crescent; four
+// chhatris round it. The four minarets at the plinth's corners, three
+// balconies each, inlaid in dark lines, a chhatri on top, each leaning
+// slightly outward. (Built small, then drawn up to fill its site and stand
+// about six cells tall: stretch.)
 export function tajMahal(): G[] {
   const out: G[] = [];
-  const WM = 0xf3eee4, WM2 = 0xe2dccd, INLAY = 0x4a4038, RECESS = 0xc9c0ae, DOOR = 0x3a332c, GOLD = 0xd9b04a;
-  const tz = 0;
-  // The plinth, its blind arcade.
-  const py = 0, ph = 0.0055, pw = 0.066;
-  out.push(...box(pw, ph, pw, WM, { y: py, z: tz }, WM2));
-  for (let f = 0; f < 4; f++) {
-    const ry = (f * Math.PI) / 2;
-    for (let k = 0; k < 9; k++) {
-      const t = -pw / 2 + 0.004 + k * ((pw - 0.008) / 8);
-      const [x, z] = onFace(0, tz, pw / 2 + 0.0002, ry, t);
-      out.push(pointed(0.0034, 0.0018, RECESS, x, py + 0.0008, z, ry));
-    }
+  const { WM, WM2, GREY, INLAY, GOLD } = TAJ;
+  const FACES = [0, 1, 2, 3].map((f) => (f * Math.PI) / 2);
+  // The plinth: a core, its four arcaded walls, base course and cornice; an
+  // inlaid border on its top.
+  const ph = 0.0055, pw = 0.066, pT = 0.001, ptop = ph + 0.0001;
+  out.push(...box(pw - 2 * pT, ph, pw - 2 * pT, TAJ.BACK, {}, WM2));
+  out.push(...box(pw + 0.0008, 0.0006, pw + 0.0008, WM2));
+  out.push(...box(pw + 0.0008, 0.0005, pw + 0.0008, WM, { y: ph - 0.0004 }, WM2));
+  const bays = Array.from({ length: 9 }, (_, i) => ({ t: -pw / 2 + 0.0045 + (i * (pw - 0.009)) / 8, y: 0.0011, w: 0.0028, h: 0.0012, backed: false }));
+  for (const ry of FACES) out.push(...nicheWall(pw, ph - 0.0004, pT, bays, 0, 0, pw / 2, ry, 0, 0, 2));
+  for (const hs of [0.0262, 0.0302]) for (const s of [-1, 1]) {
+    out.push(flat(2 * hs + 0.0004, 0.0004, GREY, 0, s * hs, ptop + 0.00005), flat(0.0004, 2 * hs - 0.0004, GREY, s * hs, 0, ptop + 0.00005));
   }
-  // The tomb: its block with cut corners.
-  const by = py + ph, bh = 0.026, bw = 0.046, a = bw / 2, k = bw * 0.2;
-  out.push(...chamfered(bw, bh, bw, 0.2, WM, { y: by, z: tz }, WM2));
-  for (let f = 0; f < 4; f++) {
-    const ry = (f * Math.PI) / 2;
-    // The pishtaq: a raised frame, rising above the roof, its iwan within.
-    const [px, pz] = onFace(0, tz, a + 0.0006, ry, 0);
-    out.push(...box(0.019, 0.03, 0.0016, WM, { x: px, y: by, z: pz, ry }, WM2));
-    const o = a + 0.0014 + 0.0002;
-    const [rx, rz] = onFace(0, tz, o, ry, 0);
-    out.push(pointed(0.0115, 0.0135, RECESS, rx, by + 0.002, rz, ry));
-    const [dx, dz] = onFace(0, tz, o + 0.0002, ry, 0);
-    out.push(pointed(0.005, 0.006, DOOR, dx, by + 0.002, dz, ry));
-    { const [lx, lz] = onFace(0, tz, o + 0.0001, ry, 0); out.push(pane(0.009, 0.0014, shade(RECESS, 0.9), lx, by + 0.0105, lz, ry)); }
-    // The inlaid band round it.
-    for (const t of [-0.0071, 0.0071]) { const [x, z] = onFace(0, tz, o, ry, t); out.push(pane(0.0009, 0.0225, INLAY, x, by + 0.0015, z, ry)); }
-    { const [x, z] = onFace(0, tz, o, ry, 0); out.push(pane(0.0151, 0.0009, INLAY, x, by + 0.0244, z, ry)); }
-    // Its pinnacles.
-    for (const t of [-0.0098, 0.0098]) {
-      const [x, z] = onFace(0, tz, a + 0.0006, ry, t);
-      out.push(cyl(0.0008, 0.0007, 0.0355, 6, WM, { x, y: by, z }), ball(0.001, WM, { x, y: by + 0.0362, z }));
+
+  // The tomb: a core under its roof terrace, its eight walls round it (the
+  // pishtaqs standing proud), a base course and cornice round them.
+  // (Everything on it a hair above its top, so their undersides keep off it.)
+  const by = ptop + 0.00003, bh = 0.026, bw = 0.046, a = bw / 2, k = bw * 0.2, dd = (2 * a - k) / Math.SQRT2, kw = k * Math.SQRT2;
+  out.push(...chamfered(bw - 0.008, bh + 0.0001, bw - 0.008, 0.1805, WM, { y: by }, WM2));
+  out.push(...chamfered(bw + 0.0006, 0.0012, bw + 0.0006, 0.2012, WM2, { y: by - 0.000015 }));
+  out.push(...chamfered(bw + 0.0008, 0.0005, bw + 0.0008, 0.2016, WM, { y: by + bh - 0.0012 }, WM2));
+  const PW = 0.019, PH = 0.0305, dp = a + 0.0008, iw = 0.0115, ih = 0.0135, iy = 0.0015;
+  for (const ry of FACES) {
+    const on = (d: number, t: number) => onFace(0, 0, d, ry, t);
+    // The pishtaq and its iwan.
+    out.push(...nicheWall(PW, PH, 0.003, [{ t: 0, y: iy, w: iw, h: ih, dome: true, frame: false }], 0, 0, dp, ry, 0, by, 4));
+    {
+      // The arch's moulded rim.
+      const s = archPath(new THREE.Shape(), iw + 0.0008, ih, 0, iy);
+      s.holes.push(archPath(new THREE.Path(), iw, ih, 0, iy));
+      const [x, z] = on(dp + 0.00005, 0);
+      out.push(P(new THREE.ShapeGeometry(s, 4), GREY, { x, y: by, z, ry }));
     }
-    // The cut corners: arches two high.
-    const rd = ry + Math.PI / 4, dd = (2 * a - k) / Math.SQRT2 + 0.0003;
-    for (const yy of [by + 0.002, by + 0.0145]) {
-      const [x, z] = onFace(0, tz, dd, rd, 0);
-      out.push(pointed(0.0068, 0.0065, RECESS, x, yy, z, rd));
-      const [x2, z2] = onFace(0, tz, dd + 0.0002, rd, 0);
-      out.push(pointed(0.003, 0.0035, DOOR, x2, yy, z2, rd));
+    // The calligraphy band, dark on a pale border, round the arch.
+    const bt = 0.0076, btop = 0.0255;
+    for (const [c, lw, dz] of [[GREY, 0.0013, 0.00005], [INLAY, 0.0007, 0.0001]] as const) {
+      for (const s of [-1, 1]) { const [x, z] = on(dp + dz, s * bt); out.push(pane(lw, btop + lw / 2 - iy, c, x, by + iy, z, ry)); }
+      const [x, z] = on(dp + dz, 0); out.push(pane(2 * bt + lw, lw, c, x, by + btop - lw / 2, z, ry));
     }
-    // Beside the pishtaq, narrow arches two high.
-    for (const t of [-0.0118, 0.0118]) for (const yy of [by + 0.002, by + 0.0145]) {
-      const [x, z] = onFace(0, tz, a + 0.0002, ry, t);
-      out.push(pointed(0.0026, 0.0068, RECESS, x, yy, z, ry));
+    // Inlaid rosettes in the spandrels, a pale border round the frame.
+    for (const s of [-1, 1]) {
+      const [x, z] = on(dp + 0.00005, s * 0.005);
+      out.push(P(new THREE.CircleGeometry(0.0008, 8), GREY, { x, y: by + 0.0218, z, ry }));
+      const [x3, z3] = on(dp + 0.00005, s * (PW / 2 - 0.0006));
+      out.push(pane(0.0003, PH - 0.0026, GREY, x3, by + 0.0013, z3, ry));
     }
+    { const [x, z] = on(dp + 0.00005, 0); out.push(pane(PW - 0.0009, 0.0003, GREY, x, by + PH - 0.0013, z, ry)); }
+    // Its cornice and cresting.
+    { const [x, z] = on(dp - 0.0015, 0); out.push(...box(PW + 0.0006, 0.0005, 0.0036, WM, { x, y: by + PH - 0.0008, z, ry })); }
+    for (let i = 0; i < 9; i++) { const [x, z] = on(dp - 0.0004, -PW / 2 + 0.0011 + (i * (PW - 0.0022)) / 8); out.push(...box(0.0007, 0.0008, 0.0006, WM, { x, y: by + PH - 0.0003, z, ry })); }
+    // Its guldastas.
+    for (const s of [-1, 1]) { const [x, z] = on(dp - 0.0004, s * (PW / 2 + 0.0004)); out.push(...guldasta(x, z, by, 0.0345, 0.0007)); }
+    // Beside it, narrow niches two high; a string course between.
+    for (const s of [-1, 1]) {
+      const sw = a - k - PW / 2, t = s * (PW / 2 + sw / 2);
+      out.push(...nicheWall(sw, bh, 0.0022, [{ t: 0, y: 0.0015, w: 0.0026, h: 0.0068, dome: true }, { t: 0, y: 0.0135, w: 0.0026, h: 0.0068, dome: true }], 0, 0, a, ry, t, by));
+      out.push(...crest(sw, a, ry, t, by + bh));
+      const [x, z] = on(a + 0.00005, t); out.push(pane(sw, 0.0003, GREY, x, by + 0.013, z, ry));
+    }
+    // The cut corner: deeper niches two high.
+    const rd = ry + Math.PI / 4;
+    out.push(...nicheWall(kw, bh, 0.0025, [{ t: 0, y: 0.0015, w: 0.0058, h: 0.0062, dome: true }, { t: 0, y: 0.0135, w: 0.0058, h: 0.0062, dome: true }], 0, 0, dd, rd, 0, by));
+    out.push(...crest(kw, dd, rd, 0, by + bh));
+    { const [x, z] = onFace(0, 0, dd + 0.00005, rd, 0); out.push(pane(kw, 0.0003, GREY, x, by + 0.013, z, rd)); }
+    // Guldastas at the block's corners.
+    for (const s of [-1, 1]) { const [x, z] = on(a, s * (a - k)); out.push(...guldasta(x, z, by, bh + 0.005, 0.0009)); }
   }
-  // Pinnacles at the eight corners of the block.
-  for (let i = 0; i < 8; i++) {
-    const q = i < 4 ? i : i - 4, sx = q === 0 || q === 3 ? 1 : -1, sz = q < 2 ? 1 : -1;
-    const [x, z] = i < 4 ? [sx * (a - k), sz * a] : [sx * a, sz * (a - k)];
-    out.push(cyl(0.0009, 0.0008, bh + 0.005, 6, WM, { x, y: by, z: tz + z }), ball(0.0011, WM, { x, y: by + bh + 0.0056, z: tz + z }));
-  }
-  // The drum, its blind arches; the dome, its lotus crown and finial.
+
+  // The drum on its base course, its blind arcade under a cornice.
   const dy = by + bh;
-  out.push(drumC(0.0128, 0.0128, 0.0085, 24, WM, { y: dy, z: tz }));
+  out.push(drumC(0.0137, 0.0137, 0.0013, 32, WM2, { y: dy }), cyl(0.0128, 0.0128, 0.0083, 32, WM, { y: dy + 0.0002 }), drumC(0.0135, 0.0133, 0.0006, 32, WM, { y: dy + 0.0079 }));
   for (let i = 0; i < 16; i++) {
-    const ry = (i / 16) * Math.PI * 2, [x, z] = onFace(0, tz, 0.013, ry, 0);
-    out.push(pointed(0.0028, 0.0035, RECESS, x, dy + 0.0015, z, ry));
+    const ry = (i / 16) * Math.PI * 2;
+    const [x0, z0] = onFace(0, 0, 0.01295, ry, 0), [x1, z1] = onFace(0, 0, 0.01302, ry, 0), [x2, z2] = onFace(0, 0, 0.01309, ry, 0);
+    out.push(pointed(0.0033, 0.0036, GREY, x0, dy + 0.0015, z0, ry, 3), pointed(0.0027, 0.0034, TAJ.BACK, x1, dy + 0.0017, z1, ry, 3), pointed(0.0011, 0.0022, TAJ.DOOR, x2, dy + 0.0019, z2, ry, 2));
   }
+  // The onion dome, its lotus crown, the gilded finial and its crescent.
   const top = dy + 0.0085;
-  out.push(lathe([[0.0128, 0], [0.0152, 0.003], [0.0165, 0.0065], [0.0163, 0.0095], [0.0149, 0.0125], [0.0123, 0.0152], [0.0089, 0.0175], [0.0053, 0.0193], [0.0024, 0.0205], [0.0009, 0.0211], [0, 0.0213]], 28, WM, { y: top, z: tz }));
-  out.push(lathe([[0, 0], [0.0032, 0.0004], [0.0024, 0.0012], [0.001, 0.0016]], 12, WM2, { y: top + 0.0205, z: tz }));
-  out.push(rod(V(0, top + 0.021, tz), V(0, top + 0.0295, tz), 0.00035, GOLD, 5));
-  for (const [yy, rr] of [[0.0232, 0.0011], [0.0256, 0.0008]] as const) out.push(ball(rr, GOLD, { y: top + yy, z: tz }, 1));
-  out.push(P(new THREE.TorusGeometry(0.0013, 0.00025, 4, 10, Math.PI * 1.4).rotateZ(-0.2 * Math.PI), GOLD, { y: top + 0.0302, z: tz }));
-  // The four domed kiosks round the dome.
-  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) out.push(...chhatri(sx * 0.0165, tz + sz * 0.0165, dy, 0.0045, WM, WM2, GOLD));
-  // The minarets.
+  out.push(lathe([[0.0128, 0], [0.0152, 0.003], [0.0165, 0.0065], [0.0163, 0.0095], [0.0149, 0.0125], [0.0123, 0.0152], [0.0089, 0.0175], [0.0053, 0.0193], [0.0024, 0.0205], [0.0009, 0.0211], [0, 0.0213]], 32, WM, { y: top }));
+  out.push(lathe([[0, 0], [0.0032, 0.0004], [0.0024, 0.0012], [0.001, 0.0016]], 16, WM2, { y: top + 0.0205 }));
+  for (let i = 0; i < 10; i++) {
+    const t = (i / 10) * Math.PI * 2;
+    out.push(P(new THREE.OctahedronGeometry(0.0009), WM2, { x: Math.sin(t) * 0.0027, y: top + 0.0203, z: Math.cos(t) * 0.0027, ry: t, sx: 0.55, sy: 0.35, sz: 1.15 }));
+  }
+  out.push(lathe([[0.0005, 0], [0.001, 0.0003], [0.0011, 0.0008], [0.0006, 0.0013], [0.0004, 0.0015], [0.0008, 0.0019], [0.0009, 0.0023], [0.0005, 0.0027], [0.0003, 0.0029], [0.0005, 0.0032], [0.0005, 0.0035], [0.0002, 0.0038], [0.0002, 0.004]], 10, GOLD, { y: top + 0.0209 }));
+  out.push(rod(V(0, top + 0.0248, 0), V(0, top + 0.0289, 0), 0.00024, GOLD, 5), rod(V(0, top + 0.0289, 0), V(0, top + 0.0318, 0), 0.00016, GOLD, 4));
+  for (const [yy, rr] of [[0.0268, 0.0005], [0.0282, 0.00035]] as const) out.push(ball(rr, GOLD, { y: top + yy }, 1));
+  out.push(P(new THREE.TorusGeometry(0.0013, 0.00024, 4, 12, Math.PI * 1.4).rotateZ(0.8 * Math.PI), GOLD, { y: top + 0.0302 }));
+  // The four chhatris round the dome.
+  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) out.push(...chhatri(sx * 0.0165, sz * 0.0165, dy + 0.0002, 0.0045, WM, WM2, GOLD));
+  // The minarets, each leaning a little outward.
   for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) {
-    const x = sx * (pw / 2 - 0.0035), z = tz + sz * (pw / 2 - 0.0035), y = py + ph;
-    out.push(drumC(0.0036, 0.0034, 0.002, 8, WM, { x, y, z }));
-    const seg = [[0.0029, 0.0027, 0.013], [0.0026, 0.0024, 0.011], [0.0023, 0.0021, 0.009]] as const;
-    let yy = y + 0.002;
-    for (const [r0, r1, h] of seg) {
-      out.push(cyl(r0, r1, h, 10, WM, { x, y: yy, z }));
-      for (const f of [0.3, 0.65]) out.push(cyl(r0 + 0.0001, r0 + 0.0001, 0.0003, 10, INLAY, { x, y: yy + h * f, z }));
-      yy += h;
-      out.push(drumC(r1 + 0.0016, r1 + 0.0018, 0.0007, 10, WM2, { x, y: yy, z }));
-      out.push(cyl(r1 + 0.0016, r1 + 0.0016, 0.0011, 10, WM, { x, y: yy + 0.0007, z }));
-    }
-    out.push(...chhatri(x, z, yy + 0.0007, 0.0032, WM, WM2, GOLD));
+    const x = sx * (pw / 2 - 0.0035), z = sz * (pw / 2 - 0.0035), y = by;
+    const m = new THREE.Matrix4().makeTranslation(x, y, z).multiply(new THREE.Matrix4().makeRotationAxis(V(sz, 0, -sx).normalize(), 0.035)).multiply(new THREE.Matrix4().makeTranslation(-x, -y, -z));
+    out.push(...minaret(x, z, y).map((g) => g.applyMatrix4(m)));
   }
   return [flat(2 * H, 2 * H, 0xd8d0c0, 0, 0, 0.0003), ...stretch(out, 2.18, 3.5)];
 }
-// A domed kiosk on slender columns (a chhatri), r wide, standing on y.
+// A pointed arch's outline (as pointed()), w wide, its sides h high, its
+// bottom middle at (x, y), traced into p.
+function archPath<T extends THREE.Path>(p: T, w: number, h: number, x: number, y: number): T {
+  p.moveTo(x - w / 2, y);
+  p.lineTo(x - w / 2, y + h);
+  p.quadraticCurveTo(x - w / 2, y + h + w * 0.5, x, y + h + w * 0.72);
+  p.quadraticCurveTo(x + w / 2, y + h + w * 0.5, x + w / 2, y + h);
+  p.lineTo(x + w / 2, y);
+  return p;
+}
+// A niche: t along its wall, its bottom y up it, w wide, its sides h high;
+// a half dome over it or not, its pale inlaid frame (alfiz) or not, a back
+// wall of its own or not (the wall behind it shows: the plinth's).
+interface Niche { readonly t: number; readonly y: number; readonly w: number; readonly h: number; readonly dome?: boolean; readonly frame?: boolean; readonly backed?: boolean }
+// A piece of the Taj's wall facing ry, its outer face d out from (cx, cz)
+// and t along, standing on y: w wide, h high, T deep, pierced by its niches.
+// Each niche's sides are the wall's own depth; at its back a wall with a
+// door (framed in grey) and, if there is room, a jali window over it; a half
+// dome over the big ones (the space between its rim and the pointed arch
+// filled in); its alfiz on the wall's face.
+function nicheWall(w: number, h: number, T: number, niches: readonly Niche[], cx: number, cz: number, d: number, ry: number, t: number, y: number, seg = 3): G[] {
+  const out: G[] = [];
+  const s = new THREE.Shape();
+  s.moveTo(-w / 2, 0); s.lineTo(w / 2, 0); s.lineTo(w / 2, h); s.lineTo(-w / 2, h); s.lineTo(-w / 2, 0);
+  for (const n of niches) s.holes.push(archPath(new THREE.Path(), n.w, n.h, n.t, n.y));
+  const at = (dz: number, tt: number) => onFace(cx, cz, d + dz, ry, t + tt);
+  { const [x, z] = at(0, 0); out.push(P(new THREE.ExtrudeGeometry(s, { depth: T, bevelEnabled: false, curveSegments: seg }).translate(0, 0, -T), TAJ.WM, { x, y, z, ry })); }
+  for (const n of niches) {
+    const yb = y + n.y, back = -T + 0.00006;
+    if (n.backed !== false) { const [x, z] = at(back, n.t); out.push(pointed(n.w, n.h, TAJ.BACK, x, yb, z, ry, seg)); }
+    // The door, the jali over it.
+    const dw = n.w * 0.42, dh = n.h * 0.3, js = dh + dw * 0.72 + n.h * 0.05, jw = n.w * 0.34, jh = n.h * 0.12;
+    for (const [c, ww, hh, dz] of [[TAJ.GREY, dw + 0.0005, dh + 0.00025, 0.00006], [TAJ.DOOR, dw, dh, 0.00012]] as const) {
+      if (c === TAJ.GREY && n.h < 0.002) continue;
+      const [x, z] = at(back + dz, n.t); out.push(pointed(ww, hh, c, x, yb, z, ry, 2));
+    }
+    if (js + jh + jw * 0.72 + 0.0003 < n.h) {
+      if (n.w > 0.004) { const [x, z] = at(back + 0.00006, n.t); out.push(pointed(jw + 0.0004, jh + 0.0004, TAJ.GREY, x, yb + js - 0.0002, z, ry, 2)); }
+      { const [x, z] = at(back + 0.00012, n.t); out.push(pointed(jw, jh, TAJ.JALI, x, yb + js, z, ry, 2)); }
+    }
+    if (n.dome) {
+      const r = n.w / 2, [x, z] = at(-0.00015, n.t);
+      out.push(P(new THREE.SphereGeometry(r, r > 0.002 ? 8 : 5, r > 0.002 ? 3 : 2, Math.PI, Math.PI, 0, Math.PI / 2), TAJ.SOFT, { x, y: yb + n.h, z, ry, sz: Math.min(1, (T - 0.0002) / r) }));
+      const ty = new THREE.Shape();
+      // (The fill's lower edge a little inside the dome's rim: no sliver shows.)
+      ty.moveTo(-r, n.h);
+      ty.quadraticCurveTo(-r, n.h + n.w * 0.5, 0, n.h + n.w * 0.72);
+      ty.quadraticCurveTo(r, n.h + n.w * 0.5, r, n.h);
+      ty.absarc(0, n.h, r * 0.96, 0, Math.PI, false);
+      out.push(P(new THREE.ShapeGeometry(ty, seg), TAJ.BACK, { x, y: yb, z, ry }));
+    }
+    if (n.frame !== false) {
+      const fw = n.w + 0.0011, fh = n.h + n.w * 0.72 + 0.0006, lw = 0.0003;
+      for (const sd of [-1, 1]) { const [x, z] = at(0.00005, n.t + sd * (fw / 2)); out.push(pane(lw, fh, TAJ.GREY, x, yb, z, ry)); }
+      const [x, z] = at(0.00005, n.t); out.push(pane(fw + lw, lw, TAJ.GREY, x, yb + fh - lw, z, ry));
+    }
+  }
+  return out;
+}
+// A crested parapet w long along a wall's top at y (its face d out toward
+// ry, t along).
+function crest(w: number, d: number, ry: number, t: number, y: number): G[] {
+  const out: G[] = [];
+  { const [x, z] = onFace(0, 0, d - 0.00035, ry, t); out.push(...box(w, 0.0009, 0.0007, TAJ.WM, { x, y, z, ry })); }
+  const n = Math.max(2, Math.round(w / 0.0024));
+  for (let i = 0; i < n; i++) {
+    const [x, z] = onFace(0, 0, d - 0.00035, ry, t - w / 2 + ((i + 0.5) * w) / n);
+    out.push(...box(0.0005, 0.0005, 0.0005, TAJ.WM, { x, y: y + 0.0009, z, ry }));
+  }
+  return out;
+}
+// A guldasta: a slim octagonal pinnacle h high, r thick, ringed in grey,
+// capped by a little kiosk and lotus bud with a gilded spike.
+function guldasta(x: number, z: number, y: number, h: number, r: number): G[] {
+  const out: G[] = [cyl(r, r * 0.85, h, 6, TAJ.WM, { x, y, z })];
+  for (const f of [0.4, 0.75]) out.push(cyl(r * 1.08, r * 1.08, r * 0.35, 6, TAJ.GREY, { x, y: y + h * f, z }));
+  out.push(drumC(r * 1.35, r * 1.35, r * 0.45, 6, TAJ.WM2, { x, y: y + h, z }));
+  out.push(lathe([[r * 1.15, 0], [r * 1.2, r * 0.7], [0, r * 1.9]], 6, TAJ.WM, { x, y: y + h + r * 0.45, z }));
+  out.push(rod(V(x, y + h + r * 2.2, z), V(x, y + h + r * 3.4, z), r * 0.14, TAJ.GOLD, 4));
+  return out;
+}
+// A minaret standing on (x, y, z): its octagonal base, three tapering
+// stages inlaid with dark rings and lines, a balcony on corbels over each,
+// a chhatri on top.
+function minaret(x: number, z: number, y: number): G[] {
+  const out: G[] = [drumC(0.0038, 0.0037, 0.0008, 8, TAJ.WM2, { x, y, z }), drumC(0.0035, 0.0033, 0.0016, 8, TAJ.WM, { x, y: y + 0.0008, z })];
+  let yy = y + 0.0024;
+  for (const [r0, r1, h] of [[0.0029, 0.0027, 0.0128], [0.0026, 0.0024, 0.0108], [0.0023, 0.0021, 0.0088]] as const) {
+    out.push(cyl(r0, r1, h, 10, TAJ.WM, { x, y: yy, z }));
+    for (const f of [0.5, 0.94]) {
+      const rf = r0 + (r1 - r0) * f + 0.00006;
+      out.push(cyl(rf, rf, 0.00028, 10, TAJ.INLAY, { x, y: yy + h * f, z }));
+    }
+    for (let i = 0; i < 4; i++) {
+      const q = (i / 4) * Math.PI * 2 + Math.PI / 4, c = Math.cos(q), sn = Math.sin(q);
+      const ra = r0 + 0.00003, rb = r1 + 0.00003;
+      out.push(rod(V(x + c * ra, yy, z + sn * ra), V(x + c * rb, yy + h * 0.94, z + sn * rb), 0.00007, TAJ.INLAY, 3));
+    }
+    yy += h;
+    // The balcony: its corbelled underside, floor and parapet, grey-edged.
+    out.push(drumC(r1, r1 + 0.0016, 0.0009, 10, TAJ.WM2, { x, y: yy - 0.0002, z }));
+    out.push(cyl(r1 + 0.0016, r1 + 0.0016, 0.001, 10, TAJ.WM, { x, y: yy + 0.0007, z }));
+    out.push(cyl(r1 + 0.00166, r1 + 0.00166, 0.00018, 10, TAJ.GREY, { x, y: yy + 0.0013, z }));
+  }
+  out.push(...chhatri(x, z, yy + 0.0007, 0.0032, TAJ.WM, TAJ.WM2, TAJ.GOLD));
+  return out;
+}
+// A chhatri (a domed kiosk), r wide, standing on y: its platform, eight
+// slim columns under pointed arches, the sloping eave (chhajja), a drum
+// ringed in grey, the dome, its lotus and gilded finial.
 function chhatri(x: number, z: number, y: number, r: number, c: number, c2: number, gold: number): G[] {
-  const out: G[] = [drumC(r, r, r * 0.3, 8, c2, { x, y, z })];
-  for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2; out.push(cyl(r * 0.1, r * 0.09, r * 1.0, 4, c, { x: x + Math.cos(a) * r * 0.78, y: y + r * 0.3, z: z + Math.sin(a) * r * 0.78 })); }
-  out.push(drumC(r * 1.1, r * 1.05, r * 0.18, 10, c2, { x, y: y + r * 1.3, z }));
-  out.push(lathe([[r * 0.95, 0], [r * 1.0, r * 0.35], [r * 0.82, r * 0.75], [r * 0.45, r * 1.05], [0, r * 1.2]], 12, c, { x, y: y + r * 1.48, z }));
-  out.push(rod(V(x, y + r * 2.6, z), V(x, y + r * 3.2, z), r * 0.07, gold, 4));
+  const out: G[] = [drumC(r * 1.05, r * 1.05, r * 0.25, 8, c2, { x, y, z })];
+  const cr = r * 0.8, ap = cr * Math.cos(Math.PI / 8), aw = 2 * cr * Math.sin(Math.PI / 8);
+  for (let i = 0; i < 8; i++) {
+    const q = ((i + 0.5) / 8) * Math.PI * 2;
+    out.push(cyl(r * 0.085, r * 0.075, r * 0.95, 4, c, { x: x + Math.sin(q) * cr, y: y + r * 0.25, z: z + Math.cos(q) * cr }));
+    // The arch between two columns: the wall over its pointed opening.
+    const ry = (i / 8) * Math.PI * 2, ah = r * 0.42, s = new THREE.Shape();
+    s.moveTo(-aw / 2, 0); s.lineTo(-aw / 2, ah); s.lineTo(aw / 2, ah); s.lineTo(aw / 2, 0);
+    s.quadraticCurveTo(aw / 2, ah * 0.55, 0, ah * 0.8);
+    s.quadraticCurveTo(-aw / 2, ah * 0.55, -aw / 2, 0);
+    const [ax, az] = onFace(x, z, ap, ry, 0);
+    out.push(P(new THREE.ShapeGeometry(s, 2), c, { x: ax, y: y + r * 0.78, z: az, ry }));
+  }
+  out.push(drumC(r * 0.92, r * 0.92, r * 0.1, 8, c, { x, y: y + r * 1.2, z }));
+  out.push(drumC(r * 1.32, r * 0.95, r * 0.14, 8, c2, { x, y: y + r * 1.3, z }));
+  out.push(cyl(r * 0.86, r * 0.86, r * 0.3, 8, c, { x, y: y + r * 1.44, z }));
+  out.push(cyl(r * 0.875, r * 0.875, r * 0.06, 8, TAJ.GREY, { x, y: y + r * 1.6, z }));
+  out.push(lathe([[r * 0.86, 0], [r * 0.98, r * 0.3], [r * 0.95, r * 0.6], [r * 0.7, r * 0.95], [r * 0.35, r * 1.15], [0, r * 1.22]], 8, c, { x, y: y + r * 1.74, z }));
+  out.push(lathe([[0, 0], [r * 0.34, r * 0.04], [r * 0.24, r * 0.14], [r * 0.08, r * 0.2]], 6, c2, { x, y: y + r * 2.9, z }));
+  out.push(rod(V(x, y + r * 3.0, z), V(x, y + r * 3.6, z), r * 0.06, gold, 4));
   return out;
 }
 // ---------- Moscow ----------
