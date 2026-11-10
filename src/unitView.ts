@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { Billboard } from './billboards.ts';
 import type { ArchCiv } from './architecture.ts';
 import { unitDef, domainOf, type UnitKey } from './rules.ts';
@@ -277,6 +278,7 @@ const UNIT_VERTEX_DECL = /* glsl */ `
   attribute vec4 aPose;     // per figure: its body above the hips bent forward, turned; its crouch; its striking elbow bent (radians)
   attribute vec4 aMore;     // per figure: its shield raised, its bowstring drawn, how burnt (0..1); its striking arm carried out to its side (radians; - across it)
   uniform float uTime;
+  varying float vFlatN;     // a flat face's corner (no normal of its own: shareCorners)
   vec2 rot2(vec2 v, float a) { float c = cos(a), s = sin(a); return vec2(c * v.x - s * v.y, s * v.x + c * v.y); }
   // (A point or direction turned with the body above the hips.)
   vec3 bodyBend(vec3 p, float c1, float s1, float c2, float s2) {
@@ -367,6 +369,8 @@ const UNIT_LIMB = /* glsl */ `
   float upper = fromShoulder ? 1.0 : (isLeg ? 1.0 - blendOn : 1.0) * smoothstep(${(HIP - 0.07).toFixed(2)}, ${(HIP + 0.03).toFixed(2)}, position.y);
   float twC = cos(upper * aPose.y), twS = sin(upper * aPose.y), bnC = cos(upper * aPose.x), bnS = sin(upper * aPose.x);`;
 const UNIT_NORMAL = /* glsl */ `
+  vFlatN = dot(objectNormal, objectNormal) < 0.25 ? 1.0 : 0.0;
+  if (vFlatN > 0.5) objectNormal = vec3(0.0, 1.0, 0.0);
   ${UNIT_LIMB}
   if (spinY > 0.5) objectNormal.xz = vec2(spinC * objectNormal.x - spinS * objectNormal.z, spinS * objectNormal.x + spinC * objectNormal.z);
   if (spinZ > 0.5) objectNormal.xy = vec2(spinC * objectNormal.x - spinS * objectNormal.y, spinS * objectNormal.x + spinC * objectNormal.y);
@@ -426,6 +430,19 @@ export function makeUnitMaterial(time: { value: number }, texture?: string): THR
           vColor.rgb = mix(mix(color.rgb, aSkinTone.rgb, isTeamV.y), color.rgb * instanceColor.rgb, isTeamV.x);
           vColor.rgb *= 1.0 - 0.78 * aMore.z; // (burnt: a wreck)
         #endif`);
+    // (A flat face's corners: no offset along the normal where the shadow map is looked up (the figures are not in it: no acne to keep off).)
+    shader.vertexShader = shader.vertexShader.replace('#include <shadowmap_vertex>', THREE.ShaderChunk.shadowmap_vertex
+      .replace('transformNormalByInverseViewMatrix( transformedNormal, viewMatrix )', '(vFlatN > 0.5 ? vec3(0.0) : transformNormalByInverseViewMatrix( transformedNormal, viewMatrix ))'));
+    // (A flat face's normal from how its points change across the screen,
+    // as flatShading has it: the face's own, turned to the camera, as a
+    // double-sided face's normal is.)
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying float vFlatN;')
+      .replace('#include <normal_fragment_begin>', `
+        float faceDirection = gl_FrontFacing ? 1.0 : - 1.0;
+        vec3 faceNormal = normalize(cross(dFdx(vViewPosition), dFdy(vViewPosition)));
+        vec3 normal = vFlatN > 0.5 ? faceNormal : normalize(vNormal) * faceDirection;
+        vec3 nonPerturbedNormal = normal;`);
     if (texture) shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', `
       #ifdef USE_MAP
         if (vMapUv.x >= 0.0) diffuseColor *= texture2D(map, vMapUv);
@@ -433,6 +450,32 @@ export function makeUnitMaterial(time: { value: number }, texture?: string): THR
   };
   mat.customProgramCacheKey = () => (texture ? 'unit-figure-textured' : 'unit-figure');
   return mat;
+}
+// A model's corners shared between its faces (an indexed geometry): the
+// vertex shader, which poses every corner, then runs about once a corner,
+// not three times a face (a model's corners are about a quarter of its
+// faces' three each). A flat face's corners lose their normal (0: the
+// fragment shader takes the face's from the screen, as flatShading does),
+// so they are shared with the faces round them; a smooth face (a barrel, a
+// wheel) keeps its own.
+export function shareCorners(geo: THREE.BufferGeometry): THREE.BufferGeometry {
+  if (geo.index) return geo;
+  const pos = geo.getAttribute('position'), nor = geo.getAttribute('normal');
+  if (nor) {
+    const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), n = new THREE.Vector3(), v = new THREE.Vector3();
+    for (let i = 0; i + 2 < pos.count; i += 3) {
+      a.fromBufferAttribute(pos, i); b.fromBufferAttribute(pos, i + 1); c.fromBufferAttribute(pos, i + 2);
+      n.crossVectors(b.sub(a), c.sub(a));
+      if (n.lengthSq() < 1e-20) continue;
+      n.normalize();
+      let flat = true;
+      for (let k = 0; k < 3 && flat; k++) flat = v.fromBufferAttribute(nor, i + k).dot(n) > 0.999;
+      if (flat) for (let k = 0; k < 3; k++) nor.setXYZ(i + k, 0, 0, 0);
+    }
+  }
+  const shared = mergeVertices(geo, 1e-6);
+  shared.userData = geo.userData;
+  return shared;
 }
 // A model's geometry made ready for `cap` instances (their gait and skin).
 export function prepareUnitGeometry(geo: THREE.BufferGeometry, cap: number): THREE.BufferGeometry {
@@ -1227,7 +1270,7 @@ export class UnitView {
     if (mesh && mesh.instanceMatrix.count >= need) return mesh;
     const cap = Math.max(64, need, mesh ? mesh.instanceMatrix.count * 2 : 0);
     const [a, b, c, d, e] = key.split('|') as [string, string, string | undefined, string | undefined, string | undefined];
-    const geo = mesh ? mesh.geometry : a === 'hair' ? hairModel(HAIR_STYLES[Number(b)]!) : a === 'transport' ? transportModel() : unitModel(a as UnitKey, b as ArchCiv, Number(c), d === '1', e === '1');
+    const geo = mesh ? mesh.geometry : shareCorners(a === 'hair' ? hairModel(HAIR_STYLES[Number(b)]!) : a === 'transport' ? transportModel() : unitModel(a as UnitKey, b as ArchCiv, Number(c), d === '1', e === '1'));
     prepareUnitGeometry(geo, cap);
     const next = new THREE.InstancedMesh(geo, this.materialOf(geo), cap);
     next.setColorAt(0, new THREE.Color());

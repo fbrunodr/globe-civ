@@ -25,7 +25,7 @@ import { TECHS, TECH_KEYS } from './techs.ts';
 import { POLITICS } from './politics.ts';
 import { FORTIFY_BONUS, combatStrength, fightRounds, matchup, statOf } from './game.ts';
 import { HAIR_STYLES, UNIT_LOOK, colsOf, formationSlots, hairModel, headOffset, isMachine, rides, unitModel, variantOf, whirls, bowman, cuts, thrusts, draws, bayonets, womenShare } from './unitModels.ts';
-import { FIGHT, PLAYS, UnitView, Volleys, durOf, defendPlay, falls, figureLooks, makeUnitMaterial, playAt, playOf, prepareUnitGeometry, type Play, type ShownUnit } from './unitView.ts';
+import { FIGHT, PLAYS, UnitView, Volleys, durOf, defendPlay, falls, figureLooks, makeUnitMaterial, playAt, playOf, prepareUnitGeometry, shareCorners, type Play, type ShownUnit } from './unitView.ts';
 import type { P2 } from './duel.ts';
 import { AFTER, armOf, dropOf, flingOf, legsOf, poseOf, poseTurn, rearShift, type Cue } from './unitAnim.ts';
 import { UNIT_CLASS, attackBlock, attackStyle, canAssault, canAttackType, canShoot, defaultMode, siegeStyle, type AttackMode } from './unitClasses.ts';
@@ -202,7 +202,7 @@ function build(): { w: number; d: number } {
   const perFigure = new Map<UnitKey, number>(), hairTris = new Map<string, number>();
   for (const [key, list] of figs) {
     const [a, b, c, d] = key.split('|') as [string, string, string | undefined, string | undefined];
-    const geo = prepareUnitGeometry(a === 'hair' ? hairModel(HAIR_STYLES[Number(b)]!) : unitModel(a as UnitKey, b as ArchCiv, Number(c), d === '1'), list.length);
+    const geo = prepareUnitGeometry(shareCorners(a === 'hair' ? hairModel(HAIR_STYLES[Number(b)]!) : unitModel(a as UnitKey, b as ArchCiv, Number(c), d === '1')), list.length);
     const n = triangles([geo]);
     drawn += n * list.length;
     if (a === 'hair') hairTris.set(b, n);

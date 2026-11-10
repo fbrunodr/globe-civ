@@ -287,7 +287,8 @@ p.notice { color: var(--warn); margin: 0 0 12px; }
 #fps table.tris { border-collapse: collapse; margin-top: 3px; font-size: 11px; }
 #fps table.tris th { text-align: left; font-weight: normal; padding-right: 10px; }
 #fps table.tris td { text-align: right; padding-left: 8px; color: var(--text, #ddd); }
-#fps table.tris tr:first-child th { color: var(--muted); text-align: right; }
+#fps table.tris tr[data-stat]:hover th { color: var(--text, #ddd); }
+#fps table.tris tr.off { opacity: 0.45; text-decoration: line-through; }
 
 /* The dock (settingsMenu.ts): bottom right, the View bar and the settings gear side by side; the menu opens upward. */
 #dock { position: fixed; right: 14px; bottom: 14px; display: flex; align-items: center; gap: 8px; z-index: 20; }

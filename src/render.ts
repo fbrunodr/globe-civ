@@ -380,6 +380,8 @@ export class GlobeRenderer {
   // (installed at each counter refresh).
   private readonly statTris = new Map<string, number>();
   // Whether the counter shows the breakdown (clicking it toggles; remembered per viewer).
+  // Categories hidden by clicking their rows in the counter (to see what each costs the GPU).
+  private readonly hiddenStats = new Set<string>();
   private statsOpen = ((): boolean => { try { return localStorage.getItem('trisBreakdown') === '1'; } catch { return false; } })();
 
   constructor(canvas: HTMLCanvasElement, game: Game) {
@@ -626,7 +628,14 @@ export class GlobeRenderer {
     this.scene.add(this.smoke.points);
 
     this.bindInput(canvas);
-    this.fpsEl?.addEventListener('click', () => {
+    this.fpsEl?.addEventListener('click', (e) => {
+      // (A category's row clicked: it is hidden, or shown again, to see what it costs.)
+      const row = (e.target as HTMLElement).closest('tr[data-stat]');
+      if (row) {
+        const k = row.getAttribute('data-stat')!;
+        if (!this.hiddenStats.delete(k)) this.hiddenStats.add(k);
+        return;
+      }
       this.statsOpen = !this.statsOpen;
       try { localStorage.setItem('trisBreakdown', this.statsOpen ? '1' : '0'); } catch { /* (not remembered) */ }
     }, { signal: this.abort.signal });
@@ -2466,7 +2475,11 @@ export class GlobeRenderer {
     // (A fine triangle of the ground on screen: a tile's edge over the lattice's steps, SUBDIV × 2, where the camera looks.)
     const triPx = (this.game.globe.avgEdgeAngle / (SUBDIV * 2)) * this.renderer.domElement.height / (2 * Math.tan((this.camera.fov * Math.PI) / 360)) / Math.max(1e-6, this.camera.position.length() - 1);
     this.msaaOn = this.walk.active || triPx > (this.msaaOn ? MSAA_BELOW_PX : MSAA_ABOVE_PX);
+    // (The categories hidden from the counter's table: left out of this frame.)
+    const hid: THREE.Object3D[] = [];
+    if (this.hiddenStats.size) this.scene.traverse((o) => { if (o.visible && this.hiddenStats.has(o.userData['stat'])) { o.visible = false; hid.push(o); } });
     const tris = this.draw(this.msaaOn);
+    for (const o of hid) o.visible = true;
     this.gpuTimer.end();
     this.countFrame(performance.now() - t0, tris);
   }
@@ -2502,11 +2515,11 @@ export class GlobeRenderer {
     const head = `${this.statsOpen ? '▾' : '▸'} ${fps.toFixed(0)} fps · ${(this.fpsWork / this.fpsFrames).toFixed(1)} ms CPU${gpu === null ? '' : ` · ${gpu.toFixed(1)} ms GPU`} · ${fmtTris(this.fpsTris)} tris`;
     if (!this.statsOpen) this.fpsEl.textContent = head;
     else {
-      const rows = [...this.statTris].filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+      const rows = [...this.statTris].filter(([k, v]) => v > 0 || this.hiddenStats.has(k)).sort((a, b) => b[1] - a[1]);
       const other = this.fpsTris - rows.reduce((a, [, v]) => a + v, 0);
       if (other > 0) rows.push(['other', other]);
       this.fpsEl.innerHTML = `<div>${head}</div><table class="tris">`
-        + `${rows.map(([k, v]) => `<tr><th>${k}</th><td>${fmtTris(v)}</td></tr>`).join('')}</table>`;
+        + `${rows.map(([k, v]) => `<tr data-stat="${k}"${this.hiddenStats.has(k) ? ' class="off"' : ''}><th>${k}</th><td>${this.hiddenStats.has(k) ? 'hidden' : fmtTris(v)}</td></tr>`).join('')}</table>`;
     }
     this.fpsFrames = 0; this.fpsWork = 0; this.fpsSince = now;
     this.hookStats();
