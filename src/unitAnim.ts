@@ -75,18 +75,20 @@ function idle(now: number, phase: number): Pose {
   const own = frac(phase * 2.31), breath = 0.02 * Math.sin(now * 1.3 + phase);
   // (Weight shifted, slowly, every 9 to 15 s.)
   const shift = smooth(0.5 + 0.5 * Math.sin(now / (1.5 + frac(phase * 7.7)) + phase * 3) * 1.6);
-  const easy = P(0, 0, 0, 0.03 + breath + 0.04 * own, 0.12 * (own - 0.5), 0, 0, 0, 0, 0.15);
-  const hip = P(0, 0, 0, 0.06 + breath, 0.12 + 0.12 * (own - 0.5), 0.05, 0, 0.18, 0.07, 0.2);
-  const base = mix(easy, hip, frac(phase * 3.7) < 0.5 ? shift : 1 - shift);
+  // (At ease, or the weight on one hip: mixed by `t`.)
+  const t = Math.max(0, Math.min(1, frac(phase * 3.7) < 0.5 ? shift : 1 - shift)), m = (x: number, y: number) => x + (y - x) * t;
+  const bend = m(0.03 + breath + 0.04 * own, 0.06 + breath), twist = m(0.12 * (own - 0.5), 0.12 + 0.12 * (own - 0.5)), arm = m(0, 0.05);
+  const stride = m(0, 0.18), crouch = m(0, 0.07), elbow = m(0.15, 0.2);
   // (A fidget: 1.6 s in every 7 or so, which one by its turn.)
   const cycle = 6.5 + 2 * frac(phase * 5.3), u = frac(now / cycle + phase), k = u < 0.23 ? Math.sin((u / 0.23) * Math.PI) : 0;
   const n = Math.floor(now / cycle + phase), way = n % 2 ? 1 : -1, kind = Math.floor(frac(Math.sin(n * 78.233 + phase * 12.9898) * 43758.5453) * 5);
-  const fidget: Partial<Pose> = kind === 0 ? { twist: 0.5 * way, arm: 0.25, bend: -0.03 }           // a look aside
-    : kind === 1 ? { twist: 0.95 * way, bend: -0.06 }                                                  // a glance back
-    : kind === 2 ? { arm: 0.55, elbow: 0.6, twist: 0.15 * way }                                        // the weapon shifted
-    : kind === 3 ? { bend: 0.16, arm: 0.35, crouch: 0.06 }                                             // a lean on it
-    : { bend: -0.14, arm: 0.2, twist: -0.1 * way };                                                     // a stretch
-  return add(base, Object.fromEntries(Object.entries(fidget).map(([key, v]) => [key, (v as number) * k])));
+  // (Its twist, arm, bend, elbow and crouch, as far into it as it is.)
+  const [dt, da, db, de, dc] = kind === 0 ? [0.5 * way, 0.25, -0.03, 0, 0] // a look aside
+    : kind === 1 ? [0.95 * way, 0, -0.06, 0, 0]                            // a glance back
+    : kind === 2 ? [0.15 * way, 0.55, 0, 0.6, 0]                           // the weapon shifted
+    : kind === 3 ? [0, 0.35, 0.16, 0, 0.06]                                // a lean on it
+    : [-0.1 * way, 0.2, -0.14, 0, 0];                                      // a stretch
+  return { lunge: 0, lean: 0, yaw: 0, bend: bend + db * k, twist: twist + dt * k, arm: arm + da * k, walk: 0, stride, crouch: crouch + dc * k, elbow: elbow + de * k, aim: 0, aimed: 0, guard: 0, draw: 0, rise: 0, out: 0 };
 }
 // On the march (`walk` 1), or at a run (more): leaning into it.
 const march = (now: number, phase: number, walk: number): Pose =>
@@ -460,7 +462,9 @@ export const rearShift = (p: Pose): readonly [number, number] => [-HIND * Math.s
 // How far a crouch lowers the figure (figure heights: its legs fold under it).
 export const dropOf = (crouch: number): number => 0.5 * (1 - Math.cos(crouch));
 // The pose's turn of the whole figure about its feet.
-export const poseTurn = (q: THREE.Quaternion, p: Pose): THREE.Quaternion => q.setFromEuler(new THREE.Euler(p.lean, p.yaw, 0, 'YXZ'));
+export const poseTurn = (q: THREE.Quaternion, p: Pose): THREE.Quaternion => q.setFromEuler(EULER.set(p.lean, p.yaw, 0, 'YXZ'));
+// (A scratch turn, made once.)
+const EULER = new THREE.Euler();
 // For the shader: the legs (aAnim.y: past 1.5, set apart exactly) and the
 // striking arm (aAnim.z: past 1.5, exactly that arm).
 export const legsOf = (p: Pose): number => (p.walk > 0 ? p.walk : 3 + p.stride);

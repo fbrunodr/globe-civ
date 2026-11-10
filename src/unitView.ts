@@ -49,6 +49,13 @@ const SHUFFLE = 1.1, SHUFFLE_FAR = 0.6, TURN = 3.6, TURN_MACHINE = 1.3;
 const INERTIA = { foot: [5.5, 9], horse: [4.6, 9], machine: [3, 4.5] } as const;
 // Further than this from where it is meant to be (figure heights), it is put there.
 const SNAP = 25;
+// Nearer than this to where it is meant to be, and slower than this (figure
+// heights, a second), it has come to rest there.
+const REST = 1e-6;
+// A unit at rest seen smaller than NEAR_PX is posed afresh at most this
+// often (seconds): it only breathes and fidgets, too slightly to show the
+// steps between.
+const POSE_EVERY = 1 / 50;
 // Running faster than this (figure heights a second), a figure kicks up dust.
 const DUSTY = 3;
 // A figure's legs by how fast it goes over the ground (figure heights a
@@ -204,7 +211,7 @@ export interface UnitViewEnv {
 // and where its legs are in their beat (`gait`, radians). `fresh`: not yet
 // stood anywhere.
 interface Figure {
-  jx: number; jz: number; slot: number; at: THREE.Vector3; off: THREE.Vector3; still: boolean; head: THREE.Vector3; last: THREE.Vector3; speed: number; gait: number; fresh: boolean; // (still: stood at its place, nothing to redo)
+  jx: number; jz: number; slot: number; at: THREE.Vector3; off: THREE.Vector3; still: boolean; head: THREE.Vector3; last: THREE.Vector3; speed: number; gait: number; fresh: boolean; turning: boolean; eased: boolean; // (still: stood at its place, nothing to redo; turning: not yet turned the way it means to face; eased: that way its own, at ease)
   variant: number; female: boolean; skin: THREE.Color; hair: number; hairColor: THREE.Color; phase: number; pos: THREE.Vector3; to: THREE.Vector3; vel: THREE.Vector3; up: THREE.Vector3; // (pos: where it is drawn, following `to`, where it is meant to be, with its weight: `vel`)
   home: THREE.Vector3 | null; goal: THREE.Vector3 | null; foe: THREE.Vector3 | null; face: THREE.Vector3 | null; delay: number; curve: number; fall: number;
   beat: number | null; // where it is in its round of blows (null: its phase says)
@@ -216,6 +223,7 @@ interface Figure {
   held: boolean; // its place set by the fight (stepped up to a foe), not by its formation
   keys?: readonly [string, string, boolean]; // its model's (UnitView.key), seen far and near, and whether embarked
   hairKey?: string;
+  slots: Slots; // where it is drawn (its body, hair and shadow: instances held from frame to frame)
 }
 // (`enemy`: the figures of the unit it is at grips with, in a melee.)
 // (`reach`: how far it goes in, times its play's charge: further at a tile no one defends, into a city's streets.)
@@ -223,7 +231,7 @@ interface Figure {
 interface Fight { at: THREE.Vector3; home: THREE.Vector3; t0: number; play: Play; fired: number; attack: Play; side: 'attacker' | 'defender'; won: boolean; enemy: Figure[]; reach: number; counter: Shown | null }
 // A figure struck down, lying where it fell (then sinking away).
 // (A machine's: a wreck burning, on land or at sea.)
-interface Corpse { wreck: Wreck | null; smoke: number; key: string; hair: number; hairColor: THREE.Color; skin: THREE.Color; phase: number; color: THREE.Color; pos: THREE.Vector3; up: THREE.Vector3; face: THREE.Vector3; fall: number; beat: number; horse: boolean; lift: readonly [number, number] }
+interface Corpse { slots: Slots; wreck: Wreck | null; smoke: number; key: string; hair: number; hairColor: THREE.Color; skin: THREE.Color; phase: number; color: THREE.Color; pos: THREE.Vector3; up: THREE.Vector3; face: THREE.Vector3; fall: number; beat: number; horse: boolean; lift: readonly [number, number] }
 const unfought = () => ({ home: null, goal: null, foe: null, face: null, delay: 0, curve: 0, fall: Infinity, beat: null, shot: -Infinity, smoke: 0, dust: 0, foeFig: null, reach: null, gap: 0, held: false });
 // What a machine struck down leaves: a wreck on land, or a ship going down
 // (aircraft and figures leave none).
@@ -258,6 +266,11 @@ interface Shown {
   far: boolean;                // seen too small to make out its people's poses (and not busy)
   flagAt: THREE.Vector3;       // where its flag was last stood (it is moved when the unit is)
   seen: boolean;
+  // Its figures as last drawn still hold good (each in its instances):
+  // nothing has moved it since (layout, dress or a new colour undo it).
+  clean: boolean;
+  posed: number;               // when its figures were last posed (seconds)
+  posedFar: boolean;           // and whether standing still, seen far (Shown.far)
 }
 
 // A long gun's other hand (RIG.support): where the gun arms are made (the
@@ -492,8 +505,14 @@ export class UnitView {
   private readonly material: THREE.MeshStandardMaterial;
   private readonly shadowGeo = new THREE.CircleGeometry(0.5, 10).rotateX(-Math.PI / 2);
   private readonly shadowMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.28, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
-  private readonly meshes = new Map<string, THREE.InstancedMesh>();
-  private shadows: THREE.InstancedMesh;
+  private readonly batches = new Map<string, Batch>();
+  private frameNo = 0;
+  // (Scratch values for drawing, made once.)
+  private readonly scratch = {
+    m: new THREE.Matrix4(), q: new THREE.Quaternion(), basis: new THREE.Matrix4(), scale: new THREE.Vector3(), x: new THREE.Vector3(), z: new THREE.Vector3(),
+    color: new THREE.Color(), head: new THREE.Vector3(), tip: new THREE.Quaternion(), turned: new THREE.Quaternion(), lift3: new THREE.Vector3(), stepped: new THREE.Vector3(),
+    euler: new THREE.Euler(), heading: new THREE.Vector3(), gap: new THREE.Vector3(), d: new THREE.Vector3(), want: new THREE.Vector3(),
+  };
   private readonly shown = new Map<number, Shown>();
   private corpses: Corpse[] = [];
   private readonly volleys: Volleys;
@@ -506,9 +525,8 @@ export class UnitView {
   constructor(private readonly env: UnitViewEnv, private readonly makeFlag: (u: ShownUnit) => Billboard) {
     this.size = FIGURE * env.step;
     this.material = makeUnitMaterial(this.time);
-    this.shadows = this.makeShadows(256);
     this.volleys = new Volleys(this.size);
-    this.group.add(this.shadows, this.volleys.lines);
+    this.group.add(this.volleys.lines);
   }
 
   // The units to show now (those in sight). A unit on a new tile marches
@@ -522,6 +540,7 @@ export class UnitView {
       const k = onTile.get(u.tile) ?? 0;
       onTile.set(u.tile, k + 1);
       let s = this.shown.get(u.id);
+      if (s && s.unit.color !== u.color) s.clean = false;
       if (!s || s.unit.type !== u.type || s.unit.civ !== u.civ || s.unit.suffrage !== u.suffrage) {
         if (s) this.drop(s);
         s = this.add(u, k);
@@ -550,7 +569,7 @@ export class UnitView {
       was.dispose();
       s.seen = true;
     }
-    for (const s of [...this.shown.values()]) {
+    for (const s of this.shown.values()) {
       if (s.seen) continue;
       if (s.fight) { s.gone = true; s.flag.visible = false; } else this.drop(s);
     }
@@ -669,19 +688,24 @@ export class UnitView {
   // Every frame: marching and fighting units move on, and every figure is
   // drawn where it stands. `pxPerUnit`: screen pixels per world unit at
   // distance 1 (figures too small to see are not drawn).
+  // (Each figure keeps its instances from frame to frame (Slots): only those
+  // that change are written and sent to the GPU. A unit seen too small to
+  // make out stands still (far), so once drawn so it is left as it is
+  // (Shown.clean); a ship or machine rides the swell or smokes, never still.
+  // One at rest, not seen close, is posed only every POSE_EVERY.)
   update(now: number, camera: THREE.Camera, pxPerUnit: number): void {
     const dt = Math.max(0, Math.min(0.1, now - this.now));
     this.time.value = now;
     this.now = now;
+    const stamp = ++this.frameNo;
     this.frustum.setFromProjectionMatrix(this.projView.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
-    const drawn: Shown[] = [], need = new Map<string, number>();
-    let figures = 0;
-    for (const s of [...this.shown.values()]) {
+    const w = this.scratch;
+    for (const s of this.shown.values()) {
       if (s.fight) this.fighting(s, now, dt);
       else if (s.march && now >= s.march.t0) {
         const t = Math.min(1, (now - s.march.t0) / s.march.dur);
         s.dir.copy(s.march.from).lerp(s.march.to, t).normalize();
-        this.face(s, s.march.to.clone().sub(s.march.from));
+        this.face(s, w.heading.copy(s.march.to).sub(s.march.from));
         if (t >= 1) {
           if (s.route.length) this.marchOn(s, s.march.to.clone(), s.march.t0 + s.march.dur);
           else { s.march = null; this.settle(s, s.k); }
@@ -705,115 +729,127 @@ export class UnitView {
       if (px < MIN_PX) continue;
       // (Close enough to be seen in detail: its people in their finer bodies.)
       s.near = px >= NEAR_PX;
-      drawn.push(s);
-      for (const f of s.figures) {
-        const key = this.key(s, f);
-        need.set(key, (need.get(key) ?? 0) + 1);
-        if (f.hair >= 0) { const hk = f.hairKey ??= `hair|${f.hair}`; need.set(hk, (need.get(hk) ?? 0) + 1); }
-      }
-      figures += s.figures.length;
+      this.draw(s, now, stamp);
     }
     // (The dead, until they have sunk away.)
     this.corpses = this.corpses.filter((c) => this.gone(c, now) < 1);
-    for (const c of this.corpses) {
-      need.set(c.key, (need.get(c.key) ?? 0) + 1);
-      if (c.hair >= 0) need.set(`hair|${c.hair}`, (need.get(`hair|${c.hair}`) ?? 0) + 1);
+    for (const c of this.corpses) this.drawCorpse(c, now, stamp);
+    // (Instances no longer drawn given up: each batch's last moved into the gap.)
+    for (const b of this.batches.values()) {
+      for (let i = b.owners.length - 1; i >= 0; i--) if (b.owners[i]!.stamp !== stamp) b.release(i);
+      b.send();
     }
-    for (const [key, n] of need) this.mesh(key, n);
-    if (this.shadows.instanceMatrix.count < figures) this.growShadows(figures);
-    const counts = new Map<string, number>();
-    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), basis = new THREE.Matrix4(), scale = new THREE.Vector3();
-    const x = new THREE.Vector3(), z = new THREE.Vector3(), color = new THREE.Color(), head = new THREE.Vector3();
-    let shadowN = 0;
-    const tip = new THREE.Quaternion(), turned = new THREE.Quaternion(), lift3 = new THREE.Vector3(), stepped = new THREE.Vector3();
-    const put = (key: string, pos: THREE.Vector3, c: THREE.Color, f: { gait: number; skin: THREE.Color }, walk: number, strike: number, body: Bends, char = 0) => {
-      const mesh = this.meshes.get(key)!, i = counts.get(key) ?? 0;
-      counts.set(key, i + 1);
-      mesh.setMatrixAt(i, m.compose(pos, turned, scale.setScalar(this.size)));
-      mesh.setColorAt(i, c);
-      (mesh.geometry.getAttribute('aAnim') as THREE.InstancedBufferAttribute).setXYZW(i, f.gait, walk, strike, body[4]);
-      (mesh.geometry.getAttribute('aSkinTone') as THREE.InstancedBufferAttribute).setXYZW(i, f.skin.r, f.skin.g, f.skin.b, body[5]);
-      (mesh.geometry.getAttribute('aPose') as THREE.InstancedBufferAttribute).setXYZW(i, body[0], body[1], body[2], body[3]);
-      (mesh.geometry.getAttribute('aMore') as THREE.InstancedBufferAttribute).setXYZW(i, body[6], body[7], char, body[8]);
-    };
-    for (const s of drawn) {
-      const { strike } = this.pose(s, now), wreck = wreckOf(s.unit);
-      color.set(s.unit.color);
-      for (const f of s.figures) {
-        const [lift, back] = headOffset(s.unit.type, f.variant), walk = walkOf(f.speed);
-        // (Model axes: x = up × forward, y up, z forward; struck down, tipped over.)
-        x.crossVectors(f.up, f.head).normalize();
-        z.crossVectors(x, f.up).normalize();
-        q.setFromRotationMatrix(basis.makeBasis(x, f.up, z));
-        // (People and horses posed as they act (unitAnim.ts); struck down,
-        // falling. A rider's body doesn't bend: he sits his horse.)
-        const body = falls(s.unit.type) && !s.unit.embarked, horse = rides(s.unit.type, f.variant), beat = f.beat ?? f.phase / (Math.PI * 2);
-        let at = f.pos, legs = walk, arm = strike, bends: Bends = FLAT, char = 0;
-        turned.copy(q);
-        if (body && now > f.fall) {
-          turned.multiply(deathTurn(tip, now - f.fall, beat, horse));
-          const fold = deathBend(now - f.fall, beat);
-          legs = deathLegs(now - f.fall, horse); arm = 3 + fold.arm; bends = horse ? FLAT : [fold.bend, 0, fold.crouch, 0.6, fold.aim, 1, 0.4, 0, 0];
-          if (!horse) at = stepped.copy(f.pos).addScaledVector(f.up, -dropOf(fold.crouch) * this.size);
-        } else if (body && s.far) {
-          // (Too small to make out: standing as it would, no breath nor fidget.)
-          legs = walk; arm = strike;
-        } else if (body) {
-          const p = poseOf(this.cue(s, f, now), now, f.phase, beat, walk, horse, whirls(s.unit.type), s.unit.fortified === true && !s.march, bowman(s.unit.type));
-          turned.multiply(poseTurn(tip, p));
-          // (Crouched, lower: the legs fold under it.)
-          const [ry, rz] = rearShift(p);
-          at = stepped.copy(f.pos).addScaledVector(z, (p.lunge + rz) * this.size).addScaledVector(f.up, (p.rise + ry - dropOf(p.crouch)) * this.size);
-          // (Walking to its place while it acts: its legs walk.)
-          legs = p.walk === 0 && walk > 0.3 ? walk : legsOf(p); arm = armOf(p); bends = horse ? [0, 0, 0, p.elbow, p.aim, p.aimed, p.guard, p.draw, p.out] : [p.bend, p.twist, p.crouch, p.elbow, p.aim, p.aimed, p.guard, p.draw, p.out];
-        } else if (wreck) {
-          // (A machine: its recoil, the swell or the ground under it; struck, a burning wreck.)
-          const mp = machinePose(wreck === 'sea', now - f.shot, now, f.phase, f.speed, now > f.fall ? now - f.fall : -1);
-          turned.multiply(tip.setFromEuler(new THREE.Euler(mp.pitch, 0, mp.roll, 'YXZ')));
-          at = stepped.copy(f.pos).addScaledVector(z, -mp.back * this.size).addScaledVector(f.up, -mp.drop * this.size);
-          char = mp.char;
-          arm = flingOf(now - f.shot); // (an engine's throwing arm, if it has one)
-          if (now > f.fall) f.smoke = this.volleys.burn(at, now, f.smoke, wreck === 'sea', f.phase);
-        }
-        put(this.key(s, f), at, color, f, legs, arm, bends, char);
-        if (f.hair >= 0) put(f.hairKey ??= `hair|${f.hair}`, head.copy(at).add(lift3.set(0, lift * this.size, back * this.size).applyQuaternion(turned)), f.hairColor, f, legs, 0, bends);
-        // Its shadow: a soft disc on the ground under it (longer under a horse).
-        // (On the ground under it, however high it flies: smaller the higher.)
-        const high = 1 / (1 + 0.5 * s.alt);
-        m.compose(f.pos.clone().addScaledVector(f.up, (0.002 - s.alt) * this.size), q, scale.set(this.size * high * (isMachine(s.unit.type) ? 0.8 : 0.42), 1, this.size * high * (isMachine(s.unit.type) ? 1.4 : rides(s.unit.type, f.variant) ? 0.95 : 0.42)));
-        this.shadows.setMatrixAt(shadowN++, m);
-      }
-    }
-    for (const c of this.corpses) {
-      const since = now - c.fall, fold = deathBend(since, c.beat);
-      x.crossVectors(c.up, c.face).normalize();
-      z.crossVectors(x, c.up).normalize();
-      q.setFromRotationMatrix(basis.makeBasis(x, c.up, z));
-      turned.copy(q).multiply(deathTurn(tip, since, c.beat, c.horse));
-      if (c.wreck) {
-        // (A wreck: burning, then sunk away.)
-        const mp = machinePose(c.wreck === 'sea', -1, now, c.phase, 0, since);
-        q.multiply(tip.setFromEuler(new THREE.Euler(mp.pitch, 0, mp.roll, 'YXZ')));
-        turned.copy(q);
-        const at = stepped.copy(c.pos).addScaledVector(c.up, -(mp.drop + 0.6 * this.gone(c, now)) * this.size);
-        put(c.key, at, c.color, { gait: 0, skin: c.skin }, 0, 0, FLAT, 1);
-        if (this.gone(c, now) < 0.5) c.smoke = this.volleys.burn(at, now, c.smoke, c.wreck === 'sea', c.phase);
-        continue;
-      }
-      const at = stepped.copy(c.pos).addScaledVector(c.up, -0.5 * this.size * sunk(since)), bends: Bends = c.horse ? FLAT : [fold.bend, 0, fold.crouch, 0.6, fold.aim, 1, 0.4, 0, 0];
-      const g = { gait: c.phase, skin: c.skin };
-      put(c.key, at, c.color, g, deathLegs(since, c.horse), 3 + fold.arm, bends);
-      if (c.hair >= 0) put(`hair|${c.hair}`, head.copy(at).add(lift3.set(0, c.lift[0] * this.size, c.lift[1] * this.size).applyQuaternion(turned)), c.hairColor, g, 3, 0, bends);
-    }
-    for (const [key, mesh] of this.meshes) {
-      mesh.count = counts.get(key) ?? 0;
-      if (mesh.count === 0) continue;
-      const g = mesh.geometry;
-      for (const a of [mesh.instanceMatrix, mesh.instanceColor, g.getAttribute('aAnim'), g.getAttribute('aSkinTone'), g.getAttribute('aPose'), g.getAttribute('aMore')]) if (a) sendUsed(a as THREE.BufferAttribute, mesh.count);
-    }
-    this.shadows.count = shadowN;
-    sendUsed(this.shadows.instanceMatrix, shadowN);
     this.volleys.update(now);
+  }
+
+  // A unit's figures drawn: each in its instances (held from frame to
+  // frame), written anew unless they still hold good.
+  private draw(s: Shown, now: number, stamp: number): void {
+    const w = this.scratch, wreck = wreckOf(s.unit);
+    const machine = isMachine(s.unit.type), still = s.far && !wreck;
+    // (At rest, not seen close: posed afresh only every POSE_EVERY seconds, its stir too slight to show between.)
+    const keep = s.clean && ((still && s.posedFar) || (!still && !s.near && now - s.posed < POSE_EVERY && this.atRest(s)));
+    let strike = 0, colored = false;
+    for (const f of s.figures) {
+      const key = this.key(s, f), hairKey = f.hair >= 0 ? (f.hairKey ??= `hair|${f.hair}`) : null;
+      let fresh = this.hold(f.slots.body, key, stamp);
+      if (hairKey) fresh = this.hold(f.slots.hair, hairKey, stamp) || fresh;
+      fresh = this.hold(f.slots.shadow, SHADOW, stamp) || fresh;
+      if (keep && !fresh) continue;
+      if (!colored) { colored = true; w.color.set(s.unit.color); strike = this.pose(s, now).strike; }
+      const { m, q, basis, scale, x, z, tip, turned, lift3, stepped, head } = w;
+      const [lift, back] = headOffset(s.unit.type, f.variant), walk = walkOf(f.speed);
+      // (Model axes: x = up × forward, y up, z forward; struck down, tipped over.)
+      x.crossVectors(f.up, f.head).normalize();
+      z.crossVectors(x, f.up).normalize();
+      q.setFromRotationMatrix(basis.makeBasis(x, f.up, z));
+      // (People and horses posed as they act (unitAnim.ts); struck down,
+      // falling. A rider's body doesn't bend: he sits his horse.)
+      const body = falls(s.unit.type) && !s.unit.embarked, horse = rides(s.unit.type, f.variant), beat = f.beat ?? f.phase / (Math.PI * 2);
+      let at = f.pos, legs = walk, arm = strike, bends: Bends = FLAT, char = 0;
+      turned.copy(q);
+      if (body && now > f.fall) {
+        turned.multiply(deathTurn(tip, now - f.fall, beat, horse));
+        const fold = deathBend(now - f.fall, beat);
+        legs = deathLegs(now - f.fall, horse); arm = 3 + fold.arm; bends = horse ? FLAT : [fold.bend, 0, fold.crouch, 0.6, fold.aim, 1, 0.4, 0, 0];
+        if (!horse) at = stepped.copy(f.pos).addScaledVector(f.up, -dropOf(fold.crouch) * this.size);
+      } else if (body && s.far) {
+        // (Too small to make out: standing as it would, no breath nor fidget.)
+        legs = walk; arm = strike;
+      } else if (body) {
+        const p = poseOf(this.cue(s, f, now), now, f.phase, beat, walk, horse, whirls(s.unit.type), s.unit.fortified === true && !s.march, bowman(s.unit.type));
+        turned.multiply(poseTurn(tip, p));
+        // (Crouched, lower: the legs fold under it.)
+        const [ry, rz] = rearShift(p);
+        at = stepped.copy(f.pos).addScaledVector(z, (p.lunge + rz) * this.size).addScaledVector(f.up, (p.rise + ry - dropOf(p.crouch)) * this.size);
+        // (Walking to its place while it acts: its legs walk.)
+        legs = p.walk === 0 && walk > 0.3 ? walk : legsOf(p); arm = armOf(p); bends = horse ? [0, 0, 0, p.elbow, p.aim, p.aimed, p.guard, p.draw, p.out] : [p.bend, p.twist, p.crouch, p.elbow, p.aim, p.aimed, p.guard, p.draw, p.out];
+      } else if (wreck) {
+        // (A machine: its recoil, the swell or the ground under it; struck, a burning wreck.)
+        const mp = machinePose(wreck === 'sea', now - f.shot, now, f.phase, f.speed, now > f.fall ? now - f.fall : -1);
+        turned.multiply(tip.setFromEuler(w.euler.set(mp.pitch, 0, mp.roll, 'YXZ')));
+        at = stepped.copy(f.pos).addScaledVector(z, -mp.back * this.size).addScaledVector(f.up, -mp.drop * this.size);
+        char = mp.char;
+        arm = flingOf(now - f.shot); // (an engine's throwing arm, if it has one)
+        if (now > f.fall) f.smoke = this.volleys.burn(at, now, f.smoke, wreck === 'sea', f.phase);
+      }
+      this.put(f.slots.body, at, w.color, f.gait, f.skin, legs, arm, bends, char);
+      if (hairKey) this.put(f.slots.hair, head.copy(at).add(lift3.set(0, lift * this.size, back * this.size).applyQuaternion(turned)), f.hairColor, f.gait, f.skin, legs, 0, bends, 0);
+      // Its shadow: a soft disc on the ground under it (longer under a horse).
+      // (On the ground under it, however high it flies: smaller the higher.)
+      const high = 1 / (1 + 0.5 * s.alt);
+      m.compose(stepped.copy(f.pos).addScaledVector(f.up, (0.002 - s.alt) * this.size), q, scale.set(this.size * high * (machine ? 0.8 : 0.42), 1, this.size * high * (machine ? 1.4 : horse ? 0.95 : 0.42)));
+      f.slots.shadow.b!.matrix(f.slots.shadow.i, m);
+    }
+    if (!keep) { s.clean = true; s.posed = now; s.posedFar = still; }
+  }
+  // A unit standing at rest: not fighting nor marching, each of its
+  // figures stood at its place, still, turned as it means to face.
+  private atRest(s: Shown): boolean {
+    if (s.fight || s.after || s.march) return false;
+    for (const f of s.figures) if (!f.still || f.turning || f.vel.x !== 0 || f.vel.y !== 0 || f.vel.z !== 0) return false;
+    return true;
+  }
+
+  // A corpse drawn: sinking away (a wreck burning first).
+  private drawCorpse(c: Corpse, now: number, stamp: number): void {
+    const w = this.scratch, { q, basis, x, z, tip, turned, lift3, stepped, head } = w;
+    this.hold(c.slots.body, c.key, stamp);
+    if (c.hair >= 0) this.hold(c.slots.hair, `hair|${c.hair}`, stamp);
+    const since = now - c.fall, fold = deathBend(since, c.beat);
+    x.crossVectors(c.up, c.face).normalize();
+    z.crossVectors(x, c.up).normalize();
+    q.setFromRotationMatrix(basis.makeBasis(x, c.up, z));
+    turned.copy(q).multiply(deathTurn(tip, since, c.beat, c.horse));
+    if (c.wreck) {
+      // (A wreck: burning, then sunk away.)
+      const mp = machinePose(c.wreck === 'sea', -1, now, c.phase, 0, since);
+      q.multiply(tip.setFromEuler(w.euler.set(mp.pitch, 0, mp.roll, 'YXZ')));
+      turned.copy(q);
+      const at = stepped.copy(c.pos).addScaledVector(c.up, -(mp.drop + 0.6 * this.gone(c, now)) * this.size);
+      this.put(c.slots.body, at, c.color, 0, c.skin, 0, 0, FLAT, 1);
+      if (this.gone(c, now) < 0.5) c.smoke = this.volleys.burn(at, now, c.smoke, c.wreck === 'sea', c.phase);
+      return;
+    }
+    const at = stepped.copy(c.pos).addScaledVector(c.up, -0.5 * this.size * sunk(since)), bends: Bends = c.horse ? FLAT : [fold.bend, 0, fold.crouch, 0.6, fold.aim, 1, 0.4, 0, 0];
+    this.put(c.slots.body, at, c.color, c.phase, c.skin, deathLegs(since, c.horse), 3 + fold.arm, bends, 0);
+    if (c.hair >= 0) this.put(c.slots.hair, head.copy(at).add(lift3.set(0, c.lift[0] * this.size, c.lift[1] * this.size).applyQuaternion(turned)), c.hairColor, c.phase, c.skin, 3, 0, bends, 0);
+  }
+
+  // A figure's instance in the batch of model `key`, held this frame: kept
+  // if it already has one there (true if it is new, to be written).
+  private hold(slot: Slot, key: string, stamp: number): boolean {
+    slot.stamp = stamp;
+    if (slot.b && slot.b.key === key) return false;
+    if (slot.b) slot.b.release(slot.i);
+    this.batch(key).take(slot);
+    return true;
+  }
+  // An instance written: where it stands and how it is turned (`turned`,
+  // the scratch quaternion), its colour, its legs' beat, skin and pose.
+  private put(slot: Slot, pos: THREE.Vector3, c: THREE.Color, gait: number, skin: THREE.Color, walk: number, strike: number, body: Bends, char: number): void {
+    const w = this.scratch;
+    slot.b!.write(slot.i, w.m.compose(pos, w.turned, w.scale.setScalar(this.size)), c, gait, skin, walk, strike, body, char);
   }
 
   // A fight going on, as its play says: out, striking, back home; its
@@ -830,7 +866,7 @@ export class UnitView {
         for (const g of s.figures) {
           if (g.fall > now) continue;
           const [lift, back] = headOffset(s.unit.type, g.variant);
-          this.corpses.push({ wreck: falls(s.unit.type) && !s.unit.embarked ? null : wreck, smoke: g.smoke, key: this.key(s, g), hair: g.hair, hairColor: g.hairColor, skin: g.skin, phase: g.phase, color: new THREE.Color(s.unit.color), pos: g.pos.clone(), up: g.up.clone(),
+          this.corpses.push({ slots: slotsOf(), wreck: falls(s.unit.type) && !s.unit.embarked ? null : wreck, smoke: g.smoke, key: this.key(s, g), hair: g.hair, hairColor: g.hairColor, skin: g.skin, phase: g.phase, color: new THREE.Color(s.unit.color), pos: g.pos.clone(), up: g.up.clone(),
             face: g.head.clone(), fall: g.fall, beat: g.beat ?? g.phase / (Math.PI * 2), horse: rides(s.unit.type, g.variant), lift: [lift, back] });
         }
       }
@@ -925,7 +961,7 @@ export class UnitView {
       if (away.length() > reach) {
         f.at.copy(best.up).addScaledVector(away.normalize(), reach).normalize();
         f.off.copy(f.up).sub(f.at);
-        f.still = false;
+        f.still = false; f.turning = true;
         f.held = true;
       }
     }
@@ -1019,7 +1055,7 @@ export class UnitView {
 
   dispose(): void {
     for (const s of this.shown.values()) s.flag.dispose();
-    for (const mesh of this.meshes.values()) mesh.geometry.dispose();
+    for (const b of this.batches.values()) b.dispose();
     this.material.dispose();
     this.shadowGeo.dispose();
     this.shadowMat.dispose();
@@ -1037,7 +1073,7 @@ export class UnitView {
     const north = c.clone().cross(east);
     const s: Shown = {
       unit: u, dir: c.clone(), forward: east.multiplyScalar(Math.cos(a)).addScaledVector(north, Math.sin(a)).normalize(),
-      figures: [], spread: LOOSE[0], order: 'block', laid: null, alt: 0, march: null, route: [], fight: null, after: null, gone: false, flag: this.makeFlag(u), k, seen: true, near: false, far: false, flagAt: new THREE.Vector3(),
+      figures: [], spread: LOOSE[0], order: 'block', laid: null, alt: 0, march: null, route: [], fight: null, after: null, gone: false, flag: this.makeFlag(u), k, seen: true, near: false, far: false, flagAt: new THREE.Vector3(), clean: false, posed: -Infinity, posedFar: false,
     };
     this.shown.set(u.id, s);
     this.settle(s, k);
@@ -1069,17 +1105,18 @@ export class UnitView {
     const u = s.unit, rand = mulberry32(u.id * 104729 + 3), old = keep ? s.figures : [];
     const motion = (i: number, phase: number) => {
       const o = old[i];
-      return o ? { at: o.at, off: o.off, still: false, head: o.head, last: o.last, speed: o.speed, gait: o.gait, fresh: o.fresh, pos: o.pos, to: o.to, vel: o.vel, up: o.up }
-        : { at: new THREE.Vector3(), off: new THREE.Vector3(), still: false, head: s.forward.clone(), last: new THREE.Vector3(), speed: 0, gait: phase, fresh: true, pos: new THREE.Vector3(), to: new THREE.Vector3(), vel: new THREE.Vector3(), up: new THREE.Vector3() };
+      return o ? { at: o.at, off: o.off, still: false, head: o.head, last: o.last, speed: o.speed, gait: o.gait, fresh: o.fresh, turning: true, eased: false, pos: o.pos, to: o.to, vel: o.vel, up: o.up }
+        : { at: new THREE.Vector3(), off: new THREE.Vector3(), still: false, head: s.forward.clone(), last: new THREE.Vector3(), speed: 0, gait: phase, fresh: true, turning: true, eased: false, pos: new THREE.Vector3(), to: new THREE.Vector3(), vel: new THREE.Vector3(), up: new THREE.Vector3() };
     };
     // (Embarked: its one boat.)
-    if (u.embarked) { s.figures = [{ jx: 0, jz: 0, slot: 0, variant: 0, female: false, skin: new THREE.Color(), hair: -1, hairColor: new THREE.Color(), phase: 0, ...motion(0, 0), ...unfought() }]; return; }
+    if (u.embarked) { s.figures = [{ jx: 0, jz: 0, slot: 0, variant: 0, female: false, skin: new THREE.Color(), hair: -1, hairColor: new THREE.Color(), phase: 0, ...motion(0, 0), ...unfought(), slots: slotsOf() }]; s.clean = false; return; }
     // (The slots jittered apart from the looks: a figure keeps its looks as the formation thins.)
     const exact = orderSlots(u.type, figuresOf(u), 'block');
     s.figures = formationSlots(u.type, u.hp, mulberry32(u.id * 7 + 5)).map(([x, z], i) => {
       const variant = variantOf(u.type, i, rand), looks = figureLooks(u.type, u.civ, womenShare(u.type, u.suffrage), rand), phase = rand() * Math.PI * 2;
-      return { jx: x - exact[i]![0], jz: z - exact[i]![1], slot: i, variant, ...looks, phase, ...motion(i, phase), ...unfought() };
+      return { jx: x - exact[i]![0], jz: z - exact[i]![1], slot: i, variant, ...looks, phase, ...motion(i, phase), ...unfought(), slots: slotsOf() };
     });
+    s.clean = false;
   }
 
   // Where each figure stands now: around the unit's spot, on the ground
@@ -1093,6 +1130,7 @@ export class UnitView {
     const order = this.orderOf(s), places = s.unit.embarked ? [[0, 0] as const] : orderSlots(s.unit.type, s.figures.length, order);
     const spread = s.spread * (s.unit.fortified && order === 'block' && !s.fight ? 0.78 : 1);
     const dirs = s.figures.map((f, i) => this.figureDir(s.dir, s.forward, right, (places[i]![0] + f.jx) * spread, (places[i]![1] + f.jz) * spread));
+    s.clean = false;
     const l = s.laid, anew = !l || l.order !== order || l.spread !== spread || l.n !== s.figures.length || l.fwd.dot(s.forward) < 0.9999;
     s.order = order;
     s.laid = { fwd: s.forward.clone(), spread, n: s.figures.length, order };
@@ -1111,7 +1149,7 @@ export class UnitView {
     for (const f of s.figures) {
       if (f.held) continue;
       f.at.copy(dirs[f.slot]!);
-      f.still = false;
+      f.still = false; f.turning = true;
       if (f.fresh) { f.fresh = false; f.off.set(0, 0, 0); f.head.copy(s.forward); this.place(s, f, f.at, afloat); f.pos.copy(f.to); f.vel.set(0, 0, 0); f.last.copy(f.pos); }
       else if (anew) f.off.copy(f.up).sub(f.at);
     }
@@ -1130,7 +1168,7 @@ export class UnitView {
   // beat, and it turns towards where it goes (going fast enough) or else
   // the way it faces.
   private stride(s: Shown, now: number, dt: number): void {
-    const afloat = this.afloat(s.unit), d = new THREE.Vector3(), want = new THREE.Vector3(), rate = (isMachine(s.unit.type) ? TURN_MACHINE : TURN) * dt;
+    const afloat = this.afloat(s.unit), d = this.scratch.d, want = this.scratch.want, rate = (isMachine(s.unit.type) ? TURN_MACHINE : TURN) * dt;
     for (const f of s.figures) {
       const running = s.fight !== null && f.goal !== null, down = now > f.fall;
       // (One stood at its place, its place unmoved, needn't be stood there again: the ground isn't sampled for it.)
@@ -1156,17 +1194,22 @@ export class UnitView {
         this.volleys.dust(f.pos.clone().addScaledVector(d.normalize(), -0.3 * this.size), now, horse ? 1.6 : 1);
         f.dust = now + (horse ? 0.07 : 0.13) * (0.7 + 0.6 * Math.random());
       }
+      // (Stood at its place, turned its own way at ease: nothing to redo.)
+      const easy = !s.fight && !s.march && !s.unit.fortified && f.speed < 0.3;
+      if (f.still && !f.turning && easy && f.eased && f.vel.x === 0 && f.vel.y === 0 && f.vel.z === 0) continue;
+      f.eased = easy;
       // (Turned at its pace, on the ground where it stands.)
       want.copy(f.speed > 0.8 && inst > 0.4 ? d : f.face ?? s.forward);
       // (At ease, each stands its own way, a little off its file's line.)
-      if (!s.fight && !s.march && !s.unit.fortified && f.speed < 0.3) want.applyAxisAngle(f.up, 0.35 * (frac(f.phase * 1.7) - 0.5));
+      if (easy) want.applyAxisAngle(f.up, 0.35 * (frac(f.phase * 1.7) - 0.5));
       want.addScaledVector(f.up, -want.dot(f.up));
       f.head.addScaledVector(f.up, -f.head.dot(f.up)).normalize();
       if (want.lengthSq() < 1e-14) continue;
       want.normalize();
       const ang = Math.acos(Math.max(-1, Math.min(1, f.head.dot(want))));
-      if (ang <= rate) { f.head.copy(want); continue; }
-      const sign = Math.sign(new THREE.Vector3().crossVectors(f.head, want).dot(f.up)) || 1;
+      f.turning = ang > rate;
+      if (!f.turning) { f.head.copy(want); continue; }
+      const sign = Math.sign(this.scratch.gap.crossVectors(f.head, want).dot(f.up)) || 1;
       f.head.applyAxisAngle(f.up, sign * rate).normalize();
     }
   }
@@ -1175,8 +1218,10 @@ export class UnitView {
   // damped, its pull no more than its legs can give: INERTIA), never
   // snapping there. (Far off, put there: a unit set down anew.)
   private carry(s: Shown, f: Figure, dt: number): void {
-    const gap = new THREE.Vector3().subVectors(f.to, f.pos);
+    const gap = this.scratch.gap.subVectors(f.to, f.pos);
     if (gap.length() > SNAP * this.size) { f.pos.copy(f.to); f.vel.set(0, 0, 0); return; }
+    // (Come to rest there, as near as makes no difference: stood there.)
+    if (gap.lengthSq() < (REST * this.size) ** 2 && f.vel.lengthSq() < (REST * this.size) ** 2) { f.pos.copy(f.to); f.vel.set(0, 0, 0); return; }
     const [w, most] = INERTIA[isMachine(s.unit.type) ? 'machine' : rides(s.unit.type, 0) ? 'horse' : 'foot'];
     // (In small steps, so a slow frame doesn't overshoot.)
     for (let left = dt; left > 1e-6; left -= 1 / 120) {
@@ -1263,50 +1308,137 @@ export class UnitView {
     if (!m) this.textured.set(t, m = makeUnitMaterial(this.time, t));
     return m;
   }
-  // The instanced mesh of a model (type|civ|variant, or hair|style), room
-  // for `need` figures.
-  private mesh(key: string, need: number): THREE.InstancedMesh {
-    let mesh = this.meshes.get(key);
-    if (mesh && mesh.instanceMatrix.count >= need) return mesh;
-    const cap = Math.max(64, need, mesh ? mesh.instanceMatrix.count * 2 : 0);
-    const [a, b, c, d, e] = key.split('|') as [string, string, string | undefined, string | undefined, string | undefined];
-    const geo = mesh ? mesh.geometry : shareCorners(a === 'hair' ? hairModel(HAIR_STYLES[Number(b)]!) : a === 'transport' ? transportModel() : unitModel(a as UnitKey, b as ArchCiv, Number(c), d === '1', e === '1'));
-    prepareUnitGeometry(geo, cap);
-    const next = new THREE.InstancedMesh(geo, this.materialOf(geo), cap);
-    next.setColorAt(0, new THREE.Color());
-    next.receiveShadow = true;
-    next.frustumCulled = false;
-    next.userData['stat'] = 'units';
-    if (mesh) { this.group.remove(mesh); mesh.dispose(); }
-    this.meshes.set(key, next);
-    this.group.add(next);
-    mesh = next;
-    return mesh;
-  }
-
-  private makeShadows(cap: number): THREE.InstancedMesh {
-    const mesh = new THREE.InstancedMesh(this.shadowGeo, this.shadowMat, cap);
-    mesh.frustumCulled = false;
-    mesh.renderOrder = 3;
-    mesh.userData['stat'] = 'units';
-    return mesh;
-  }
-
-  private growShadows(need: number): void {
-    const next = this.makeShadows(Math.max(need, this.shadows.instanceMatrix.count * 2));
-    this.group.remove(this.shadows);
-    this.shadows.dispose();
-    this.shadows = next;
-    this.group.add(next);
+  // The batch of a model (type|civ|variant|sex|fine, hair|style, or the
+  // shadows' SHADOW): its instanced mesh, made as first needed.
+  private batch(key: string): Batch {
+    let b = this.batches.get(key);
+    if (b) return b;
+    if (key === SHADOW) b = new Batch(key, this.shadowGeo, this.shadowMat, false);
+    else {
+      const [a, n, c, d, e] = key.split('|') as [string, string, string | undefined, string | undefined, string | undefined];
+      const geo = shareCorners(a === 'hair' ? hairModel(HAIR_STYLES[Number(n)]!) : a === 'transport' ? transportModel() : unitModel(a as UnitKey, n as ArchCiv, Number(c), d === '1', e === '1'));
+      b = new Batch(key, geo, this.materialOf(geo), true);
+    }
+    this.batches.set(key, b);
+    this.group.add(b.mesh);
+    b.onGrow = (old, next) => { this.group.remove(old); this.group.add(next); };
+    return b;
   }
 }
 
-// An instance attribute sent to the GPU, only as far as the instances in use
-// (`n`): the rest of its room is never drawn.
-function sendUsed(a: THREE.BufferAttribute, n: number): void {
-  a.clearUpdateRanges();
-  a.addUpdateRange(0, n * a.itemSize);
-  a.needsUpdate = true;
+// An instance held by a figure in a model's batch (`b`, at `i`), and the
+// frame it was last drawn (instances not drawn in a frame are given up).
+interface Slot { b: Batch | null; i: number; stamp: number }
+interface Slots { readonly body: Slot; readonly hair: Slot; readonly shadow: Slot }
+const slotsOf = (): Slots => ({ body: { b: null, i: 0, stamp: 0 }, hair: { b: null, i: 0, stamp: 0 }, shadow: { b: null, i: 0, stamp: 0 } });
+// The shadows' batch.
+const SHADOW = 'shadow';
+
+// A model's instances (one instanced mesh): held by figures, packed at its
+// front (one given up: the last moved into its place). Only the instances
+// written in a frame are sent to the GPU (the span from the first to the last).
+class Batch {
+  mesh: THREE.InstancedMesh;
+  readonly owners: Slot[] = [];
+  private lo = Infinity;
+  private hi = -1;
+  private attrs: THREE.BufferAttribute[] = [];
+  private anim!: Float32Array; private skin!: Float32Array; private pose!: Float32Array; private more!: Float32Array; private color!: Float32Array; private mat!: Float32Array;
+  onGrow: (old: THREE.InstancedMesh, next: THREE.InstancedMesh) => void = () => {};
+
+  constructor(readonly key: string, private readonly geo: THREE.BufferGeometry, private readonly material: THREE.Material, private readonly figure: boolean) {
+    this.mesh = this.make(64);
+  }
+  private make(cap: number): THREE.InstancedMesh {
+    if (this.figure) prepareUnitGeometry(this.geo, cap);
+    const mesh = new THREE.InstancedMesh(this.geo, this.material, cap);
+    mesh.frustumCulled = false;
+    mesh.matrixAutoUpdate = false; // (it stays where its group puts it)
+    mesh.userData['stat'] = 'units';
+    mesh.count = 0;
+    mesh.visible = false;
+    this.mat = mesh.instanceMatrix.array as Float32Array;
+    this.attrs = [mesh.instanceMatrix];
+    if (this.figure) {
+      mesh.setColorAt(0, new THREE.Color());
+      mesh.receiveShadow = true;
+      const g = this.geo, at = (k: string) => g.getAttribute(k) as THREE.InstancedBufferAttribute;
+      this.color = mesh.instanceColor!.array as Float32Array;
+      this.anim = at('aAnim').array as Float32Array; this.skin = at('aSkinTone').array as Float32Array; this.pose = at('aPose').array as Float32Array; this.more = at('aMore').array as Float32Array;
+      this.attrs.push(mesh.instanceColor!, at('aAnim'), at('aSkinTone'), at('aPose'), at('aMore'));
+    } else mesh.renderOrder = 3;
+    return mesh;
+  }
+  // An instance taken by `slot` (at the end).
+  take(slot: Slot): void {
+    const n = this.owners.length;
+    if (n === this.mesh.instanceMatrix.count) this.grow(n * 2);
+    slot.b = this;
+    slot.i = n;
+    this.owners.push(slot);
+  }
+  // The instance at `i` given up: the last moved into its place.
+  release(i: number): void {
+    const last = this.owners.length - 1, gone = this.owners[i]!;
+    if (gone.b === this && gone.i === i) gone.b = null;
+    if (i !== last) {
+      const moved = this.owners[last]!;
+      this.owners[i] = moved;
+      moved.i = i;
+      for (const a of this.attrs) a.array.copyWithin(i * a.itemSize, last * a.itemSize, (last + 1) * a.itemSize);
+      this.touch(i);
+    }
+    this.owners.pop();
+  }
+  private grow(cap: number): void {
+    const old = this.mesh, olds = this.attrs.map((a) => a.array), n = this.owners.length;
+    this.mesh = this.make(cap);
+    this.attrs.forEach((a, k) => a.array.set(olds[k]!.subarray(0, n * a.itemSize)));
+    old.dispose();
+    this.onGrow(old, this.mesh);
+    this.lo = 0; this.hi = Math.max(this.hi, n - 1);
+  }
+  private touch(i: number): void {
+    if (i < this.lo) this.lo = i;
+    if (i > this.hi) this.hi = i;
+  }
+  // A shadow's matrix.
+  matrix(i: number, m: THREE.Matrix4): void {
+    m.toArray(this.mat, i * 16);
+    this.touch(i);
+  }
+  // A figure's instance: its matrix, its (team) colour, its legs' beat, its
+  // skin, how it walks and strikes and how its body bends (Bends), how burnt.
+  write(i: number, m: THREE.Matrix4, c: THREE.Color, gait: number, skin: THREE.Color, walk: number, strike: number, body: Bends, char: number): void {
+    m.toArray(this.mat, i * 16);
+    const j = i * 4, k = i * 3;
+    this.color[k] = c.r; this.color[k + 1] = c.g; this.color[k + 2] = c.b;
+    this.anim[j] = gait; this.anim[j + 1] = walk; this.anim[j + 2] = strike; this.anim[j + 3] = body[4];
+    this.skin[j] = skin.r; this.skin[j + 1] = skin.g; this.skin[j + 2] = skin.b; this.skin[j + 3] = body[5];
+    this.pose[j] = body[0]; this.pose[j + 1] = body[1]; this.pose[j + 2] = body[2]; this.pose[j + 3] = body[3];
+    this.more[j] = body[6]; this.more[j + 1] = body[7]; this.more[j + 2] = char; this.more[j + 3] = body[8];
+    this.touch(i);
+  }
+  // The frame's instances counted, and those written (or moved) sent to the GPU.
+  send(): void {
+    const n = this.owners.length;
+    this.mesh.count = n;
+    this.mesh.visible = n > 0;
+    if (this.hi >= n) this.hi = n - 1;
+    if (this.hi >= this.lo) {
+      for (const a of this.attrs) {
+        a.clearUpdateRanges();
+        a.addUpdateRange(this.lo * a.itemSize, (this.hi - this.lo + 1) * a.itemSize);
+        a.needsUpdate = true;
+      }
+    }
+    this.lo = Infinity;
+    this.hi = -1;
+  }
+  dispose(): void {
+    this.mesh.dispose();
+    if (this.figure) this.geo.dispose();
+  }
 }
 
 const smooth = (t: number) => t * t * (3 - 2 * t);
