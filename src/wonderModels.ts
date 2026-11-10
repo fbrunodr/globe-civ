@@ -45,13 +45,16 @@ export const MIN_HEIGHT = 0.14;
 const CITY_HALF = 0.95 * 8 * UNIT; // (a city fits a site's pad to its rectangle, 16 units at most)
 const LAND_HALF: Partial<Record<SiteModel, number>> = {
   pyramids: 2 * CITY_HALF, fastTelescope: 1.8 * CITY_HALF, terracottaArmy: 1.6 * CITY_HALF,
-  neuschwanstein: 1.6 * CITY_HALF, petra: 1.5 * CITY_HALF, stonehenge: 1.95 * CITY_HALF, launchComplex39: 1.4 * CITY_HALF,
+  neuschwanstein: 1.6 * CITY_HALF, petra: 1.5 * CITY_HALF, stonehenge: 1.95 * CITY_HALF, cristoRedentor: 1.35 * CITY_HALF, launchComplex39: 1.4 * CITY_HALF,
 };
 const SEA_SCALE: Partial<Record<SiteModel, number>> = { greatLighthouse: 1, colossus: 0.9, statueOfLiberty: 1 };
 // Wonders that stand beside a city on the bare ground, with no base: sunk
 // into a slope at its lowest corner rather than raised on a foundation
 // (cityProps.ts standLot).
 export const ON_BARE_GROUND: ReadonlySet<string> = new Set(Object.keys(LAND_HALF));
+// Wonders beside a city that stand on the highest point of their tile (on
+// its summit, not near its middle).
+export const ON_SUMMIT: ReadonlySet<SiteModel> = new Set<SiteModel>(['cristoRedentor']);
 export const landHalf = (m: SiteModel): number => LAND_HALF[m] ?? 2 * CITY_HALF;
 export const seaScale = (m: SiteModel): number => SEA_SCALE[m] ?? 0.9;
 

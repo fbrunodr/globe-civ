@@ -14,7 +14,7 @@ import * as THREE from 'three';
 import type { Game, City } from './game.ts';
 import { USE, BORDER_MAX, wonderBeside, isWonderKey, type ImprovementKey, type EraIndex } from './cities.ts';
 import { ROOFS, buildingEntry, isFloraModel, isLotModel, placedGeometry, waterRule, type BuildingKind, type LotModelKind, type PlacedKind } from './buildingCatalog.ts';
-import { ON_BARE_GROUND, groundsBox, isWonderModelKind, landHalf, seaScale, siteModelOf, wonderGrounds, wonderModelKind, wonderPieces, type SiteModel, type WonderGrounds, type WonderModelKind } from './wonderModels.ts';
+import { ON_BARE_GROUND, ON_SUMMIT, groundsBox, isWonderModelKind, landHalf, seaScale, siteModelOf, wonderGrounds, wonderModelKind, wonderPieces, type SiteModel, type WonderGrounds, type WonderModelKind } from './wonderModels.ts';
 import { ROUND_SIDES } from './wonders/kit.ts';
 import type { TerrainHole } from './terrainMaterial.ts';
 import { CATALOG, type CatalogKind } from './propCatalog.ts';
@@ -606,7 +606,12 @@ export class CityProps {
       for (let x = -r; x <= r; x += 0.02) for (let y = -r; y <= r; y += 0.02) if (Math.hypot(x, y) <= r) disk.push({ x, y });
       const spots: { p: Pt2; dist: number }[] = [];
       const mid = this.paintedMiddle(t);
-      for (let x = -0.4; x <= 0.4; x += 0.02) for (let y = -0.4; y <= 0.4; y += 0.02) spots.push({ p: { x, y }, dist: toDir({ x, y }).angleTo(mid) });
+      // (One on a summit: the highest spots first.)
+      const summit = ON_SUMMIT.has(m);
+      for (let x = -0.4; x <= 0.4; x += 0.02) for (let y = -0.4; y <= 0.4; y += 0.02) {
+        const d = toDir({ x, y });
+        spots.push({ p: { x, y }, dist: summit ? -this.sampleDir(d).ground : d.angleTo(mid) });
+      }
       spots.sort((a, b) => a.dist - b.dist);
       let best: Pt2 | null = null;
       for (const { p } of spots) {
@@ -1264,7 +1269,8 @@ export class CityProps {
       color: new THREE.Color(shade, shade, shade),
       leaf: new THREE.Color(1, 1, 1),
     }];
-    if (base - low >= FOUNDATION_MIN * this.scale) {
+    // (None under a wonder on the bare ground: it is set into the slope.)
+    if (!bare && base - low >= FOUNDATION_MIN * this.scale) {
       const fu = this.scale * PROP_SCALE * FOUNDATION_UNIT, fs = 0.0002 * this.scale;
       out.push({
         kind: 'foundation',

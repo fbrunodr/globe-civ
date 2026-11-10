@@ -4,10 +4,10 @@
 // against the town (a storey about 0.95 cell, a tall skyscraper 14.6).
 
 import * as THREE from 'three';
-import { P, V, ball, box, cyl, disc, drumC, flat, pane, rnd, rod, shade, statue, type G, type Models } from './kit.ts';
+import { P, V, ball, box, cyl, drumC, flat, pane, rod, shade, statue, type G, type Models } from './kit.ts';
 import { CRISTO } from './statues.ts';
 
-const PAD = 0xc9c4b8, PAVE = 0xc9c4b8;
+const PAD = 0xc9c4b8;
 
 // ---------- shared pieces ----------
 
@@ -46,45 +46,12 @@ function floors(cx: number, cz: number, w: number, d: number, y0: number, y1: nu
 
 // ---------- Rio ----------
 
-// Christ the Redeemer on Corcovado: the granite crag, its bare face toward
-// the city, its flanks deep in rainforest; on the summit the viewing
-// terrace with its railing and tourists, the chapel in the pedestal, and
-// the robed figure, arms open, head bowed a little; the rack railway's red
-// tram climbing the flank.
+// Christ the Redeemer, standing beside his city on the highest point of
+// a hill (cityProps.ts: the summit of its tile, the hill itself the
+// land's): the robed figure on his pedestal, arms open, head bowed a
+// little, straight on the ground.
 function cristoRedentor(): G[] {
-  const r = rnd(31), out: G[] = [pad()];
-  const GRANITE = 0x6f6b62, SOAP = 0xe8e3d4, CH = 0.145, R0 = 0.07, R1 = 0.02;
-  const radiusAt = (y: number) => R1 + (R0 - R1) * (1 - y / CH);
-  // The crag: a jagged cone, its top cut for the terrace.
-  const crag = new THREE.CylinderGeometry(R1, R0, CH, 14, 8, false);
-  const pos = crag.getAttribute('position');
-  for (let i = 0; i < pos.count; i++) {
-    const y = pos.getY(i), f = (y + CH / 2) / CH;
-    if (f <= 0.001 || f >= 0.999) continue;
-    const a = Math.atan2(pos.getZ(i), pos.getX(i));
-    // (Steeper toward the front, the famous face.)
-    const front = Math.max(0, Math.sin(a)), j = 1 + (r() - 0.5) * 0.2 - front * 0.12 * f;
-    pos.setX(i, pos.getX(i) * j); pos.setZ(i, pos.getZ(i) * j); pos.setY(i, y + (r() - 0.5) * 0.005);
-  }
-  crag.translate(0, CH / 2, 0);
-  out.push(P(crag.toNonIndexed(), GRANITE));
-  // Ledges of paler granite streaked down the face.
-  for (let k = 0; k < 9; k++) {
-    const a = Math.PI / 2 + (r() - 0.5) * 1.1, y = 0.03 + r() * 0.08, rr = radiusAt(y);
-    out.push(ball(0.003 + r() * 0.0025, shade(GRANITE, 1.1 + r() * 0.15), { x: Math.cos(a) * rr * 0.92, y, z: Math.sin(a) * rr * 0.92, sy: 1.8, ry: r() * 6.28 }));
-  }
-  // The forest's mantle round its foot (the landform's own green, not trees one by one).
-  const mantle = new THREE.CylinderGeometry(R0 * 0.8, R0 * 1.06, 0.036, 16, 2, true);
-  const mp = mantle.getAttribute('position');
-  for (let i = 0; i < mp.count; i++) { if (mp.getY(i) > -0.017) { const j = 1 + (r() - 0.5) * 0.1; mp.setX(i, mp.getX(i) * j); mp.setZ(i, mp.getZ(i) * j); mp.setY(i, mp.getY(i) + (r() - 0.5) * 0.008); } }
-  out.push(P(mantle.translate(0, 0.018, 0).toNonIndexed(), 0x3d6a32));
-  // The summit terrace.
-  const yt = CH;
-  out.push(drumC(0.024, 0.025, 0.003, 16, shade(PAVE, 0.95), { y: yt - 0.001 }));
-  out.push(disc(0.0245, PAVE, 0, 0, yt + 0.0021, 16));
-  // The statue on its pedestal, set on the terrace.
-  out.push(statue(CRISTO, 0.08, SOAP, { y: yt + 0.002 }));
-  return out;
+  return [statue(CRISTO, 0.11, 0xe8e3d4)];
 }
 
 // The Empire State Building's own pieces. A plan is an outline of [x, z]

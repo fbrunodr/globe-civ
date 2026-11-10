@@ -354,7 +354,7 @@ export const WONDERS = {
   sagradaFamilia:    w('Sagrada Fam\u00edlia', 660, 'any', { faith: 5, culture: 5 }),
   brandenburgGate:   w('Brandenburg Gate', 600, 'any', { cohesion: 4, culture: 4, prod: 1 }),
   // Modern
-  cristoRedentor:    w('Cristo Redentor', 860, 'hills', { faith: 6, culture: 6 }),
+  cristoRedentor:    w('Cristo Redentor', 860, 'hills', { faith: 6, culture: 6 }, 'land'),
   empireState:       w('Empire State Building', 900, 'any', { prod: 6, gold: 6, science: 3 }),
   sydneyOperaHouse:  w('Sydney Opera House', 880, 'coast', { culture: 10, gold: 3 }),
   tokyoTower:        w('Tokyo Tower', 860, 'any', { culture: 8, science: 4 }),
