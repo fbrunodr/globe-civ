@@ -507,6 +507,13 @@ export class CityProps {
     });
     // (Exactly where painted: they meet the buildings' sides.)
     for (const r of dressed.painting.roads) pavings.push({ points: r.map(toDir), paved: era > 0, rgb: dressed.roadRgb, exact: true });
+    // (A wonder's lot paved as the streets right up to them: its model,
+    // fitted a hair inside and square where its lot may not be, leaves no
+    // grass showing round it.)
+    {
+      const pt = dressed.painting, at = (x: number, y: number) => toDir({ x: pt.origin.x + (x * pt.u.x + y * pt.v.x) * UNIT, y: pt.origin.y + (x * pt.u.y + y * pt.v.y) * UNIT });
+      for (const b of pt.buildings) if (b.kind === 'wonder') pavings.push({ points: [at(b.x0, b.y0), at(b.x1, b.y0), at(b.x1, b.y1), at(b.x0, b.y1)], paved: era > 0, rgb: dressed.roadRgb, exact: true });
+    }
 
     // The roads into town: from where each reaches the tile's edge on to
     // the nearest of its streets it can reach in a straight line between
