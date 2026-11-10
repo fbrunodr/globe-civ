@@ -228,44 +228,6 @@ function sydneyOperaHouse(): G[] {
   return [pad(), ...stretch(out, 1.1, 1, 1.03)];
 }
 
-// ---------- Brasília ----------
-
-// The National Congress: the long white platform over its reflecting pool,
-// the Senate's dome and the Chamber's bowl on its roof, the ramp up to it
-// from the lawn; behind, the twin towers joined into an H; the flag on its
-// mast, cars on the axis, people on the ramp.
-function brasiliaCongress(): G[] {
-  const out: G[] = [pad()], WHITE = 0xeeece6, GLASS2 = 0x3e4a52;
-  // The platform, white, its long front a band of dark glass.
-  const py = 0.012, pd = 0.05, pw = 0.146;
-  out.push(...box(pw, py, pd, WHITE, {}, shade(WHITE, 0.97)));
-  for (const s of [-1, 1]) out.push(pane(pw * 0.98, 0.0062, GLASS2, 0, 0.0026, s * (pd / 2 + 0.00025), s > 0 ? 0 : Math.PI));
-  for (const s of [-1, 1]) out.push(pane(pd * 0.96, 0.0062, GLASS2, s * (pw / 2 + 0.00025), 0.0026, 0, s * Math.PI / 2));
-  for (let k = 0; k < 24; k++) out.push(pane(0.0005, 0.0062, WHITE, -pw * 0.49 + (k * pw * 0.98) / 23, 0.0026, pd / 2 + 0.0005));
-  // The Chamber's bowl, open to the sky, and the Senate's dome.
-  const bx = 0.04;
-  out.push(P(new THREE.CylinderGeometry(0.027, 0.012, 0.014, 32, 1, true).translate(0, 0.007, 0), WHITE, { x: bx, y: py }));
-  out.push(P(new THREE.CylinderGeometry(0.0265, 0.0118, 0.0136, 32, 1, true).translate(0, 0.0068, 0), shade(WHITE, 0.9), { x: bx, y: py + 0.0004 }));
-  out.push(disc(0.012, 0xd6d2c8, bx, 0, py + 0.0006, 24));
-  out.push(P(new THREE.SphereGeometry(0.017, 24, 8, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.62, 1), WHITE, { x: -0.04, y: py }));
-  out.push(drumC(0.0172, 0.0172, 0.0008, 24, shade(WHITE, 0.92), { x: -0.04, y: py }));
-  // The ramp from the lawn up onto the roof, its railings.
-  const rz0 = 0.064, rz1 = pd / 2, rl = Math.hypot(rz0 - rz1, py);
-  out.push(P(new THREE.BoxGeometry(0.009, 0.0016, rl), WHITE, { y: py / 2 - 0.0008, z: (rz0 + rz1) / 2, rx: Math.atan2(py, rz0 - rz1) }));
-  for (const s of [-1, 1]) out.push(rod(V(s * 0.0044, 0.0015, rz0), V(s * 0.0044, py + 0.0015, rz1), 0.0002, 0x9a9a9a, 3));
-  // The twin towers behind, joined by their bridge floors into an H.
-  const tz = -0.045, th = 0.164, tw = 0.0105, td = 0.026, gap = 0.0055;
-  for (const s of [-1, 1]) {
-    const x = s * (gap / 2 + tw / 2);
-    out.push(...box(tw, th, td, 0xd8d4c8, { x, z: tz }, shade(WHITE, 0.95)));
-    out.push(...floors(x, tz, tw, td, 0.004, th - 0.003, 28, 0.0024, GLASS2));
-    for (let k = 0; k < 3; k++) out.push(pane(0.0012, th - 0.006, 0xeeece6, x + (k - 1) * 0.0035, 0.003, tz + td / 2 + 0.0006));
-  }
-  out.push(...box(gap + 0.001, 0.011, td * 0.72, 0xd8d4c8, { y: 0.074, z: tz }, shade(WHITE, 0.95)));
-  out.push(...floors(0, tz, gap + 0.001, td * 0.72, 0.074, 0.085, 2, 0.0024, GLASS2));
-  return out;
-}
-
 // ---------- Tokyo ----------
 
 // Tokyo Tower: the four legs of its lattice sweeping in to the main deck,
@@ -383,11 +345,10 @@ function maracana(): G[] {
   return [pad(), ...stretch(out, 1, 1.3, 1)];
 }
 
-export const MODERN: Models<'cristoRedentor' | 'empireState' | 'sydneyOperaHouse' | 'brasiliaCongress' | 'tokyoTower' | 'maracana'> = {
+export const MODERN: Models<'cristoRedentor' | 'empireState' | 'sydneyOperaHouse' | 'tokyoTower' | 'maracana'> = {
   cristoRedentor,
   empireState,
   sydneyOperaHouse,
-  brasiliaCongress,
   tokyoTower,
   maracana,
 };

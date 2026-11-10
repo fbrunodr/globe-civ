@@ -19,7 +19,6 @@ import { ANCIENT } from './wonders/ancient.ts';
 import { CLASSICAL } from './wonders/classical.ts';
 import { MEDIEVAL } from './wonders/medieval.ts';
 import { RENAISSANCE } from './wonders/renaissance.ts';
-import { versaillesGrounds } from './wonders/renaissanceB.ts';
 import { terracottaGrounds } from './wonders/classicalA.ts';
 import { hangingGardensGrounds } from './wonders/ancient.ts';
 import type { CatalogKind } from './propCatalog.ts';
@@ -45,8 +44,8 @@ export const MIN_HEIGHT = 0.14;
 // islet 0.075 of it across, wonders/kit.ts), near a city's.
 const CITY_HALF = 0.95 * 8 * UNIT; // (a city fits a site's pad to its rectangle, 16 units at most)
 const LAND_HALF: Partial<Record<SiteModel, number>> = {
-  pyramids: 2 * CITY_HALF, versailles: 2 * CITY_HALF, fastTelescope: 1.8 * CITY_HALF, terracottaArmy: 1.6 * CITY_HALF,
-  neuschwanstein: 1.6 * CITY_HALF, petra: 1.5 * CITY_HALF, stonehenge: 1.3 * CITY_HALF,
+  pyramids: 2 * CITY_HALF, fastTelescope: 1.8 * CITY_HALF, terracottaArmy: 1.6 * CITY_HALF,
+  neuschwanstein: 1.6 * CITY_HALF, petra: 1.5 * CITY_HALF, stonehenge: 1.3 * CITY_HALF, launchComplex39: 1.4 * CITY_HALF,
 };
 const SEA_SCALE: Partial<Record<SiteModel, number>> = { greatLighthouse: 1, colossus: 0.9, statueOfLiberty: 1 };
 // Wonders that stand beside a city on the bare ground, with no base: sunk
@@ -102,7 +101,7 @@ export interface WonderGrounds {
 // (Made when first asked: the era files import this one's types.)
 let groundsOf: Partial<Record<SiteModel, WonderGrounds>> | null = null;
 export const wonderGrounds = (m: SiteModel): WonderGrounds | null => {
-  groundsOf ??= { versailles: versaillesGrounds(), terracottaArmy: terracottaGrounds(), hangingGardens: hangingGardensGrounds() };
+  groundsOf ??= { terracottaArmy: terracottaGrounds(), hangingGardens: hangingGardensGrounds() };
   return groundsOf[m] ?? null;
 };
 // How far its grounds reach from its middle along x and z (model units).

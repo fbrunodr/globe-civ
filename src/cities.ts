@@ -344,7 +344,6 @@ export const WONDERS = {
   himejiCastle:      w('Himeji Castle', 440, 'any', { culture: 5, prod: 3 }),
   forbiddenCity:     w('Forbidden City', 500, 'any', { cohesion: 4, gold: 3, culture: 3 }),
   florenceCathedral: w('Florence Cathedral', 440, 'any', { culture: 5, faith: 3, science: 1 }),
-  versailles:        w('Versailles', 500, 'flat', { culture: 7, cohesion: 2 }, 'land'),
   temploMayor:       w('Templo Mayor', 440, 'any', { faith: 4, food: 3, culture: 2 }),
   stPeters:          w('St Peter\u2019s Basilica', 480, 'any', { faith: 6, culture: 3 }),
   // Industrial
@@ -358,13 +357,13 @@ export const WONDERS = {
   cristoRedentor:    w('Cristo Redentor', 860, 'hills', { faith: 6, culture: 6 }),
   empireState:       w('Empire State Building', 900, 'any', { prod: 6, gold: 6, science: 3 }),
   sydneyOperaHouse:  w('Sydney Opera House', 880, 'coast', { culture: 10, gold: 3 }),
-  brasiliaCongress:  w('Bras\u00edlia Congress', 860, 'any', { cohesion: 6, prod: 3, culture: 3 }),
   tokyoTower:        w('Tokyo Tower', 860, 'any', { culture: 8, science: 4 }),
   maracana:          w('Maracan\u00e3', 860, 'any', { culture: 9, gold: 4 }),
   // Information
   burjKhalifa:       w('Burj Khalifa', 1150, 'any', { gold: 10, culture: 4 }),
   fastTelescope:     w('FAST Radio Telescope', 1100, 'hills', { science: 12 }, 'land'),
   cern:              w('CERN', 1200, 'any', { science: 12, culture: 2 }),
+  launchComplex39:   w('Launch Complex 39', 1150, 'coast', { science: 10, culture: 4 }, 'land'),
 } satisfies Record<string, WonderDef>;
 export type WonderKey = keyof typeof WONDERS;
 export const WONDER_KEYS = Object.keys(WONDERS) as WonderKey[];

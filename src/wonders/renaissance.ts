@@ -2,16 +2,15 @@
 // site units (kit.ts), the front +z.
 
 import type { Models } from './kit.ts';
-import { florenceCathedral, stPeters, temploMayor, versailles } from './renaissanceB.ts';
+import { florenceCathedral, stPeters, temploMayor } from './renaissanceB.ts';
 import { forbiddenCity, himejiCastle, stBasils, tajMahal } from './renaissanceA.ts';
 
-export const RENAISSANCE: Models<'tajMahal' | 'stBasils' | 'himejiCastle' | 'forbiddenCity' | 'florenceCathedral' | 'versailles' | 'temploMayor' | 'stPeters'> = {
+export const RENAISSANCE: Models<'tajMahal' | 'stBasils' | 'himejiCastle' | 'forbiddenCity' | 'florenceCathedral' | 'temploMayor' | 'stPeters'> = {
   tajMahal,
   stBasils,
   himejiCastle,
   forbiddenCity,
   florenceCathedral,
-  versailles,
   temploMayor,
   stPeters,
 };

@@ -83,7 +83,9 @@ export function colossus(): G[] {
     const a = Math.PI * (0.12 + (0.76 * i) / 13), R = 0.058;
     out.push(...box(0.0145, 0.006, 0.012, shade(STONE, 0.9 + r() * 0.08), { x: Math.cos(a) * R, y: 0.003, z: Math.sin(a) * R, ry: -a + Math.PI / 2 }, shade(STONE, 0.97)));
   }
-  // The pedestal: three steps, a plinth, a torus and a cavetto up to the die.
+  // The pedestal: three steps, a plinth, a torus and a cavetto up to the die
+  // (drawn, then made broader and taller to carry the god's stride).
+  const i0 = out.length, KW = 1.5, KY = 1.3;
   const st = steps(0.056, 0.056, 3, 0.0035, 0.003, shade(M, 0.92), { y: 0.004 }, shade(M, 0.97));
   out.push(...st.parts);
   let y = st.y;
@@ -116,6 +118,9 @@ export function colossus(): G[] {
   out.push(...box(0.039, 0.0022, 0.039, shade(M, 1.04), { y })); y += 0.0022;
   out.push(...sqFrustum(0.039, 0.034, 0.0012, shade(M, 0.96), y, shade(M, 0.96))); y += 0.0012;
   out.push(...box(0.026, 0.0016, 0.021, shade(0xb88a4e, 0.72), { y, z: 0.001 })); y += 0.0016;
+  const m = new THREE.Matrix4().makeTranslation(0, 0.004, 0).multiply(new THREE.Matrix4().makeScale(KW, KY, KW)).multiply(new THREE.Matrix4().makeTranslation(0, -0.004, 0));
+  for (const g of out.slice(i0)) g.applyMatrix4(m);
+  y = 0.004 + (y - 0.004) * KY;
   // The god himself.
   out.push(statue(COLOSSUS, 0.14, 0xa87238, { y }));
   return out;

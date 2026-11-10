@@ -110,7 +110,7 @@ export const TECHS: Record<TechKey, TechDef> = {
   architecture:    t('Architecture', 3, 80, ['domes', 'printingPress'], { effects: [prodPct('building', 10)], wonders: ['florenceCathedral'] }),
   cropRotation:    t('Crop Rotation', 3, 75, ['plough', 'education'], { effects: [onImprovement('farm', { food: 1 }), onImprovement('pasture', { food: 1 })], wonders: ['temploMayor'] }),
   magnetism:       t('Magnetism', 3, 80, ['navigation', 'physics'], { units: ['frigate'], effects: [onImprovement('boats', { prod: 1 })] }),
-  patronage:       t('Patronage', 3, 75, ['architecture', 'banking'], { effects: [perSpecialist('artist', { culture: 1 })], wonders: ['versailles'] }),
+  patronage:       t('Patronage', 3, 75, ['architecture', 'banking'], { effects: [perSpecialist('artist', { culture: 1 })] }),
   // ---- Industrial ----
   scientificTheory: t('Scientific Theory', 4, 135, ['physics', 'chemistry'], { effects: [yieldPct('science', 10)] }),
   rifling:         t('Rifling', 4, 135, ['metallurgy', 'chemistry'], { units: ['rifleman'] }),
@@ -129,7 +129,7 @@ export const TECHS: Record<TechKey, TechDef> = {
   // ---- Modern ----
   electricity:     t('Electricity', 5, 200, ['scientificTheory', 'steamPower'], { effects: [yieldPct('science', 5), yieldPct('prod', 5)], wonders: ['maracana'] }),
   refining:        t('Refining', 5, 195, ['industrialization', 'chemistry'], { units: ['airship'] }), // (reveals Oil)
-  combustion:      t('Combustion', 5, 210, ['refining', 'steamPower'], { units: ['landship', 'destroyer'], effects: [onImprovement('well', { prod: 1 })], wonders: ['brasiliaCongress'] }),
+  combustion:      t('Combustion', 5, 210, ['refining', 'steamPower'], { units: ['landship', 'destroyer'], effects: [onImprovement('well', { prod: 1 })] }),
   replaceableParts: t('Replaceable Parts', 5, 215, ['electricity', 'militaryScience'], { units: ['infantry', 'antiTank'] }),
   radio:           t('Radio', 5, 205, ['electricity'], { units: ['marine'], buildings: ['broadcastTower'], wonders: ['cristoRedentor'] }),
   motorizedWarfare: t('Motorized Warfare', 5, 235, ['combustion', 'replaceableParts'], { units: ['tank'] }),
@@ -147,7 +147,7 @@ export const TECHS: Record<TechKey, TechDef> = {
   jetPropulsion:   t('Jet Propulsion', 5, 260, ['radar', 'massProduction'], { units: ['jetFighter', 'helicopter'] }),
   // ---- Information ----
   computers:       t('Computers', 6, 280, ['electronics', 'atomicTheory'], { effects: [yieldPct('science', 10)], wonders: ['fastTelescope'] }),
-  rocketry:        t('Rocketry', 6, 290, ['radar', 'refining'], { units: ['rocketArtillery', 'mobileSAM'] }),
+  rocketry:        t('Rocketry', 6, 290, ['radar', 'refining'], { units: ['rocketArtillery', 'mobileSAM'], wonders: ['launchComplex39'] }),
   composites:      t('Composites', 6, 290, ['steel', 'motorizedWarfare'], { units: ['modernArmor'], wonders: ['burjKhalifa'] }),
   mobileTactics:   t('Mobile Tactics', 6, 290, ['motorizedWarfare', 'radio'], { units: ['mechanizedInfantry', 'paratrooper', 'specialForces'] }),
   nuclearFission:  t('Nuclear Fission', 6, 300, ['atomicTheory', 'electronics'], { units: ['nuclearSubmarine', 'atomicBomb'], effects: [yieldPct('prod', 5)] }),

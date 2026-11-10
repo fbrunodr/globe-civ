@@ -223,4 +223,91 @@ function cern(): G[] {
   return out;
 }
 
-export const INFORMATION: Models<'burjKhalifa' | 'fastTelescope' | 'cern'> = { burjKhalifa, fastTelescope, cern };
+// ---------- Cape Canaveral ----------
+
+// Launch Complex 39 in the days of Apollo: the pad's raised hardstand, its
+// ramp and the flame trench through it; on it the mobile launcher, its deck
+// over the trench, the red umbilical tower with its swing arms reaching to
+// the rocket and the hammerhead crane on top; and the Saturn V standing
+// ready: its first stage's black roll pattern, fins and engine fairings,
+// the second and third stages, the instrument ring, the adapter, the
+// Apollo spacecraft and its escape tower. (Beside its city, on the bare
+// ground: metres turned to site units, 0.12 for the rocket's 110 m.)
+function launchComplex39(): G[] {
+  const out: G[] = [], u = 0.12 / 110;
+  const CONC = 0xc9c5bb, CONC2 = 0xb2ada2, STEEL = 0x8c9196, RED = 0xb8402e, WHITE = 0xeeeeea, BLACK = 0x26262a, SILVER = 0xc4c8cc, SOOT = 0x3a3836;
+  // The hardstand: a low platform, a ramp up to it from the crawlerway, the trench's dark mouths.
+  const hs = 0.1, hh = 0.007;
+  out.push(...box(hs, hh, hs, CONC2, {}, CONC));
+  {
+    // (The ramp: a wedge falling from the hardstand's edge to the ground.)
+    const z0 = hs / 2, z1 = z0 + 0.024, w = 0.015;
+    const g = new THREE.BufferGeometry();
+    const p = [-w, hh, z0, w, hh, z0, w, 0, z1, -w, hh, z0, w, 0, z1, -w, 0, z1,
+      -w, 0, z0, -w, hh, z0, -w, 0, z1, w, hh, z0, w, 0, z0, w, 0, z1];
+    g.setAttribute('position', new THREE.Float32BufferAttribute(p, 3));
+    out.push(P(g, CONC2));
+  }
+  for (const s of [-1, 1]) out.push(pane(0.024, hh * 0.8, SOOT, 0, 0, s * (hs / 2 + 0.0002), s > 0 ? 0 : Math.PI));
+  out.push(flat(0.02, hs - 0.02, SOOT, 0, 0, hh + 0.0002));
+  // The mobile launcher: its deck (49 × 41 m, 7.6 m deep) on six steel legs over the trench.
+  const mw = 49 * u, md = 41 * u, mh = 7.6 * u, legs = 6 * u, yd = hh + legs;
+  for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1], [-1, 0], [1, 0]] as const) out.push(...box(0.003, legs, 0.003, STEEL, { x: x * (mw / 2 - 0.003), y: hh, z: z * (md / 2 - 0.003) }));
+  out.push(...box(mw, mh, md, STEEL, { y: yd }, shade(STEEL, 1.08)));
+  for (let k = 0; k < 6; k++) out.push(pane(mw - 0.004, 0.0005, shade(STEEL, 0.8), 0, yd + mh * (0.2 + k * 0.12), md / 2 + 0.0002));
+  const y0 = yd + mh;
+  // The umbilical tower: 18 bays of red lattice to 120 m over the deck, the crane on top.
+  const tx = 0.024, tz = 0, tw = 12 * u, th = 120 * u, bays = 18;
+  for (const [a, b] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) out.push(...box(0.0011, th, 0.0011, RED, { x: tx + a * tw / 2, y: y0, z: tz + b * tw / 2 }));
+  for (let k = 0; k < bays; k++) {
+    const ya = y0 + (k * th) / bays, yb = y0 + ((k + 1) * th) / bays;
+    for (const [ax, az, bx, bz] of [[-1, -1, 1, -1], [1, -1, 1, 1], [1, 1, -1, 1], [-1, 1, -1, -1]] as const) {
+      const A = V(tx + (ax * tw) / 2, ya, tz + (az * tw) / 2), B = V(tx + (bx * tw) / 2, yb, tz + (bz * tw) / 2);
+      out.push(rod(A, B, 0.00035, RED, 3));
+      out.push(rod(V(A.x, yb, A.z), V(B.x, yb, B.z), 0.0004, RED, 3));
+    }
+  }
+  out.push(...box(tw + 0.002, 0.0014, tw + 0.002, RED, { x: tx, y: y0 + th, z: tz }));
+  out.push(...box(0.003, 0.012, 0.003, RED, { x: tx, y: y0 + th + 0.0014, z: tz }));
+  out.push(...box(0.026, 0.0022, 0.0026, RED, { x: tx - 0.005, y: y0 + th + 0.011, z: tz }));
+  // The rocket, its stages from the bottom (heights and diameters in metres).
+  const R1 = 5 * u, Rt = 3.3 * u;
+  let y = y0 + 1.5 * u;
+  // (The hold-down posts and the engine bells' skirt under the first stage.)
+  for (let k = 0; k < 4; k++) { const a = Math.PI / 4 + (k * Math.PI) / 2; out.push(...box(0.0025, 1.5 * u, 0.0025, STEEL, { x: Math.cos(a) * R1, y: y0, z: Math.sin(a) * R1 })); }
+  const band = (r: number, h: number, c: number) => { out.push(cyl(r, r, h, 20, c, { y })); y += h; };
+  const s1 = 42 * u;
+  const y1 = y;
+  band(R1, s1 * 0.16, WHITE); band(R1, s1 * 0.12, BLACK); band(R1, s1 * 0.42, WHITE); band(R1, s1 * 0.1, BLACK); band(R1, s1 * 0.2, WHITE);
+  // The roll pattern: black panels round the white bands, in turn.
+  for (const [f0, f1] of [[0, 0.16], [0.7, 0.9]] as const) for (let k = 0; k < 4; k++) {
+    const a = (k * Math.PI) / 2 + Math.PI / 4;
+    out.push(P(new THREE.CylinderGeometry(R1 + 0.0001, R1 + 0.0001, s1 * (f1 - f0), 10, 1, true, a, Math.PI / 4).translate(0, (s1 * (f1 - f0)) / 2, 0), BLACK, { y: y1 + s1 * f0 }));
+  }
+  // The fins and the engine fairings at its foot.
+  for (let k = 0; k < 4; k++) {
+    const a = Math.PI / 4 + (k * Math.PI) / 2, cx = Math.cos(a), cz = Math.sin(a);
+    out.push(cone(1.3 * u, 7 * u, 8, WHITE, { x: cx * R1, y: y1 - 1.3 * u, z: cz * R1 }));
+    out.push(...box(0.0005, 4.5 * u, 3.5 * u, WHITE, { x: cx * (R1 + 2.2 * u), y: y1 - 1.3 * u, z: cz * (R1 + 2.2 * u), ry: -a }));
+  }
+  // The second stage, its interstage black, and the third: white, its upper half's black stripes.
+  band(R1, 2.5 * u, BLACK); band(R1, 22 * u, WHITE);
+  out.push(P(new THREE.CylinderGeometry(Rt, R1, 3 * u, 20, 1, true).translate(0, 1.5 * u, 0), WHITE, { y })); y += 3 * u;
+  band(Rt, 3 * u, BLACK); band(Rt, 7 * u, WHITE); band(Rt, 2 * u, BLACK); band(Rt, 3 * u, WHITE);
+  band(Rt, 1 * u, SILVER);
+  // The adapter tapering to the service module; the command module; the escape tower and its rocket.
+  out.push(P(new THREE.CylinderGeometry(2 * u, Rt, 8.5 * u, 20, 1, true).translate(0, 4.25 * u, 0), WHITE, { y })); y += 8.5 * u;
+  band(2 * u, 7.5 * u, SILVER);
+  out.push(cone(2 * u, 3.6 * u, 16, WHITE, { y })); y += 3.6 * u;
+  out.push(rod(V(0, y - 0.6 * u, 0), V(0, y + 4 * u, 0), 0.6 * u, RED, 4)); y += 4 * u;
+  out.push(cyl(0.6 * u, 0.6 * u, 4 * u, 8, WHITE, { y }), cone(0.6 * u, 1.5 * u, 8, RED, { y: y + 4 * u }));
+  // The swing arms, from the tower to the stages they serve.
+  for (const [ya, w] of [[0.06, 1], [0.32, 1], [0.6, 1], [0.66, 0.8], [0.72, 0.8], [0.8, 0.7], [0.86, 0.7], [0.9, 0.6], [0.95, 0.6]] as const) {
+    const yy = y0 + 110 * u * ya * (0.95 + 0.05 * w), x0 = tx - tw / 2, x1 = ya < 0.7 ? R1 : Rt;
+    out.push(...box(x0 - x1, 0.0016, 0.0024 * w, RED, { x: (x0 + x1) / 2, y: yy, z: tz }, shade(RED, 1.1)));
+  }
+  // (The whole moved a little toward the tower's side, to sit in the middle.)
+  return out.map((g) => g.translate(-0.006, 0, 0));
+}
+
+export const INFORMATION: Models<'burjKhalifa' | 'fastTelescope' | 'cern' | 'launchComplex39'> = { burjKhalifa, fastTelescope, cern, launchComplex39 };
