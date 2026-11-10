@@ -128,7 +128,11 @@ const GATE_GROW = 1.15;
 // Machu Picchu: the least houses its summit holds (render.ts cuts it deeper
 // until they fit), and how level ground must be to count as the cut's top.
 export const SUMMIT_HOUSES = 6;
-const SUMMIT_FLAT = 0.00008;
+// Machu Picchu's houses: each on a lot this many town cells square (a
+// town's smallest lots are two), its widest foot (the hall's, rural/models.ts) filling it.
+const MP_LOT = 1.5, INCA_FOOT = 0.0248;
+// (How much a lot may fall across it, and how far below the summit the town goes.)
+const MP_STEP = 0.0015, MP_DROP = 0.0025, MP_GRANITE = 0x8d877c;
 // Foundations: under a building whose footprint's corners differ by more
 // than this (× the world scale); the model is FOUNDATION_UNIT on a side.
 const FOUNDATION_MIN = 0.00005;
@@ -858,18 +862,31 @@ export class CityProps {
     const P = top.dir, { e1, k } = tileFrame(this.game, t), cell = CITY_CELL * k;
     const u = e1.clone().addScaledVector(P, -e1.dot(P)).normalize(), w = P.clone().cross(u);
     const at = (x: number, y: number) => P.clone().addScaledVector(u, x * cell).addScaledVector(w, y * cell).normalize();
-    const flat = (d: THREE.Vector3) => Math.abs(this.sampleDir(d).ground - top!.ground) < SUMMIT_FLAT * this.scale;
     const out: PlacedBuilding[] = [];
-    // (Nudged so the grid's cells fall round the top, not across it.)
+    // (Each house on a lot of MP_LOT × MP_LOT town cells, side by side with
+    // no gap between: drawn up so its foot fills its lot, a hair inside.)
+    const L = MP_LOT, size = (k * L * CITY_CELL * 0.97) / INCA_FOOT;
+    // (Nudged so the grid's lots fall round the top, not across it.)
     for (const [ox, oy] of [[0, 0], [0.5, 0], [0, 0.5], [0.5, 0.5]] as const) {
       const here: PlacedBuilding[] = [];
-      for (let a = -6; a <= 6; a++) for (let b = -6; b <= 6; b++) {
-        const x = a + ox, y = b + oy;
-        if (![[x, y], [x - 0.45, y - 0.45], [x + 0.45, y - 0.45], [x + 0.45, y + 0.45], [x - 0.45, y + 0.45]].every(([p, q]) => flat(at(p!, q!)))) continue;
+      for (let a = -4; a <= 4; a++) for (let b = -4; b <= 4; b++) {
+        // (Terraced down the peak as the town is: every lot within reach of
+        // the top takes a house, whatever the slope, the house on the lot's
+        // highest corner and a terrace of granite under it down to its
+        // lowest; none too far below the summit.)
+        const x = (a + ox) * L, y = (b + oy) * L, h = L * 0.5;
+        const gs = [[x, y], [x - h, y - h], [x + h, y - h], [x + h, y + h], [x - h, y + h]].map(([p, q]) => this.sampleDir(at(p!, q!)).ground);
+        const lo = Math.min(...gs), hi = Math.max(...gs);
+        if (hi - lo > MP_STEP * this.scale || top.ground - lo > MP_DROP * this.scale) continue;
         const d = at(x, y), quarter = Math.floor(rand() * 4);
         const qn = new THREE.Quaternion().setFromUnitVectors(UP, d).multiply(new THREE.Quaternion().setFromAxisAngle(UP, facing(d, at(x + 1, y)) + Math.PI / 2 + quarter * Math.PI / 2));
-        const pos = d.clone().multiplyScalar(1 + top.ground - 0.00005 * this.scale);
-        here.push({ kind: ruralModelKind(rand() < 0.3 ? 'incaHall' : 'incaHouse'), matrix: new THREE.Matrix4().compose(pos, qn, new THREE.Vector3(k, k, k)), color: new THREE.Color(1, 1, 1).multiplyScalar(0.92 + 0.12 * rand()), leaf: new THREE.Color(1, 1, 1) });
+        const pos = d.clone().multiplyScalar(1 + hi - 0.00002 * this.scale);
+        if (hi - lo > 0.00003 * this.scale) {
+          const fu = this.scale * PROP_SCALE * FOUNDATION_UNIT, fs = 0.0002 * this.scale, side = (L * cell) / fu;
+          const qf = new THREE.Quaternion().setFromUnitVectors(UP, d).multiply(new THREE.Quaternion().setFromAxisAngle(UP, facing(d, at(x + 1, y)) + Math.PI / 2));
+          here.push({ kind: 'foundation', matrix: new THREE.Matrix4().compose(d.clone().multiplyScalar(1 + lo - fs), qf, new THREE.Vector3(side, (hi - lo + fs) / fu, side)), color: new THREE.Color(1, 1, 1).multiplyScalar(0.9 + 0.1 * rand()), leaf: new THREE.Color(MP_GRANITE) });
+        }
+        here.push({ kind: ruralModelKind(rand() < 0.3 ? 'incaHall' : 'incaHouse'), matrix: new THREE.Matrix4().compose(pos, qn, new THREE.Vector3(size, size, size)), color: new THREE.Color(1, 1, 1).multiplyScalar(0.92 + 0.12 * rand()), leaf: new THREE.Color(1, 1, 1) });
       }
       if (here.length > out.length) out.splice(0, out.length, ...here);
     }
