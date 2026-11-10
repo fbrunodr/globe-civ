@@ -103,25 +103,31 @@ function bladeTexture(): THREE.DataTexture {
 // color shows through), transparent between them. Made once, in code.
 // A fence's card (rural/models.ts fenceCard): three kinds in bands up the
 // texture (v: a third each, from the foot): woven wattle hurdles on stakes,
-// posts and two rails, posts and three strands of wire; two posts to a
-// unit of u (the texture repeats along a run).
+// posts and two rails, posts and three strands of wire. A unit of u is a
+// bay (rural/models.ts): a post at each end (half of it at each edge, so
+// bays side by side share a whole post where they meet) and one midway;
+// the rails and wattle run edge to edge, unbroken from bay to bay.
 let fenceTex: THREE.DataTexture | null = null;
 export const FENCE_BANDS = ['wattle', 'rails', 'wire'] as const;
 function fenceTexture(): THREE.DataTexture {
   if (fenceTex) return fenceTex;
   const W = 128, B = 42, H = 128;
   fenceTex = drawnTexture(W, H, 0xfe4ce, (rand, stroke) => {
-    // (Each band: its foot at y0, B texels tall, a post every W/2.)
-    const posts = (y0: number, top: number, w: number, shade: number) => { for (const x of [W * 0.25, W * 0.75]) stroke(x + (rand() - 0.5) * 3, y0, x + (rand() - 0.5) * 3, y0 + top, w, shade); };
-    // Wattle: stakes, rods woven between them, close set.
-    posts(0, B * 0.92, 4, 0.55);
-    for (let y = 4; y < B * 0.85; y += 3.2) stroke(0, y + (rand() - 0.5), W, y + (rand() - 0.5), 2.6, 0.62 + 0.25 * rand());
-    // Rails: posts, two rails.
-    posts(B, B * 0.95, 5, 0.6);
-    for (const y of [B * 0.42, B * 0.78]) stroke(0, B + y, W, B + y + (rand() - 0.5) * 2, 3.5, 0.82);
+    // (Each band: its foot at y0, B texels tall; the end posts straight
+    // (halves that meet), the middle one a little out of true.)
+    const posts = (y0: number, top: number, w: number, shade: number, at: readonly number[]) => {
+      for (const x of [0, W]) stroke(x, y0, x, y0 + top, w, shade);
+      for (const x of at) stroke(x + (rand() - 0.5) * 2, y0, x + (rand() - 0.5) * 2, y0 + top, w * 0.85, shade);
+    };
+    // Wattle: hurdles of rods woven between stakes, close set, under the stakes' tops.
+    for (let y = 3; y < B * 0.8; y += 3.4) stroke(0, y + (rand() - 0.5), W, y + (rand() - 0.5), 2.4, 0.78 + 0.18 * rand());
+    posts(0, B * 0.9, 3.6, 0.7, [W * 0.25, W * 0.5, W * 0.75]);
+    // Rails: posts, two slim rails.
+    for (const y of [B * 0.45, B * 0.8]) stroke(0, B + y, W, B + y, 3.2, 0.95);
+    posts(B, B * 0.95, 4, 0.78, [W * 0.5]);
     // Wire: posts, three strands.
-    posts(2 * B, B * 0.95, 4, 0.55);
-    for (const y of [B * 0.33, B * 0.6, B * 0.86]) stroke(0, 2 * B + y, W, 2 * B + y, 1.2, 0.9);
+    for (const y of [B * 0.33, B * 0.6, B * 0.86]) stroke(0, 2 * B + y, W, 2 * B + y, 1.1, 1);
+    posts(2 * B, B * 0.95, 3.4, 0.75, [W * 0.5]);
   });
   fenceTex.wrapS = THREE.RepeatWrapping;
   return fenceTex;

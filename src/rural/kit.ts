@@ -290,10 +290,109 @@ function sailboat(): G[] {
     P(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute([0.4, 7.6, 0, 3.9, 1.2, 0, 0.4, 2.1, 0], 3)), 0xc8bca0),
     fleece([-2, 1.25, 0.6], [0.8, 0.25, 0.4], 0x8a7a5a, 0.3, 1)];
 }
+// (A skin through rows of points, each row joined to the next point by
+// point: indexed, so smooth-shaded; `paint` one, or one per column.)
+function grid(rows: readonly (readonly V3[])[], paint: Paint | readonly Paint[]): G {
+  const pos: number[] = [], idx: number[] = [], paints: Paint[] = [], n = rows[0]!.length;
+  for (const row of rows) row.forEach((p, j) => { pos.push(...p); paints.push(Array.isArray(paint) ? (paint as readonly Paint[])[j]! : (paint as Paint)); });
+  for (let i = 0; i < rows.length - 1; i++) for (let j = 0; j < n - 1; j++) { const a = i * n + j, b = a + 1, c = a + n, d = c + 1; idx.push(a, c, b, b, c, d); }
+  const g = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return finish(g, paints);
+}
+// (A side outline, x and y, given its thickness across: from z0 to z1.)
+const prism = (pts: readonly (readonly [number, number])[], z0: number, z1: number, c: Paint): G =>
+  P(new THREE.ExtrudeGeometry(new THREE.Shape(pts.map(([x, y]) => new THREE.Vector2(x, y))), { depth: z1 - z0, bevelEnabled: false }).translate(0, 0, z0), c);
+// (A drum lying across the deck, its axis along z.)
+// (A flat pane, facing z: a window.)
+const pane = (w: number, h: number, c: Paint, o: Tf) => P(new THREE.PlaneGeometry(w, h), c, o);
+const drum = (r: number, w: number, n: number, c: Paint, x: number, y: number, z = 0) => P(new THREE.CylinderGeometry(r, r, w, n).rotateX(Math.PI / 2), c, { x, y, z });
+// A modern stern trawler, 13 m: a navy hull with sheer (the bow raised and
+// flared, its stem raked, a transom), red below the waterline, a white
+// sheer strake; the bulwarks round a green deck. Forward the white
+// deckhouse, the wheelhouse on it (its windows raked forward, a visor),
+// the mast with radar and yard, the exhaust stack; aft the working deck:
+// the trawl winch, the fish hold's hatch, the net drum with its net, and
+// the orange A-frame gantry over the stern, the otter boards hung on it,
+// the warps run up to its blocks.
 function trawler(): G[] {
-  const hull = loft(smooth([S(-6, 1.4, 0.6, 0.8), S(-5.5, 1.2, 1.4, 2.0), S(0, 1.0, 1.6, 2.4), S(5, 1.3, 1.4, 1.6), S(6.6, 2.0, 0.2, 0.2)], 3), 12, (p) => (p.y < 0.6 ? 0x8a3a2a : 0x2a3a4a));
-  return [hull, box(11, 0.12, 4.2, 0x8a7a68, { y: 2.3 }), box(3.4, 2.6, 2.8, 0xe8e4dc, { x: -1, y: 2.4 }), box(3.8, 0.15, 3.2, 0x4a4a4e, { x: -1, y: 5.0 }), cyl(0.5, 0.45, 3.2, 6, 0x2a2a2a, { x: -2.5, y: 4.4 }),
-    cyl(0.12, 0.1, 6, 6, 0x5a5e62, { x: 3, y: 2.4 }), beam([3, 7.5, 0], [-5.5, 2.6, 0], 0.03, 0x3a3a3a, 3), beam([3, 6.5, 0], [6, 2.4, 0], 0.08, 0x5a5e62, 4)];
+  const NAVY = 0x22405e, RED = 0x9a2e26, WHITE = 0xeeece6, DECK = 0x6c7a6c, ORANGE = 0xe8702a, GLASS = 0x1c2830, WIRE = 0x2a2a2a, NET = 0x2f6b4f;
+  const STERN = -6.2, BOW = 6.6;
+  const sheer = (x: number) => 1.95 + Math.max(0, x - 0.5) ** 2 * 0.035 + Math.max(0, -x - 4) ** 2 * 0.05;
+  const beamAt = (x: number) => x > 1 ? Math.max(0.07, 2.35 * Math.sqrt(Math.max(0, 1 - ((x - 1) / (BOW - 1)) ** 2.2))) : 2.35 - Math.max(0, -x - 4) ** 2 * 0.07;
+  const waterAt = (x: number) => x > 1 ? 2.2 * Math.max(0, 1 - ((x - 1) / 5.3) ** 2) ** 0.7 : 2.2 - Math.max(0, -x - 4) ** 2 * 0.1;
+  const keel = (x: number) => -0.9 + Math.max(0, x - 2) ** 2 * 0.03 + Math.max(0, -3 - x) ** 2 * 0.06;
+  const deckAt = (x: number) => sheer(x) - 0.85;
+  // (The stem raked: low down the bow draws back.)
+  const rake = (x: number, y: number) => x - (Math.max(0, x - 4) / (BOW - 4)) * 0.11 * (sheer(x) - y);
+  // A station's side, keel to rail (z ≥ 0): bilge, the waterline's red and
+  // navy, the flare, the white strake under the rail.
+  const side = (x: number): [number, number][] => {
+    const bs = beamAt(x), bw = Math.max(0.05, Math.min(waterAt(x), bs)), ys = sheer(x), yk = keel(x);
+    return [[Math.min(0.12, bw * 0.5), yk], [bw * 0.8, yk * 0.45], [bw * 0.98, 0.24], [bw, 0.28], [bw + (bs - bw) * 0.65, ys * 0.55], [bs * 0.996, ys - 0.46], [bs, ys - 0.42], [bs, ys]];
+  };
+  const SIDE_PAINT = [RED, RED, RED, NAVY, NAVY, NAVY, WHITE, WHITE];
+  const stations = [STERN, -5.6, -4.6, -3.2, 1, 2.6, 3.8, 4.8, 5.6, 6.15, BOW];
+  const ring = (x: number): V3[] => { const s = side(x); return [...[...s].reverse().map(([z, y]): V3 => [rake(x, y), y, -z]), ...s.map(([z, y]): V3 => [rake(x, y), y, z])]; };
+  const hullSkin = grid(stations.map(ring), [...[...SIDE_PAINT].reverse(), ...SIDE_PAINT]);
+  // (The transom, and the stem's narrow face.)
+  const across = (x: number) => grid([side(x).map(([z, y]): V3 => [rake(x, y), y, -z]), side(x).map(([z, y]): V3 => [rake(x, y), y, z])], SIDE_PAINT);
+  const transom = across(STERN), stem = across(BOW);
+  // The deck, the bulwarks' inside and their capping rail.
+  const inner = (x: number) => Math.max(0, beamAt(x) - 0.1);
+  const deck = grid(stations.map((x): V3[] => [[rake(x, deckAt(x)), deckAt(x), -inner(x)], [rake(x, deckAt(x)), deckAt(x), inner(x)]]), DECK);
+  const bulwarks = [-1, 1].flatMap((s) => [
+    grid(stations.map((x): V3[] => [[rake(x, deckAt(x)), deckAt(x), s * inner(x)], [x, sheer(x), s * inner(x)]]), 0xd8d4c8),
+    grid(stations.map((x): V3[] => [[x, sheer(x) + 0.01, s * inner(x)], [x, sheer(x) + 0.01, s * beamAt(x)]]), WHITE),
+  ]);
+  const aft = STERN + 0.1;
+  const sternBulwark = [box(0.1, sheer(aft) - deckAt(aft), 2 * inner(aft), 0xd8d4c8, { x: aft, y: deckAt(aft) }), box(0.14, 0.04, 2 * beamAt(STERN), WHITE, { x: STERN + 0.05, y: sheer(STERN) })];
+  const out: G[] = [hullSkin, transom, stem, deck, ...bulwarks, ...sternBulwark];
+  // The deckhouse: white, three windows a side, two ahead; a life ring each side.
+  out.push(box(3.9, 2.3, 3.5, WHITE, { x: 1.75, y: 1.0 }));
+  for (const s of [-1, 1]) {
+    for (const x of [0.5, 1.5, 2.5]) out.push(pane(0.55, 0.36, GLASS, { x, y: 2.63, z: s * 1.76 }));
+    out.push(pane(0.6, 0.4, GLASS, { x: 3.71, y: 2.6, z: s * 0.75, ry: Math.PI / 2 }));
+    out.push(P(new THREE.TorusGeometry(0.26, 0.07, 3, 6), ORANGE, { x: 3.2, y: 2.0, z: s * 1.78 }));
+  }
+  // The wheelhouse on it: its front raked forward, the windows all round, the visor roof.
+  out.push(prism([[0.5, 3.3], [3.1, 3.3], [3.45, 4.95], [0.5, 4.95]], -1.4, 1.4, WHITE));
+  out.push(prism([[0.45, 4.1], [3.27, 4.1], [3.4, 4.66], [0.45, 4.66]], -1.43, 1.43, GLASS));
+  for (const z of [-0.72, 0, 0.72]) out.push(beam([3.28, 4.1, z], [3.41, 4.66, z], 0.04, WHITE, 4));
+  for (const s of [-1, 1]) for (const x of [1.4, 2.4]) out.push(pane(0.08, 0.56, WHITE, { x, y: 4.38, z: s * 1.44 }));
+  out.push(prism([[0.35, 4.95], [3.62, 4.95], [3.68, 5.08], [0.35, 5.08]], -1.55, 1.55, 0xd2d2ce));
+  // The mast on its roof: radar, a yard, the masthead light; a forestay to the stemhead post.
+  out.push(cyl(0.1, 0.07, 3.3, 6, WHITE, { x: 1.7, y: 5.08 }), box(0.3, 0.3, 0.3, 0x3a3a3e, { x: 1.7, y: 6.05 }), box(0.22, 0.07, 1.9, WIRE, { x: 1.7, y: 6.36 }),
+    beam([1.7, 7.4, -0.85], [1.7, 7.4, 0.85], 0.05, WHITE, 4), cyl(0.09, 0.09, 0.18, 6, 0xf4e8a0, { x: 1.7, y: 8.38 }));
+  out.push(cyl(0.08, 0.06, 2.4, 5, WHITE, { x: 5.6, y: deckAt(5.6) }), beam([1.7, 8.2, 0], [5.6, deckAt(5.6) + 2.35, 0], 0.025, WIRE, 3));
+  // The exhaust stack aft of the wheelhouse, raked: white, its top black; the liferafts beside it.
+  const lean = 0.14, stackH = 2.0, cap = 0.35;
+  out.push(cyl(0.42, 0.38, stackH, 7, WHITE, { x: 0.05, y: 3.3, rz: lean, sz: 0.7 }),
+    cyl(0.38, 0.38, cap, 7, WIRE, { x: 0.05 - Math.sin(lean) * stackH, y: 3.3 + Math.cos(lean) * stackH, rz: lean, sz: 0.7 }));
+  for (const s of [-1, 1]) out.push(P(new THREE.CylinderGeometry(0.26, 0.26, 0.9, 7).rotateZ(Math.PI / 2), WHITE, { x: 0.2, y: 3.56, z: s * 1.2 }));
+  // The trawl winch against the deckhouse: two drums of wire, orange flanges.
+  const wy = deckAt(-0.9);
+  out.push(box(1.0, 0.45, 2.6, 0x4a4e52, { x: -0.9, y: wy }));
+  for (const s of [-1, 1]) out.push(drum(0.36, 0.72, 6, 0x3a3a3e, -0.9, wy + 0.85, s * 0.75), drum(0.55, 0.06, 8, ORANGE, -0.9, wy + 0.85, s * 0.38), drum(0.55, 0.06, 8, ORANGE, -0.9, wy + 0.85, s * 1.12));
+  // The fish hold's hatch.
+  out.push(box(1.4, 0.28, 1.4, 0xb8bcb8, { x: -2.4, y: deckAt(-2.4) }), box(1.2, 0.1, 1.2, 0x3e6a8a, { x: -2.4, y: deckAt(-2.4) + 0.28 }));
+  // The net drum on its stands, wound with net; more net heaped behind it, its floats.
+  const dx = -4.2, dy = deckAt(dx) + 1.0;
+  out.push(drum(0.75, 2.5, 10, NET, dx, dy), drum(0.95, 0.08, 10, ORANGE, dx, dy, -1.29), drum(0.95, 0.08, 10, ORANGE, dx, dy, 1.29));
+  for (const s of [-1, 1]) out.push(box(0.5, 1.0, 0.12, 0x4a4e52, { x: dx, y: deckAt(dx), z: s * 1.4 }));
+  out.push(fleece([-5.35, deckAt(-5.35) + 0.2, 0], [0.55, 0.28, 1.0], NET, 0.25, 0));
+  for (const [x, z] of [[-5.1, -0.5], [-5.5, 0.35], [-5.0, 0.7]] as const) out.push(P(new THREE.IcosahedronGeometry(0.16, 0), ORANGE, { x, y: deckAt(x) + 0.42, z }));
+  // The A-frame gantry over the stern, its back stays; the blocks; the otter boards hung at the quarters.
+  const top = 6.0, gx = -6.45, gy = deckAt(-5.7);
+  for (const s of [-1, 1]) {
+    out.push(beam([-5.7, gy, s * 1.85], [gx, top, s * 1.6], 0.13, ORANGE, 5), beam([-4.6, deckAt(-4.6), s * 2.0], [gx + 0.15, top - 0.6, s * 1.62], 0.08, ORANGE, 5));
+    out.push(box(0.3, 0.4, 0.22, 0x3a3a3e, { x: gx, y: top - 0.55, z: s * 1.4 }));
+    out.push(beam([-0.9, wy + 1.15, s * 0.75], [gx, top - 0.3, s * 1.4], 0.03, WIRE, 3), beam([gx, top - 0.5, s * 1.45], [-6.35, 3.75, s * 2.2], 0.03, WIRE, 3));
+    out.push(box(0.9, 1.3, 0.12, 0x5a3a30, { x: -6.3, y: 2.45, z: s * 2.22, rx: s * -0.12 }), box(0.94, 0.08, 0.16, ORANGE, { x: -6.3, y: 3.72, z: s * 2.22 + s * 0.16, rx: s * -0.12 }));
+  }
+  out.push(beam([gx, top, -1.75], [gx, top, 1.75], 0.15, ORANGE, 5), beam([gx, top, 0], [1.7, 7.6, 0], 0.025, WIRE, 3));
+  return out;
 }
 
 // ---- oil, by stage ----
@@ -511,6 +610,12 @@ const PLANTS: ReadonlySet<KitModel> = new Set<KitModel>(['wildRice', 'resinPine'
 const WILD: ReadonlySet<KitModel> = new Set<KitModel>(['outcrop', 'oreRock', 'boulders', 'oysters', 'salmonShoal', 'tunaShoal', 'troutShoal', 'whale', 'crabRock', 'coralBed', 'oilSlick', 'resinPine', 'campfire']);
 export const kitBoost = (k: KitModel): number => (PEOPLE.has(k) ? PERSON_BOOST : FIGURES.has(k) ? FIGURE_BOOST : WILD.has(k) ? WILD_BOOST : SMALL.has(k) ? SMALL_BOOST : PLANTS.has(k) ? PLANT_BOOST : KIT_BOOST);
 export const FENCE_BOOST = SMALL_BOOST;
+// The works built on a level floor: on a slope each stands level with the
+// highest ground under it on a foundation (cityProps.ts), and is sited
+// where its ground is flattest (rural/layout.ts). What else stands still
+// (carts, heaps, tents, rock) sits down into the slope.
+export const WORKS: ReadonlySet<KitModel> = new Set<KitModel>(['windpump', 'stoneSilo', 'steelSilo', 'shelter', 'shack', 'lodge', 'sawmill', 'headframe', 'steamHeadframe', 'smelter', 'treadCrane', 'steamCrane', 'derrick', 'pumpjack', 'oilTank']);
+export const isWorks = (m: string): boolean => WORKS.has(m as KitModel);
 // A kit model in tile steps.
 export function kitModel(k: KitModel): G[] {
   const m = new THREE.Matrix4().makeScale(CREATURE_SCALE, CREATURE_SCALE, CREATURE_SCALE);

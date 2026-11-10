@@ -406,7 +406,7 @@ function workedItems(imp: ImprovementKey, stage: number, res: ResourceKey | null
   }
   const inp: RuralInput = { imp, stage, res, region, axis: 0, salt: seed, seed, yard: (i) => areaLook(imp, land, null, 15, i, seed) };
   // (A wetland's water is its pools; the farm keeps in from its border band.)
-  const site: RuralSite = { free: () => true, depth: (p) => (pools?.(p) ? 0.004 : -1), wade: PADDY_WATER, ours: (p) => rhoOf(6, p) <= FILL, inner: (p) => rhoOf(6, p) <= 0.85, pool: (p) => pools?.(p) ?? false, field: imp === 'pasture' ? largestRect((u, v) => rhoOf(6, { x: u, y: v }) <= FILL) : null };
+  const site: RuralSite = { free: () => true, depth: (p) => (pools?.(p) ? 0.004 : -1), wade: PADDY_WATER, ours: (p) => rhoOf(6, p) <= FILL, inner: (p) => rhoOf(6, p) <= 0.85, pool: (p) => pools?.(p) ?? false, ground: () => 0, field: imp === 'pasture' ? largestRect((u, v) => rhoOf(6, { x: u, y: v }) <= FILL) : null };
   const farm = planFarm(inp, site);
   if (!farm) return out;
   const plan = layoutRural(inp, farm, site);

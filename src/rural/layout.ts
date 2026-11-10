@@ -19,8 +19,8 @@ import { paintFarm, WORK_OF, type Farm } from '../farmPainter.ts';
 import { CROP_HEIGHT, CROP_PALETTE, CROP_STAND_SATURATION, PLOT_SIZES, MAX_STAGE, PLANT_ROW_W, cropIndex, plotAt, FARM_LANE } from './plots.ts';
 import { SCATTER_GAP, scatterIn, type AreaLook, type CropRegion, type Fill } from './look.ts';
 import { stageLook, plotStage, pastureFences, herdSize } from './stages.ts';
-import { kitBoost, FIGURES, FENCE_BOOST } from './kit.ts';
-import { ruralGeometry, ruralModelKind, roamOf, wanderMax, wanderIn, isFloraRural, type RuralModel } from './models.ts';
+import { kitBoost, FIGURES, FENCE_BOOST, isWorks } from './kit.ts';
+import { ruralGeometry, ruralModelKind, footingOf, roamOf, wanderMax, wanderIn, isFloraRural, type RuralModel } from './models.ts';
 
 export interface RuralItem {
   readonly model: RuralModel;
@@ -38,6 +38,7 @@ export interface RuralSite {
   readonly ours: (p: Pt) => boolean;  // the land painted as this tile's (its fields fill it)
   readonly inner: (p: Pt) => boolean; // that, with some room all round (a fence keeps to it)
   readonly pool: (p: Pt) => boolean;  // its water a wetland's own pools, not a river or the sea
+  readonly ground: (p: Pt) => number; // the ground's height (tile steps): the works are sited where it is flattest
   readonly field: FieldRect | null;   // a pasture's: the largest rectangle in its padded land (largestRect), in the farm's frame
 }
 // A rectangle in the farm's frame (u along its axis, v across: tile steps).
@@ -123,6 +124,22 @@ function lotFit(m: RuralModel): number {
   // (A town's houses stand on lots CITY_CELL / CELL larger than the plain ones: cityDress.ts.)
   return (CITY_CELL / CELL) * Math.min((2 * hd) / (b.max.x - b.min.x), (2 * hw) / (b.max.z - b.min.z));
 }
+// How far the ground falls across a model's footing (rural/models.ts) at p, turned to
+// `heading`, at its size `s` (tile steps): its corners, its sides' middles
+// and its middle.
+function reliefUnder(m: RuralModel, p: Pt, heading: number, s: number, ground: (p: Pt) => number): number {
+  const { x0, x1, z0, z1 } = footingOf(ruralModelKind(m)), c = Math.cos(heading), sn = Math.sin(heading);
+  let lo = Infinity, hi = -Infinity;
+  for (const x of [x0, (x0 + x1) / 2, x1]) for (const y of [z0, (z0 + z1) / 2, z1]) {
+    const g = ground({ x: p.x + s * (x * c - y * sn), y: p.y + s * (x * sn + y * c) });
+    lo = Math.min(lo, g); hi = Math.max(hi, g);
+  }
+  return hi - lo;
+}
+// The slope a work is happy on (the ground's fall across its footprint over
+// the footprint's length): steeper, it looks further (and stands on the
+// flattest it found, its foundation making up the rest).
+const WORKS_SLOPE = 0.06;
 // How far a model reaches from its middle (tile steps, at its size `s`).
 const reach = new Map<RuralModel, number>();
 function radiusOf(m: RuralModel, s: number): number {
@@ -272,9 +289,15 @@ export function layoutRural(inp: RuralInput, farm: Farm, site: RuralSite, keep: 
     // (A walker keeps its whole walk clear, not just where it stands.)
     const rad = radiusOf(m, s) * (fig ? 0.5 : 1) + walkOf(m, s), gap = fig ? 0.004 : GAP;
     const leaf = th.colors ? th.colors[Math.floor(r() * th.colors.length)]! : 0xffffff;
-    for (let tries = 0; tries < 40; tries++) {
+    // (A work: the flattest spot and way round found, unless one is flat enough.)
+    const works = isWorks(m), span = works ? Math.max(footingOf(ruralModelKind(m)).x1 - footingOf(ruralModelKind(m)).x0, footingOf(ruralModelKind(m)).z1 - footingOf(ruralModelKind(m)).z0) * s : 0;
+    let best: { p: Pt; heading: number; fall: number } | null = null;
+    for (let tries = 0; tries <= 40; tries++) {
+      // (Out of tries: the flattest, if any.)
+      if (tries === 40 && !best) break;
       let p: Pt;
-      if (th.where === 'home') {
+      if (tries === 40) p = best!.p;
+      else if (th.where === 'home') {
         // (Round the house, a little further out each few tries.)
         const a = r() * Math.PI * 2, dist = HOUSE_R + rad + gap + 0.005 * Math.floor(tries / 4);
         p = { x: farm.home.x + Math.cos(a) * dist, y: farm.home.y + Math.sin(a) * dist };
@@ -292,8 +315,19 @@ export function layoutRural(inp: RuralInput, farm: Farm, site: RuralSite, keep: 
         if (cropIndex(plotAt(pu, pv, inp.salt, ps).h, ps) !== (m === 'combine' ? 0 : 3)) continue;
       }
       // (Machines and teams work along the plots; people face about.)
+      let heading = (th.where === 'field' && !fig) || m === 'ploughTeam' ? along : r() * 6.28;
+      if (works && tries < 40) {
+        // (Its long side along the slope's contour, if a quarter turn finds it flatter.)
+        const turns = th.where === 'field' ? [heading, heading + Math.PI] : [heading, heading + Math.PI / 2, heading + Math.PI, heading + 1.5 * Math.PI];
+        const falls = turns.map((h) => reliefUnder(m, p, h, s, site.ground)), k = falls.indexOf(Math.min(...falls));
+        heading = turns[k]!;
+        if (falls[k]! > WORKS_SLOPE * span) {
+          if (!best || falls[k]! < best.fall) best = { p, heading, fall: falls[k]! };
+          continue;
+        }
+      } else if (tries === 40) heading = best!.heading;
       // (A lodge kept low: at its full height it dwarfed the homestead.)
-      add(m, p, (th.where === 'field' && !fig) || m === 'ploughTeam' ? along : r() * 6.28, m === 'lodge' ? [s, s * LODGE_SQUASH, s] : s, leaf);
+      add(m, p, heading, m === 'lodge' ? [s, s * LODGE_SQUASH, s] : s, leaf);
       // (A person's wanders keep on the farm's land, as dry as where it stands, off the roads.)
       if (roamOf(m)) walkers.push({ i: items.length - 1, ok: (q) => rhoOf(6, q) <= 0.95 && site.ours(q) && site.free(q) && site.depth(q) <= (imp === 'wetland' ? site.wade : 0) });
       taken.push({ p, r: rad });

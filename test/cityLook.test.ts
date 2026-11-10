@@ -250,3 +250,55 @@ describe('L6: no building stands on a street or a road', () => {
 });
 // (Was L8: floors cut into the ground. Nothing is cut now: a house stands
 // at the highest ground under it, a foundation below, L5.)
+
+// A gate's passage stays open: the ring's pieces are shorter than a gate,
+// so its cut spans their joints (and the ring's closing one); no wall piece
+// stands in it, and the walls close up to the gatehouse on both sides.
+describe('L8: walls leave each gate open and meet it on both sides', () => {
+  const g = grownGame();
+  for (const c of g.cities) c.buildings.add('walls');
+  const at = (d: THREE.Vector3): CitySpot => ({ dir: d, ground: 0.01, water: 0, slope: 0, urban: 1 });
+  const sampler = (t: number, i: number, wa: number, wb: number): CitySpot => {
+    const tl = g.tiles[t]!, k = tl.corners.length;
+    const A = g.globe.triCenters[tl.corners[i]!]!, B = g.globe.triCenters[tl.corners[(i + 1) % k]!]!;
+    return at(tl.center.clone().multiplyScalar(1 - wa - wb).addScaledVector(A, wa).addScaledVector(B, wb).normalize());
+  };
+  const scale = g.globe.avgEdgeAngle / 0.07;
+  const cp = new CityProps(g, sampler, (d) => ({ ...at(d), t: locate(g.globe, d).t }), scale);
+  const K = 1.5 * 0.276 * scale; // model units (buildingCatalog.ts) to the matrices' units
+  let gates = 0, blocked = 0, open = 0;
+  for (const c of g.cities) {
+    if (g.wallsObsolete(c.owner)) continue;
+    const ps = cp.place(c.tile);
+    const inv = new Map(ps.map((p) => [p, p.matrix.clone().invert()] as const));
+    const local = (v: THREE.Vector3, p: (typeof ps)[number]) => v.clone().applyMatrix4(inv.get(p)!).divideScalar(K);
+    for (const gt of ps.filter((p) => p.kind === 'wallGate')) {
+      gates++;
+      // (The passage: 0.005 across between its towers, 0.0066 deep; a wall piece 0.01 by 0.0042.)
+      const inPassage = ps.some((s) => s.kind === 'wallSegment' && [-1, -0.5, 0, 0.5, 1].some((i) => [-1, 0, 1].some((j) => {
+        const l = local(new THREE.Vector3(0.005 * i, 0.0005, 0.0021 * j).multiplyScalar(K).applyMatrix4(s.matrix), gt);
+        return Math.abs(l.x) < 0.0023 && Math.abs(l.z) < 0.003;
+      })));
+      // (Nor a neighbouring gate's tower: towers 0.0025 to 0.0059 out, 0.0066 deep.)
+      const towerIn = ps.some((s) => s !== gt && s.kind === 'wallGate' && [-0.0058, -0.0042, -0.0026, 0.0026, 0.0042, 0.0058].some((x) => [-0.0032, 0, 0.0032].some((z) => {
+        const l = local(new THREE.Vector3(x, 0.0005, z).multiplyScalar(K).applyMatrix4(s.matrix), gt);
+        return Math.abs(l.x) < 0.0023 && Math.abs(l.z) < 0.003;
+      })));
+      if (inPassage || towerIn) blocked++;
+      // (Each of its towers, 0.0025 to 0.0059 out and 0.0066 deep, touched by a wall piece, a tower or the next gate.)
+      for (const side of [-1, 1]) {
+        const touches = (s: (typeof ps)[number]) => {
+          const [hx, hz] = s.kind === 'wallTower' ? [0.0022, 0.0022] : s.kind === 'wallGate' ? [0.0059, 0.0033] : [0.005, 0.0021];
+          return [-1, -0.5, 0, 0.5, 1].some((i) => [-1, 0, 1].some((j) => {
+            const l = local(new THREE.Vector3(hx * i, 0.0005, hz * j).multiplyScalar(K).applyMatrix4(s.matrix), gt);
+            return side * l.x > 0.0022 && side * l.x < 0.0062 && Math.abs(l.z) < 0.0036;
+          }));
+        };
+        if (!ps.some((s) => s !== gt && (s.kind === 'wallSegment' || s.kind === 'wallTower' || s.kind === 'wallGate') && touches(s))) open++;
+      }
+    }
+  }
+  it('has gates to check', () => expect(gates).toBeGreaterThan(10));
+  it('no wall piece stands in a gate passage', () => expect(blocked).toBe(0));
+  it('the walls meet every gate on both sides', () => expect(open).toBe(0));
+});

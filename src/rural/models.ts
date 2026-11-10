@@ -153,17 +153,19 @@ function patch(n: number, salt: number, tall: number): THREE.BufferGeometry {
   }
   return cards(pos, uv);
 }
-// A run of fence along x, a unit long (instances stretch it), 1.2 m tall:
+// A bay of fence along x, a unit long (instances stretch it, and shear it
+// so it runs from post to post on the ground: cityProps.ts), 1.2 m tall:
 // one card, its posts and rails or wattle drawn on it (propMaterial.ts
-// fenceTexture, z 5), the wood's colour; three units of the texture to a
-// run (as long as fenceAlong makes them).
+// fenceTexture, z 5, a bay to a unit of the texture), weathered wood's
+// light grey-brown. Lit as if facing up a little (the ground's light), so
+// it reads the same from either side.
 function fenceCard(kind: (typeof FENCE_BANDS)[number]): THREE.BufferGeometry {
   const b = FENCE_BANDS.indexOf(kind), v0 = (b * 42) / 128, v1 = ((b + 1) * 42 - 1) / 128, h = 1.2 * CREATURE_SCALE, w = 0.5 * CREATURE_SCALE;
   const pos: number[] = [], uv: number[] = [];
-  for (const [s, t] of [[-1, 0], [1, 0], [1, 1], [-1, 0], [1, 1], [-1, 1]] as const) { pos.push(s * w, t * h, 0); uv.push(((s + 1) / 2) * 3, t ? v1 : v0, 5); }
-  const g = cards(pos, uv, 0), col = g.getAttribute('color') as THREE.BufferAttribute, c = new THREE.Color(kind === 'wire' ? 0x7a6a58 : kind === 'rails' ? 0x7a5f45 : 0x8a7048);
+  for (const [s, t] of [[-1, 0], [1, 0], [1, 1], [-1, 0], [1, 1], [-1, 1]] as const) { pos.push(s * w, t * h, 0); uv.push((s + 1) / 2, t ? v1 : v0, 5); }
+  const g = cards(pos, uv, 0), col = g.getAttribute('color') as THREE.BufferAttribute, c = new THREE.Color(kind === 'wire' ? 0xa49482 : kind === 'rails' ? 0xab8e68 : 0xb09468);
   for (let i = 0; i < col.count; i++) col.setXYZ(i, c.r, c.g, c.b);
-  g.setAttribute('normal', new THREE.Float32BufferAttribute(Array.from({ length: pos.length / 3 }, () => [0, 0, 1]).flat(), 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(Array.from({ length: pos.length / 3 }, () => [0, 0.8, 0.6]).flat(), 3));
   return g;
 }
 // The wild plants, of leaf cards (the trees' crowns' way: propCatalog.ts),
@@ -326,4 +328,28 @@ export function ruralGeometry(kind: RuralModelKind): THREE.BufferGeometry {
     g.setAttribute('gait', new THREE.Float32BufferAttribute(gaitOf(g, m), 2));
   }
   return g;
+}
+// What of a model meets the ground (tile steps a model unit): the box of its
+// parts near its foot (in the lowest eighth of its height), x and z. Its
+// footing on a slope is judged on this, not on what it holds up overhead (a
+// windpump's wheel and vane, a headframe's sheave): cityProps.ts,
+// rural/layout.ts.
+export interface Footing { readonly x0: number; readonly x1: number; readonly z0: number; readonly z1: number }
+const footings = new Map<RuralModelKind, Footing>();
+export function footingOf(kind: RuralModelKind): Footing {
+  let f = footings.get(kind);
+  if (!f) {
+    const pos = ruralGeometry(kind).getAttribute('position');
+    let y0 = Infinity, y1 = -Infinity;
+    for (let i = 0; i < pos.count; i++) { y0 = Math.min(y0, pos.getY(i)); y1 = Math.max(y1, pos.getY(i)); }
+    const top = y0 + (y1 - y0) / 8;
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (let i = 0; i < pos.count; i++) {
+      if (pos.getY(i) > top) continue;
+      x0 = Math.min(x0, pos.getX(i)); x1 = Math.max(x1, pos.getX(i)); z0 = Math.min(z0, pos.getZ(i)); z1 = Math.max(z1, pos.getZ(i));
+    }
+    f = { x0, x1, z0, z1 };
+    footings.set(kind, f);
+  }
+  return f;
 }

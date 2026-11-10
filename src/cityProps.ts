@@ -24,9 +24,11 @@ import { LOT_SIZE, rhoOf, type Floors, type Footprint } from './town/geometry.ts
 import { planRoads, roadLines, ROAD_HALF_WIDTH } from './roads.ts';
 import { farmAxis, WORK_OF, type RuralDensity } from './farmPainter.ts';
 import { SCATTER_GAP, areaLook, cropRegion, scatterIn, type RGB } from './rural/look.ts';
-import { ruralModelKind, type RuralModel } from './rural/models.ts';
+import { ruralModelKind, footingOf, isFloraRural, type RuralModel } from './rural/models.ts';
 import { stageLook, waterLook } from './rural/stages.ts';
-import { kitBoost } from './rural/kit.ts';
+import { kitBoost, isWorks, FIGURES, type KitModel } from './rural/kit.ts';
+import { FENCE_BANDS } from './propMaterial.ts';
+import { CREATURE_SCALE } from './creatures.ts';
 import { planFarm, layoutRural, largestRect, HOMESTEAD_SCALE, HOMESTEAD_LOT, PADDY_DEPTH, type FieldRect, type RuralInput, type RuralSite } from './rural/layout.ts';
 import { RESOURCE_IMPROVEMENT } from './resources.ts';
 import { BIOMES } from './terrain.ts';
@@ -140,6 +142,9 @@ const FOUNDATION_UNIT = 0.01;
 // Each civ builds its foundations its own way (by player): grey stone,
 // sandstone, brick, basalt, timber, marble, adobe, mossy stone.
 const FOUNDATION_STYLE = [0x8d877c, 0xb59a72, 0x9a6a55, 0x5f5a55, 0x7a5f45, 0xd2ccbe, 0xb08a5a, 0x6f7a62] as const;
+// A pasture's fences (rural/models.ts fenceCard): bays drawn post to post on the ground.
+const FENCES: ReadonlySet<string> = new Set(FENCE_BANDS);
+const isFence = (m: RuralModel): boolean => FENCES.has(m);
 // render.ts draws prop models at 1.5 × PROP_SIZE of the reference size.
 const PROP_SCALE = 1.5 * 0.276;
 // The breathing room a town (its walls) and a pasture's fence keep from
@@ -560,15 +565,59 @@ export class CityProps {
       const gateSize = HOUSE_SCALE * Math.min(GATE_GROW, Math.max(1, need)), gateWide = Math.max(1, need / GATE_GROW);
       const gateHalf = (GATE_HALF * this.scale * PROP_SCALE * gateSize * gateWide) / frame.k;
       const towerR = (WALL_TOWER_R * this.scale * PROP_SCALE * HOUSE_SCALE) / frame.k;
-      // Where each road crosses the ring: the piece and how far along it.
-      const gates: { n: number; at: Pt2 }[] = [];
+      // (The ring measured along: where each of its points stands, from the
+      // first, and the point that far along it, round and round: closed.)
+      const S: number[] = [0];
+      for (let n = 0; n + 1 < ring.length; n++) S.push(S[n]! + Math.hypot(ring[n + 1]!.x - ring[n]!.x, ring[n + 1]!.y - ring[n]!.y));
+      const L = S[S.length - 1]!;
+      const ringAt = (s: number): Pt2 => {
+        const w = ((s % L) + L) % L;
+        let n = 0;
+        while (n + 2 < S.length && S[n + 1]! < w) n++;
+        const a = ring[n]!, b = ring[n + 1]!, l = S[n + 1]! - S[n]!, t = l > 0 ? (w - S[n]!) / l : 0;
+        return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+      };
+      // Where each road crosses the ring: how far along it. (A gate is
+      // longer than the ring's pieces are apart: its passage is cut out of
+      // the ring as a whole, across the joints it spans, not out of its
+      // piece alone. Roads crossing within a gate's half length of each
+      // other share one gate.)
+      const crossings: number[] = [];
       for (const [a, b] of ways) for (let n = 0; n + 1 < ring.length; n++) {
         const c = ring[n]!, d = ring[n + 1]!;
         const den = (b.x - a.x) * (d.y - c.y) - (b.y - a.y) * (d.x - c.x);
         if (Math.abs(den) < 1e-12) continue;
         const t = ((c.x - a.x) * (d.y - c.y) - (c.y - a.y) * (d.x - c.x)) / den, u = ((c.x - a.x) * (b.y - a.y) - (c.y - a.y) * (b.x - a.x)) / den;
-        if (t >= 0 && t <= 1 && u >= 0 && u <= 1) gates.push({ n, at: { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t } });
+        if (t >= 0 && t <= 1 && u >= 0 && u <= 1) crossings.push(S[n]! + u * (S[n + 1]! - S[n]!));
       }
+      crossings.sort((a, b) => a - b);
+      const along: number[][] = [];
+      for (const s of crossings) {
+        const last = along[along.length - 1];
+        if (last && s - last[0]! < gateHalf) last.push(s); else along.push([s]);
+      }
+      // (Round the joint where the ring closes: the last and the first.)
+      if (along.length > 1 && along[0]![0]! + L - along[along.length - 1]![0]! < gateHalf) along[0]!.unshift(...along.pop()!.map((s) => s - L));
+      // Each gate: its middle, and the ring's points where its walls end
+      // either side (it stands along the line between them, so it meets
+      // the walls at both ends, however the ring bends under it).
+      // (Two gates closer than their length: moved apart about their middle
+      // to stand side by side, neither tower in the other's passage.)
+      const mids = along.map((ss) => ss.reduce((a, b) => a + b, 0) / ss.length);
+      for (let pass = 0; pass < 4 && mids.length > 1; pass++) {
+        let moved = false;
+        mids.forEach((s, i) => {
+          const j = (i + 1) % mids.length, gap = ((mids[j]! - s) % L + L) % L;
+          if (gap >= 2 * gateHalf - 1e-9 || i === j) return;
+          const push = gateHalf - gap / 2;
+          mids[i] = s - push; mids[j] = mids[j]! + push; moved = true;
+        });
+        if (!moved) break;
+      }
+      const gates = mids.map((s) => {
+        const a = ringAt(s - gateHalf), b = ringAt(s + gateHalf);
+        return { s, a, b, at: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } };
+      });
       const nearGate = (p: Pt2, r: number) => gates.some((q) => Math.hypot(q.at.x - p.x, q.at.y - p.y) < r);
       const segment = (p: Pt2, q: Pt2) => {
         const s = this.sampleDir(toDir(p)), nx = this.sampleDir(toDir(q));
@@ -585,17 +634,23 @@ export class CityProps {
         }
         const q = ring[n + 1];
         if (!q) return;
-        // (The piece in parts either side of its gates.)
-        const len = Math.hypot(q.x - p.x, q.y - p.y), along = (t: number): Pt2 => ({ x: p.x + ((q.x - p.x) * t) / len, y: p.y + ((q.y - p.y) * t) / len });
-        let from = 0;
-        for (const gt of gates.filter((x) => x.n === n).map((x) => Math.hypot(x.at.x - p.x, x.at.y - p.y)).sort((a, b) => a - b)) {
-          if (gt - gateHalf > from + 1e-4) segment(along(from), along(gt - gateHalf));
-          from = Math.max(from, gt + gateHalf);
-          const at = this.sampleDir(toDir(along(gt)));
-          put(city.tile, ...this.stand('wallGate', at.dir, facing(at.dir, toDir(q)), gateSize, buildingEntry('wallGate').leaf, rand, city.owner, gateWide));
+        // (The piece in parts outside its gates' passages, which may reach
+        // in from a gate on the pieces either side, or across the ring's
+        // closing joint; a sliver left by a cut, too short to stand, left
+        // out: the gate's tower and the next piece close it.)
+        const s0 = S[n]!, s1 = S[n + 1]!, len = s1 - s0;
+        const point = (s: number): Pt2 => ({ x: p.x + ((q.x - p.x) * (s - s0)) / len, y: p.y + ((q.y - p.y) * (s - s0)) / len });
+        const cuts = gates.flatMap((x) => [-L, 0, L].map((w) => [x.s + w - gateHalf, x.s + w + gateHalf] as const)).filter(([a, b]) => b > s0 && a < s1).sort((a, b) => a[0] - b[0]);
+        let from = s0;
+        for (const [a, b] of [...cuts, [s1, s1] as const]) {
+          if (a - from > 0.05 * gateHalf) segment(point(from), point(a));
+          from = Math.max(from, b);
         }
-        if (len > from + 1e-4) segment(along(from), q);
       });
+      for (const x of gates) {
+        const at = this.sampleDir(toDir(x.at));
+        put(city.tile, ...this.stand('wallGate', at.dir, facing(at.dir, toDir(x.b)), gateSize, buildingEntry('wallGate').leaf, rand, city.owner, gateWide));
+      }
     }
 
     // Wonders beside the city on flat land (the Pyramids, Stonehenge, or
@@ -677,6 +732,7 @@ export class CityProps {
         inner: imp === 'pasture' ? innerMask(toT, (d) => this.sampleDir(d), (s) => (s.owner === undefined || s.owner === t) && s.water - s.ground <= DRY) : () => false,
         // (A paddy's water is its own pools: not a river running by, nor the sea.)
         pool: (p) => { const s = spotAt(p); return (s.bank ?? 0) < 0.05 && (s.coast ?? 1) > 0.3; },
+        ground: (p) => spotAt(p).ground / D,
         field: imp === 'pasture' ? this.farmRect(t) : null,
       };
       const farm = planFarm(inp, site);
@@ -686,15 +742,47 @@ export class CityProps {
         return [];
       };
       // One model at p, facing `heading` (the hex's frame), never on a road crossing the farm.
+      // On a slope: a fence's bay runs from post to post on the ground; a
+      // work (WORKS) stands level with the highest ground under it on a
+      // foundation, as the town's houses do; what else stands still sits
+      // down to the lowest; people, beasts and plants where they stand.
       const one = (m: RuralModel, p: Pt2, heading: number, size: readonly [number, number, number], leaf: number, shade = 1, wander = 0) => {
-        const dir = toT(p), smp = this.sampleDir(dir);
+        const kind = ruralModelKind(m), dir = toT(p), smp = this.sampleDir(dir);
         const yaw = facing(dir, toT({ x: p.x + 0.01 * Math.cos(heading), y: p.y + 0.01 * Math.sin(heading) }));
         const q = new THREE.Quaternion().setFromUnitVectors(UP, dir).multiply(new THREE.Quaternion().setFromAxisAngle(UP, yaw));
-        const pos = dir.clone().multiplyScalar(1 + smp.ground - 0.00005 * this.scale);
-        const b: PlacedBuilding = { kind: ruralModelKind(m), matrix: new THREE.Matrix4().compose(pos, q, new THREE.Vector3(size[0] * D, size[1] * D, size[2] * D)), color: new THREE.Color(shade, shade, shade), leaf: new THREE.Color(leaf),
-          wander: (wander * kT) / (size[0] * D) };
+        const sc = new THREE.Vector3(size[0] * D, size[1] * D, size[2] * D), sink = 0.00005 * this.scale;
+        const out: PlacedBuilding[] = [];
+        let matrix: THREE.Matrix4;
+        if (isFence(m)) {
+          // (Its ends on the ground, the bay sheared between them: the posts upright, the rails along the slope.)
+          const half = (size[0] * CREATURE_SCALE) / 2, c = Math.cos(heading), sn = Math.sin(heading);
+          const [a, b] = [-1, 1].map((k) => { const d = toT({ x: p.x + k * half * c, y: p.y + k * half * sn }); return d.multiplyScalar(1 + this.sampleDir(d).ground - sink); }) as [THREE.Vector3, THREE.Vector3];
+          const mid = a.clone().add(b).multiplyScalar(0.5), up = mid.clone().normalize(), run = b.clone().sub(a);
+          const side = run.clone().cross(up).normalize();
+          matrix = new THREE.Matrix4().makeBasis(run.multiplyScalar(1 / CREATURE_SCALE), up.multiplyScalar(sc.y), side.multiplyScalar(sc.z)).setPosition(mid);
+        } else if (isWorks(m) || (!FIGURES.has(m as KitModel) && !isFloraRural(kind))) {
+          // (The ground under its footing (rural/models.ts): its corners, sides' middles and middle.)
+          const f = footingOf(kind), X = new THREE.Vector3(1, 0, 0).applyQuaternion(q).multiplyScalar(sc.x), Z = new THREE.Vector3(0, 0, 1).applyQuaternion(q).multiplyScalar(sc.z);
+          let low = smp.ground, high = low;
+          for (const x of [f.x0, (f.x0 + f.x1) / 2, f.x1]) for (const z of [f.z0, (f.z0 + f.z1) / 2, f.z1]) {
+            const h = this.sampleDir(dir.clone().addScaledVector(X, x).addScaledVector(Z, z).normalize()).ground;
+            low = Math.min(low, h); high = Math.max(high, h);
+          }
+          if (isWorks(m)) {
+            const lift = 0.00012 * this.scale;
+            matrix = new THREE.Matrix4().compose(dir.clone().multiplyScalar(1 + high - lift), q, sc);
+            if (high - low >= FOUNDATION_MIN * this.scale) {
+              const fu = this.scale * PROP_SCALE * FOUNDATION_UNIT, fs = 0.0002 * this.scale;
+              const at = dir.clone().addScaledVector(X, (f.x0 + f.x1) / 2).addScaledVector(Z, (f.z0 + f.z1) / 2).normalize();
+              const k = 0.92 + 0.1 * mulberry32(mix(t, Math.round(p.x * 1e4) ^ Math.round(p.y * 1e4) * 7919))();
+              out.push({ kind: 'foundation', matrix: new THREE.Matrix4().compose(at.multiplyScalar(1 + low - fs), q, new THREE.Vector3(((f.x1 - f.x0) * sc.x) / fu, (high - lift - low + fs) / fu, ((f.z1 - f.z0) * sc.z) / fu)),
+                color: new THREE.Color(k, k, k), leaf: new THREE.Color(FOUNDATION_STYLE[((city.owner % FOUNDATION_STYLE.length) + FOUNDATION_STYLE.length) % FOUNDATION_STYLE.length]!) });
+            }
+          } else matrix = new THREE.Matrix4().compose(dir.clone().multiplyScalar(1 + low - sink), q, sc);
+        } else matrix = new THREE.Matrix4().compose(dir.clone().multiplyScalar(1 + smp.ground - sink), q, sc);
+        const b: PlacedBuilding = { kind, matrix, color: new THREE.Color(shade, shade, shade), leaf: new THREE.Color(leaf), wander: (wander * kT) / (size[0] * D) };
         if (!clear.free(this.footprint(b))) return false;
-        put(t, b);
+        put(t, b, ...out);
         return true;
       };
       // A mine's adits, cut where the tile is steepest, each with its spoil below it.

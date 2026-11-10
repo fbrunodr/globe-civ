@@ -85,7 +85,7 @@ export const TECHS: Record<TechKey, TechDef> = {
   calendar:        t('Calendar', 1, 35, ['astrology', 'irrigation'], { effects: [onImprovement('plantation', { gold: 1 })], wonders: ['statueOfZeus'] }),
   // ---- Medieval ----
   education:       t('Education', 2, 55, ['mathematics', 'philosophy'], { buildings: ['academy'] }),
-  apprenticeship:  t('Apprenticeship', 2, 50, ['currency', 'construction'], { units: ['manAtArms'], buildings: ['smithy'], wonders: ['angkorWat'] }),
+  apprenticeship:  t('Apprenticeship', 2, 50, ['currency', 'construction'], { units: ['manAtArms'], buildings: ['smithy'] }),
   machinery:       t('Machinery', 2, 55, ['ironWorking', 'engineering'], { units: ['crossbowman'] }),
   militaryTactics: t('Military Tactics', 2, 55, ['mathematics', 'ironWorking'], { units: ['pikeman'] }),
   stirrups:        t('Stirrups', 2, 55, ['horsebackRiding', 'ironWorking'], { units: ['knight'] }),
@@ -95,7 +95,7 @@ export const TECHS: Record<TechKey, TechDef> = {
   drainage:        t('Drainage', 2, 45, ['engineering'], { effects: [onImprovement('wetland', { food: 1 })], wonders: ['machuPicchu'] }),
   domes:           t('Domes', 2, 55, ['engineering', 'mathematics'], { wonders: ['hagiaSophia'] }),
   compass:         t('Compass', 2, 50, ['shipbuilding', 'mathematics'], { units: ['galleass', 'cog'], effects: [onImprovement('boats', { food: 1 })] }),
-  craftGuilds:     t('Craft Guilds', 2, 55, ['apprenticeship', 'trade'], { buildings: ['guildHall'], wonders: ['notreDame'] }),
+  craftGuilds:     t('Craft Guilds', 2, 55, ['apprenticeship', 'trade'], { buildings: ['guildHall'] }),
   paper:           t('Paper', 2, 50, ['literature', 'currency'], { effects: [perSpecialist('scientist', { science: 1 })], wonders: ['chichenItza'] }),
   // ---- Renaissance ----
   printingPress:   t('Printing Press', 3, 85, ['education', 'paper'], { buildings: ['university'] }),
@@ -118,9 +118,9 @@ export const TECHS: Record<TechKey, TechDef> = {
   sanitation:      t('Sanitation', 4, 140, ['scientificTheory'], { buildings: ['hospital'] }),
   militaryScience: t('Military Science', 4, 140, ['rifling', 'stirrups'], { units: ['cavalry'], wonders: ['brandenburgGate'] }),
   ballistics:      t('Ballistics', 4, 145, ['rifling', 'industrialization'], { units: ['machineGun'] }),
-  steamPower:      t('Steam Power', 4, 140, ['industrialization', 'physics'], { units: ['ironclad', 'cruiser'], effects: [onImprovement('mine', { prod: 1 })], wonders: ['statueOfLiberty'] }),
+  steamPower:      t('Steam Power', 4, 140, ['industrialization', 'physics'], { units: ['ironclad', 'cruiser'], effects: [onImprovement('mine', { prod: 1 })] }),
   railroad:        t('Railroad', 4, 145, ['steamPower'], { units: ['greatWarInfantry'], buildings: ['railwayStation'], effects: [onImprovement('camp', { prod: 1 })] }),
-  economics:       t('Economics', 4, 135, ['industrialization', 'accounting'], { buildings: ['stockExchange'], wonders: ['bigBen'] }),
+  economics:       t('Economics', 4, 135, ['industrialization', 'accounting'], { buildings: ['stockExchange'] }),
   fertilizer:      t('Fertilizer', 4, 130, ['cropRotation', 'chemistry'], { effects: [onImprovement('farm', { food: 1 }), onImprovement('plantation', { gold: 1 })] }),
   archaeology:     t('Archaeology', 4, 125, ['patronage', 'scientificTheory'], { buildings: ['museum'], wonders: ['neuschwanstein'] }),
   pedagogy:        t('Pedagogy', 4, 125, ['scientificTheory', 'printingPress'], { buildings: ['publicSchool'] }),
@@ -131,7 +131,7 @@ export const TECHS: Record<TechKey, TechDef> = {
   refining:        t('Refining', 5, 195, ['industrialization', 'chemistry'], { units: ['airship'] }), // (reveals Oil)
   combustion:      t('Combustion', 5, 210, ['refining', 'steamPower'], { units: ['landship', 'destroyer'], effects: [onImprovement('well', { prod: 1 })] }),
   replaceableParts: t('Replaceable Parts', 5, 215, ['electricity', 'militaryScience'], { units: ['infantry', 'antiTank'] }),
-  radio:           t('Radio', 5, 205, ['electricity'], { units: ['marine'], buildings: ['broadcastTower'], wonders: ['cristoRedentor'] }),
+  radio:           t('Radio', 5, 205, ['electricity'], { units: ['marine'], buildings: ['broadcastTower'] }),
   motorizedWarfare: t('Motorized Warfare', 5, 235, ['combustion', 'replaceableParts'], { units: ['tank'] }),
   electronics:     t('Electronics', 5, 215, ['electricity', 'refining'], { units: ['submarine'], buildings: ['powerPlant'], effects: [onImprovement('well', { prod: 1 })] }),
   steel:           t('Steel', 5, 205, ['railroad', 'ballistics'], { units: ['battleship'], wonders: ['empireState'], effects: [prodPct('building', 10)] }),
