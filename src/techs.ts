@@ -71,7 +71,7 @@ export const TECHS: Record<TechKey, TechDef> = {
   mysticism:       t('Mysticism', 0, 40, ['astrology'], { buildings: ['temple'] }),
   // ---- Classical ----
   celestialNavigation: t('Celestial Navigation', 1, 40, ['sailing', 'astrology'], { buildings: ['shipyard'], wonders: ['colossus'] }),
-  currency:        t('Currency', 1, 35, ['writing'], { buildings: ['market'], wonders: ['persepolis'] }),
+  currency:        t('Currency', 1, 35, ['writing'], { buildings: ['market'], wonders: ['apadana'] }),
   ironWorking:     t('Iron Working', 1, 40, ['bronzeWorking'], { units: ['swordsman'], wonders: ['terracottaArmy'] }),
   construction:    t('Construction', 1, 40, ['masonry', 'theWheel'], { units: ['compositeBowman'], buildings: ['workshop'], wonders: ['colosseum'] }),
   mathematics:     t('Mathematics', 1, 40, ['currency'], { units: ['catapult'], buildings: ['countingHouse'], wonders: ['mausoleum'] }),

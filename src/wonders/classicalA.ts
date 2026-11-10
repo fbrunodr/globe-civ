@@ -218,7 +218,7 @@ function scaled(parts: G[], s: number, x: number, y: number, z: number): G[] {
 // columns crowned with twin bulls, its own stair carved with tribute
 // bearers; the Hall of a Hundred Columns; stepped merlons and glazed bands
 // under cedar roofs; the winged sun over the gate. (On a plain pad.)
-export function persepolis(): G[] {
+export function apadana(): G[] {
   const out: G[] = [];
   const STONE = 0xb8ac96, TOP = 0xcabea8, WALL = 0xd6c6a2, CEDAR = 0x7a5a3a, GLAZE = 0x3a8a9a, COL = 0xc7bba6;
   out.push(flat(2 * H, 2 * H, PAVE, 0, 0, 0.0003));

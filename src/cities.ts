@@ -321,7 +321,7 @@ export const WONDERS = {
   templeOfArtemis:   w('Temple of Artemis', 160, 'any', { food: 2, faith: 2, culture: 1 }),
   // Classical
   parthenon:         w('Parthenon', 220, 'any', { culture: 5, faith: 1 }),
-  persepolis:        w('Apadana', 220, 'any', { cohesion: 3, gold: 2, culture: 1 }),
+  apadana:           w('Apadana', 220, 'any', { cohesion: 3, gold: 2, culture: 1 }),
   colosseum:         w('Colosseum', 180, 'any', { culture: 5, gold: 1 }),
   greatLibrary:      w('Great Library', 200, 'any', { science: 5, culture: 2 }),
   terracottaArmy:    w('Terracotta Army', 220, 'flat', { prod: 4, culture: 2 }, 'land'),
