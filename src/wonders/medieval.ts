@@ -106,7 +106,7 @@ function hagiaSophia(): G[] {
   out.push(...box(0.042, 0.044, 0.042, PL, { z: zc }, LEAD));
   for (const s of [-1, 1]) {
     const x = s * 0.0213;
-    out.push(...archPane(0.034, 0.014, PL2, x, 0.024, zc, s * Math.PI / 2));
+    out.push(...archPane(0.03, 0.004, PL2, x, 0.024, zc, s * Math.PI / 2));
     out.push(...rowOf(7, 0.03, (xx, z) => archPane(0.0024, 0.0045, WIN, xx, 0.0255, z, s * Math.PI / 2), x + s * 0.0003, zc, s * Math.PI / 2));
     out.push(...rowOf(5, 0.022, (xx, z) => archPane(0.0024, 0.004, WIN, xx, 0.0335, z, s * Math.PI / 2), x + s * 0.0003, zc, s * Math.PI / 2));
     // The buttresses either side of the arch, sloped on top.

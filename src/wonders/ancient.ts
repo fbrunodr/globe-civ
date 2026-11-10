@@ -239,13 +239,15 @@ export function hangingGardens(H: number): G[] {
   for (let k = 0; k < 7; k++) out.push(...box(0.0028, 0.003, 0.0028, shade(BRICK, 1.02), { x: -0.0125 + k * 0.0042, y: yt + 0.012, z: dz - 0.004 + 0.0096 }));
   out.push(...archPane(0.006, 0.006, DARK, 0, yt, dz - 0.004 + 0.0113));
   out.push(P(new THREE.SphereGeometry(0.008, 10, 4, 0, Math.PI * 2, 0, Math.PI / 2), 0xb89a5e, { y: yt + 0.012, z: dz - 0.006 }));
-  // The water: lifted to the top (by hidden screws) and running down the front in cascades, terrace by terrace.
-  for (let i = 0; i < tiers.length; i++) {
+  // The water: lifted (by hidden screws) to a pool on the highest terrace
+  // but one, running down the front from it in cascades, terrace by terrace.
+  for (let i = 0; i < tiers.length - 1; i++) {
     const d = tiers[i]! * 0.94, y = i * th;
     out.push(pane(0.004, th, 0x7fb4cc, CASCADE, y, dz + d / 2 + 0.0009));
     out.push(pane(0.0018, th, 0xd8eef4, CASCADE + 0.0004, y, dz + d / 2 + 0.0011));
     if (i > 0) out.push(flat(0.007, 0.006, WATER, CASCADE, dz + d / 2 + 0.0035, y + 0.0004));
   }
+  { const n = tiers.length - 1, d = tiers[n - 1]! * 0.94; out.push(flat(0.007, 0.006, WATER, CASCADE, dz + d / 2 - 0.0035, n * th + 0.0004)); }
   // At the foot, the band of blue glaze, golden beasts striding along it.
   const w0 = tiers[0]!, d0 = w0 * 0.94;
   for (const [ry, len, o] of [[0, w0, d0 / 2], [Math.PI / 2, d0, w0 / 2], [-Math.PI / 2, d0, w0 / 2], [Math.PI, w0, d0 / 2]] as const) {

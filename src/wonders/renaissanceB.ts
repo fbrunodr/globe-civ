@@ -44,6 +44,31 @@ function fitTo(parts: G[], dz: number, sH: number, y0: number, a: number, b: num
   }
   return parts;
 }
+// A rib down a dome: along a profile of (radius, height) points turned to
+// the bearing a round the vertical through (0, zc), w wide and standing t
+// proud of the shell: its face and its two sides, mitred at each point.
+function rib(prof: readonly (readonly [number, number])[], a: number, zc: number, w: number, t: number, c: number): G {
+  const sx = Math.sin(a), sz = Math.cos(a), tx = Math.cos(a), tz = -Math.sin(a);
+  // (Each point's outward normal in the profile's plane, averaged over its two segments.)
+  const nrm = prof.map((_, i) => {
+    const [r0, y0] = prof[Math.max(0, i - 1)]!, [r1, y1] = prof[Math.min(prof.length - 1, i + 1)]!;
+    const dr = r1 - r0, dy = y1 - y0, l = Math.hypot(dr, dy);
+    return [dy / l, -dr / l] as const;
+  });
+  const at = (i: number, out: number, side: number) => {
+    const [r, y] = prof[i]!, [nr, ny] = nrm[i]!, rr = r + nr * out;
+    return [sx * rr + tx * side, y + ny * out, zc + sz * rr + tz * side];
+  };
+  const p: number[] = [];
+  const quad = (A: number[], B: number[], C: number[], D: number[]) => p.push(...A, ...B, ...C, ...A, ...C, ...D);
+  for (let i = 0; i < prof.length - 1; i++) {
+    quad(at(i, t, -w / 2), at(i + 1, t, -w / 2), at(i + 1, t, w / 2), at(i, t, w / 2));
+    for (const s of [-1, 1]) quad(at(i, -0.0004, (s * w) / 2), at(i + 1, -0.0004, (s * w) / 2), at(i + 1, t, (s * w) / 2), at(i, t, (s * w) / 2));
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(p, 3));
+  return P(g, c);
+}
 // A round window: a disc facing ry, its middle at x, y, z.
 // (sy: squashed to stand round once its group is raised.)
 const oculus = (r: number, c: number, x: number, y: number, z: number, ry: number, sy = 1) => P(new THREE.CircleGeometry(r, 10), c, { x, y, z, ry, sy });
@@ -120,19 +145,22 @@ export function florenceCathedral(): G[] {
   const Rm = Rd * 1.0, ym = yd + hd + 0.0018, hm = 0.0175;
   const prof: [number, number][] = [[1, 0], [0.985, 0.14], [0.945, 0.3], [0.87, 0.47], [0.75, 0.63], [0.58, 0.78], [0.37, 0.9], [0.2, 0.97], [0.14, 1]];
   out.push(lathe(prof.map(([a, b]) => [a * Rm, b * hm] as const), 8, TILE, { y: ym, z: zc }, Math.PI / 8));
-  for (let k = 0; k < 8; k++) {
-    const a = Math.PI / 8 + (k * Math.PI) / 4, sx = Math.sin(a), sz = Math.cos(a);
+  // (The shell's height at a fraction r of its radius.)
+  const shellAt = (r: number) => {
     for (let i = 0; i < prof.length - 1; i++) {
       const [a0, b0] = prof[i]!, [a1, b1] = prof[i + 1]!;
-      out.push(rod(V(sx * a0 * Rm * 1.012, ym + b0 * hm, zc + sz * a0 * Rm * 1.012), V(sx * a1 * Rm * 1.012, ym + b1 * hm, zc + sz * a1 * Rm * 1.012), 0.0009, MARBLE, 4));
+      if (r <= a0 && r >= a1) return b0 + ((b1 - b0) * (a0 - r)) / (a0 - a1);
     }
-  }
-  // The lantern: an octagon with buttress scrolls, its cone, the golden ball and cross.
+    return 1;
+  };
+  for (let k = 0; k < 8; k++) out.push(rib(prof.map(([a, b]) => [a * Rm, ym + b * hm] as const), Math.PI / 8 + (k * Math.PI) / 4, zc, 0.0019, 0.0009, MARBLE));
+  // The lantern: an octagon with buttress scrolls (each standing on the
+  // shell at a rib's top, leaning in to the lantern), its cone, the golden ball and cross.
   const yl = ym + hm;
   out.push(drumC(0.0046, 0.0042, 0.0085, 8, MARBLE, { y: yl, z: zc, ry: Math.PI / 8 }));
   for (let k = 0; k < 8; k++) {
-    const a = Math.PI / 8 + (k * Math.PI) / 4;
-    out.push(rod(V(Math.sin(a) * 0.0075, yl, zc + Math.cos(a) * 0.0075), V(Math.sin(a) * 0.0046, yl + 0.007, zc + Math.cos(a) * 0.0046), 0.0008, MARBLE, 3));
+    const a = Math.PI / 8 + (k * Math.PI) / 4, rb = 0.0075, yb = ym + shellAt(rb / Rm) * hm - 0.0004;
+    out.push(rod(V(Math.sin(a) * rb, yb, zc + Math.cos(a) * rb), V(Math.sin(a) * 0.0044, yl + 0.007, zc + Math.cos(a) * 0.0044), 0.0008, MARBLE, 4));
     const f = octFace(k, 0.0044);
     out.push(...archPane(0.0011, 0.004, DARK, f.nx * (f.ap + 0.0003), yl + 0.0018, zc + f.nz * (f.ap + 0.0003), f.ry));
   }
