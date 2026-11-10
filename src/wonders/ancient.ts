@@ -4,10 +4,10 @@
 // those in it rise over the town (wonderModels.ts MIN_HEIGHT).
 
 import * as THREE from 'three';
-import { chamfered, frustum, ring } from '../houseKit.ts';
+import { frustum, ring } from '../houseKit.ts';
 import {
-  P, annulus, archPane, ball, box, bush, column, cone, disc, drumC, figure, flat, pane,
-  peristyle, rnd, shade, steppedPyramid, steps, templeRoof, H, islet, type G, type Models,
+  P, annulus, archPane, ball, box, bush, cone, cyl, disc, drumC, figure, flat, pane,
+  peristyle, rnd, rod, shade, steppedPyramid, steps, templeRoof, H, islet, type G, type Models,
 } from './kit.ts';
 import type { GroundTree, WonderGrounds } from '../wonderModels.ts';
 
@@ -27,66 +27,232 @@ export function pyramids(): G[] {
 
 // ---------- the Pharos ----------
 
-// On its islet: the walled precinct with its corner towers, the square
-// first stage with rows of windows and tritons blowing conchs at its
-// corners, the octagonal second, the round lantern of columns with its fire,
-// Zeus the Saviour on top; a ramp of arches up to the door.
+type PhPt = readonly [number, number];
+// An opening's outline, w × h, its sill at y, its middle at x; round-headed if `arched`.
+function phOpening(x: number, y: number, w: number, h: number, arched = false): PhPt[] {
+  if (!arched) return [[x - w / 2, y], [x + w / 2, y], [x + w / 2, y + h], [x - w / 2, y + h]];
+  const r = w / 2, ys = y + h - r, pts: PhPt[] = [[x - w / 2, y], [x + w / 2, y]];
+  for (let i = 0; i <= 4; i++) { const a = (i / 4) * Math.PI; pts.push([x + r * Math.cos(a), ys + r * Math.sin(a)]); }
+  return pts;
+}
+// A wall face (its outline in u, v facing +z) pierced by openings, each a
+// real recess: its reveals going `deep` back to a dark back; placed by `at`.
+function phWall(outline: readonly PhPt[], holes: readonly (readonly PhPt[])[], deep: number, c: number, dark: number, at: Parameters<typeof P>[2]): G[] {
+  const v2 = (pts: readonly PhPt[]) => pts.map(([u, v]) => new THREE.Vector2(u, v));
+  const shape = new THREE.Shape(v2(outline));
+  for (const h of holes) shape.holes.push(new THREE.Path(v2(h)));
+  const out: G[] = [P(new THREE.ShapeGeometry(shape, 1), c, at)];
+  const sides: number[] = [];
+  for (const h of holes) {
+    const cx = h.reduce((s, p) => s + p[0], 0) / h.length, cy = h.reduce((s, p) => s + p[1], 0) / h.length;
+    for (let i = 0; i < h.length; i++) {
+      let p = h[i]!, q = h[(i + 1) % h.length]!;
+      // (Each reveal faces into the opening.)
+      if (-(q[1] - p[1]) * (cx - p[0]) + (q[0] - p[0]) * (cy - p[1]) < 0) [p, q] = [q, p];
+      sides.push(p[0], p[1], 0, q[0], q[1], 0, q[0], q[1], -deep, p[0], p[1], 0, q[0], q[1], -deep, p[0], p[1], -deep);
+    }
+    out.push(P(new THREE.ShapeGeometry(new THREE.Shape(v2(h)), 1).translate(0, 0, -deep), dark, at));
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(sides, 3));
+  out.push(P(g, shade(c, 0.86), at));
+  return out;
+}
+// Parts built facing +z about the origin, set at (x, y, z) facing ry.
+function phAt(parts: G[], x: number, y: number, z: number, ry: number): G[] {
+  const m = new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, ry, 0)), new THREE.Vector3(1, 1, 1));
+  return parts.map((g) => g.applyMatrix4(m));
+}
+// An octagonal course (apothem a, h tall) with its faces to the axes and diagonals.
+const phOct = (a: number, h: number, c: number, y: number, open = false) =>
+  P(new THREE.CylinderGeometry(a / Math.cos(Math.PI / 8), a / Math.cos(Math.PI / 8), h, 8, 1, open).rotateY(Math.PI / 8).translate(0, h / 2, 0), c, { y });
+// A triton kneeling on its block, blowing his conch, facing +z.
+function phTriton(c: number): G[] {
+  const V3 = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
+  return [
+    ...box(0.006, 0.0025, 0.006, shade(0xe4d8ba, 0.92)),
+    // The fish tail coiled behind him, its fin up.
+    rod(V3(0, 0.0025, 0.0015), V3(0.0012, 0.0035, -0.0022), 0.0017, c, 6, 0.0012),
+    rod(V3(0.0012, 0.0035, -0.0022), V3(-0.0008, 0.0062, -0.0028), 0.0012, c, 5, 0.0006),
+    P(new THREE.ConeGeometry(0.0016, 0.0022, 4).rotateZ(Math.PI).scale(1, 1, 0.3), c, { x: -0.0011, y: 0.0068, z: -0.0029, rz: 0.5 }),
+    // His body, head, arms and the conch to his lips.
+    P(new THREE.CylinderGeometry(0.0019, 0.0015, 0.0045, 6).translate(0, 0.00225, 0), c, { y: 0.004, z: 0.0012 }),
+    ball(0.0012, c, { y: 0.0098, z: 0.0014 }, 0),
+    rod(V3(0.0018, 0.0082, 0.0012), V3(0.0008, 0.0094, 0.0034), 0.0005, c, 4),
+    rod(V3(-0.0018, 0.0082, 0.0012), V3(-0.0004, 0.0088, 0.0036), 0.0005, c, 4),
+    rod(V3(0, 0.0097, 0.0024), V3(0.0004, 0.0112, 0.0052), 0.00025, shade(c, 1.12), 5, 0.0008),
+  ];
+}
+// Zeus the Saviour, his sceptre in his raised hand, facing +z.
+function phZeus(c: number): G[] {
+  const V3 = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
+  return [
+    P(new THREE.CylinderGeometry(0.0016, 0.0024, 0.0075, 7).translate(0, 0.00375, 0), c), // the himation
+    P(new THREE.CylinderGeometry(0.0021, 0.0016, 0.0042, 7).translate(0, 0.0021, 0), c, { y: 0.0075 }), // the chest
+    ball(0.0012, c, { y: 0.0128, z: 0.0001 }, 1),
+    ball(0.0009, shade(c, 0.9), { y: 0.0122, z: 0.0008, sy: 1.2 }, 0), // the beard
+    rod(V3(0.0021, 0.0113, 0), V3(0.0036, 0.0145, 0.0006), 0.0005, c, 4),
+    rod(V3(0.0038, 0.0005, 0.0006), V3(0.0038, 0.0168, 0.0006), 0.00028, shade(c, 1.15), 4),
+    rod(V3(-0.0021, 0.0113, 0), V3(-0.0032, 0.0082, 0.0026), 0.0005, c, 4),
+    P(new THREE.ConeGeometry(0.0007, 0.0014, 5).translate(0, 0.0007, 0), shade(c, 1.15), { x: -0.0033, y: 0.0075, z: 0.0029 }), // an orb of victory
+  ];
+}
+
+// On its islet: the walled precinct, its corner towers, a stair up from the
+// shore; the great square first stage, a little narrowed toward the top,
+// its rows of windows sunk in its walls between string courses, its
+// pilasters, its cornice and the terrace with tritons blowing conchs at the
+// corners; the octagonal second, windowed and corniced, its balcony; the
+// round lantern of columns with its fire under a dome, Zeus the Saviour on
+// top; a ramp on arches up to the door.
 export function greatLighthouse(islet: () => G[]): G[] {
-  const L = 0xe4d8ba, D = 0x3f3a35, out: G[] = [...islet()];
-  // The precinct: a low wall with merlons, round towers at its corners.
-  out.push(...box(0.104, 0.008, 0.104, shade(L, 0.92), { y: 0.004 }, shade(L, 0.86)));
+  const L = 0xe4d8ba, D = 0x2e2a26, out: G[] = [...islet()];
+  const TOWER = 0xa8604a;
+  // The precinct: a battered footing, a wall with its cornice and merlons,
+  // arrow slits; round towers at the corners; a stair up from the shore.
+  const pw = 0.104;
+  out.push(...frustum(pw + 0.006, pw + 0.006, pw, pw, 0.003, shade(L, 0.82), { y: 0.0035 }));
+  out.push(...box(pw, 0.0055, pw, shade(L, 0.92), { y: 0.0065 }, shade(L, 0.86)));
+  out.push(...box(pw + 0.0018, 0.0012, pw + 0.0018, shade(L, 0.98), { y: 0.0108 }, shade(L, 0.86)));
   for (let i = 0; i < 12; i++) for (const [fx, fz] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
     const t = -0.046 + (i * 0.092) / 11;
-    out.push(...box(0.003, 0.003, 0.003, shade(L, 0.9), { x: fx ? fx * 0.0505 : t, y: 0.012, z: fz ? fz * 0.0505 : t }));
+    if (!(fz === 1 && Math.abs(t) < 0.01)) out.push(...box(0.003, 0.003, 0.003, shade(L, 0.9), { x: fx ? fx * 0.0505 : t, y: 0.012, z: fz ? fz * 0.0505 : t }));
+    if (i % 2 === 1 && !(fz === 1 && Math.abs(t) < 0.01)) {
+      const ry = Math.atan2(fx, fz), o = pw / 2 + 0.0002;
+      out.push(pane(0.0012, 0.0032, D, fx ? fx * o : t + 0.0042, 0.007, fz ? fz * o : t + 0.0042, ry));
+    }
   }
   for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) {
-    out.push(drumC(0.0075, 0.007, 0.018, 10, shade(L, 0.95), { x: x * 0.05, y: 0.004, z: z * 0.05 }));
-    out.push(cone(0.0078, 0.006, 10, 0xa8604a, { x: x * 0.05, y: 0.022, z: z * 0.05 }));
+    const at = { x: x * 0.05, z: z * 0.05 };
+    out.push(drumC(0.0082, 0.0075, 0.0035, 12, shade(L, 0.84), { ...at, y: 0.0035 }));
+    out.push(P(new THREE.CylinderGeometry(0.0072, 0.0075, 0.0125, 12, 1, true).translate(0, 0.00625, 0), shade(L, 0.95), { ...at, y: 0.007 }));
+    out.push(drumC(0.0083, 0.0083, 0.002, 12, shade(L, 1.02), { ...at, y: 0.0195 }));
+    out.push(cone(0.0082, 0.0075, 12, TOWER, { ...at, y: 0.0215 }));
+    out.push(ball(0.0008, BRONZE, { ...at, y: 0.0292 }));
+    for (const k of [0, 1, 2]) {
+      const a = Math.atan2(x, z) + (k - 1) * 0.9;
+      out.push(pane(0.0012, 0.003, D, at.x + Math.sin(a) * 0.00745, 0.0125, at.z + Math.cos(a) * 0.00745, a));
+    }
   }
-  // The first stage: a square tower, windows in rows, a cornice; tritons at its corners.
-  const y0 = 0.012, h1 = 0.086, w1 = 0.046;
-  out.push(...box(w1 + 0.006, 0.004, w1 + 0.006, shade(L, 0.95), { y: y0 }));
-  out.push(...box(w1, h1, w1, L, { y: y0 + 0.004 }));
+  // The stair from the landing stage to the precinct's gate.
+  for (let i = 0; i < 4; i++) out.push(...box(0.014, 0.003 + i * 0.0021, 0.003, shade(L, 0.9 - i * 0.015), { y: 0.0035, z: pw / 2 + 0.0125 - i * 0.003 }, shade(L, 0.94)));
+  out.push(...box(0.018, 0.0055, 0.0012, shade(L, 0.86), { y: 0.012, z: pw / 2 - 0.0006 }));
+  out.push(...archPane(0.006, 0.0025, D, 0, 0.012, pw / 2 + 0.00005));
+
+  // The first stage: a square tower on its plinth, its windows sunk in its
+  // walls, pilasters at its corners, string courses, the cornice.
+  const y0 = 0.012, h1 = 0.086, w1 = 0.046, yb = y0 + 0.004;
+  out.push(...box(w1 + 0.007, 0.0025, w1 + 0.007, shade(L, 0.9), { y: y0 }));
+  out.push(...box(w1 + 0.004, 0.0015, w1 + 0.004, shade(L, 0.96), { y: y0 + 0.0025 }));
+  const rows = [0.012, 0.0245, 0.037, 0.0495, 0.062, 0.0745], cols = [-0.0135, 0, 0.0135];
+  const doorH = 0.0105, doorY = 0.012;
   for (const ry of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
-    const nx = Math.sin(ry), nz = Math.cos(ry), tx = Math.cos(ry), tz = -Math.sin(ry), o = w1 / 2 + 0.0003;
-    for (let row = 0; row < 6; row++) for (const s of [-1, 0, 1]) {
-      if (ry === 0 && row === 0 && s === 0) continue; // (the door)
-      out.push(pane(0.0032, 0.0055, D, nx * o + tx * s * 0.013, y0 + 0.016 + row * 0.0125, nz * o + tz * s * 0.013, ry));
+    const nx = Math.sin(ry), nz = Math.cos(ry), o = w1 / 2;
+    const holes: PhPt[][] = [];
+    for (const [ri, v] of rows.entries()) for (const u of cols) {
+      if (ry === 0 && u === 0 && ri === 0) continue;
+      holes.push(phOpening(u, v, u === 0 ? 0.0042 : 0.0034, u === 0 ? 0.0068 : 0.0058, ri >= 4));
+    }
+    if (ry === 0) holes.push(phOpening(0, doorY, 0.0072, doorH, true));
+    out.push(...phWall([[-w1 / 2, 0], [w1 / 2, 0], [w1 / 2, h1], [-w1 / 2, h1]], holes, 0.0018, L, D, { x: nx * o, y: yb, z: nz * o, ry }));
+    // Each window's lintel and sill.
+    const tx = Math.cos(ry), tz = -Math.sin(ry), f = o + 0.0003;
+    for (const [ri, v] of rows.entries()) for (const u of cols) {
+      if (ry === 0 && u === 0 && ri === 0) continue;
+      const w = u === 0 ? 0.0042 : 0.0034, h = u === 0 ? 0.0068 : 0.0058;
+      out.push(pane(w + 0.0016, 0.0009, shade(L, 0.9), nx * f + tx * u, yb + v - 0.0009, nz * f + tz * u, ry));
+      if (ri < 4) out.push(pane(w + 0.0012, 0.0012, shade(L, 1.05), nx * f + tx * u, yb + v + h, nz * f + tz * u, ry));
     }
     // Pilasters at the corners.
-    for (const s of [-1, 1]) out.push(...box(0.003, h1 - 0.0003, 0.003, shade(L, 1.04), { x: nx * (w1 / 2) + tx * s * (w1 / 2), y: y0 + 0.004, z: nz * (w1 / 2) + tz * s * (w1 / 2) }));
+    for (const s of [-1, 1]) out.push(...box(0.0034, h1 - 0.0016, 0.0034, shade(L, 1.04), { x: nx * o + tx * s * o, y: yb, z: nz * o + tz * s * o }));
   }
-  out.push(...archPane(0.007, 0.007, D, 0, y0 + 0.016, w1 / 2 + 0.0003)); // the door
-  // String courses between the rows of windows.
-  for (const yb of [0.036, 0.061, 0.086]) out.push(...box(w1 + 0.0016, 0.0014, w1 + 0.0016, shade(L, 0.94), { y: y0 + yb }));
-  const y1 = y0 + 0.004 + h1;
-  out.push(...box(w1 + 0.006, 0.0035, w1 + 0.006, shade(L, 0.96), { y: y1 }));
-  for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) out.push(...figure(x * 0.022, z * 0.022, 0.012, BRONZE, { y: y1 + 0.0035, ry: Math.atan2(x, z), skin: BRONZE, arm: 1 }));
-  // The second stage, octagonal, with its windows and cornice.
-  const y2 = y1 + 0.0035, h2 = 0.04;
-  out.push(...chamfered(0.034, h2, 0.034, 0.29, shade(L, 1.02), { y: y2 }));
+  // The door's frame and its bronze doors.
+  const frame = new THREE.Shape(phOpening(0, doorY - 0.0004, 0.0096, doorH + 0.0016, true).map(([u, v]) => new THREE.Vector2(u, v)));
+  frame.holes.push(new THREE.Path(phOpening(0, doorY, 0.0072, doorH, true).map(([u, v]) => new THREE.Vector2(u, v))));
+  out.push(P(new THREE.ShapeGeometry(frame, 1), shade(L, 1.07), { y: yb, z: w1 / 2 + 0.00025 }));
+  out.push(...archPane(0.0066, doorH - 0.0003, 0x6a4a2a, 0, yb + doorY, w1 / 2 - 0.0015));
+  // String courses between the windows.
+  for (const v of [0.0365, 0.0615]) out.push(...box(w1 + 0.0042, 0.0016, w1 + 0.0042, shade(L, 0.93), { y: yb + v - 0.0034 }));
+  // The cornice in steps, the terrace's parapet, the tritons on its corners.
+  const y1 = yb + h1;
+  out.push(...box(w1 + 0.0046, 0.0016, w1 + 0.0046, shade(L, 0.93), { y: y1 - 0.0016 }));
+  // (Its dentils: the shadowed gaps between them.)
+  for (const ry of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) for (let i = 0; i < 15; i++) {
+    const o = (w1 + 0.0046) / 2 + 0.0002, u = -0.0238 + (i * 0.0476) / 14;
+    out.push(pane(0.0009, 0.0011, shade(L, 0.62), Math.sin(ry) * o + Math.cos(ry) * u, y1 - 0.0013, Math.cos(ry) * o - Math.sin(ry) * u, ry));
+  }
+  out.push(...box(w1 + 0.007, 0.0018, w1 + 0.007, shade(L, 0.98), { y: y1 }));
+  out.push(...box(w1 + 0.0095, 0.0018, w1 + 0.0095, shade(L, 1.03), { y: y1 + 0.0018 }, shade(L, 0.9)));
+  const yt = y1 + 0.0036, pr = (w1 + 0.0085) / 2;
+  out.push(ring(w1 + 0.0085, 0.0022, w1 + 0.0085, shade(L, 1.0), { y: yt }));
+  out.push(ring(w1 + 0.0075, 0.0022, w1 + 0.0075, shade(L, 0.94), { y: yt }));
+  for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) out.push(...phAt(phTriton(BRONZE), x * (pr - 0.0032), yt, z * (pr - 0.0032), Math.atan2(x, z)));
+
+  // The second stage: octagonal, on its plinth, windowed between corner
+  // piers, a string course, the cornice and its balcony.
+  const y2 = yt, h2 = 0.038, a2 = 0.017, s2 = 2 * a2 * Math.tan(Math.PI / 8);
+  out.push(phOct(a2 + 0.0018, 0.0025, shade(L, 0.93), y2));
+  const y2b = y2 + 0.0025;
   for (let k = 0; k < 8; k++) {
-    const ry = (k * Math.PI) / 4, o = 0.0175;
-    for (let row = 0; row < 3; row++) out.push(pane(0.0028, 0.005, D, Math.sin(ry) * o, y2 + 0.006 + row * 0.012, Math.cos(ry) * o, ry));
+    const ry = (k * Math.PI) / 4;
+    const holes = [0.0045, 0.0165, 0.0285].map((v, i) => phOpening(0, v, 0.0032, i === 2 ? 0.0065 : 0.0058, true));
+    out.push(...phWall([[-s2 / 2, 0], [s2 / 2, 0], [s2 / 2, h2], [-s2 / 2, h2]], holes, 0.0016, shade(L, 1.02), D, { x: Math.sin(ry) * a2, y: y2b, z: Math.cos(ry) * a2, ry }));
+    for (const v of [0.0045, 0.0165, 0.0285]) out.push(pane(0.0044, 0.0008, shade(L, 0.9), Math.sin(ry) * (a2 + 0.0003), y2b + v - 0.0008, Math.cos(ry) * (a2 + 0.0003), ry));
+    const rc = a2 / Math.cos(Math.PI / 8), ac = ry + Math.PI / 8;
+    out.push(...box(0.0022, h2 - 0.0015, 0.0022, shade(L, 1.06), { x: Math.sin(ac) * rc, y: y2b, z: Math.cos(ac) * rc, ry: ac }));
   }
-  out.push(...chamfered(0.039, 0.003, 0.039, 0.29, shade(L, 0.95), { y: y2 + h2 }));
-  // The lantern: a ring of columns round the fire, a cone roof, the god on top.
-  const y3 = y2 + h2 + 0.003;
-  out.push(drumC(0.0125, 0.012, 0.004, 14, L, { y: y3 }));
+  out.push(phOct(a2 + 0.0011, 0.0014, shade(L, 0.94), y2b + 0.0132));
+  out.push(phOct(a2 + 0.0011, 0.0014, shade(L, 0.94), y2b + 0.0252));
+  const y2t = y2b + h2;
+  out.push(phOct(a2 + 0.0012, 0.0015, shade(L, 0.93), y2t - 0.0015));
+  out.push(phOct(a2 + 0.0026, 0.002, shade(L, 1.03), y2t));
+  out.push(phOct(a2 + 0.0022, 0.002, shade(L, 0.98), y2t + 0.002, true));
+  out.push(phOct(a2 + 0.0014, 0.002, shade(L, 0.92), y2t + 0.002, true));
+
+  // The lantern: a ring of columns round the fire, the entablature, a dome,
+  // the god on top.
+  const y3 = y2t + 0.002;
+  out.push(drumC(0.0128, 0.0128, 0.003, 16, shade(L, 0.97), { y: y3 }));
+  out.push(drumC(0.0134, 0.0134, 0.001, 16, shade(L, 1.03), { y: y3 + 0.003 }));
+  const yc = y3 + 0.004, ch = 0.0105;
+  for (let k = 0; k < 8; k++) {
+    const a = ((k + 0.5) / 8) * Math.PI * 2, x = Math.sin(a) * 0.0108, z = Math.cos(a) * 0.0108;
+    out.push(...box(0.0026, 0.0007, 0.0026, shade(L, 0.95), { x, y: yc, z, ry: a }));
+    out.push(P(new THREE.CylinderGeometry(0.00095, 0.00115, ch - 0.0016, 6, 1, true).translate(0, (ch - 0.0016) / 2, 0), L, { x, y: yc + 0.0007, z }));
+    out.push(...box(0.0026, 0.0009, 0.0026, shade(L, 1.04), { x, y: yc + ch - 0.0009, z, ry: a }));
+  }
+  // The fire in its brazier, the bronze mirror behind it.
+  out.push(drumC(0.0042, 0.0052, 0.0025, 10, BRONZE, { y: yc }));
+  out.push(P(new THREE.ConeGeometry(0.0045, 0.0075, 7, 1, true).translate(0, 0.00375, 0), 0xe8803a, { y: yc + 0.0025 }));
+  for (const [x, z, h] of [[0.0022, 0.001, 0.006], [-0.002, -0.0015, 0.0065], [0.0004, 0.0022, 0.005]] as const) out.push(P(new THREE.ConeGeometry(0.0022, h, 5, 1, true).translate(0, h / 2, 0), 0xffc45a, { x, y: yc + 0.0025, z }));
+  out.push(ball(0.0026, 0xfff0b0, { y: yc + 0.004 }, 0));
+  out.push(P(new THREE.CircleGeometry(0.0042, 10), 0xc9a14a, { y: yc + 0.0085, z: -0.0068, rx: 0.35 }));
+  // The entablature, the dome, the plinth and the god.
+  const ye = yc + ch;
+  out.push(P(new THREE.CylinderGeometry(0.0126, 0.0126, 0.0022, 16, 1, true).translate(0, 0.0011, 0), shade(L, 0.97), { y: ye }));
+  out.push(drumC(0.0138, 0.0138, 0.0014, 16, shade(L, 1.03), { y: ye + 0.0022 }));
+  const yd = ye + 0.0036;
+  out.push(P(new THREE.SphereGeometry(0.0128, 16, 4, 0, Math.PI * 2, 0, Math.PI / 2), BRONZE, { y: yd, sy: 0.52 }));
   for (let k = 0; k < 8; k++) {
     const a = (k / 8) * Math.PI * 2;
-    out.push(drumC(0.0013, 0.0011, 0.014, 6, L, { x: Math.cos(a) * 0.0098, y: y3 + 0.004, z: Math.sin(a) * 0.0098 }));
+    out.push(P(new THREE.TorusGeometry(0.0128, 0.00035, 3, 6, Math.PI / 2), shade(BRONZE, 0.82), { y: yd, ry: a + Math.PI / 2, sy: 0.52 }));
   }
-  out.push(ball(0.0055, 0xf0a040, { y: y3 + 0.009 }, 1), ball(0.0034, 0xffe08a, { y: y3 + 0.0105 }, 1));
-  out.push(drumC(0.013, 0.013, 0.0025, 14, shade(L, 0.95), { y: y3 + 0.018 }));
-  out.push(cone(0.0125, 0.009, 14, BRONZE, { y: y3 + 0.0205 }));
-  out.push(...figure(0, 0, 0.016, BRONZE, { y: y3 + 0.0285, skin: BRONZE, arm: 1 }));
-  // The ramp of arches from the precinct's front up to the door.
-  const rz0 = 0.05, rz1 = w1 / 2 + 0.002, ry0 = 0.012, ry1 = y0 + 0.016;
-  const ramp = Math.hypot(rz0 - rz1, ry1 - ry0);
-  out.push(P(new THREE.BoxGeometry(0.008, 0.003, ramp), shade(L, 0.93), { y: (ry0 + ry1) / 2 - 0.0015, z: (rz0 + rz1) / 2, rx: Math.atan2(ry1 - ry0, rz0 - rz1) }));
-  out.push(...box(0.007, ry1 - ry0, 0.006, shade(L, 0.9), { y: ry0, z: rz1 + 0.003 }));
-  for (let i = 0; i < 3; i++) out.push(...[-1, 1].flatMap((s) => archPane(0.0035, 0.002 + i * 0.002, D, s * 0.0043, ry0, rz1 + 0.009 + i * 0.008, s * Math.PI / 2)));
+  const yz = yd + 0.0128 * 0.52;
+  out.push(drumC(0.0028, 0.0022, 0.0024, 8, shade(L, 1.02), { y: yz - 0.0006 }));
+  out.push(...phAt(phZeus(0xc9a14a), 0, yz + 0.0018, 0, 0));
+
+  // The ramp on its arches from the gate up to the door.
+  const rz0 = pw / 2 - 0.0014, rz1 = w1 / 2 + 0.0035, ry0 = 0.012, ry1 = yb + doorY;
+  const prof: PhPt[] = [[rz1, ry0], [rz0, ry0], [rz0, ry0 + 0.0025], [rz1, ry1]];
+  const arches = [0.25, 0.5, 0.75].map((t) => {
+    const z = rz0 + (rz1 - rz0) * t, top = ry0 + 0.0025 + (ry1 - ry0 - 0.0025) * t - 0.0025;
+    return phOpening(z, ry0, 0.0048, top - ry0, true);
+  });
+  const shape = new THREE.Shape(prof.map(([u, v]) => new THREE.Vector2(u, v)));
+  for (const h of arches) shape.holes.push(new THREE.Path(h.map(([u, v]) => new THREE.Vector2(u, v))));
+  out.push(P(new THREE.ExtrudeGeometry(shape, { depth: 0.008, bevelEnabled: false, curveSegments: 1 }).translate(0, 0, -0.004).rotateY(-Math.PI / 2).translate(0, 0.0001, 0), shade(L, 0.93)));
+  const rl = Math.hypot(rz0 - rz1, ry1 - ry0 - 0.0025), tilt = Math.atan2(ry1 - ry0 - 0.0025, rz0 - rz1);
+  for (const s of [-1, 1]) out.push(P(new THREE.BoxGeometry(0.0009, 0.0022, rl), shade(L, 1.02), { x: s * 0.00365, y: (ry0 + 0.0025 + ry1) / 2 + 0.0011, z: (rz0 + rz1) / 2, rx: tilt }));
   return out;
 }
 
@@ -266,6 +432,29 @@ export function hangingGardens(H: number): G[] {
 
 // ---------- Ephesus ----------
 
+// An Ionic column as kit.ts column draws it, in fewer triangles: open
+// drums, no hidden tops (the abacus's under the architrave), its carved
+// lower drum in `band`; the inner rows (`plain`), seen only between the
+// outer, with fewer sides and no volutes.
+function ephColumn(x: number, y: number, z: number, r: number, h: number, c: number, band?: number, plain = false): G[] {
+  const out: G[] = [], cap = r * 1.25, base = r * 0.7, sh = h - base - cap;
+  const tube = (r0: number, r1: number, hh: number, n: number, col: number, yy: number) => cyl(r0, r1, hh, n, col, { x, y: yy, z });
+  if (plain) out.push(ring(r * 2.7, r * 0.35, r * 2.7, shade(c, 0.95), { x, y, z }));
+  else out.push(...box(r * 2.7, r * 0.35, r * 2.7, shade(c, 0.95), { x, y, z }));
+  out.push(tube(r * (plain ? 1.18 : 1.32), r * 1.18, r * 0.35, 6, c, y + r * 0.35));
+  if (band !== undefined) {
+    const bh = sh * 0.16;
+    out.push(tube(r * 1.04, r * 1.02, bh, 10, band, y + base));
+    out.push(tube(r, r * 0.85, sh - bh, 10, c, y + base + bh));
+  } else out.push(tube(r, r * 0.85, sh, plain ? 8 : 10, c, y + base));
+  const yc = y + base + sh;
+  out.push(tube(r * 0.9, r * 1.05, cap * 0.35, plain ? 6 : 8, c, yc));
+  // The volutes: a scroll either side, rolled about the front-back axis.
+  if (!plain) for (const s of [-1, 1]) out.push(P(new THREE.CylinderGeometry(cap * 0.42, cap * 0.42, r * 1.9, 5).rotateX(Math.PI / 2), shade(c, 0.97), { x: x + s * r * 1.05, y: yc + cap * 0.48, z }));
+  out.push(ring(r * 2.3, cap * 0.22, r * 2.0, c, { x, y: yc + cap * 0.78, z }));
+  return out;
+}
+
 // The great temple of Artemis on its walled precinct: a stepped platform,
 // a double forest of Ionic columns (the outer ones with their carved lower
 // drums), the cella within; the entablature with its painted frieze, the
@@ -280,9 +469,9 @@ export function templeOfArtemis(): G[] {
   const y = st.y, zc = -0.008, colH = 0.064, r = 0.0034;
   const hw = st.w / 2 - 0.0045, hd = st.d / 2 - 0.0045;
   // The outer colonnade (carved drums), the inner one, the cella within.
-  out.push(...peristyle(0, zc, hw, hd, 8, 12, (x, z) => column(x, y, z, r, colH, C, 'ionic', CARVED)));
+  out.push(...peristyle(0, zc, hw, hd, 8, 12, (x, z) => ephColumn(x, y, z, r, colH, C, CARVED)));
   const sx = (2 * hw) / 7, sz = (2 * hd) / 11;
-  out.push(...peristyle(0, zc, hw - sx, hd - sz, 6, 10, (x, z) => column(x, y, z, r * 0.95, colH, C, 'ionic')));
+  out.push(...peristyle(0, zc, hw - sx, hd - sz, 6, 10, (x, z) => ephColumn(x, y, z, r * 0.95, colH, C, undefined, true)));
   out.push(...box(0.03, colH, 0.07, shade(C, 0.96), { y, z: zc - 0.004 }));
   out.push(pane(0.009, 0.03, 0x3a2e24, 0, y, zc - 0.004 + 0.0353));
   // Her statue before the doorway, gilded.

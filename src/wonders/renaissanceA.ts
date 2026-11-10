@@ -5,7 +5,7 @@
 
 import * as THREE from 'three';
 import { chamfered, frustum, gable, ring } from '../houseKit.ts';
-import { H, P, V, ball, box, cyl, drumC, flat, pane, rnd, rod, shade, steps, type G } from './kit.ts';
+import { H, P, V, ball, box, cone, cyl, drumC, flat, pane, rod, shade, type G } from './kit.ts';
 
 // ---------- shared pieces ----------
 
@@ -56,9 +56,10 @@ const TAJ = { WM: 0xf3eee4, WM2: 0xe2dccd, BACK: 0xd8d0c1, SOFT: 0xe9e2d4, GREY:
 // On the roof the drum on its base course, its blind arcade, the onion dome,
 // its lotus crown and the tall gilded finial with the crescent; four
 // chhatris round it. The four minarets at the plinth's corners, three
-// balconies each, inlaid in dark lines, a chhatri on top, each leaning
+// balconies each, ringed in dark inlay, a chhatri on top, each leaning
 // slightly outward. (Built small, then drawn up to fill its site and stand
-// about six cells tall: stretch.)
+// about five cells tall, a little more up than across, so the dome keeps
+// the real one's proportions: stretch.)
 export function tajMahal(): G[] {
   const out: G[] = [];
   const { WM, WM2, GREY, INLAY, GOLD } = TAJ;
@@ -69,7 +70,7 @@ export function tajMahal(): G[] {
   out.push(...box(pw - 2 * pT, ph, pw - 2 * pT, TAJ.BACK, {}, WM2));
   out.push(...box(pw + 0.0008, 0.0006, pw + 0.0008, WM2));
   out.push(...box(pw + 0.0008, 0.0005, pw + 0.0008, WM, { y: ph - 0.0004 }, WM2));
-  const bays = Array.from({ length: 9 }, (_, i) => ({ t: -pw / 2 + 0.0045 + (i * (pw - 0.009)) / 8, y: 0.0011, w: 0.0028, h: 0.0012, backed: false }));
+  const bays = Array.from({ length: 7 }, (_, i) => ({ t: -pw / 2 + 0.005 + (i * (pw - 0.01)) / 6, y: 0.0011, w: 0.0028, h: 0.0012, backed: false, door: false, frame: false }));
   for (const ry of FACES) out.push(...nicheWall(pw, ph - 0.0004, pT, bays, 0, 0, pw / 2, ry, 0, 0, 2));
   for (const hs of [0.0262, 0.0302]) for (const s of [-1, 1]) {
     out.push(flat(2 * hs + 0.0004, 0.0004, GREY, 0, s * hs, ptop + 0.00005), flat(0.0004, 2 * hs - 0.0004, GREY, s * hs, 0, ptop + 0.00005));
@@ -86,13 +87,13 @@ export function tajMahal(): G[] {
   for (const ry of FACES) {
     const on = (d: number, t: number) => onFace(0, 0, d, ry, t);
     // The pishtaq and its iwan.
-    out.push(...nicheWall(PW, PH, 0.003, [{ t: 0, y: iy, w: iw, h: ih, dome: true, frame: false }], 0, 0, dp, ry, 0, by, 4));
+    out.push(...nicheWall(PW, PH, 0.003, [{ t: 0, y: iy, w: iw, h: ih, dome: true, frame: false }], 0, 0, dp, ry, 0, by, 3, false));
     {
       // The arch's moulded rim.
       const s = archPath(new THREE.Shape(), iw + 0.0008, ih, 0, iy);
       s.holes.push(archPath(new THREE.Path(), iw, ih, 0, iy));
       const [x, z] = on(dp + 0.00005, 0);
-      out.push(P(new THREE.ShapeGeometry(s, 4), GREY, { x, y: by, z, ry }));
+      out.push(P(new THREE.ShapeGeometry(s, 3), GREY, { x, y: by, z, ry }));
     }
     // The calligraphy band, dark on a pale border, round the arch.
     const bt = 0.0076, btop = 0.0255;
@@ -103,26 +104,26 @@ export function tajMahal(): G[] {
     // Inlaid rosettes in the spandrels, a pale border round the frame.
     for (const s of [-1, 1]) {
       const [x, z] = on(dp + 0.00005, s * 0.005);
-      out.push(P(new THREE.CircleGeometry(0.0008, 8), GREY, { x, y: by + 0.0218, z, ry }));
+      out.push(P(new THREE.CircleGeometry(0.0008, 6), GREY, { x, y: by + 0.0218, z, ry }));
       const [x3, z3] = on(dp + 0.00005, s * (PW / 2 - 0.0006));
       out.push(pane(0.0003, PH - 0.0026, GREY, x3, by + 0.0013, z3, ry));
     }
     { const [x, z] = on(dp + 0.00005, 0); out.push(pane(PW - 0.0009, 0.0003, GREY, x, by + PH - 0.0013, z, ry)); }
     // Its cornice and cresting.
     { const [x, z] = on(dp - 0.0015, 0); out.push(...box(PW + 0.0006, 0.0005, 0.0036, WM, { x, y: by + PH - 0.0008, z, ry })); }
-    for (let i = 0; i < 9; i++) { const [x, z] = on(dp - 0.0004, -PW / 2 + 0.0011 + (i * (PW - 0.0022)) / 8); out.push(...box(0.0007, 0.0008, 0.0006, WM, { x, y: by + PH - 0.0003, z, ry })); }
+    { const [x, z] = on(dp - 0.0004, 0); out.push(merlons(PW - 0.0015, 9, 0.0007, 0.0008, WM, x, by + PH - 0.0003, z, ry)); }
     // Its guldastas.
     for (const s of [-1, 1]) { const [x, z] = on(dp - 0.0004, s * (PW / 2 + 0.0004)); out.push(...guldasta(x, z, by, 0.0345, 0.0007)); }
     // Beside it, narrow niches two high; a string course between.
     for (const s of [-1, 1]) {
       const sw = a - k - PW / 2, t = s * (PW / 2 + sw / 2);
-      out.push(...nicheWall(sw, bh, 0.0022, [{ t: 0, y: 0.0015, w: 0.0026, h: 0.0068, dome: true }, { t: 0, y: 0.0135, w: 0.0026, h: 0.0068, dome: true }], 0, 0, a, ry, t, by));
+      out.push(...nicheWall(sw, bh, 0.0022, [{ t: 0, y: 0.0015, w: 0.0026, h: 0.0068, dome: true }, { t: 0, y: 0.0135, w: 0.0026, h: 0.0068, dome: true }], 0, 0, a, ry, t, by, 2));
       out.push(...crest(sw, a, ry, t, by + bh));
       const [x, z] = on(a + 0.00005, t); out.push(pane(sw, 0.0003, GREY, x, by + 0.013, z, ry));
     }
     // The cut corner: deeper niches two high.
     const rd = ry + Math.PI / 4;
-    out.push(...nicheWall(kw, bh, 0.0025, [{ t: 0, y: 0.0015, w: 0.0058, h: 0.0062, dome: true }, { t: 0, y: 0.0135, w: 0.0058, h: 0.0062, dome: true }], 0, 0, dd, rd, 0, by));
+    out.push(...nicheWall(kw, bh, 0.0025, [{ t: 0, y: 0.0015, w: 0.0058, h: 0.0062, dome: true }, { t: 0, y: 0.0135, w: 0.0058, h: 0.0062, dome: true }], 0, 0, dd, rd, 0, by, 2));
     out.push(...crest(kw, dd, rd, 0, by + bh));
     { const [x, z] = onFace(0, 0, dd + 0.00005, rd, 0); out.push(pane(kw, 0.0003, GREY, x, by + 0.013, z, rd)); }
     // Guldastas at the block's corners.
@@ -131,24 +132,25 @@ export function tajMahal(): G[] {
 
   // The drum on its base course, its blind arcade under a cornice.
   const dy = by + bh;
-  out.push(drumC(0.0137, 0.0137, 0.0013, 32, WM2, { y: dy }), cyl(0.0128, 0.0128, 0.0083, 32, WM, { y: dy + 0.0002 }), drumC(0.0135, 0.0133, 0.0006, 32, WM, { y: dy + 0.0079 }));
-  for (let i = 0; i < 16; i++) {
-    const ry = (i / 16) * Math.PI * 2;
-    const [x0, z0] = onFace(0, 0, 0.01295, ry, 0), [x1, z1] = onFace(0, 0, 0.01302, ry, 0), [x2, z2] = onFace(0, 0, 0.01309, ry, 0);
-    out.push(pointed(0.0033, 0.0036, GREY, x0, dy + 0.0015, z0, ry, 3), pointed(0.0027, 0.0034, TAJ.BACK, x1, dy + 0.0017, z1, ry, 3), pointed(0.0011, 0.0022, TAJ.DOOR, x2, dy + 0.0019, z2, ry, 2));
+  out.push(lathe([[0.0137, 0], [0.0137, 0.0013], [0.0128, 0.0013]], 20, WM2, { y: dy }), cyl(0.0128, 0.0128, 0.0068, 20, WM, { y: dy + 0.0013 }), lathe([[0.0128, 0], [0.0135, 0.0002], [0.0133, 0.0006], [0.0128, 0.0006]], 20, WM, { y: dy + 0.0079 }));
+  for (let i = 0; i < 12; i++) {
+    const ry = (i / 12) * Math.PI * 2;
+    const [x1, z1] = onFace(0, 0, 0.01302, ry, 0), [x2, z2] = onFace(0, 0, 0.01309, ry, 0);
+    out.push(pointed(0.0027, 0.0034, TAJ.BACK, x1, dy + 0.0017, z1, ry, 2), pointed(0.0011, 0.0022, TAJ.DOOR, x2, dy + 0.0019, z2, ry, 1));
   }
-  // The onion dome, its lotus crown, the gilded finial and its crescent.
-  const top = dy + 0.0085;
-  out.push(lathe([[0.0128, 0], [0.0152, 0.003], [0.0165, 0.0065], [0.0163, 0.0095], [0.0149, 0.0125], [0.0123, 0.0152], [0.0089, 0.0175], [0.0053, 0.0193], [0.0024, 0.0205], [0.0009, 0.0211], [0, 0.0213]], 32, WM, { y: top }));
-  out.push(lathe([[0, 0], [0.0032, 0.0004], [0.0024, 0.0012], [0.001, 0.0016]], 16, WM2, { y: top + 0.0205 }));
-  for (let i = 0; i < 10; i++) {
-    const t = (i / 10) * Math.PI * 2;
-    out.push(P(new THREE.OctahedronGeometry(0.0009), WM2, { x: Math.sin(t) * 0.0027, y: top + 0.0203, z: Math.cos(t) * 0.0027, ry: t, sx: 0.55, sy: 0.35, sz: 1.15 }));
+  // The onion dome (as tall as it is wide, on its drum), its lotus crown,
+  // the gilded finial and its crescent.
+  const top = dy + 0.0085, DH = 0.0275, ky = DH / 0.0213, ft = top + DH - 0.0008;
+  out.push(lathe(([[0.0128, 0], [0.0155, 0.0033], [0.0166, 0.007], [0.0158, 0.0105], [0.0128, 0.0143], [0.0083, 0.0174], [0.0039, 0.0196], [0.0014, 0.0207], [0, 0.0213]] as const).map(([r, h]) => [r, h * ky] as const), 20, WM, { y: top }));
+  out.push(lathe([[0, 0], [0.0032, 0.0004], [0.0024, 0.0012], [0.001, 0.0016]], 8, WM2, { y: ft }));
+  for (let i = 0; i < 6; i++) {
+    const t = (i / 6) * Math.PI * 2;
+    out.push(P(new THREE.OctahedronGeometry(0.0009), WM2, { x: Math.sin(t) * 0.0027, y: ft - 0.0002, z: Math.cos(t) * 0.0027, ry: t, sx: 0.55, sy: 0.35, sz: 1.15 }));
   }
-  out.push(lathe([[0.0005, 0], [0.001, 0.0003], [0.0011, 0.0008], [0.0006, 0.0013], [0.0004, 0.0015], [0.0008, 0.0019], [0.0009, 0.0023], [0.0005, 0.0027], [0.0003, 0.0029], [0.0005, 0.0032], [0.0005, 0.0035], [0.0002, 0.0038], [0.0002, 0.004]], 10, GOLD, { y: top + 0.0209 }));
-  out.push(rod(V(0, top + 0.0248, 0), V(0, top + 0.0289, 0), 0.00024, GOLD, 5), rod(V(0, top + 0.0289, 0), V(0, top + 0.0318, 0), 0.00016, GOLD, 4));
-  for (const [yy, rr] of [[0.0268, 0.0005], [0.0282, 0.00035]] as const) out.push(ball(rr, GOLD, { y: top + yy }, 1));
-  out.push(P(new THREE.TorusGeometry(0.0013, 0.00024, 4, 12, Math.PI * 1.4).rotateZ(0.8 * Math.PI), GOLD, { y: top + 0.0302 }));
+  out.push(lathe([[0.0005, 0], [0.0011, 0.0008], [0.0004, 0.0015], [0.0009, 0.0023], [0.0003, 0.0029], [0.0005, 0.0035], [0.0002, 0.004]], 6, GOLD, { y: ft + 0.0004 }));
+  out.push(cyl(0.00024, 0.0002, 0.0041, 4, GOLD, { y: ft + 0.0043 }), cone(0.00016, 0.003, 4, GOLD, { y: ft + 0.0084 }));
+  for (const [yy, rr] of [[0.0063, 0.0005], [0.0077, 0.00035]] as const) out.push(ball(rr, GOLD, { y: ft + yy }));
+  out.push(P(new THREE.TorusGeometry(0.0013, 0.00024, 3, 6, Math.PI * 1.4).rotateZ(0.8 * Math.PI), GOLD, { y: ft + 0.0097 }));
   // The four chhatris round the dome.
   for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) out.push(...chhatri(sx * 0.0165, sz * 0.0165, dy + 0.0002, 0.0045, WM, WM2, GOLD));
   // The minarets, each leaning a little outward.
@@ -157,7 +159,7 @@ export function tajMahal(): G[] {
     const m = new THREE.Matrix4().makeTranslation(x, y, z).multiply(new THREE.Matrix4().makeRotationAxis(V(sz, 0, -sx).normalize(), 0.035)).multiply(new THREE.Matrix4().makeTranslation(-x, -y, -z));
     out.push(...minaret(x, z, y).map((g) => g.applyMatrix4(m)));
   }
-  return [flat(2 * H, 2 * H, 0xd8d0c0, 0, 0, 0.0003), ...stretch(out, 2.18, 3.5)];
+  return [flat(2 * H, 2 * H, 0xd8d0c0, 0, 0, 0.0003), ...stretch(out, 2.18, 2.4)];
 }
 // A pointed arch's outline (as pointed()), w wide, its sides h high, its
 // bottom middle at (x, y), traced into p.
@@ -172,43 +174,56 @@ function archPath<T extends THREE.Path>(p: T, w: number, h: number, x: number, y
 // A niche: t along its wall, its bottom y up it, w wide, its sides h high;
 // a half dome over it or not, its pale inlaid frame (alfiz) or not, a back
 // wall of its own or not (the wall behind it shows: the plinth's).
-interface Niche { readonly t: number; readonly y: number; readonly w: number; readonly h: number; readonly dome?: boolean; readonly frame?: boolean; readonly backed?: boolean }
+interface Niche { readonly t: number; readonly y: number; readonly w: number; readonly h: number; readonly dome?: boolean; readonly frame?: boolean; readonly backed?: boolean; readonly door?: boolean }
+// (A geometry without its hidden faces: those all at z = zb, its back
+// against the core, and those all on y = 0, its foot.)
+function trimHidden(g: THREE.BufferGeometry, zb: number): THREE.BufferGeometry {
+  const src = g.index ? g.toNonIndexed() : g, p = src.getAttribute('position'), keep: number[] = [];
+  for (let i = 0; i < p.count; i += 3) {
+    let back = true, foot = true;
+    for (let k = 0; k < 3; k++) { if (Math.abs(p.getZ(i + k) - zb) > 1e-7) back = false; if (Math.abs(p.getY(i + k)) > 1e-7) foot = false; }
+    if (!back && !foot) for (let k = 0; k < 3; k++) keep.push(p.getX(i + k), p.getY(i + k), p.getZ(i + k));
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.Float32BufferAttribute(keep, 3));
+  return out;
+}
 // A piece of the Taj's wall facing ry, its outer face d out from (cx, cz)
 // and t along, standing on y: w wide, h high, T deep, pierced by its niches.
 // Each niche's sides are the wall's own depth; at its back a wall with a
 // door (framed in grey) and, if there is room, a jali window over it; a half
 // dome over the big ones (the space between its rim and the pointed arch
 // filled in); its alfiz on the wall's face.
-function nicheWall(w: number, h: number, T: number, niches: readonly Niche[], cx: number, cz: number, d: number, ry: number, t: number, y: number, seg = 3): G[] {
+function nicheWall(w: number, h: number, T: number, niches: readonly Niche[], cx: number, cz: number, d: number, ry: number, t: number, y: number, seg = 3, trim = true): G[] {
   const out: G[] = [];
   const s = new THREE.Shape();
   s.moveTo(-w / 2, 0); s.lineTo(w / 2, 0); s.lineTo(w / 2, h); s.lineTo(-w / 2, h); s.lineTo(-w / 2, 0);
   for (const n of niches) s.holes.push(archPath(new THREE.Path(), n.w, n.h, n.t, n.y));
   const at = (dz: number, tt: number) => onFace(cx, cz, d + dz, ry, t + tt);
-  { const [x, z] = at(0, 0); out.push(P(new THREE.ExtrudeGeometry(s, { depth: T, bevelEnabled: false, curveSegments: seg }).translate(0, 0, -T), TAJ.WM, { x, y, z, ry })); }
+  { const [x, z] = at(0, 0); const g = new THREE.ExtrudeGeometry(s, { depth: T, bevelEnabled: false, curveSegments: seg }).translate(0, 0, -T); out.push(P(trim ? trimHidden(g, -T) : g, TAJ.WM, { x, y, z, ry })); }
   for (const n of niches) {
-    const yb = y + n.y, back = -T + 0.00006;
+    const yb = y + n.y, back = -T + 0.00006, big = n.w > 0.007;
     if (n.backed !== false) { const [x, z] = at(back, n.t); out.push(pointed(n.w, n.h, TAJ.BACK, x, yb, z, ry, seg)); }
     // The door, the jali over it.
     const dw = n.w * 0.42, dh = n.h * 0.3, js = dh + dw * 0.72 + n.h * 0.05, jw = n.w * 0.34, jh = n.h * 0.12;
-    for (const [c, ww, hh, dz] of [[TAJ.GREY, dw + 0.0005, dh + 0.00025, 0.00006], [TAJ.DOOR, dw, dh, 0.00012]] as const) {
-      if (c === TAJ.GREY && n.h < 0.002) continue;
-      const [x, z] = at(back + dz, n.t); out.push(pointed(ww, hh, c, x, yb, z, ry, 2));
+    if (n.door !== false) for (const [c, ww, hh, dz] of [[TAJ.GREY, dw + 0.0005, dh + 0.00025, 0.00006], [TAJ.DOOR, dw, dh, 0.00012]] as const) {
+      if (c === TAJ.GREY && !big) continue;
+      const [x, z] = at(back + dz, n.t); out.push(pointed(ww, hh, c, x, yb, z, ry, big ? 2 : 1));
     }
-    if (js + jh + jw * 0.72 + 0.0003 < n.h) {
-      if (n.w > 0.004) { const [x, z] = at(back + 0.00006, n.t); out.push(pointed(jw + 0.0004, jh + 0.0004, TAJ.GREY, x, yb + js - 0.0002, z, ry, 2)); }
+    if (big && js + jh + jw * 0.72 + 0.0003 < n.h) {
+      { const [x, z] = at(back + 0.00006, n.t); out.push(pointed(jw + 0.0004, jh + 0.0004, TAJ.GREY, x, yb + js - 0.0002, z, ry, 2)); }
       { const [x, z] = at(back + 0.00012, n.t); out.push(pointed(jw, jh, TAJ.JALI, x, yb + js, z, ry, 2)); }
     }
     if (n.dome) {
       const r = n.w / 2, [x, z] = at(-0.00015, n.t);
-      out.push(P(new THREE.SphereGeometry(r, r > 0.002 ? 8 : 5, r > 0.002 ? 3 : 2, Math.PI, Math.PI, 0, Math.PI / 2), TAJ.SOFT, { x, y: yb + n.h, z, ry, sz: Math.min(1, (T - 0.0002) / r) }));
+      out.push(P(new THREE.SphereGeometry(r, r > 0.004 ? 8 : r > 0.002 ? 6 : 4, r > 0.004 ? 3 : 2, Math.PI, Math.PI, 0, Math.PI / 2), TAJ.SOFT, { x, y: yb + n.h, z, ry, sz: Math.min(1, (T - 0.0002) / r) }));
       const ty = new THREE.Shape();
       // (The fill's lower edge a little inside the dome's rim: no sliver shows.)
       ty.moveTo(-r, n.h);
       ty.quadraticCurveTo(-r, n.h + n.w * 0.5, 0, n.h + n.w * 0.72);
       ty.quadraticCurveTo(r, n.h + n.w * 0.5, r, n.h);
       ty.absarc(0, n.h, r * 0.96, 0, Math.PI, false);
-      out.push(P(new THREE.ShapeGeometry(ty, seg), TAJ.BACK, { x, y: yb, z, ry }));
+      out.push(P(new THREE.ShapeGeometry(ty, big ? seg : 2), TAJ.BACK, { x, y: yb, z, ry }));
     }
     if (n.frame !== false) {
       const fw = n.w + 0.0011, fh = n.h + n.w * 0.72 + 0.0006, lw = 0.0003;
@@ -222,74 +237,71 @@ function nicheWall(w: number, h: number, T: number, niches: readonly Niche[], cx
 // ry, t along).
 function crest(w: number, d: number, ry: number, t: number, y: number): G[] {
   const out: G[] = [];
-  { const [x, z] = onFace(0, 0, d - 0.00035, ry, t); out.push(...box(w, 0.0009, 0.0007, TAJ.WM, { x, y, z, ry })); }
-  const n = Math.max(2, Math.round(w / 0.0024));
-  for (let i = 0; i < n; i++) {
-    const [x, z] = onFace(0, 0, d - 0.00035, ry, t - w / 2 + ((i + 0.5) * w) / n);
-    out.push(...box(0.0005, 0.0005, 0.0005, TAJ.WM, { x, y: y + 0.0009, z, ry }));
-  }
+  const [x, z] = onFace(0, 0, d - 0.00035, ry, t);
+  out.push(...box(w, 0.0009, 0.0007, TAJ.WM, { x, y, z, ry }));
+  out.push(merlons(w, Math.max(2, Math.round(w / 0.0024)), 0.0005, 0.0005, TAJ.WM, x, y + 0.0009, z, ry));
   return out;
 }
-// A guldasta: a slim octagonal pinnacle h high, r thick, ringed in grey,
-// capped by a little kiosk and lotus bud with a gilded spike.
+// A row of n merlons along a parapet's top (each a quad standing on its
+// middle line), w long, each mw wide and mh high, facing ry.
+function merlons(w: number, n: number, mw: number, mh: number, c: number, x: number, y: number, z: number, ry: number): G {
+  const p: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const m = -w / 2 + ((i + 0.5) * w) / n, a = m - mw / 2, b = m + mw / 2;
+    p.push(a, 0, 0, b, 0, 0, b, mh, 0, a, 0, 0, b, mh, 0, a, mh, 0);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(p, 3));
+  return P(g, c, { x, y, z, ry });
+}
+// A guldasta: a slim six-sided pinnacle h high, r thick, capped by a
+// little kiosk and its pointed bud with a gilded spike.
 function guldasta(x: number, z: number, y: number, h: number, r: number): G[] {
+  // (Open shells: each one's ends hidden in the next.)
   const out: G[] = [cyl(r, r * 0.85, h, 6, TAJ.WM, { x, y, z })];
-  for (const f of [0.4, 0.75]) out.push(cyl(r * 1.08, r * 1.08, r * 0.35, 6, TAJ.GREY, { x, y: y + h * f, z }));
-  out.push(drumC(r * 1.35, r * 1.35, r * 0.45, 6, TAJ.WM2, { x, y: y + h, z }));
-  out.push(lathe([[r * 1.15, 0], [r * 1.2, r * 0.7], [0, r * 1.9]], 6, TAJ.WM, { x, y: y + h + r * 0.45, z }));
-  out.push(rod(V(x, y + h + r * 2.2, z), V(x, y + h + r * 3.4, z), r * 0.14, TAJ.GOLD, 4));
+  out.push(cyl(r * 1.35, r * 1.35, r * 0.45, 6, TAJ.WM2, { x, y: y + h, z }));
+  out.push(cone(r * 1.3, r * 1.9, 6, TAJ.WM, { x, y: y + h + r * 0.45, z }));
+  out.push(cone(r * 0.14, r * 1.3, 3, TAJ.GOLD, { x, y: y + h + r * 2.25, z }));
   return out;
 }
 // A minaret standing on (x, y, z): its octagonal base, three tapering
-// stages inlaid with dark rings and lines, a balcony on corbels over each,
+// stages, each ringed with dark inlay, a balcony on corbels over each,
 // a chhatri on top.
 function minaret(x: number, z: number, y: number): G[] {
-  const out: G[] = [drumC(0.0038, 0.0037, 0.0008, 8, TAJ.WM2, { x, y, z }), drumC(0.0035, 0.0033, 0.0016, 8, TAJ.WM, { x, y: y + 0.0008, z })];
+  const out: G[] = [lathe([[0.0038, 0], [0.0035, 0.0024], [0.0029, 0.0024]], 8, TAJ.WM2, { x, y, z })];
   let yy = y + 0.0024;
   for (const [r0, r1, h] of [[0.0029, 0.0027, 0.0128], [0.0026, 0.0024, 0.0108], [0.0023, 0.0021, 0.0088]] as const) {
-    out.push(cyl(r0, r1, h, 10, TAJ.WM, { x, y: yy, z }));
-    for (const f of [0.5, 0.94]) {
-      const rf = r0 + (r1 - r0) * f + 0.00006;
-      out.push(cyl(rf, rf, 0.00028, 10, TAJ.INLAY, { x, y: yy + h * f, z }));
-    }
-    for (let i = 0; i < 4; i++) {
-      const q = (i / 4) * Math.PI * 2 + Math.PI / 4, c = Math.cos(q), sn = Math.sin(q);
-      const ra = r0 + 0.00003, rb = r1 + 0.00003;
-      out.push(rod(V(x + c * ra, yy, z + sn * ra), V(x + c * rb, yy + h * 0.94, z + sn * rb), 0.00007, TAJ.INLAY, 3));
-    }
+    out.push(cyl(r0, r1, h, 8, TAJ.WM, { x, y: yy, z }));
+    { const rf = (r0 + r1) / 2 + 0.00006; out.push(cyl(rf, rf, 0.00028, 8, TAJ.INLAY, { x, y: yy + h * 0.5, z })); }
     yy += h;
-    // The balcony: its corbelled underside, floor and parapet, grey-edged.
-    out.push(drumC(r1, r1 + 0.0016, 0.0009, 10, TAJ.WM2, { x, y: yy - 0.0002, z }));
-    out.push(cyl(r1 + 0.0016, r1 + 0.0016, 0.001, 10, TAJ.WM, { x, y: yy + 0.0007, z }));
-    out.push(cyl(r1 + 0.00166, r1 + 0.00166, 0.00018, 10, TAJ.GREY, { x, y: yy + 0.0013, z }));
+    // The balcony: its corbelled underside and parapet.
+    out.push(lathe([[r1, 0], [r1 + 0.0016, 0.0009], [r1 + 0.0016, 0.0019]], 8, TAJ.WM2, { x, y: yy - 0.0002, z }));
   }
-  out.push(...chhatri(x, z, yy + 0.0007, 0.0032, TAJ.WM, TAJ.WM2, TAJ.GOLD));
+  out.push(...chhatri(x, z, yy + 0.0007, 0.0032, TAJ.WM, TAJ.WM2, TAJ.GOLD, 6));
   return out;
 }
-// A chhatri (a domed kiosk), r wide, standing on y: its platform, eight
-// slim columns under pointed arches, the sloping eave (chhajja), a drum
-// ringed in grey, the dome, its lotus and gilded finial.
-function chhatri(x: number, z: number, y: number, r: number, c: number, c2: number, gold: number): G[] {
-  const out: G[] = [drumC(r * 1.05, r * 1.05, r * 0.25, 8, c2, { x, y, z })];
-  const cr = r * 0.8, ap = cr * Math.cos(Math.PI / 8), aw = 2 * cr * Math.sin(Math.PI / 8);
-  for (let i = 0; i < 8; i++) {
-    const q = ((i + 0.5) / 8) * Math.PI * 2;
-    out.push(cyl(r * 0.085, r * 0.075, r * 0.95, 4, c, { x: x + Math.sin(q) * cr, y: y + r * 0.25, z: z + Math.cos(q) * cr }));
+// A chhatri (a domed kiosk), r wide, standing on y: its platform, n slim
+// columns under pointed arches, the sloping eave (chhajja), a drum, the
+// dome, its lotus and gilded finial.
+function chhatri(x: number, z: number, y: number, r: number, c: number, c2: number, gold: number, n = 8): G[] {
+  const out: G[] = [drumC(r * 1.05, r * 1.05, r * 0.25, n, c2, { x, y, z })];
+  const cr = r * 0.8, ap = cr * Math.cos(Math.PI / n), aw = 2 * cr * Math.sin(Math.PI / n);
+  for (let i = 0; i < n; i++) {
+    const q = ((i + 0.5) / n) * Math.PI * 2;
+    out.push(cyl(r * 0.085, r * 0.075, r * 0.95, 3, c, { x: x + Math.sin(q) * cr, y: y + r * 0.25, z: z + Math.cos(q) * cr }));
     // The arch between two columns: the wall over its pointed opening.
-    const ry = (i / 8) * Math.PI * 2, ah = r * 0.42, s = new THREE.Shape();
+    const ry = (i / n) * Math.PI * 2, ah = r * 0.42, s = new THREE.Shape();
     s.moveTo(-aw / 2, 0); s.lineTo(-aw / 2, ah); s.lineTo(aw / 2, ah); s.lineTo(aw / 2, 0);
     s.quadraticCurveTo(aw / 2, ah * 0.55, 0, ah * 0.8);
     s.quadraticCurveTo(-aw / 2, ah * 0.55, -aw / 2, 0);
     const [ax, az] = onFace(x, z, ap, ry, 0);
-    out.push(P(new THREE.ShapeGeometry(s, 2), c, { x: ax, y: y + r * 0.78, z: az, ry }));
+    out.push(P(new THREE.ShapeGeometry(s, n === 8 ? 2 : 1), c, { x: ax, y: y + r * 0.78, z: az, ry }));
   }
-  out.push(drumC(r * 0.92, r * 0.92, r * 0.1, 8, c, { x, y: y + r * 1.2, z }));
-  out.push(drumC(r * 1.32, r * 0.95, r * 0.14, 8, c2, { x, y: y + r * 1.3, z }));
-  out.push(cyl(r * 0.86, r * 0.86, r * 0.3, 8, c, { x, y: y + r * 1.44, z }));
-  out.push(cyl(r * 0.875, r * 0.875, r * 0.06, 8, TAJ.GREY, { x, y: y + r * 1.6, z }));
-  out.push(lathe([[r * 0.86, 0], [r * 0.98, r * 0.3], [r * 0.95, r * 0.6], [r * 0.7, r * 0.95], [r * 0.35, r * 1.15], [0, r * 1.22]], 8, c, { x, y: y + r * 1.74, z }));
-  out.push(lathe([[0, 0], [r * 0.34, r * 0.04], [r * 0.24, r * 0.14], [r * 0.08, r * 0.2]], 6, c2, { x, y: y + r * 2.9, z }));
-  out.push(rod(V(x, y + r * 3.0, z), V(x, y + r * 3.6, z), r * 0.06, gold, 4));
+  out.push(drumC(r * 1.32, r * 0.95, r * 0.14, n, c2, { x, y: y + r * 1.2, z }));
+  out.push(cyl(r * 0.86, r * 0.86, r * 0.4, n, c, { x, y: y + r * 1.34, z }));
+  out.push(lathe([[r * 0.86, 0], [r * 0.98, r * 0.4], [r * 0.6, r * 1.0], [0, r * 1.22]], n, c, { x, y: y + r * 1.74, z }));
+  out.push(lathe([[r * 0.3, 0], [r * 0.08, r * 0.2]], n, c2, { x, y: y + r * 2.9, z }));
+  out.push(cone(r * 0.06, r * 0.7, 3, gold, { x, y: y + r * 2.95, z }));
   return out;
 }
 // ---------- Moscow ----------
@@ -448,235 +460,462 @@ function chapel(x: number, z: number, y: number, w: number, h: number, dr: numbe
 }
 // ---------- Himeji ----------
 
+// Himeji's colours: white plaster, its eaves, the grey tiles and their dark
+// edges, the white mortar, the stone, the gravel, windows and their frames, gilding.
+const HJ = { WHITE: 0xf3f1ea, EAVE: 0xe0ddd4, ROOF: 0x5a646e, EDGE: 0x454c54, RIDGE: 0xd6d6d0, STONE: 0xa8a090, GRAVEL: 0xd9d2c2, WIN: 0x2e2e30, FRAME: 0x9a9890, GOLD: 0xd9b04a } as const;
+
 // The White Heron (the castle alone, on a plain pad): its terrace of
-// battered stone; the great keep of five roofs on its own tall stone base
-// (white plaster, grey tiled roofs with their triangular and curved
-// gables, golden fish on the ridge) and its three lesser keeps joined to it
-// by corridors round a court; the castle's white walls with tiled caps
-// round the terrace, its gate and corner turrets. (Drawn up to fill its
-// site and stand about five cells tall: stretch.)
+// battered stone, the white walls round it under their little tiled roofs,
+// pierced by loopholes, its gate and corner turrets; the great keep of five
+// roofs on its own tall base of stone with its curved batter (white plaster,
+// grey tiles on sagging slopes whose corners turn up, white plastered eaves,
+// the hips mortared white), its triangular gables (chidori-hafu) and curved
+// ones (kara-hafu) with gilded ornaments, golden fish on the ridge; its
+// three lesser keeps round a court, joined to it by two-storey corridors.
+// (Drawn up to fill its site and stand about five cells tall: stretch.)
 export function himejiCastle(): G[] {
   const out: G[] = [];
-  const WHITE = 0xf3f1ea, ROOF = 0x5a646e, STONE = 0xa8a090, GRAVEL = 0xd9d2c2;
   // The terrace of battered stone, gravel on top.
   const tw = 0.1, td = 0.086, th = 0.012;
-  out.push(...frustum(tw, td, tw - 0.006, td - 0.006, th, STONE, {}, GRAVEL));
-  for (let i = 0; i < 4; i++) out.push(...frustum(tw + 0.0002 - i * 0.0015, td + 0.0002 - i * 0.0015, tw - 0.0012 - i * 0.0015, td - 0.0012 - i * 0.0015, 0.0004, shade(STONE, 0.86), { y: (i + 0.5) * th / 4.4 }));
-  const top = th, iw = tw - 0.006, id = td - 0.006;
-  const edge = (x0: number, z0: number, x1: number, z1: number) => out.push(...wall(x0, z0, x1, z1, top, WHITE, ROOF));
-  edge(-iw / 2 + 0.002, id / 2 - 0.002, -0.007, id / 2 - 0.002);
-  edge(0.007, id / 2 - 0.002, iw / 2 - 0.002, id / 2 - 0.002);
-  edge(-iw / 2 + 0.002, -id / 2 + 0.002, -iw / 2 + 0.002, id / 2 - 0.002);
-  edge(iw / 2 - 0.002, -id / 2 + 0.002, iw / 2 - 0.002, id / 2 - 0.002);
-  edge(-iw / 2 + 0.002, -id / 2 + 0.002, iw / 2 - 0.002, -id / 2 + 0.002);
-  out.push(...yagura(0, id / 2 - 0.004, top, 0.012, 0.007, WHITE, ROOF, 0));
-  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) out.push(...yagura(sx * (iw / 2 - 0.0055), sz * (id / 2 - 0.0052), top, 0.008, 0.007, WHITE, ROOF, 0));
-  // The great keep and its three lesser keeps, the corridors joining them.
-  out.push(...keep(0.014, 0.008, top, [[0.034, 0.028, 0.009], [0.03, 0.024, 0.0075], [0.026, 0.021, 0.0072], [0.022, 0.018, 0.0066], [0.017, 0.014, 0.0072]], WHITE, ROOF, STONE, 1));
-  out.push(...keep(-0.026, 0.012, top, [[0.02, 0.017, 0.0075], [0.016, 0.014, 0.0066], [0.012, 0.011, 0.0066]], WHITE, ROOF, STONE, 2));
-  out.push(...keep(-0.026, -0.022, top, [[0.018, 0.016, 0.0072], [0.014, 0.012, 0.0064], [0.011, 0.01, 0.0062]], WHITE, ROOF, STONE, 3));
-  out.push(...keep(0.016, -0.028, top, [[0.018, 0.016, 0.0072], [0.014, 0.012, 0.0064], [0.011, 0.01, 0.0062]], WHITE, ROOF, STONE, 4));
-  out.push(...corridor(-0.026, 0.003, -0.026, -0.013, top, WHITE, ROOF), ...corridor(-0.017, -0.024, 0.007, -0.027, top, WHITE, ROOF));
-  out.push(...corridor(0.016, -0.019, 0.016, -0.006, top, WHITE, ROOF), ...corridor(-0.016, 0.012, -0.003, 0.012, top, WHITE, ROOF));
+  out.push(...battered(0, 0, 0, tw - 0.006, td - 0.006, th, 0.003, 4, HJ.STONE, HJ.GRAVEL));
+  const top = th, iw = tw - 0.006, id = td - 0.006, X = iw / 2 - 0.002, Z = id / 2 - 0.002;
+  // Its walls, the gate in the front one, the corner turrets.
+  out.push(...dobei(-X, Z, -0.0085, Z, top), ...dobei(0.0085, Z, X, Z, top), ...dobei(-X, -Z, -X, Z, top), ...dobei(X, -Z, X, Z, top), ...dobei(-X, -Z, X, -Z, top));
+  out.push(...gate(0, Z, top));
+  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) out.push(...turret(sx * (X - 0.0035), sz * (Z - 0.0032), top, sx * sz > 0 ? 0 : Math.PI / 2));
+  // The great keep: five storeys, a roof over each, the gables on them.
+  out.push(...keep(0.014, 0.008, top, [[0.034, 0.028, 0.009], [0.03, 0.024, 0.0075], [0.026, 0.021, 0.0072], [0.022, 0.018, 0.0066], [0.017, 0.014, 0.0072]], [
+    { front: 'pair', side: 'one' }, { front: 'big', side: 'none' }, { front: 'kara', side: 'pair' }, { front: 'pair', side: 'kara' },
+  ], true));
+  // The lesser keeps, the corridors joining them to it and each other.
+  out.push(...keep(-0.026, 0.012, top, [[0.02, 0.017, 0.0075], [0.016, 0.014, 0.0066], [0.012, 0.011, 0.0066]], [{ front: 'one', side: 'one' }, { front: 'kara', side: 'none' }], false));
+  out.push(...keep(-0.026, -0.022, top, [[0.018, 0.016, 0.0072], [0.014, 0.012, 0.0064], [0.011, 0.01, 0.0062]], [{ front: 'one', side: 'none' }, { front: 'none', side: 'one' }], false));
+  out.push(...keep(0.016, -0.028, top, [[0.018, 0.016, 0.0072], [0.014, 0.012, 0.0064], [0.011, 0.01, 0.0062]], [{ front: 'big', side: 'none' }, { front: 'one', side: 'none' }], false));
+  out.push(...corridor(-0.026, 0.003, -0.026, -0.013, top), ...corridor(-0.017, -0.024, 0.007, -0.027, top));
+  out.push(...corridor(0.016, -0.019, 0.016, -0.006, top), ...corridor(-0.016, 0.012, -0.003, 0.012, top));
   return [flat(2 * H, 2 * H, 0xcfc8b8, 0, 0, 0.0003), ...stretch(out, 1.44, 2.1)];
 }
-// A white wall with a tiled cap from (x0, z0) to (x1, z1), on y.
-function wall(x0: number, z0: number, x1: number, z1: number, y: number, white: number, roof: number): G[] {
-  return [...run(x0, z0, x1, z1, 0.0012, 0.0036, white, y), ...run(x0, z0, x1, z1, 0.0024, 0.0008, roof, y + 0.0036)];
+// A base of stone w × d at its top, h high, its faces' curved batter
+// (musha-gaeshi: flaring out at the foot, upright at the top) B wide; in n
+// courses of alternating shade, its top in `top`.
+function battered(x: number, z: number, y: number, w: number, d: number, h: number, B: number, n: number, c: number, top: number): G[] {
+  const out: G[] = [], at = (t: number) => 2 * B * (1 - t) ** 2;
+  for (let k = 0; k < n; k++) {
+    const t0 = k / n, t1 = (k + 1) / n;
+    out.push(...frustum(w + at(t0), d + at(t0), w + at(t1), d + at(t1), h / n, shade(c, k % 2 ? 0.95 : 1.03), { x, y: y + (h * k) / n, z }, k === n - 1 ? top : undefined));
+  }
+  return out;
 }
-// A Japanese hipped roof: from eaves w × d at y up to w1 × d1, flaring at
-// the eaves; a dark soffit under the eaves.
-function jRoof(x: number, z: number, y: number, w: number, d: number, w1: number, d1: number, h: number, roof: number, ry = 0): G[] {
-  const mw = w1 + (w - w1) * 0.38, md = d1 + (d - d1) * 0.38;
+// A rib (a roof's ridge, a barge board): a three-sided rod from a to b, open-ended.
+function rib(a: THREE.Vector3, b: THREE.Vector3, r: number, c: number): G {
+  const l = a.distanceTo(b), g = new THREE.CylinderGeometry(r, r, l, 3, 1, true).translate(0, l / 2, 0);
+  g.applyMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion().setFromUnitVectors(V(0, 1, 0), b.clone().sub(a).normalize())));
+  return P(g.translate(a.x, a.y, a.z), c);
+}
+// A Japanese hipped roof from its eaves w × d at y up to w1 × d1 (a ridge
+// when d1 is small), h high, turned ry, in Himeji's tiles: its hips (and
+// ridge) mortared white when `hips`, its eaves plastered white (swoop).
+const hRoof = (x: number, z: number, y: number, w: number, d: number, w1: number, d1: number, h: number, ry = 0, hips = true): G[] =>
+  swoop(x, z, y, w, d, w1, d1, h, { tile: HJ.ROOF, edge: HJ.EDGE, eave: HJ.EAVE, ridge: hips ? HJ.RIDGE : undefined }, ry);
+// An East Asian hipped roof from its eaves w × d at y up to w1 × d1 (a
+// ridge when w1 or d1 is small, a point when both are), h high, turned ry:
+// its slopes sagging (flat at the eaves, steep above), the eaves' corners
+// turned up by `lift` of h; the tiles' edge and the eaves' underside; its
+// hips (and ridge) in `ridge`, if given, and on each hip's foot a file of
+// `beasts` little roof figures; the rows of tiles down its front and back
+// slopes `rows` apart, if given (in the tiles' edge).
+interface RoofCols { readonly tile: number; readonly edge: number; readonly eave: number; readonly ridge?: number | undefined }
+function swoop(x: number, z: number, y: number, w: number, d: number, w1: number, d1: number, h: number, col: RoofCols, ry = 0, lift0 = 0.22, beasts = 0, rows = 0): G[] {
+  const T = [0, 0.3, 0.65, 1], lift = h * lift0, edge = h * 0.1;
+  const ring = (k: number, dy = 0): THREE.Vector3[] => {
+    const t = T[k]!, a = w / 2 + (w1 / 2 - w / 2) * t, b = d / 2 + (d1 / 2 - d / 2) * t, yy = h * t ** 1.5 + dy;
+    const C = [[-a, b], [a, b], [a, -b], [-a, -b]] as const, pts: THREE.Vector3[] = [];
+    for (let i = 0; i < 4; i++) {
+      const p = C[i]!, q = C[(i + 1) % 4]!;
+      for (let j = 0; j < 3; j++) {
+        const up = j === 0 ? (k === 0 ? lift : k === 1 ? lift * 0.3 : 0) : 0, s = j / 3;
+        pts.push(V(p[0] + (q[0] - p[0]) * s, yy + up, p[1] + (q[1] - p[1]) * s));
+      }
+    }
+    return pts;
+  };
+  const quads = (A: THREE.Vector3[], B: THREE.Vector3[], arr: number[]) => {
+    for (let i = 0; i < A.length; i++) {
+      const a0 = A[i]!, a1 = A[(i + 1) % A.length]!, b0 = B[i]!, b1 = B[(i + 1) % B.length]!;
+      arr.push(a0.x, a0.y, a0.z, a1.x, a1.y, a1.z, b1.x, b1.y, b1.z, a0.x, a0.y, a0.z, b1.x, b1.y, b1.z, b0.x, b0.y, b0.z);
+    }
+  };
+  const rings = [0, 1, 2, 3].map((k) => ring(k)), low = ring(0, -edge);
+  const slope: number[] = [], rim: number[] = [], soffit: number[] = [];
+  for (let k = 0; k < 3; k++) quads(rings[k]!, rings[k + 1]!, slope);
+  quads(low, rings[0]!, rim);
+  for (let i = 0; i < 12; i++) { const a = low[i]!, b = low[(i + 1) % 12]!; soffit.push(0, -edge, 0, b.x, b.y, b.z, a.x, a.y, a.z); }
+  const mk = (arr: number[], c: number) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(arr, 3)); return P(g, c, { x, y, z, ry }); };
+  const out: G[] = [mk(slope, col.tile), mk(rim, col.edge), mk(soffit, col.eave)];
+  if (rows > 0) {
+    // (Each row a strip lying a hair over the slope, eaves to ridge, at one x.)
+    const tiles: number[] = [], hw = rows * 0.13, a3 = w1 / 2 - rows * 0.5, n = Math.floor((2 * a3) / rows) + 1;
+    const on = (k: number, ids: readonly number[], xx: number) => {
+      const pl = ids.map((i) => rings[k]![i]!);
+      for (let j = 0; j < pl.length - 1; j++) {
+        const p = pl[j]!, q = pl[j + 1]!, lo = Math.min(p.x, q.x), hi = Math.max(p.x, q.x);
+        if (xx >= lo - 1e-9 && xx <= hi + 1e-9) { const f = hi - lo < 1e-9 ? 0 : (xx - p.x) / (q.x - p.x); return [p.y + (q.y - p.y) * f + 0.0002, p.z] as const; }
+      }
+      return [pl[0]!.y + 0.0002, pl[0]!.z] as const;
+    };
+    for (const ids of [[0, 1, 2, 3], [6, 7, 8, 9]] as const) for (let i = 0; i < n; i++) {
+      const xx = n === 1 ? 0 : -a3 + (i * 2 * a3) / (n - 1);
+      for (let k = 0; k < 3; k++) {
+        const [y0, z0] = on(k, ids, xx), [y1, z1] = on(k + 1, ids, xx);
+        tiles.push(xx - hw, y0, z0, xx + hw, y0, z0, xx + hw, y1, z1, xx - hw, y0, z0, xx + hw, y1, z1, xx - hw, y1, z1);
+      }
+    }
+    out.push(mk(tiles, col.edge));
+  }
+  const m = new THREE.Matrix4().compose(V(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, ry, 0)), V(1, 1, 1));
+  const at = (k: number, i: number) => rings[k]![i]!.clone().applyMatrix4(m);
+  if (col.ridge !== undefined) {
+    const r = Math.max(0.00022, Math.min(0.0005, h * 0.06));
+    for (const i of [0, 3, 6, 9]) out.push(rib(at(0, i), at(1, i), r, col.ridge), rib(at(1, i), at(3, i), r, col.ridge));
+    if (d1 < d * 0.25 && w1 > d1 * 2) out.push(rib(at(3, 0), at(3, 3), r * 1.5, col.ridge));
+    else if (w1 < w * 0.25 && d1 > w1 * 2) out.push(rib(at(3, 0), at(3, 9), r * 1.5, col.ridge));
+  }
+  // (The figures: an immortal leading, beasts behind, up the hip's foot.)
+  for (const i of [0, 3, 6, 9]) for (let b = 0; b < beasts; b++) {
+    const p = at(0, i).lerp(at(1, i), 0.18 + (0.7 * b) / Math.max(1, beasts));
+    out.push(cone(h * 0.07, h * (b === 0 ? 0.2 : 0.15), 3, col.ridge ?? col.edge, { x: p.x, y: p.y, z: p.z }));
+  }
+  return out;
+}
+// A chidori-hafu (a triangular gable standing out of a roof's slope), w
+// wide and h high, its white face's foot at (x, y, z) facing ry: its tiled
+// slopes, dark barge boards, a gilded gegyo under the apex.
+function chidori(x: number, z: number, y: number, w: number, h: number, ry: number): G[] {
+  const dep = w * 0.9, sx = Math.sin(ry), cz = Math.cos(ry);
+  const at = (u: number, v: number, f: number) => V(x + cz * u + sx * f, y + v, z - sx * u + cz * f);
   return [
-    ...frustum(w, d, mw, md, h * 0.28, shade(roof, 1.05), { x, y, z, ry }),
-    ...frustum(mw, md, w1, d1, h * 0.72, roof, { x, y: y + h * 0.28, z, ry }),
-    P(new THREE.PlaneGeometry(w, d).rotateX(Math.PI / 2), 0x3a3a3c, { x, y: y - 0.00005, z, ry }),
+    ...gable(w, dep, h, HJ.ROOF, { x: x - sx * (dep / 2), y, z: z - cz * (dep / 2), ry }, true, HJ.WHITE),
+    rib(at(-w / 2, 0, 0.0002), at(0, h, 0.0002), w * 0.035, HJ.EDGE), rib(at(w / 2, 0, 0.0002), at(0, h, 0.0002), w * 0.035, HJ.EDGE),
+    P(new THREE.OctahedronGeometry(w * 0.07), HJ.GOLD, { ...xyz(at(0, h * 0.7, 0.0003)), sz: 0.4, ry }),
   ];
 }
-// A keep: its stone base, then storeys (w, d, h) each under its roof, with
-// windows and gables; the top under a hip-and-gable roof with golden fish.
-function keep(x: number, z: number, y: number, storeys: readonly (readonly [number, number, number])[], white: number, roof: number, stone: number, seed: number): G[] {
-  const r = rnd(seed * 7), out: G[] = [];
+const xyz = (v: THREE.Vector3) => ({ x: v.x, y: v.y, z: v.z });
+// A kara-hafu (a curved, bow-shaped gable), w wide, its foot at (x, y, z)
+// facing ry: the tiled bow, its dark edge, the white face under it, a
+// gilded ornament.
+function karaHafu(x: number, z: number, y: number, w: number, ry: number): G[] {
+  const H0 = w * 0.55, len = w * 0.75, n = 8, edge = w * 0.08;
+  const prof = Array.from({ length: n + 1 }, (_, i) => {
+    const u = -1 + (2 * i) / n;
+    return [u * w / 2, H0 * (Math.cos((u * Math.PI) / 2) ** 1.6 * 0.85 + 0.15 * Math.max(0, Math.abs(u) - 0.7) / 0.3 * 0.9)] as const;
+  });
+  const tiles: number[] = [], rim: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const [u0, v0] = prof[i]!, [u1, v1] = prof[i + 1]!;
+    tiles.push(u0, v0, 0, u1, v1, 0, u1, v1, -len, u0, v0, 0, u1, v1, -len, u0, v0, -len);
+    rim.push(u0, v0 - edge, 0.0001, u1, v1 - edge, 0.0001, u1, v1, 0.0001, u0, v0 - edge, 0.0001, u1, v1, 0.0001, u0, v0, 0.0001);
+  }
+  const face = new THREE.Shape();
+  face.moveTo(-w * 0.42, 0);
+  for (const [u, v] of prof) if (Math.abs(u) <= w * 0.42) face.lineTo(u, v - edge);
+  face.lineTo(w * 0.42, 0);
+  const mk = (arr: number[], c: number) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(arr, 3)); return P(g, c, { x, y, z, ry }); };
+  return [
+    mk(tiles, HJ.ROOF), mk(rim, HJ.EDGE),
+    P(new THREE.ShapeGeometry(face), HJ.WHITE, { x, y, z, ry }),
+    P(new THREE.OctahedronGeometry(w * 0.06), HJ.GOLD, { x: x + Math.sin(ry) * 0.0003, y: y + H0 * 0.62, z: z + Math.cos(ry) * 0.0003, sz: 0.4, ry }),
+  ];
+}
+// A white storey w × d, h high, its windows (n a side, framed or not) round it.
+function storey(x: number, z: number, y: number, w: number, d: number, h: number, framed: boolean, ry = 0): G[] {
+  const out: G[] = [ring(w, h, d, HJ.WHITE, { x, y, z, ry })];
+  for (const [fr, len, o] of [[0, w, d / 2], [Math.PI, w, d / 2], [Math.PI / 2, d, w / 2], [-Math.PI / 2, d, w / 2]] as const) {
+    const f = ry + fr, n = Math.max(1, Math.floor(len / 0.0042));
+    for (let k = 0; k < n; k++) {
+      const t = -len / 2 + (k + 0.5) * (len / n), [fx, fz] = onFace(x, z, o + 0.0002, f, t);
+      if (framed) { const [gx, gz] = onFace(x, z, o + 0.0001, f, t); out.push(pane(0.0021, 0.0022, HJ.FRAME, gx, y + h * 0.42 - 0.0003, gz, f)); }
+      out.push(pane(0.0015, 0.0016, HJ.WIN, fx, y + h * 0.42, fz, f));
+    }
+  }
+  return out;
+}
+// The gables on one roof: on its front and back and on its sides, none, one,
+// a pair, a big one or a kara-hafu.
+type Gables = 'none' | 'one' | 'pair' | 'big' | 'kara';
+function gables(x: number, z: number, y: number, w: number, d: number, rh: number, front: Gables, side: Gables): G[] {
+  const out: G[] = [];
+  for (const [kind, len, o, f] of [[front, w, d / 2, 0], [front, w, d / 2, Math.PI], [side, d, w / 2, Math.PI / 2], [side, d, w / 2, -Math.PI / 2]] as const) {
+    const put = (t: number, gw: number, gh: number, yy: number) => { const [fx, fz] = onFace(x, z, o, f, t); out.push(...chidori(fx, fz, yy, gw, gh, f)); };
+    if (kind === 'one') put(0, 0.0075, 0.0042, y + rh * 0.12);
+    else if (kind === 'pair') for (const t of [-1, 1]) put(t * len * 0.24, 0.0062, 0.0036, y + rh * 0.15);
+    else if (kind === 'big') put(0, Math.min(0.012, len * 0.5), 0.0058, y + rh * 0.05);
+    else if (kind === 'kara') { const [fx, fz] = onFace(x, z, o + 0.0006, f, 0); out.push(...karaHafu(fx, fz, y + rh * 0.08, 0.0095, f)); }
+  }
+  return out;
+}
+// A keep: its stone base, then storeys (w, d, h) each under its roof with
+// its gables, the top under a hip-and-gable roof (irimoya), its gable ends
+// white with a gilded ornament, golden fish (shachihoko) at the ridge's ends.
+function keep(x: number, z: number, y: number, storeys: readonly (readonly [number, number, number])[], roofs: readonly { front: Gables; side: Gables }[], main: boolean): G[] {
+  const out: G[] = [];
   const [w0, d0] = storeys[0]!;
   const sb = 0.006 + w0 * 0.25;
-  out.push(...frustum(w0 + 0.006, d0 + 0.006, w0 + 0.001, d0 + 0.001, sb, stone, { x, y, z }, shade(stone, 1.1)));
+  out.push(...battered(x, z, y, w0 + 0.001, d0 + 0.001, sb, 0.0025, main ? 5 : 3, HJ.STONE, shade(HJ.STONE, 1.1)));
   let yy = y + sb;
   storeys.forEach(([w, d, h], i) => {
     const next = storeys[i + 1];
-    out.push(ring(w, h, d, white, { x, y: yy, z }));
-    // Windows, a row of dark slits under each storey's eaves, a dark band at the foot.
-    for (const [ry, len, o] of [[0, w, d / 2], [Math.PI, w, d / 2], [Math.PI / 2, d, w / 2], [-Math.PI / 2, d, w / 2]] as const) {
-      const n = Math.max(2, Math.floor(len / 0.004));
-      for (let k = 0; k < n; k++) {
-        const t = -len / 2 + (k + 0.5) * (len / n), [fx, fz] = onFace(x, z, o + 0.0002, ry, t);
-        out.push(pane(0.0014, 0.0016, 0x2e2e30, fx, yy + h * 0.5, fz, ry));
-      }
-      const [bx, bz] = onFace(x, z, o + 0.0002, ry, 0);
-      out.push(pane(len, h * 0.12, 0x8a8a86, bx, yy, bz, ry));
-    }
+    out.push(...storey(x, z, yy, w, d, h, main));
     yy += h;
+    const ov = 0.0038;
     if (next) {
-      const ov = 0.0038, rh = 0.0042;
-      out.push(...jRoof(x, z, yy, w + ov * 2, d + ov * 2, next[0], next[1], rh, roof));
-      // Gables on the roof: triangular on the long sides here, curved there.
-      const kind = (i + seed) % 3;
-      for (const s of [-1, 1]) {
-        const fz = z + s * (d / 2 + ov * 0.35);
-        if (kind === 0) out.push(...gable(0.0085, 0.006, 0.0042, roof, { x, y: yy + rh * 0.12, z: fz, ry: s > 0 ? 0 : Math.PI }, true, white));
-        else if (kind === 1) {
-          for (const t of [-1, 1]) out.push(...gable(0.006, 0.005, 0.0034, roof, { x: x + t * w * 0.24, y: yy + rh * 0.15, z: fz, ry: s > 0 ? 0 : Math.PI }, true, white));
-        } else out.push(...karaHafu(x, fz, yy + rh * 0.1, 0.008, s > 0 ? 0 : Math.PI, roof, white));
-        if (r() < 0.5) {
-          const fx = x + s * (w / 2 + ov * 0.35);
-          out.push(...gable(0.006, 0.005, 0.0034, roof, { x: fx, y: yy + rh * 0.15, z, ry: s > 0 ? Math.PI / 2 : -Math.PI / 2 }, true, white));
-        }
-      }
+      const rh = 0.0042, g = roofs[i] ?? { front: 'none', side: 'none' };
+      out.push(...hRoof(x, z, yy, w + ov * 2, d + ov * 2, next[0], next[1], rh));
+      out.push(...gables(x, z, yy, w + ov * 0.6, d + ov * 0.6, rh, g.front, g.side));
       yy += rh;
     } else {
-      // The top: a hipped lower skirt, a gabled roof over it, golden fish at the ridge's ends.
-      const ov = 0.004;
-      out.push(...jRoof(x, z, yy, w + ov * 2, d + ov * 2, w * 0.9, d * 0.62, 0.0035, roof));
-      out.push(...gable(w * 0.95, d * 0.66, 0.0062, roof, { x, y: yy + 0.0035, z }, false, white));
-      out.push(rod(V(x - w * 0.47, yy + 0.0097, z), V(x + w * 0.47, yy + 0.0097, z), 0.0005, shade(roof, 0.8), 4));
-      for (const s of [-1, 1]) out.push(P(new THREE.ConeGeometry(0.0008, 0.0028, 4).translate(0, 0.0014, 0), 0xd9b04a, { x: x + s * w * 0.47, y: yy + 0.0097, z, rz: s * 0.5 }));
-      yy += 0.0097;
+      // The top: a hipped skirt, the gabled roof over it, its ridge and fish.
+      out.push(...hRoof(x, z, yy, w + ov * 2, d + ov * 2, w * 0.92, d * 0.64, 0.0035, 0, false));
+      const gy = yy + 0.0035, gh = 0.0062;
+      out.push(...gable(w * 0.95, d * 0.66, gh, HJ.ROOF, { x, y: gy, z }, false, HJ.WHITE));
+      for (const s of [-1, 1]) {
+        out.push(rib(V(x + s * w * 0.475, gy + 0.0002, z + d * 0.33), V(x + s * w * 0.475, gy + gh + 0.0002, z), 0.0003, HJ.EDGE), rib(V(x + s * w * 0.475, gy + 0.0002, z - d * 0.33), V(x + s * w * 0.475, gy + gh + 0.0002, z), 0.0003, HJ.EDGE));
+        out.push(P(new THREE.OctahedronGeometry(0.0007), HJ.GOLD, { x: x + s * (w * 0.475 + 0.0002), y: gy + gh * 0.7, z, sx: 0.4 }));
+      }
+      out.push(rib(V(x - w * 0.48, gy + gh, z), V(x + w * 0.48, gy + gh, z), 0.0005, HJ.RIDGE));
+      for (const s of [-1, 1]) {
+        out.push(P(new THREE.OctahedronGeometry(0.0009), HJ.GOLD, { x: x + s * w * 0.47, y: gy + gh + 0.0009, z, sx: 1.4, sz: 0.5 }));
+        out.push(cone(0.0005, 0.0018, 4, HJ.GOLD, { x: x + s * w * 0.47, y: gy + gh + 0.0012, z, rz: s * 0.6 }));
+      }
     }
   });
   return out;
 }
-// A curved gable (kara-hafu): a half barrel roof over a white face, set on
-// a roof's slope facing ry.
-function karaHafu(x: number, z: number, y: number, w: number, ry: number, roof: number, white: number): G[] {
-  // (A half barrel, its axis outward, its arch on top; a white face under its front end.)
-  const len = 0.006, barrel = new THREE.CylinderGeometry(w / 2, w / 2, len, 10, 1, true, Math.PI / 2, Math.PI).rotateX(Math.PI / 2);
-  const [fx, fz] = [x + Math.sin(ry) * (len / 2 - 0.0002), z + Math.cos(ry) * (len / 2 - 0.0002)];
+// A stretch of the castle's wall (dobei) from (x0, z0) to (x1, z1) on y:
+// white, under its little tiled roof, loopholes (square and triangular) on
+// its outer face.
+function dobei(x0: number, z0: number, x1: number, z1: number, y: number): G[] {
+  const l = Math.hypot(x1 - x0, z1 - z0), ry = Math.atan2(x1 - x0, z1 - z0), x = (x0 + x1) / 2, z = (z0 + z1) / 2, wh = 0.0036;
+  const out: G[] = [...run(x0, z0, x1, z1, 0.0012, wh, HJ.WHITE, y), ...gable(0.0026, l + 0.0008, 0.0011, HJ.ROOF, { x, y: y + wh, z, ry }, true, HJ.EDGE)];
+  // (Its outer face: the side away from the castle's middle.)
+  const nx = Math.cos(ry), nz = -Math.sin(ry), s = nx * x + nz * z > 0 ? 1 : -1, n = Math.floor(l / 0.0045);
+  for (let i = 0; i < n; i++) {
+    const t = -l / 2 + (i + 0.5) * (l / n), px = x + Math.sin(ry) * t + s * nx * 0.00062, pz = z + Math.cos(ry) * t + s * nz * 0.00062, f = ry + (s > 0 ? Math.PI / 2 : -Math.PI / 2);
+    if (i % 2) out.push(pane(0.0006, 0.0006, HJ.WIN, px, y + 0.0018, pz, f));
+    else out.push(P(new THREE.CircleGeometry(0.00045, 3).rotateZ(Math.PI / 2), HJ.WIN, { x: px, y: y + 0.0021, z: pz, ry: f }));
+  }
+  return out;
+}
+// The front gate: stone piers either side of the dark gateway, the white
+// gatehouse over it under its roof, a gable to the front.
+function gate(x: number, z: number, y: number): G[] {
+  const w = 0.017, d = 0.0065, ph = 0.0036;
+  const out: G[] = [];
+  for (const s of [-1, 1]) out.push(...battered(x + s * (w / 2 - 0.0022), z, y, 0.0036, d - 0.001, ph, 0.0004, 1, HJ.STONE, HJ.STONE));
+  out.push(pane(w - 0.0088, ph, HJ.WIN, x, y, z + d / 2 - 0.0012));
+  out.push(...box(w, 0.0048, d, HJ.WHITE, { x, y: y + ph, z }));
+  out.push(pane(w - 0.0088, 0.0006, 0x6a4a34, x, y + ph - 0.0006, z + d / 2 - 0.00115));
+  for (const t of [-0.0045, 0, 0.0045]) out.push(pane(0.0015, 0.0012, HJ.WIN, x + t, y + ph + 0.0018, z + d / 2 + 0.0001));
+  out.push(...hRoof(x, z, y + ph + 0.0048, w + 0.006, d + 0.006, w * 0.6, 0.0006, 0.0048));
+  out.push(...chidori(x, z + d / 2 + 0.0018, y + ph + 0.0052, 0.007, 0.0036, 0));
+  return out;
+}
+// A corner turret (sumi-yagura): two white storeys, the upper smaller, each
+// under its roof, a gable on the lower; turned ry.
+function turret(x: number, z: number, y: number, ry: number): G[] {
+  const w = 0.009, d = 0.0075;
   return [
-    P(barrel, roof, { x, y: y + 0.0012, z, ry, sy: 0.7 }),
-    P(new THREE.CircleGeometry((w / 2) * 0.9, 10, 0, Math.PI).scale(1, 0.7, 1), white, { x: fx, y: y + 0.0012, z: fz, ry }),
-    P(new THREE.PlaneGeometry(w * 0.9, 0.0012).translate(0, 0.0006, 0), white, { x: fx, y, z: fz, ry }),
+    ...storey(x, z, y, w, d, 0.0055, false, ry),
+    ...hRoof(x, z, y + 0.0055, w + 0.005, d + 0.005, w * 0.7, d * 0.6, 0.0032, ry, false),
+    ...storey(x, z, y + 0.0087, w * 0.7, d * 0.6, 0.0042, false, ry),
+    ...hRoof(x, z, y + 0.0129, w * 0.7 + 0.004, d * 0.6 + 0.004, w * 0.4, 0.0006, 0.0042, ry),
+    ...chidori(...onFace(x, z, d / 2 + 0.0018, ry, 0), y + 0.0058, 0.0055, 0.003, ry),
   ];
 }
-// A turret: one white storey under a hipped roof, its gable to the front.
-function yagura(x: number, z: number, y: number, w: number, d: number, white: number, roof: number, ry: number): G[] {
-  return [
-    ...box(w, 0.006, d, white, { x, y, z, ry }),
-    ...jRoof(x, z, y + 0.006, w + 0.004, d + 0.004, w * 0.6, d * 0.25, 0.0045, roof, ry),
-    ...gable(0.005, 0.004, 0.0028, roof, { x: x + Math.sin(ry) * (d / 2 + 0.0012), y: y + 0.0068, z: z + Math.cos(ry) * (d / 2 + 0.0012), ry }, true, white),
-  ];
-}
-// A corridor between keeps: a long white storey under a gabled roof.
-function corridor(x0: number, z0: number, x1: number, z1: number, y: number, white: number, roof: number): G[] {
+// A corridor between keeps (watari-yagura): on its own stone base, two
+// white storeys (windows on both) under a hipped roof.
+function corridor(x0: number, z0: number, x1: number, z1: number, y: number): G[] {
   const l = Math.hypot(x1 - x0, z1 - z0), ry = Math.atan2(x1 - x0, z1 - z0), x = (x0 + x1) / 2, z = (z0 + z1) / 2;
   return [
-    ...frustum(0.011, l, 0.008, l, 0.004, 0xa8a090, { x, y, z, ry }, 0xb8b0a0),
-    ...box(0.007, 0.0072, l, white, { x, y: y + 0.004, z, ry }),
-    ...gable(0.0105, l + 0.002, 0.0038, roof, { x, y: y + 0.0112, z, ry }, true, white),
+    ...frustum(0.0115, l, 0.0085, l, 0.004, HJ.STONE, { x, y, z, ry }, shade(HJ.STONE, 1.1)),
+    ...storey(x, z, y + 0.004, 0.0075, l, 0.0075, false, ry),
+    ...hRoof(x, z, y + 0.0115, 0.0115, l + 0.003, 0.0006, l - 0.004, 0.004, ry),
   ];
 }
 
 // ---------- Beijing ----------
 
-// The heart of the palace (on a plain pad): its court walled in red under
-// yellow caps, corner towers, the Gate of Supreme Harmony in the front
-// wall; within, on the triple terrace of white marble with its balustrades
-// and carved ramp, the Hall of Supreme Harmony (double eaves of yellow tile
-// on red columns and walls), the Hall of Central Harmony and the Hall of
-// Preserving Harmony behind it. (Built small, then drawn up to fill its
-// site and stand about three cells tall: stretch.)
+// The palace's vermilion, its imperial yellow tiles (their edge, the
+// darker ridges), the eaves' painted underside (blue-green), the white
+// marble, the paving, the doors' dark red and their gilded transoms.
+const FC = { RED: 0xac2e22, RED2: 0x86231a, YELLOW: 0xe0a400, YEDGE: 0x985000, YRIDGE: 0xc08000, PAINT: 0x2f6a66, MARBLE: 0xece8de, PAVE: 0xc8c0b0, WAY: 0xdcd6ca, DOOR: 0x6a2018, TRANSOM: 0xb88a30, GREY: 0x8a8680, GOLD: 0xd9b04a } as const;
+const FC_ROOF: RoofCols = { tile: FC.YELLOW, edge: FC.YEDGE, eave: FC.PAINT, ridge: FC.YRIDGE };
+
+// The heart of the palace (on a plain pad): its court paved, the imperial
+// way up its middle, walled in red under yellow-tiled caps, a corner tower
+// at each corner (crossed gables over its eaves), long galleries down its
+// sides, the Gate of Supreme Harmony in the front wall on its own marble
+// base; within, on the triple terrace of white marble (balustrades round
+// every tier, spouts at the corners, stairs either side of the carved
+// ramp), the Hall of Supreme Harmony: red columns before its lattice doors
+// with their gilded transoms, the painted bracket band, double eaves of
+// yellow tile swept up at the corners, roof figures on every hip, the
+// dragons (chiwen) at the ridge's ends; behind it the square Hall of Central
+// Harmony under its gilded knob and the Hall of Preserving Harmony under
+// its hip-and-gable roofs. (Built small, then drawn up to fill its site and
+// stand about three cells tall: stretch.)
 export function forbiddenCity(): G[] {
   const out: G[] = [];
-  const RED = 0xa8332a, YELLOW = 0xf0c020, MARBLE = 0xece8de, PAVE = 0xc8c0b0;
-  // The court: paved, walled, corner towers, the gate in the front wall.
+  // The court: paved, the imperial way, its walls and corner towers.
   const W = 0.0295;
-  out.push(flat(2 * W, 2 * W, PAVE, 0, 0, 0.0006));
-  for (const [x0, z0, x1, z1] of [[-W, -W, W, -W], [-W, -W, -W, W], [W, -W, W, W], [-W, W, -0.0125, W], [0.0125, W, W, W]] as const) {
-    // (The cap runs on past the wall's ends, so their ends never share a face.)
-    const l = Math.hypot(x1 - x0, z1 - z0), ex = ((x1 - x0) / l) * 0.0007, ez = ((z1 - z0) / l) * 0.0007;
-    out.push(...run(x0, z0, x1, z1, 0.002, 0.0065, RED, 0, shade(RED, 0.85)), ...run(x0 - ex, z0 - ez, x1 + ex, z1 + ez, 0.0028, 0.0008, YELLOW, 0.0065));
-  }
-  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) out.push(...cornerTower(sx * (W - 0.0045), sz * (W - 0.0045), 0.0065, RED, YELLOW));
-  out.push(...steps(0.026, 0.009, 2, 0.0012, 0.001, MARBLE, { z: W - 0.003 }).parts);
-  out.push(...hall(0, W - 0.003, 0.0024, 0.022, 0.0065, RED, YELLOW, true));
-  // The triple terrace of white marble, its balustrades and its carved ramp.
-  const tz = -0.004, tiers = [[0.048, 0.044], [0.044, 0.04], [0.04, 0.036]] as const;
+  out.push(flat(2 * W, 2 * W, FC.PAVE, 0, 0, 0.0006), flat(0.0045, 2 * W - 0.004, FC.WAY, 0, 0, 0.00075));
+  for (const [x0, z0, x1, z1] of [[-W, -W, W, -W], [-W, -W, -W, W], [W, -W, W, W], [-W, W, -0.0125, W], [0.0125, W, W, W]] as const) out.push(...redWall(x0, z0, x1, z1));
+  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) out.push(...cornerTower(sx * (W - 0.0042), sz * (W - 0.0042), 0.0065));
+  // The galleries down the court's sides.
+  for (const s of [-1, 1]) out.push(...hall(s * (W - 0.0038), -0.002, 0, 0.04, 0.0042, 0.004, { upper: 'none', beasts: 0, ry: -s * Math.PI / 2, open: false }));
+  // The gate in the front wall, on its marble base.
+  out.push(...terrace(0, W - 0.0025, 0, 0.027, 0.0105, 0.0024, false));
+  out.push(...hall(0, W - 0.0025, 0.0024, 0.022, 0.0068, 0.0046, { upper: 'gable', beasts: 3, rows: 0.0013 }));
+  // The triple terrace of white marble, its stairs and carved ramp.
+  const tz = -0.004, tiers = [[0.048, 0.044], [0.044, 0.04], [0.04, 0.036]] as const, step = 0.0022;
   let ty = 0;
-  for (const [w, d] of tiers) {
-    out.push(...box(w, 0.0022, d, MARBLE, { y: ty, z: tz }, shade(MARBLE, 0.97)));
-    out.push(ring(w - 0.0006, 0.0011, d - 0.0006, shade(MARBLE, 1.02), { y: ty + 0.0022, z: tz }));
-    for (let i = 0; i < Math.floor(w / 0.0028); i++) for (const s of [-1, 1]) out.push(...box(0.0005, 0.0016, 0.0005, MARBLE, { x: -w / 2 + 0.0003 + i * 0.0028, y: ty + 0.0022, z: tz + s * (d / 2 - 0.0003) }));
-    ty += 0.0022;
+  for (const [w, d] of tiers) { out.push(...terrace(0, tz, ty, w, d, step)); ty += step; }
+  {
+    const z0 = tz + tiers[0][1] / 2, run = 0.0085, a = Math.atan2(ty, run);
+    // (Its slope from the court up to the top tier's edge.)
+    out.push(P(new THREE.PlaneGeometry(0.0034, Math.hypot(ty, run)).rotateX(-Math.PI / 2 + a), shade(FC.MARBLE, 0.86), { y: ty / 2 + 0.00005, z: z0 + run / 2 - 0.0002 }));
+    for (const s of [-1, 1]) {
+      const g = new THREE.PlaneGeometry(0.004, Math.hypot(ty, run)).rotateX(-Math.PI / 2 + a);
+      out.push(P(g, shade(FC.MARBLE, 0.96), { x: s * 0.0039, y: ty / 2, z: z0 + run / 2 - 0.0002 }));
+      for (let k = 1; k < 6; k++) out.push(...box(0.004, 0.0003, 0.0004, shade(FC.MARBLE, 1.02), { x: s * 0.0039, y: ty * (k / 6) - 0.0003, z: z0 + run * (1 - k / 6) - 0.0002 }));
+      out.push(rod(V(s * 0.0019, 0, z0 + run - 0.0002), V(s * 0.0019, ty + 0.0011, z0 - 0.0002), 0.00028, FC.MARBLE, 4));
+      out.push(rod(V(s * 0.0059, 0, z0 + run - 0.0002), V(s * 0.0059, ty + 0.0011, z0 - 0.0002), 0.00028, FC.MARBLE, 4));
+    }
   }
-  out.push(P(new THREE.PlaneGeometry(0.006, 0.0085).rotateX(-Math.PI / 2 + Math.atan2(ty, 0.0085)), 0xb8b4a8, { y: ty / 2, z: tz + 0.022 + 0.0042 }));
   // The three halls on it.
-  out.push(...hall(0, tz + 0.007, ty, 0.036, 0.012, RED, YELLOW, true, 0.011));
-  out.push(...pavilion(0, tz - 0.004, ty, 0.009, RED, YELLOW));
-  out.push(...hall(0, tz - 0.013, ty, 0.03, 0.008, RED, YELLOW, true));
+  out.push(...box(0.04, 0.0006, 0.0135, shade(FC.MARBLE, 1.02), { y: ty, z: tz + 0.0068 }));
+  out.push(...hall(0, tz + 0.0068, ty + 0.0006, 0.035, 0.0115, 0.0105, { upper: 'hip', beasts: 5, rows: 0.0013 }));
+  out.push(...pavilion(0, tz - 0.004, ty, 0.0095));
+  out.push(...hall(0, tz - 0.0125, ty, 0.029, 0.0078, 0.0072, { upper: 'gable', beasts: 3, rows: 0.0013 }));
   return [flat(2 * H, 2 * H, 0xb8b0a2, 0, 0, 0.0003), ...stretch(out, 2.4, 3.9)];
 }
-// A Chinese hall: its red columns and walls on a low base, under a hipped
-// roof of yellow tiles (double eaves when `double`), its ridge beasts.
-function hall(x: number, z: number, y: number, w: number, d: number, red: number, yellow: number, double: boolean, h = d * 0.75): G[] {
-  const out: G[] = [];
-  out.push(...box(w - 0.002, h, d - 0.002, red, { x, y, z }));
-  // The colonnade along the front and back: red columns, lattice doors between.
-  const n = Math.max(3, Math.round(w / 0.0034));
-  for (let i = 0; i <= n; i++) {
-    const t = -w / 2 + 0.0004 + (i * (w - 0.0008)) / n;
-    for (const s of [-1, 1]) out.push(cyl(0.00045, 0.00045, h, 5, shade(red, 0.9), { x: x + t, y, z: z + s * (d / 2 - 0.0004) }));
-    if (i < n) out.push(pane((w - 0.0008) / n * 0.7, h * 0.7, 0x7a3a28, x + t + (w - 0.0008) / n / 2, y + h * 0.05, z + d / 2 - 0.0009));
+// A tier of white marble w × d at y, h high: its body, its moulded lip, the
+// balustrade round its edge (a rail on posts), a dragon-head spout at each
+// corner (if `spouts`).
+function terrace(x: number, z: number, y: number, w: number, d: number, h: number, spouts = true): G[] {
+  const out: G[] = [...box(w, h, d, FC.MARBLE, { x, y, z }, shade(FC.MARBLE, 0.97)), ring(w + 0.0005, 0.0004, d + 0.0005, shade(FC.MARBLE, 0.92), { x, y: y + h - 0.0006, z })];
+  const e = 0.0003, bw = w - 2 * e, bd = d - 2 * e, top = y + h;
+  out.push(ring(bw, 0.0003, bd, shade(FC.MARBLE, 1.03), { x, y: top + 0.0008, z }));
+  for (const [len, o, f] of [[bw, bd / 2, 0], [bw, bd / 2, Math.PI], [bd, bw / 2, Math.PI / 2], [bd, bw / 2, -Math.PI / 2]] as const) {
+    const [px, pz] = onFace(x, z, o - 0.00006, f, 0);
+    out.push(merlons(len, Math.max(2, Math.round(len / 0.0022)), 0.00035, 0.0014, FC.MARBLE, px, top, pz, f));
   }
-  out.push(pane(w - 0.001, h * 0.16, 0x3d6a7a, x, y + h * 0.84, z + d / 2 + 0.0001));
-  const ey = y + h, ov = 0.0028;
-  if (double) {
-    out.push(...curvedRoof(x, z, ey, w + ov * 2, d + ov * 2, w - 0.001, d - 0.001, 0.0028, yellow));
-    out.push(...box(w - 0.004, h * 0.4, d - 0.004, red, { x, y: ey + 0.0028 - 0.0004, z }));
-    out.push(pane(w - 0.005, h * 0.3, 0x3d6a7a, x, ey + 0.0028, z + (d - 0.004) / 2 + 0.0001));
-    out.push(...curvedRoof(x, z, ey + 0.0028 - 0.0004 + h * 0.4, w + ov * 1.4, d + ov * 1.4, w * 0.62, 0.0012, d * 0.55, yellow));
-    out.push(...beasts(x, z, ey + 0.0024 + h * 0.4 + d * 0.55, w * 0.62, yellow));
-  } else {
-    out.push(...curvedRoof(x, z, ey, w + ov * 2, d + ov * 2, w * 0.6, 0.0012, d * 0.5, yellow));
-    out.push(...beasts(x, z, ey + d * 0.5, w * 0.6, yellow));
+  if (spouts) for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) {
+    out.push(rod(V(x + sx * w / 2, top - 0.0008, z + sz * d / 2), V(x + sx * (w / 2 + 0.0012), top - 0.0008, z + sz * (d / 2 + 0.0012)), 0.0003, FC.GREY, 3));
   }
   return out;
 }
-// A hipped roof whose slopes sag (two pitches: steep above, flat at the
-// eaves), from eaves w × d at y up to w1 × d1, h high.
-function curvedRoof(x: number, z: number, y: number, w: number, d: number, w1: number, d1: number, h: number, c: number): G[] {
-  const mw = w1 + (w - w1) * 0.42, md = d1 + (d - d1) * 0.42;
+// A hall w × d on y, its columns h high (the eaves' height): a red body set
+// back behind its red columns, lattice doors with gilded transoms across its
+// front and back, the painted bracket band under the eaves; the lower roof
+// (yellow, swept), and over it, if any, the upper storey's short red wall
+// and band under the upper roof: a hip (wudian) with its ridge and dragons,
+// or hip-and-gable (xieshan), red gable ends; `beasts` figures on each hip.
+// Turned ry; `open` false: a gallery's plain back wall.
+function hall(x: number, z: number, y: number, w: number, d: number, h: number, o: { upper: 'none' | 'hip' | 'gable'; beasts: number; ry?: number; open?: boolean; rows?: number }): G[] {
+  const ry = o.ry ?? 0, out: G[] = [];
+  const P2 = (a: number, b: number): [number, number] => [x + Math.cos(ry) * a + Math.sin(ry) * b, z - Math.sin(ry) * a + Math.cos(ry) * b];
+  const inset = Math.min(0.0016, d * 0.14), bw = w - 2 * inset, bd = d - 2 * inset;
+  out.push(...box(bw, h, bd, FC.RED, { x, y, z, ry }));
+  // The columns along its front and back (and down its ends on a big hall).
+  const n = Math.max(3, Math.round(w / 0.0032)), cr = Math.min(0.00042, w * 0.012);
+  for (let i = 0; i <= n; i++) {
+    const t = -w / 2 + cr + (i * (w - 2 * cr)) / n;
+    for (const s of o.open === false ? [1] : [-1, 1]) { const [cx, cz] = P2(t, s * (d / 2 - cr)); out.push(cyl(cr, cr, h, 5, FC.RED, { x: cx, y, z: cz })); }
+    // The doors between: a dark-red leaf under a gilded transom.
+    if (i < n) for (const s of o.open === false ? [1] : [-1, 1]) {
+      const bt = -w / 2 + cr + ((i + 0.5) * (w - 2 * cr)) / n, bwid = ((w - 2 * cr) / n) * 0.78;
+      if (Math.abs(bt) > bw / 2 - bwid / 2) continue;
+      const [dx, dz] = P2(bt, s * (bd / 2 + 0.0001)), f = ry + (s > 0 ? 0 : Math.PI);
+      out.push(pane(bwid, h * 0.62, FC.DOOR, dx, y, dz, f), pane(bwid, h * 0.16, FC.TRANSOM, dx, y + h * 0.64, dz, f));
+    }
+  }
+  // The painted band (the brackets) under the eaves, round the columns' heads.
+  out.push(ring(w - cr, h * 0.16, d - cr, FC.PAINT, { x, y: y + h * 0.84, z, ry }));
+  out.push(ring(w - cr + 0.0004, h * 0.04, d - cr + 0.0004, FC.GOLD, { x, y: y + h * 0.82, z, ry }));
+  const ey = y + h, ov = Math.min(0.0034, d * 0.32);
+  if (o.upper === 'none') {
+    out.push(...swoop(x, z, ey, w + ov * 2, d + ov * 2, w * 0.82, 0.0004, d * 0.42, FC_ROOF, ry, 0.3, o.beasts));
+    return out;
+  }
+  // The lower eaves, the upper storey, the upper roof.
+  const lh = d * 0.2;
+  out.push(...swoop(x, z, ey, w + ov * 2, d + ov * 2, bw - 0.0006, bd - 0.0006, lh, FC_ROOF, ry, 0.3, o.beasts, o.rows ?? 0));
+  const uy = ey + lh - 0.0003, uh = h * 0.42;
+  out.push(...box(bw - 0.0008, uh, bd - 0.0008, FC.RED, { x, y: uy, z, ry }));
+  out.push(ring(bw - 0.0006, uh * 0.32, bd - 0.0006, FC.PAINT, { x, y: uy + uh * 0.68, z, ry }));
+  const ry2 = uy + uh, uw = bw + ov * 1.5, ud = bd + ov * 1.5;
+  if (o.upper === 'hip') {
+    const rh = d * 0.5, rl = w * 0.58;
+    out.push(...swoop(x, z, ry2, uw, ud, rl, 0.0004, rh, FC_ROOF, ry, 0.3, o.beasts, o.rows ?? 0));
+    // The dragons at the ridge's ends.
+    for (const s of [-1, 1]) {
+      const [cx, cz] = P2(s * rl / 2, 0);
+      out.push(...box(0.0009, 0.0024, 0.0006, FC.YRIDGE, { x: cx, y: ry2 + rh - 0.0002, z: cz, ry }));
+      out.push(cone(0.0005, 0.0016, 3, FC.YEDGE, { x: cx, y: ry2 + rh + 0.0016, z: cz, rz: -s * 0.9 }));
+    }
+  } else {
+    // Hip-and-gable: a hipped skirt, a gable over it, its ends red, a ridge.
+    const sh0 = d * 0.2, gh = d * 0.34;
+    out.push(...swoop(x, z, ry2, uw, ud, bw * 0.92, bd * 0.5, sh0, FC_ROOF, ry, 0.3, o.beasts, o.rows ?? 0));
+    out.push(...gable(bw * 0.94, bd * 0.56, gh, FC.YELLOW, { x, y: ry2 + sh0, z, ry }, false, FC.RED));
+    const [ax, az] = P2(-bw * 0.47, 0), [bx, bz] = P2(bw * 0.47, 0);
+    out.push(rib(V(ax, ry2 + sh0 + gh, az), V(bx, ry2 + sh0 + gh, bz), 0.0004, FC.YRIDGE));
+    for (const [cx, cz] of [[ax, az], [bx, bz]] as const) out.push(cone(0.0005, 0.0015, 3, FC.YEDGE, { x: cx, y: ry2 + sh0 + gh, z: cz }));
+  }
+  return out;
+}
+// A wall of the court from (x0, z0) to (x1, z1): red on a grey footing,
+// under a tiled cap (yellow, its ends dark). (The cap runs on past the
+// wall's ends, so their ends never share a face.)
+function redWall(x0: number, z0: number, x1: number, z1: number): G[] {
+  const l = Math.hypot(x1 - x0, z1 - z0), ex = ((x1 - x0) / l) * 0.0007, ez = ((z1 - z0) / l) * 0.0007, ry = Math.atan2(x1 - x0, z1 - z0);
   return [
-    ...frustum(w, d, mw, md, h * 0.3, shade(c, 1.04), { x, y, z }),
-    ...frustum(mw, md, w1, d1, h * 0.7, c, { x, y: y + h * 0.3, z }),
-    P(new THREE.PlaneGeometry(w, d).rotateX(Math.PI / 2), 0x6a3a2a, { x, y: y - 0.00005, z }),
+    ...run(x0, z0, x1, z1, 0.0024, 0.0008, FC.GREY, 0),
+    ...run(x0, z0, x1, z1, 0.002, 0.0058, FC.RED, 0.0008, FC.RED2),
+    ...run(x0 - ex, z0 - ez, x1 + ex, z1 + ez, 0.0026, 0.0004, FC.PAINT, 0.0066),
+    ...gable(0.0034, l + 0.0016, 0.0012, FC.YELLOW, { x: (x0 + x1) / 2, y: 0.007, z: (z0 + z1) / 2, ry }, true, FC.YEDGE),
   ];
 }
-// The ridge and the beasts at its ends.
-function beasts(x: number, z: number, y: number, w: number, c: number): G[] {
-  return [
-    ...box(w, 0.0008, 0.0012, shade(c, 0.85), { x, y: y - 0.0002, z }),
-    ...[-1, 1].map((s) => P(new THREE.ConeGeometry(0.0007, 0.0024, 4).translate(0, 0.0012, 0), shade(c, 0.8), { x: x + s * w / 2, y: y + 0.0004, z, rz: -s * 0.35 })),
-  ];
+// The Hall of Central Harmony: a square pavilion w across, red columns
+// round it, a single swept pyramid roof, its gilded knob.
+function pavilion(x: number, z: number, y: number, w: number): G[] {
+  const h = w * 0.55, out: G[] = [...box(w + 0.0012, 0.0005, w + 0.0012, shade(FC.MARBLE, 1.02), { x, y, z }), ...box(w - 0.0024, h, w - 0.0024, FC.RED, { x, y: y + 0.0005, z })];
+  for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) {
+    if (i > 0 && i < 3 && j > 0 && j < 3) continue;
+    out.push(cyl(0.00038, 0.00038, h, 5, FC.RED, { x: x - w / 2 + 0.0005 + (i * (w - 0.001)) / 3, y: y + 0.0005, z: z - w / 2 + 0.0005 + (j * (w - 0.001)) / 3 }));
+  }
+  for (const f of [0, Math.PI, Math.PI / 2, -Math.PI / 2]) {
+    const [dx, dz] = onFace(x, z, (w - 0.0024) / 2 + 0.0001, f, 0);
+    out.push(pane(w * 0.42, h * 0.62, FC.DOOR, dx, y + 0.0005, dz, f), pane(w * 0.42, h * 0.15, FC.TRANSOM, dx, y + 0.0005 + h * 0.64, dz, f));
+  }
+  out.push(ring(w - 0.0006, h * 0.16, w - 0.0006, FC.PAINT, { x, y: y + 0.0005 + h * 0.84, z }));
+  const ey = y + 0.0005 + h, rh = w * 0.55;
+  out.push(...swoop(x, z, ey, w + 0.005, w + 0.005, 0.0004, 0.0004, rh, FC_ROOF, 0, 0.3, 3));
+  out.push(drumC(0.0006, 0.0004, 0.0006, 6, FC.GOLD, { x, y: ey + rh - 0.0002, z }), ball(0.0008, FC.GOLD, { x, y: ey + rh + 0.0011, z }));
+  return out;
 }
-// A square pavilion under a pyramid roof (double eaves), its gilded knob.
-function pavilion(x: number, z: number, y: number, w: number, red: number, yellow: number): G[] {
-  const h = w * 0.55;
-  return [
-    ...box(w - 0.0016, h, w - 0.0016, red, { x, y, z }),
-    pane(w * 0.4, h * 0.65, 0x7a3a28, x, y, z + (w - 0.0016) / 2 + 0.0001),
-    ...curvedRoof(x, z, y + h, w + 0.004, w + 0.004, w * 0.55, w * 0.55, 0.002, yellow),
-    ...box(w * 0.5, h * 0.35, w * 0.5, red, { x, y: y + h + 0.0016, z }),
-    P(new THREE.ConeGeometry((w + 0.002) * Math.SQRT1_2, w * 0.45, 4, 1, true).rotateY(Math.PI / 4).translate(0, w * 0.225, 0), yellow, { x, y: y + h + 0.0016 + h * 0.35, z }),
-    ball(0.0009, 0xd9b04a, { x, y: y + h + 0.0016 + h * 0.35 + w * 0.45, z }),
-  ];
-}
-// A corner tower: a red pavilion on the wall, its roof of crossed gables.
-function cornerTower(x: number, z: number, y: number, red: number, yellow: number): G[] {
-  const w = 0.0065;
-  return [
-    ...box(w, 0.0042, w, red, { x, y, z }),
-    ...curvedRoof(x, z, y + 0.0042, w + 0.003, w + 0.003, w * 0.7, w * 0.7, 0.0016, yellow),
-    ...gable(w * 0.85, w * 0.45, 0.0022, yellow, { x, y: y + 0.0058, z }, false, shade(yellow, 0.85)),
-    ...gable(w * 0.85, w * 0.45, 0.0022, yellow, { x, y: y + 0.0058, z }, true, shade(yellow, 0.85)),
-    ball(0.0006, 0xd9b04a, { x, y: y + 0.0081, z }),
-  ];
+// A corner tower: a red pavilion on the wall's corner, its swept eaves, the
+// crossed gables over them (red ends), their ridges, its gilded knob.
+function cornerTower(x: number, z: number, y: number): G[] {
+  const w = 0.0068, out: G[] = [...box(w, 0.0042, w, FC.RED, { x, y, z })];
+  for (const f of [0, Math.PI, Math.PI / 2, -Math.PI / 2]) { const [dx, dz] = onFace(x, z, w / 2 + 0.0001, f, 0); out.push(pane(w * 0.5, 0.0024, FC.DOOR, dx, y + 0.0005, dz, f)); }
+  out.push(ring(w + 0.0002, 0.0007, w + 0.0002, FC.PAINT, { x, y: y + 0.0035, z }));
+  out.push(...swoop(x, z, y + 0.0042, w + 0.0036, w + 0.0036, w * 0.8, w * 0.8, 0.0014, FC_ROOF, 0, 0.35, 0));
+  // The crossed gables over the eaves, their ridges, the knob where they meet.
+  for (const r of [0, Math.PI / 2]) {
+    out.push(...gable(w * 0.98, w * 0.62, 0.0026, FC.YELLOW, { x, y: y + 0.0054, z, ry: r }, false, FC.RED));
+    out.push(rib(V(x - Math.cos(r) * w * 0.49, y + 0.008, z + Math.sin(r) * w * 0.49), V(x + Math.cos(r) * w * 0.49, y + 0.008, z - Math.sin(r) * w * 0.49), 0.0003, FC.YRIDGE));
+  }
+  out.push(ball(0.0006, FC.GOLD, { x, y: y + 0.0084, z }));
+  return out;
 }

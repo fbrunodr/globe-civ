@@ -94,8 +94,61 @@ const arcPts = (r: number, cy: number, n: number, a0: number, a1: number) =>
   Array.from({ length: n + 1 }, (_, i) => { const a = a0 + ((a1 - a0) * i) / n; return [r * Math.cos(a), cy + r * Math.sin(a)] as const; });
 // An arched window facing ry in its stone surround (f wide), the opening
 // standing just proud of the surround.
-function framedWin(w: number, h: number, x: number, y: number, z: number, ry: number, frame: number, f = 0.0004, glass = 0x3a3330): G[] {
-  return [...archPane(w + 2 * f, h + f, frame, x, y - f, z, ry), ...archPane(w, h, glass, x + Math.sin(ry) * 0.0001, y, z + Math.cos(ry) * 0.0001, ry)];
+function framedWin(w: number, h: number, x: number, y: number, z: number, ry: number, frame: number, f = 0.0004, glass = 0x3a3330, n = 3): G[] {
+  return [archShape(w + 2 * f, h + f, frame, x, y - f, z, ry, n), archShape(w, h, glass, x + Math.sin(ry) * 0.0001, y, z + Math.cos(ry) * 0.0001, ry, n)];
+}
+// An arched opening as one flat shape (its round top in n segments): the
+// cheap archPane, its bottom middle at x, y, z facing ry.
+function archShape(w: number, h: number, c: number, x: number, y: number, z: number, ry = 0, n = 3): G {
+  const pts = [[-w / 2, 0] as const, [w / 2, 0] as const, ...arcPts(w / 2, h, n, 0, Math.PI)];
+  return P(new THREE.ShapeGeometry(new THREE.Shape(pts.map(([u, v]) => new THREE.Vector2(u, v)))), c, { x, y, z, ry });
+}
+// A mesh of flat convex polygons (each a list of corners, fanned into
+// triangles): wedges, ridges and terraces with no hidden faces.
+function polys(faces: readonly (readonly THREE.Vector3[])[], c: number, o: Parameters<typeof P>[2] = {}): G {
+  const p: number[] = [];
+  for (const f of faces) for (let i = 1; i + 1 < f.length; i++) for (const v of [f[0]!, f[i]!, f[i + 1]!]) p.push(v.x, v.y, v.z);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(p, 3));
+  return P(g, c, o);
+}
+// The geometry less its triangles lying in the plane axis = v (faces
+// hidden against a neighbour).
+function cull(g: G, axis: 'x' | 'y' | 'z', ...vs: number[]): G {
+  const p = g.getAttribute('position'), get = axis === 'x' ? p.getX.bind(p) : axis === 'y' ? p.getY.bind(p) : p.getZ.bind(p), keep: number[] = [];
+  for (let i = 0; i < p.count; i += 3) if (!vs.some((v) => [0, 1, 2].every((k) => Math.abs(get(i + k) - v) < 1e-7))) keep.push(i);
+  const o = new THREE.BufferGeometry();
+  for (const name of Object.keys(g.attributes)) {
+    const a = g.getAttribute(name), n = a.itemSize, arr: number[] = [];
+    for (const i of keep) for (let k = 0; k < 3; k++) for (let j = 0; j < n; j++) arr.push(a.array[(i + k) * n + j]!);
+    o.setAttribute(name, new THREE.Float32BufferAttribute(arr, n));
+  }
+  return o;
+}
+// A rod from a to b with no ends (n-sided): a colonnette, a seam, a coping.
+function rodO(a: THREE.Vector3, b: THREE.Vector3, r: number, c: number, n = 3): G {
+  const l = a.distanceTo(b), g = new THREE.CylinderGeometry(r, r, l, n, 1, true).translate(0, l / 2, 0);
+  g.applyMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion().setFromUnitVectors(V(0, 1, 0), b.clone().sub(a).normalize())));
+  return P(g.translate(a.x, a.y, a.z), c);
+}
+// A drum with its top but no bottom (a ring course, a balcony): n sides.
+const drumT = (r0: number, r1: number, h: number, n: number, c: number, o: { x?: number; y?: number; z?: number; ry?: number } = {}): G[] => [
+  cyl(r0, r1, h, n, c, o),
+  P(new THREE.CircleGeometry(r1, n).rotateX(-Math.PI / 2).rotateY(-Math.PI / 2).translate(0, h, 0), c, o),
+];
+// A ridge along the points (a dome's lead rib): two faces meeting r over the
+// surface, which lies toward `inward` from each point.
+function ridge(pts: readonly THREE.Vector3[], r: number, c: number, centre: THREE.Vector3): G {
+  const faces: THREE.Vector3[][] = [];
+  for (let k = 0; k + 1 < pts.length; k++) {
+    const a = pts[k]!, b = pts[k + 1]!, t = b.clone().sub(a).normalize();
+    const side = (p: THREE.Vector3) => { const n = p.clone().sub(centre).normalize(); return { n, s: t.clone().cross(n).normalize() }; };
+    const A = side(a), B = side(b);
+    const top = (p: THREE.Vector3, q: { n: THREE.Vector3 }) => p.clone().addScaledVector(q.n, r);
+    const at = (p: THREE.Vector3, q: { n: THREE.Vector3; s: THREE.Vector3 }, sg: number) => p.clone().addScaledVector(q.s, sg * r * 1.2).addScaledVector(q.n, -r * 0.3);
+    for (const sg of [1, -1]) faces.push([at(a, A, sg), at(b, B, sg), top(b, B), top(a, A)]);
+  }
+  return polys(faces, c);
 }
 // Half a closed drum (a cornice round a half dome's drum), facing +z or -z.
 const halfDrumC = (r: number, h: number, c: number, x: number, y: number, z: number, toward: 1 | -1, n = 20) =>
@@ -138,14 +191,14 @@ function hagiaSophia(): G[] {
   const SH = 0.046, dr = 0.0032, hw = 0.021, aw = 0.0135, yb = 0.0242, yc = 0.029, xi = hw - dr;
   out.push(...box(2 * xi, SH, 2 * hw, PL, { z: zc }, LEAD));
   out.push(...box(0.0436, 0.0014, 0.0436, STONE, { y: SH - 0.001, z: zc }, LEAD));
-  const opening = (r: number) => arcPts(r, yc, 16, Math.PI, 0);
+  const opening = (r: number) => arcPts(r, yc, 10, Math.PI, 0);
   for (const s of SIDE) {
     const ry = s * Math.PI / 2;
     const d = dr + 0.0002;
     out.push(prism([[-hw, yb], [-aw, yb], ...opening(aw), [aw, yb], [hw, yb], [hw, SH - 0.0004], [-hw, SH - 0.0004]], d, PL, { x: s * (hw - d / 2), z: zc, ry }));
     // The arch's rim: a thick moulding standing proud, its lip over the niche.
     const yr = yb + 0.0004, ri = aw - 0.0003, ro = aw + 0.0016, rd0 = hw - 0.0004, rd1 = hw + 0.0009;
-    out.push(prism([[-ro, yr], ...arcPts(ro, yc, 16, Math.PI, 0), [ro, yr], [ri, yr], ...arcPts(ri, yc, 16, 0, Math.PI), [-ri, yr]], rd1 - rd0, BAND, { x: s * (rd0 + rd1) / 2, z: zc, ry }));
+    out.push(prism([[-ro, yr], ...arcPts(ro, yc, 10, Math.PI, 0), [ro, yr], [ri, yr], ...arcPts(ri, yc, 10, 0, Math.PI), [-ri, yr]], rd1 - rd0, BAND, { x: s * (rd0 + rd1) / 2, z: zc, ry }));
     // The tympanum: a shaded wall, two ledges, three rows of windows.
     const tym = new THREE.ShapeGeometry(new THREE.Shape([[-aw, yb] as const, ...opening(aw), [aw, yb] as const].map(([u, y]) => new THREE.Vector2(u, y))));
     out.push(P(tym, PL2, { x: s * (xi + 0.0001), z: zc, ry }));
@@ -188,20 +241,26 @@ function hagiaSophia(): G[] {
   // buttresses, base ring and cornice; the shallow lead cap with its forty
   // ribs, a crown ring and the gilded crescent.
   const yd = SH - 0.0003, rd = 0.0195, yD = yd + 0.0057;
-  out.push(drumC(rd, rd, 0.0055, 40, PL, { y: yd, z: zc }));
-  out.push(drumC(rd + 0.0006, rd + 0.0006, 0.0008, 40, STONE, { y: yd + 0.0001, z: zc }));
-  out.push(drumC(rd + 0.0012, rd + 0.0012, 0.0007, 40, STONE, { y: yd + 0.0052, z: zc }));
+  // (The drum's top lies under the dome, the courses' bottoms on it: open.)
+  out.push(cyl(rd, rd, 0.0055, 40, PL, { y: yd, z: zc }));
+  out.push(...drumT(rd + 0.0006, rd + 0.0006, 0.0008, 40, STONE, { y: yd + 0.0001, z: zc }));
+  out.push(cyl(rd + 0.0012, rd + 0.0012, 0.0007, 40, STONE, { y: yd + 0.0052, z: zc }));
+  const buttress: THREE.Vector3[][] = [];
   for (let i = 0; i < 40; i++) {
     const a = ((i + 0.5) / 40) * Math.PI * 2, r = rd * Math.cos(Math.PI / 40) + 0.0001;
     out.push(...framedWin(0.0015, 0.0024, Math.sin(a) * r, yd + 0.0013, zc + Math.cos(a) * r, a, BAND, 0.0002));
-    const b = (i / 40) * Math.PI * 2;
-    out.push(...frustum(0.0009, 0.0026, 0.0009, 0.0012, 0.005, PL2, { x: Math.sin(b) * (rd + 0.0005), y: yd + 0.0002, z: zc + Math.cos(b) * (rd + 0.0005), ry: b }, PL2));
+    // A little buttress: its sloping face, its top and its two sides.
+    const b = (i / 40) * Math.PI * 2, rr = rd + 0.0005, hw = 0.00045, y0 = yd + 0.0002, y1 = y0 + 0.005;
+    const q = (u: number, t: number, y: number) => V(Math.sin(b) * (rr + u) + Math.cos(b) * t, y, zc + Math.cos(b) * (rr + u) - Math.sin(b) * t);
+    buttress.push([q(0.0013, -hw, y0), q(0.0013, hw, y0), q(0.0006, hw, y1), q(0.0006, -hw, y1)], [q(0.0006, -hw, y1), q(0.0006, hw, y1), q(-0.0013, hw, y1), q(-0.0013, -hw, y1)]);
+    for (const t of [-hw, hw]) buttress.push([q(-0.0013, t, y0), q(0.0013, t, y0), q(0.0006, t, y1), q(-0.0013, t, y1)]);
   }
+  out.push(polys(buttress, PL2));
   const R = 0.0209;
-  out.push(P(new THREE.SphereGeometry(R, 40, 10, 0, Math.PI * 2, 0, Math.PI / 2), LEAD, { y: yD, z: zc, sy: DS }));
+  out.push(P(new THREE.SphereGeometry(R, 40, 6, 0, Math.PI * 2, 0, Math.PI / 2), LEAD, { y: yD, z: zc, sy: DS }));
   for (let i = 0; i < 40; i++) {
     const a = (i / 40) * Math.PI * 2, pts = [0, 0.35, 0.65, 0.9].map((f) => { const th = f * Math.PI / 2 * 0.9; return V(Math.sin(a) * Math.cos(th) * (R + 0.0001), yD + Math.sin(th) * (R + 0.0001) * DS, zc + Math.cos(a) * Math.cos(th) * (R + 0.0001)); });
-    for (let k = 0; k < 3; k++) out.push(rod(pts[k]!, pts[k + 1]!, 0.00022, LEAD2, 3));
+    out.push(ridge(pts, 0.00022, shade(LEAD, 0.72), V(0, yD, zc)));
   }
   out.push(drumC(0.0026, 0.0022, 0.0006, 12, LEAD2, { y: yD + R * DS - 0.0004, z: zc }));
   out.push(rod(V(0, yD + R * DS, zc), V(0, yd + 0.0217, zc), 0.0003, GOLD, 4), ball(0.0007, GOLD, { y: yd + 0.0192, z: zc }));
@@ -214,17 +273,17 @@ function hagiaSophia(): G[] {
     out.push(halfDrum(rd, 0.008, PL, 0, 0.024, z, t, 20));
     out.push(halfDrumC(rd + 0.0007, 0.0008, STONE, 0, 0.0316, z, t));
     for (let k = 0; k < 5; k++) { const a = base + (k - 2) * 0.5; out.push(...framedWin(0.002, 0.0028, Math.sin(a) * (rd + 0.0002), 0.0275, z + Math.cos(a) * (rd + 0.0002), a, BAND, 0.0003)); }
-    out.push(halfDome(rd, LEAD, 0, 0.032, z, t, DS, 20));
+    out.push(halfDome(rd, LEAD, 0, 0.032, z, t, DS, 16));
     // The great arch over it, its rim proud of the square's face.
-    const ell = (r: number, a0: number, a1: number) => arcPts(r, 0, 16, a0, a1).map(([u, y]) => [u, 0.032 + y * (DS + 0.06)] as const);
+    const ell = (r: number, a0: number, a1: number) => arcPts(r, 0, 12, a0, a1).map(([u, y]) => [u, 0.032 + y * (DS + 0.06)] as const);
     out.push(prism([[-0.0209, 0.0255], ...ell(0.0209, Math.PI, 0), [0.0209, 0.0255], [0.0197, 0.0255], ...ell(0.0197, 0, Math.PI), [-0.0197, 0.0255]], 0.0012, BAND, { z: zc + t * 0.0212 }));
     for (let k = 1; k < 8; k++) {
       const a = base - Math.PI / 2 + (k / 8) * Math.PI, pts = [0, 0.4, 0.8].map((f) => { const th = f * Math.PI / 2 * 0.95; return V(Math.sin(a) * Math.cos(th) * (rd + 0.0001), 0.0324 + Math.sin(th) * (rd + 0.0001) * DS, z + Math.cos(a) * Math.cos(th) * (rd + 0.0001)); });
-      for (let j = 0; j < 2; j++) out.push(rod(pts[j]!, pts[j + 1]!, 0.0002, LEAD2, 3));
+      out.push(ridge(pts, 0.0002, shade(LEAD, 0.72), V(0, 0.0324, z)));
     }
     for (const s of SIDE) {
       const x = s * 0.0128, zz = zc + t * 0.033;
-      out.push(halfDrum(0.0085, 0.0047, PL, x, 0.025, zz, t, 12), halfDrumC(0.0091, 0.0006, STONE, x, 0.0294, zz, t, 12), halfDome(0.0085, LEAD, x, 0.0297, zz, t, DS + 0.05, 12));
+      out.push(halfDrum(0.0085, 0.0047, PL, x, 0.025, zz, t, 10), halfDrumC(0.0091, 0.0006, STONE, x, 0.0294, zz, t, 10), halfDome(0.0085, LEAD, x, 0.0297, zz, t, DS + 0.05, 10));
       for (let k = 0; k < 3; k++) { const a = base + (k - 1) * 0.75; out.push(...framedWin(0.0014, 0.0016, x + Math.sin(a) * 0.0086, 0.0268, zz + Math.cos(a) * 0.0086, a, BAND, 0.0002)); }
     }
   }
@@ -243,8 +302,8 @@ function hagiaSophia(): G[] {
   out.push(...box(0.0706, 0.0008, 0.0066, STONE, { y: 0.0114, z: ze }, LEAD));
   out.push(...rowOf(9, 0.07, (x, z) => [
     ...framedWin(0.0032, 0.0046, x, 0.0004, z, 0, STONE, 0.0004, DOOR),
-    drumC(0.0025, 0.0025, 0.0008, 10, PL, { x, y: 0.0118, z: ze }),
-    P(new THREE.SphereGeometry(0.0024, 10, 4, 0, Math.PI * 2, 0, Math.PI / 2), LEAD, { x, y: 0.0126, z: ze, sy: 0.7 }),
+    cyl(0.0025, 0.0025, 0.0008, 8, PL, { x, y: 0.0118, z: ze }),
+    P(new THREE.SphereGeometry(0.0024, 8, 3, 0, Math.PI * 2, 0, Math.PI / 2), LEAD, { x, y: 0.0126, z: ze, sy: 0.7 }),
   ], 0, ze + 0.0033, 0));
   for (let i = 0; i <= 9; i++) out.push(...box(0.0012, 0.0114, 0.0004, shade(PL, 0.94), { x: -0.035 + i * (0.07 / 9), z: ze + 0.00325 }));
 
@@ -257,17 +316,17 @@ function hagiaSophia(): G[] {
     out.push(...box(0.0072, 0.0008, 0.0072, STONE, { x, y: 0.0125, z }));
     out.push(...frustum(0.0062, 0.0062, 0.005, 0.005, 0.0028, STONE, { x, y: 0.0133, z }, STONE));
     const y0 = 0.0161, rOf = (y: number) => 0.0027 - 0.0005 * (y - y0) / (h - y0);
-    out.push(cyl(0.0027, 0.0022, h - y0, 12, shaft, { x, y: y0, z }));
-    out.push(drumC(0.0031, 0.0029, 0.0008, 12, STONE, { x, y: y0, z }));
+    out.push(cyl(0.0027, 0.0022, h - y0, 10, shaft, { x, y: y0, z }));
+    out.push(...drumT(0.0031, 0.0029, 0.0008, 10, STONE, { x, y: y0, z }));
     for (const f of balconies) {
       const y = y0 + (h - y0) * f;
-      out.push(drumC(rOf(y - 0.0014) + 0.0001, 0.0038, 0.0014, 12, shade(shaft, 0.94), { x, y: y - 0.0014, z }));
-      out.push(drumC(0.0039, 0.0039, 0.0012, 12, WHITE, { x, y, z }));
-      out.push(drumC(0.0040, 0.0040, 0.0002, 12, shade(WHITE, 0.9), { x, y: y + 0.0011, z }));
-      out.push(...roundPanes(12, 0.0039 * Math.cos(Math.PI / 12) + 0.0001, 0.0012, 0.0006, shade(WHITE, 0.62), x, y + 0.0003, z, 0.5));
+      out.push(cyl(rOf(y - 0.0014) + 0.0001, 0.0038, 0.0014, 10, shade(shaft, 0.94), { x, y: y - 0.0014, z }));
+      out.push(...drumT(0.0039, 0.0039, 0.0012, 10, WHITE, { x, y, z }));
+      out.push(cyl(0.0040, 0.0040, 0.0002, 10, shade(WHITE, 0.9), { x, y: y + 0.0011, z }));
+      out.push(...roundPanes(10, 0.0039 * Math.cos(Math.PI / 10) + 0.0001, 0.0012, 0.0006, shade(WHITE, 0.62), x, y + 0.0003, z, 0.5));
     }
-    out.push(drumC(0.0029, 0.0029, 0.0006, 12, STONE, { x, y: h - 0.0006, z }));
-    out.push(cone(0.0028, 0.013, 12, LEAD, { x, y: h, z }));
+    out.push(cyl(0.0029, 0.0029, 0.0006, 10, STONE, { x, y: h - 0.0006, z }));
+    out.push(cone(0.0028, 0.013, 10, LEAD, { x, y: h, z }));
     out.push(rod(V(x, h + 0.0125, z), V(x, h + 0.0165, z), 0.0002, GOLD, 3), ball(0.00045, GOLD, { x, y: h + 0.0142, z }));
   };
   minaret(-0.042, 0.046, 0.076, WHITE, [0.6, 0.8]); minaret(0.042, 0.046, 0.076, WHITE, [0.6, 0.8]);
@@ -373,6 +432,13 @@ const ndArch = (w: number, ys: number, y0 = 0, k = 0.85, n = 4): NdPt[] => [[-w 
 const ndBand = (wo: number, wi: number, ys: number, yb: number, k = 0.85, n = 5): NdPt[] =>
   [[-wo / 2, yb], [-wi / 2, yb], ...ndArc(wi, ys, k, n).reverse(), [wi / 2, yb], [wo / 2, yb], ...ndArc(wo, ys, k, n)];
 const ndShift = (pts: readonly NdPt[], dx: number, dy = 0): NdPt[] => pts.map(([u, y]) => [u + dx, y + dy] as const);
+// A notched front d deep standing back from z = 0: its face and its two
+// ends (the doorways' sides lie against the portals' outer archivolts, its
+// top under the next course).
+const ndFront = (x0: number, x1: number, y1: number, notches: readonly { x: number; w: number; hs: number }[], d: number, c: number, o: { x?: number; z?: number }): G[] => [
+  ndFlat(ndNotched(x0, x1, y1, notches), c, o),
+  polys([x0, x1].map((x) => [V(x, 0, 0), V(x, 0, -d), V(x, y1, -d), V(x, y1, 0)]), c, o),
+];
 const ndRect = (x0: number, y0: number, x1: number, y1: number): NdPt[] => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
 const ndCircle = (r: number, cx: number, cy: number, n: number): NdPt[] =>
   Array.from({ length: n }, (_, i) => [cx + r * Math.cos((i / n) * Math.PI * 2), cy + r * Math.sin((i / n) * Math.PI * 2)] as const);
@@ -390,10 +456,26 @@ const ndShape = (pts: readonly NdPt[], holes: readonly (readonly NdPt[])[] = [])
   return s;
 };
 // A slab d thick (centred on z = 0) of the outline, pierced by the holes.
-const ndSlab = (pts: readonly NdPt[], holes: readonly (readonly NdPt[])[], d: number, c: number, o: Parameters<typeof P>[2] = {}) =>
-  P(new THREE.ExtrudeGeometry(ndShape(pts, holes), { depth: d, bevelEnabled: false }).translate(0, 0, -d / 2), c, o);
-// A flat outline (glass, a shadowed recess) facing +z.
-const ndFlat = (pts: readonly NdPt[], c: number, o: Parameters<typeof P>[2] = {}) => P(new THREE.ShapeGeometry(ndShape(pts)), c, o);
+// (Every slab stands against a wall or a dark core: no back face.)
+function ndSlab(pts: readonly NdPt[], holes: readonly (readonly NdPt[])[], d: number, c: number, o: Parameters<typeof P>[2] = {}): G {
+  const e = new THREE.ExtrudeGeometry(ndShape(pts, holes), { depth: d, bevelEnabled: false }), p = e.getAttribute('position'), keep: number[] = [];
+  for (let i = 0; i < p.count; i += 3) if (Math.max(p.getZ(i), p.getZ(i + 1), p.getZ(i + 2)) > 1e-9) for (let k = 0; k < 3; k++) keep.push(p.getX(i + k), p.getY(i + k), p.getZ(i + k));
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(keep, 3));
+  return P(g.translate(0, 0, -d / 2), c, o);
+}
+// A flat outline (glass, a shadowed recess) facing +z, pierced by the holes.
+const ndFlat = (pts: readonly NdPt[], c: number, o: Parameters<typeof P>[2] = {}, holes: readonly (readonly NdPt[])[] = []) => P(new THREE.ShapeGeometry(ndShape(pts, holes)), c, o);
+// An archivolt d deep (centred on z = 0): the band's face and its soffit
+// (the inner arch and jambs); its outer edge lies against the next band out.
+function ndArchivolt(wo: number, wi: number, hs: number, d: number, c: number, o: Parameters<typeof P>[2]): G[] {
+  const inner: NdPt[] = [[-wi / 2, 0], ...ndArc(wi, hs, 0.85, 3).reverse(), [wi / 2, 0]], faces: THREE.Vector3[][] = [];
+  for (let i = 0; i + 1 < inner.length; i++) {
+    const [u0, y0] = inner[i]!, [u1, y1] = inner[i + 1]!;
+    faces.push([V(u0, y0, d / 2), V(u1, y1, d / 2), V(u1, y1, -d / 2), V(u0, y0, -d / 2)]);
+  }
+  return [P(new THREE.ShapeGeometry(ndShape(ndBand(wo, wi, hs, 0, 0.85, 3))).translate(0, 0, d / 2), c, o), polys(faces, shade(c, 0.94), o)];
+}
 // Parts built facing +z about the origin, set at (x, y, z) facing ry.
 function ndXf(parts: G[], x: number, y: number, z: number, ry: number): G[] {
   const m = new THREE.Matrix4().compose(V(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, ry, 0)), V(1, 1, 1));
@@ -404,33 +486,34 @@ function ndXf(parts: G[], x: number, y: number, z: number, ry: number): G[] {
 function ndWin(w: number, hs: number, x: number, y: number, z: number, ry: number, frame: number, glass: number, tr = true): G[] {
   const f = Math.min(0.0004, w * 0.14), nx = Math.sin(ry), nz = Math.cos(ry), rise = ndRise(w);
   const at = (k: number, dy = 0) => ({ x: x + nx * k, y: y + dy, z: z + nz * k, ry });
-  const out = [ndFlat(ndArch(w + 2 * f, hs, -f), frame, at(0.0001)), ndFlat(ndArch(w, hs), glass, at(0.0002))];
-  if (tr) out.push(pane(w * 0.09, hs + rise * 0.3, frame, x + nx * 0.0003, y, z + nz * 0.0003, ry), P(new THREE.RingGeometry(w * 0.12, w * 0.2, 5), frame, at(0.0003, hs + rise * 0.42)));
+  const out = [ndFlat(ndArch(w + 2 * f, hs, -f, 0.85, 2), frame, at(0.0001)), ndFlat(ndArch(w, hs, 0, 0.85, 2), glass, at(0.0002))];
+  if (tr) out.push(pane(w * 0.09, hs + rise * 0.3, frame, x + nx * 0.0003, y, z + nz * 0.0003, ry));
   return out;
 }
 // A round window r across, its centre at y, facing ry.
 function ndOculus(r: number, x: number, y: number, z: number, ry: number, frame: number, glass: number): G[] {
   const nx = Math.sin(ry), nz = Math.cos(ry);
-  return [P(new THREE.CircleGeometry(r * 0.8, 8), glass, { x: x + nx * 0.0001, y, z: z + nz * 0.0001, ry }), P(new THREE.RingGeometry(r * 0.72, r, 8), frame, { x: x + nx * 0.0002, y, z: z + nz * 0.0002, ry })];
+  return [P(new THREE.CircleGeometry(r, 5), frame, { x: x + nx * 0.0001, y, z: z + nz * 0.0001, ry }), P(new THREE.CircleGeometry(r * 0.74, 5), glass, { x: x + nx * 0.0002, y, z: z + nz * 0.0002, ry })];
 }
 // A rose window r across at the origin facing +z, on a wall at z = 0: in
 // a square stone frame (fh its half width; 0 for none), its glass, the
 // moulded rim, two rings of tracery and the spokes between, coloured
 // lights, the dark eye.
-function ndRose(r: number, fh: number, stone: number, trim: number, glass: number, lights: readonly number[], eye: number): G[] {
+function ndRose(r: number, fh: number, stone: number, trim: number, glass: number, lights: readonly number[], eye: number, n = 24): G[] {
   const out: G[] = [];
-  if (fh) out.push(ndSlab(ndRect(-fh, -fh, fh, fh), [ndCircle(r, 0, 0, 16)], 0.0012, stone, { z: 0.0006 }));
-  out.push(P(new THREE.CircleGeometry(r, 16), glass, { z: 0.0001 }));
-  out.push(P(new THREE.RingGeometry(r * 0.88, r * 1.001, 16), trim, { z: 0.0003 }));
-  out.push(P(new THREE.RingGeometry(r * 0.56, r * 0.62, 12), trim, { z: 0.0003 }));
-  out.push(P(new THREE.RingGeometry(r * 0.25, r * 0.31, 8), trim, { z: 0.0003 }));
-  for (let i = 0; i < 24; i++) {
-    const a = (i / 24) * Math.PI * 2, b = a + Math.PI / 24;
+  const m = n >= 24 ? 16 : 12;
+  if (fh) out.push(ndSlab(ndRect(-fh, -fh, fh, fh), [ndCircle(r, 0, 0, m)], 0.0012, stone, { z: 0.0006 }));
+  out.push(P(new THREE.CircleGeometry(r, m), glass, { z: 0.0001 }));
+  out.push(P(new THREE.RingGeometry(r * 0.88, r * 1.001, m), trim, { z: 0.0003 }));
+  out.push(P(new THREE.RingGeometry(r * 0.56, r * 0.62, m - 4), trim, { z: 0.0003 }));
+  out.push(P(new THREE.RingGeometry(r * 0.25, r * 0.31, m / 2), trim, { z: 0.0003 }));
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2, b = a + Math.PI / n;
     out.push(P(new THREE.PlaneGeometry(r * 0.025, r * 0.28).translate(0, r * 0.75, 0).rotateZ(a), trim, { z: 0.0003 }));
-    out.push(P(new THREE.CircleGeometry(r * 0.07, 4), lights[i % lights.length]!, { x: Math.cos(b) * r * 0.76, y: Math.sin(b) * r * 0.76, z: 0.0002 }));
-    if (i % 2) continue;
+    out.push(P(new THREE.CircleGeometry(r * 0.07, 3), lights[i % lights.length]!, { x: Math.cos(b) * r * 0.76, y: Math.sin(b) * r * 0.76, z: 0.0002 }));
+    if (i % 2 || n < 24) continue;
     out.push(P(new THREE.PlaneGeometry(r * 0.03, r * 0.27).translate(0, r * 0.43, 0).rotateZ(a), trim, { z: 0.0003 }));
-    const c = a + Math.PI / 12;
+    const c = a + (2 * Math.PI) / n;
     out.push(P(new THREE.CircleGeometry(r * 0.08, 4), lights[(i / 2 + 1) % lights.length]!, { x: Math.cos(c) * r * 0.44, y: Math.sin(c) * r * 0.44, z: 0.0002 }));
   }
   out.push(P(new THREE.CircleGeometry(r * 0.25, 10), eye, { z: 0.0002 }), P(new THREE.CircleGeometry(r * 0.09, 6), lights[3]!, { z: 0.0003 }));
@@ -438,16 +521,23 @@ function ndRose(r: number, fh: number, stone: number, trim: number, glass: numbe
 }
 // A railing len long facing ry, h tall, standing on y: its plinth, the
 // balusters and the coping.
-function ndRail(len: number, h: number, c: number, x: number, y: number, z: number, ry: number, pitch = 0.0022): G[] {
-  const n = Math.max(2, Math.round(len / pitch)), lx = Math.cos(ry), lz = -Math.sin(ry);
-  const out = [...box(len, h * 0.2, 0.0006, c, { x, y, z, ry }), ...box(len + 0.0002, h * 0.16, 0.0008, c, { x, y: y + h * 0.84, z, ry })];
-  for (let i = 0; i < n; i++) { const t = -len / 2 + ((i + 0.5) * len) / n; out.push(cyl(0.00021, 0.00021, h * 0.64, 3, c, { x: x + lx * t, y: y + h * 0.2, z: z + lz * t })); }
+function ndRail(len: number, h: number, c: number, x: number, y: number, z: number, ry: number, pitch = 0.0034): G[] {
+  const n = Math.max(2, Math.round(len / pitch)), lx = Math.cos(ry), lz = -Math.sin(ry), nx = Math.sin(ry) * 0.0003, nz = Math.cos(ry) * 0.0003;
+  // (The coping: its two faces and its top; its ends too small to see.)
+  const cp = (k: number, dy: number) => V(x + lx * k * (len / 2 + 0.0001), y + h * 0.84 + dy, z + lz * k * (len / 2 + 0.0001));
+  const fr = V(Math.sin(ry) * 0.0004, 0, Math.cos(ry) * 0.0004), hc = h * 0.16;
+  const out = [pane(len, h * 0.2, c, x + nx, y, z + nz, ry), polys([
+    [cp(-1, 0).add(fr), cp(1, 0).add(fr), cp(1, hc).add(fr), cp(-1, hc).add(fr)],
+    [cp(-1, 0).sub(fr), cp(1, 0).sub(fr), cp(1, hc).sub(fr), cp(-1, hc).sub(fr)],
+    [cp(-1, hc).add(fr), cp(1, hc).add(fr), cp(1, hc).sub(fr), cp(-1, hc).sub(fr)],
+  ], c)];
+  for (let i = 0; i < n; i++) { const t = -len / 2 + ((i + 0.5) * len) / n; out.push(pane(0.00042, h * 0.64, c, x + lx * t, y + h * 0.2, z + lz * t, ry)); }
   return out;
 }
 // A stone (or copper) statue h tall standing on y, facing ry.
 const ndStatue = (x: number, y: number, z: number, h: number, c: number, ry = 0): G[] => [
-  cyl(h * 0.15, h * 0.09, h * 0.74, 5, c, { x, y, z, ry }),
-  P(new THREE.OctahedronGeometry(h * 0.1), shade(c, 1.05), { x, y: y + h * 0.84, z }),
+  cone(h * 0.16, h * 0.86, 3, c, { x, y, z, ry: ry + Math.PI }),
+  P(new THREE.TetrahedronGeometry(h * 0.12), shade(c, 1.05), { x, y: y + h * 0.86, z, ry: ry + Math.PI / 4 }),
 ];
 // A deep portal at x facing +z: w wide, springing at hs; nb archivolts
 // stepping in s each from the face zf back to the wall at zb, alternately
@@ -457,7 +547,7 @@ function ndPortal(w: number, hs: number, s: number, nb: number, x: number, zf: n
   const out: G[] = [], dl = (zf - zb) / (nb + 1);
   for (let k = 0; k < nb; k++) {
     const wo = w - 2 * k * s, wi = w - 2 * (k + 1) * s + 0.00012, d = zf - k * dl - (zb + 0.0001);
-    out.push(ndSlab(ndBand(wo, wi, hs, 0, 0.85, 4), [], d, cs[k % 2]!, { x, z: zb + 0.0001 + d / 2 }));
+    out.push(...ndArchivolt(wo, wi, hs, d, cs[k % 2]!, { x, z: zb + 0.0001 + d / 2 }));
   }
   const wi = w - 2 * nb * s + 0.00012, hd = hs * 0.68;
   out.push(ndFlat(ndArch(wi, hs, 0, 0.85, 4), tym, { x, z: zb + 0.00008 }));
@@ -531,15 +621,17 @@ function notreDame(): G[] {
   const hP = 0.0285, yF = 0.0215, Ry = 0.0085, tF = 0.0024, uP = r3 + 0.0017, Lf = uP - r1, uc = r3 + 0.0039;
   const buttress = (): G[] => {
     const pts: NdPt[] = [[r1, yF + Ry + tF], [uP + 0.0002, yF + 0.55 * Ry + 0.5 * tF], [uP + 0.0002, yF]];
-    for (let i = 1; i <= 8; i++) { const a = (i / 8) * Q; pts.push([r1 + Lf * Math.cos(a), yF + Ry * Math.sin(a)]); }
+    for (let i = 1; i <= 4; i++) { const a = (i / 4) * Q; pts.push([r1 + Lf * Math.cos(a), yF + Ry * Math.sin(a)]); }
+    // (Faces lying against the next part dropped: the piers' tops under the
+    // set-off and the pinnacle, the flyer's ends at the wall and the pier.)
     return [
-      ...box(0.00635, 0.012, 0.0026, ST, { x: r3 + 0.002925 }),
+      ...box(0.00635, 0.012, 0.0026, ST, { x: r3 + 0.002925 }).map((g) => cull(cull(g, 'y', 0.012), 'x', r3 - 0.00025)),
       ...box(0.0044, hP - 0.012, 0.0022, ST, { x: uc, y: 0.012 }),
-      prism([[r3 - 0.0003, 0.0121], [uP + 0.0002, 0.0121], [uP + 0.0002, 0.0148]], 0.0026, TRIM),
-      ...box(0.0024, 0.0034, 0.0018, ST, { x: uc, y: hP }),
+      cull(cull(prism([[r3 - 0.0003, 0.0121], [uP + 0.0002, 0.0121], [uP + 0.0002, 0.0148]], 0.0026, TRIM), 'y', 0.0121), 'x', uP + 0.0002),
+      ...box(0.0024, 0.0034, 0.0018, ST, { x: uc, y: hP }).map((g) => cull(g, 'y', hP + 0.0034)),
       cone(0.0019, 0.0068, 4, TRIM, { x: uc, y: hP + 0.0034, ry: Math.PI / 4 }),
-      prism(pts, 0.0011, ST),
-      rod(V(r1 + 0.0007, yF + Ry + tF + 0.00005, 0), V(uP, yF + 0.55 * Ry + 0.5 * tF + 0.0001, 0), 0.0003, TRIM, 3),
+      cull(prism(pts, 0.0011, ST), 'x', r1, uP + 0.0002),
+      rodO(V(r1 + 0.0007, yF + Ry + tF + 0.00005, 0), V(uP, yF + 0.55 * Ry + 0.5 * tF + 0.0001, 0), 0.0003, TRIM),
     ];
   };
   for (const z of piers) for (const s of SIDE) out.push(...ndXf(buttress(), 0, 0, z, s > 0 ? 0 : Math.PI));
@@ -559,7 +651,7 @@ function notreDame(): G[] {
   for (let k = 0; k <= 6; k++) {
     const t = (k * Math.PI) / 6;
     ap.push(...ndXf(buttress(), 0, 0, zb, t));
-    if (k > 0 && k < 6) ap.push(rod(V(Math.cos(t) * r1, hN + 0.0001, zb - Math.sin(t) * r1), V(0, hN + rH + 0.0001, zb), 0.0002, LEAD2, 3));
+    if (k > 0 && k < 6) ap.push(rodO(V(Math.cos(t) * r1, hN + 0.0001, zb - Math.sin(t) * r1), V(0, hN + rH + 0.0001, zb), 0.0002, LEAD2));
     if (k === 6) break;
     const tm = t + Math.PI / 12;
     ap.push(...ndXf([
@@ -590,31 +682,31 @@ function notreDame(): G[] {
     const p: G[] = [];
     const pw = 0.0066, phs = 0.0056, PH = 0.0114, PW = 0.0108;
     p.push(...box(dt - 0.0004, 0.0018, 0.0006, ST2, { z: 0.0002 }));
-    p.push(ndSlab(ndNotched(-PW / 2, PW / 2, PH, [{ x: 0, w: pw + 0.00012, hs: phs }]), [], 0.003, ST, { z: 0.0015 }));
+    p.push(...ndFront(-PW / 2, PW / 2, PH, [{ x: 0, w: pw + 0.00012, hs: phs }], 0.003, ST, { z: 0.003 }));
     p.push(...ndPortal(pw, phs, 0.0005, 3, 0, 0.0028, 0, [TRIM, ST2], ST2, DOOR, false));
     const gx = PW / 2 + 0.0003, gh = 0.0064;
     p.push(prism([[-gx, PH], [gx, PH], [0, PH + gh]], 0.003, ST, { z: 0.0015 }));
     p.push(P(new THREE.CircleGeometry(0.0013, 8), DEEP, { y: PH + 0.0024, z: 0.0031 }));
-    for (let i = 1; i <= 4; i++) for (const a of SIDE) { const f = i / 5; p.push(cone(0.00028, 0.0008, 3, TRIM, { x: a * gx * (1 - f), y: PH + gh * f, z: 0.0015 })); }
+    for (let i = 1; i <= 2; i++) for (const a of SIDE) { const f = i / 3; p.push(cone(0.00028, 0.0008, 3, TRIM, { x: a * gx * (1 - f), y: PH + gh * f, z: 0.0015 })); }
     p.push(cone(0.0006, 0.0018, 4, TRIM, { y: PH + gh - 0.0002, z: 0.0015 }));
     for (const a of SIDE) p.push(...box(0.0012, PH + 0.0022, 0.0012, ST, { x: a * (PW / 2 + 0.0009), z: 0.0012 }), cone(0.0009, 0.0042, 4, TRIM, { x: a * (PW / 2 + 0.0009), y: PH + 0.0022, z: 0.0012, ry: Math.PI / 4 }));
     p.push(...box(dt - 0.0006, 0.0006, 0.0008, TRIM, { y: 0.0158, z: 0.0003 }));
     for (let i = 0; i < 6; i++) p.push(...ndWin(0.0016, 0.0017, -0.0068 + ((i + 0.5) * 0.0136) / 6, 0.0166, 0, 0, TRIM, GLASS, false));
-    p.push(...ndXf(ndRose(0.0061, 0.0072, ST, TRIM, GLASS, LIGHTS, DARK), 0, 0.0272, 0, 0));
+    p.push(...ndXf(ndRose(0.0061, 0.0072, ST, TRIM, GLASS, LIGHTS, DARK, 12), 0, 0.0272, 0, 0));
     p.push(...box(dt - 0.0004, 0.0008, 0.0012, TRIM, { y: hN - 0.0009, z: 0.0004 }));
     const top = hN + rH + 0.0015, oc = hN + 0.0066;
-    p.push(ndSlab([[-W + 0.0002, hN], [W - 0.0002, hN], [0, top]], [ndCircle(0.0021, 0, oc, 10), ...SIDE.map((a) => ndShift(ndArch(0.0012, hN + 0.0028, hN + 0.0012, 0.85, 3), a * 0.0034))], 0.0008, ST, { z: 0.0007 }));
+    p.push(ndFlat([[-W + 0.0002, hN], [W - 0.0002, hN], [0, top]], ST, { z: 0.0011 }, [ndCircle(0.0021, 0, oc, 10), ...SIDE.map((a) => ndShift(ndArch(0.0012, hN + 0.0028, hN + 0.0012, 0.85, 3), a * 0.0034))]));
     p.push(P(new THREE.CircleGeometry(0.0021, 10), DEEP, { y: oc, z: 0.00012 }));
     for (const a of SIDE) p.push(ndFlat(ndShift(ndArch(0.0012, hN + 0.0028, hN + 0.0012, 0.85, 3), a * 0.0034), DEEP, { z: 0.00012 }));
-    for (let i = 1; i <= 5; i++) for (const a of SIDE) { const f = i / 6; p.push(cone(0.0003, 0.0009, 3, TRIM, { x: a * (W - 0.0002) * (1 - f), y: hN + (top - hN) * f, z: 0.0007 })); }
-    p.push(rod(V(0, top - 0.0004, 0.0007), V(0, top + 0.0034, 0.0007), 0.00022, TRIM, 3), rod(V(-0.001, top + 0.0022, 0.0007), V(0.001, top + 0.0022, 0.0007), 0.0002, TRIM, 3));
+    for (let i = 1; i <= 3; i++) for (const a of SIDE) { const f = i / 4; p.push(cone(0.0003, 0.0009, 3, TRIM, { x: a * (W - 0.0002) * (1 - f), y: hN + (top - hN) * f, z: 0.0007 })); }
+    p.push(rodO(V(0, top - 0.0004, 0.0007), V(0, top + 0.0034, 0.0007), 0.00022, TRIM), rodO(V(-0.001, top + 0.0022, 0.0007), V(0.001, top + 0.0022, 0.0007), 0.0002, TRIM));
     for (const a of SIDE) {
       const x = a * (W + 0.001), z = -0.0012, rt = 0.002, ht = hN + 0.004;
       p.push(cyl(rt, rt, ht, 8, ST, { x, z, ry: Math.PI / 8 }));
-      for (const y of [0.0158, hN - 0.0009, ht - 0.0006]) p.push(cyl(rt + 0.0003, rt + 0.0003, 0.0006, 8, TRIM, { x, y, z, ry: Math.PI / 8 }));
+      for (const y of [hN - 0.0009]) p.push(cyl(rt + 0.0003, rt + 0.0003, 0.0006, 8, TRIM, { x, y, z, ry: Math.PI / 8 }));
       for (const y of [0.006, 0.021, 0.029]) for (const th of [0, a * Q]) p.push(pane(0.0006, 0.0022, DARK, x + Math.sin(th) * (rt * Math.cos(Math.PI / 8) + 0.0001), y, z + Math.cos(th) * (rt * Math.cos(Math.PI / 8) + 0.0001), th));
       p.push(cone(rt + 0.0002, 0.0092, 8, TRIM, { x, y: ht, z, ry: Math.PI / 8 }));
-      for (let j = 0; j < 8; j++) for (const f of [0.45]) {
+      for (let j = 0; j < 8; j += 2) for (const f of [0.45]) {
         const th = Math.PI / 8 + (j * Math.PI) / 4, r = (rt + 0.0002) * (1 - f) + 0.0001;
         p.push(cone(0.00022, 0.0007, 3, TRIM, { x: x + Math.sin(th) * r, y: ht + 0.0092 * f, z: z + Math.cos(th) * r }));
       }
@@ -626,7 +718,7 @@ function notreDame(): G[] {
   // ----- the west front -----
   const fw = 0.074, fz = 0.0475, zbk = zf - 0.0005, yK = 0.0172, yG = 0.0405, yT = 0.0515, PD = 0.0042;
   const portals = [{ x: -0.0235, w: 0.0088, hs: 0.0072, s: 0.0005 }, { x: 0, w: 0.0108, hs: 0.0074, s: 0.0006 }, { x: 0.0235, w: 0.0088, hs: 0.0072, s: 0.0005 }] as const;
-  out.push(ndSlab(ndNotched(-fw / 2, fw / 2, yK, portals.map((p) => ({ x: p.x, w: p.w + 0.00012, hs: p.hs }))), [], PD, ST, { z: fz - PD / 2 }));
+  out.push(...ndFront(-fw / 2, fw / 2, yK, portals.map((p) => ({ x: p.x, w: p.w + 0.00012, hs: p.hs })), PD, ST, { z: fz }));
   out.push(...box(fw, yK, fz - PD - zbk, ST, { z: (fz - PD + zbk) / 2 }));
   for (const p of portals) out.push(...ndPortal(p.w, p.hs, p.s, p.x === 0 ? 4 : 3, p.x, fz - 0.0002, fz - PD, [TRIM, ST2], ST2, DOOR, p.x === 0));
   out.push(...box(fw, yG - yK, fz - zbk, ST, { y: yK, z: (fz + zbk) / 2 }));
@@ -644,10 +736,10 @@ function notreDame(): G[] {
   out.push(...box(fw, 0.0222 - yK - 0.0008, 0.0022, ST, { y: yK + 0.0008, z: fz + 0.0009 }));
   const kx = (i: number) => -fw / 2 + ((i + 0.5) * fw) / 28;
   for (let i = 0; i < 28; i++) {
-    out.push(ndFlat(ndArch(0.0019, yK + 0.003, yK + 0.0009, 0.85, 3), DEEP, { x: kx(i), z: fz + 0.0021 }));
+    out.push(ndFlat(ndArch(0.0019, yK + 0.003, yK + 0.0009, 0.85, 2), DEEP, { x: kx(i), z: fz + 0.0021 }));
     out.push(...ndStatue(kx(i), yK + 0.0008, fz + 0.0028, 0.0033, shade(ST, 0.86)));
   }
-  for (let i = 0; i <= 28; i++) out.push(rod(V(-fw / 2 + (i * fw) / 28, yK + 0.0008, fz + 0.0033), V(-fw / 2 + (i * fw) / 28, 0.0222, fz + 0.0033), 0.00022, TRIM, 3));
+  for (let i = 0; i <= 28; i++) out.push(pane(0.00044, 0.0222 - yK - 0.0008, TRIM, -fw / 2 + (i * fw) / 28, yK + 0.0008, fz + 0.0033));
   out.push(...box(fw + 0.0004, 0.0007, 0.0004, TRIM, { y: 0.0214, z: fz + 0.0034 }));
   out.push(...box(fw + 0.0008, 0.0008, 0.0044, TRIM, { y: 0.0222, z: fz + 0.0018 }));
   out.push(...ndRail(fw + 0.0008, 0.0018, TRIM, 0, 0.023, fz + 0.0034, 0));
@@ -659,7 +751,7 @@ function notreDame(): G[] {
     out.push(ndFlat(ndArch(0.0112, 0.0322, 0.0248, 0.65, 5), ST2, { x: sx, z: fz + 0.00008 }));
     for (const a of SIDE) out.push(...ndWin(0.0034, 0.0072, sx + a * 0.0026, 0.025, fz + 0.0001, 0, TRIM, GLASS));
     out.push(...ndOculus(0.0013, sx, 0.0367, fz + 0.0001, 0, TRIM, GLASS));
-    out.push(ndSlab(ndBand(0.0124, 0.0112, 0.0322, 0.0248, 0.65), [], 0.0006, TRIM, { x: sx, z: fz + 0.0003 }));
+    out.push(ndFlat(ndBand(0.0124, 0.0112, 0.0322, 0.0248, 0.65, 4), TRIM, { x: sx, z: fz + 0.0006 }));
   }
   for (const s of SIDE) out.push(...ndWin(0.003, 0.009, (s * fw) / 2, 0.025, fz - 0.009, s * Q, TRIM, GLASS));
   // The open gallery: slender pointed arches before a shadowed wall, a
@@ -671,7 +763,7 @@ function notreDame(): G[] {
   for (const [x0, x1, n] of [[-0.0334, -0.0143, 7], [-0.0107, 0.0107, 8], [0.0143, 0.0334, 7]] as const) {
     for (let i = 0; i < n; i++) gal.push(ndShift(ndArch(0.0017, yG + 0.0074, yG + 0.0016, 0.85, 2), x0 + ((i + 0.5) * (x1 - x0)) / n));
   }
-  out.push(ndSlab(ndRect(-fw / 2, yG + 0.0004, fw / 2, yT), gal, 0.0008, ST, { z: fz - 0.0005 }));
+  out.push(ndFlat(ndRect(-fw / 2, yG + 0.0004, fw / 2, yT), ST, { z: fz - 0.0001 }, gal));
   out.push(...box(fw + 0.0008, 0.0008, 0.0024, TRIM, { y: yT, z: fz - 0.0007 }));
   out.push(...ndRail(fw, 0.0018, TRIM, 0, yT + 0.0008, fz - 0.0002, 0));
   // The towers: four walls pierced by the belfry lancets round a dark
@@ -679,10 +771,12 @@ function notreDame(): G[] {
   // buttresses with their set-offs; the cornice, balustrade and pinnacles.
   const tw = 0.0238, td = 0.0164, hT = 0.0285, tT = 0.0018, tzc = fz - 0.0012 - td / 2, yb0 = yT + 0.0034, ysB = yT + 0.0206;
   const face = (len: number, wall: number, hw: number, hx: number): G[] => {
-    const p: G[] = [ndSlab(ndRect(-wall / 2, yT, wall / 2, yT + hT), SIDE.map((a) => ndShift(ndArch(hw, ysB, yb0, 0.85, 3), a * hx)), tT, ST, { z: -tT / 2 })];
-    p.push(...box(len - 0.0002, 0.0005, 0.0006, TRIM, { y: yT + 0.0024, z: 0.0001 }));
+    // (Its outer edges lie under the corner buttresses, the cornice and the floor.)
+    const p: G[] = [cull(cull(ndSlab(ndRect(-wall / 2, yT, wall / 2, yT + hT), SIDE.map((a) => ndShift(ndArch(hw, ysB, yb0, 0.85, 3), a * hx)), tT, ST, { z: -tT / 2 }), 'x', -wall / 2, wall / 2), 'y', yT, yT + hT)];
+    p.push(polys([[V(-len / 2 + 0.0001, 0, 0.0004), V(len / 2 - 0.0001, 0, 0.0004), V(len / 2 - 0.0001, 0.0005, 0.0004), V(-len / 2 + 0.0001, 0.0005, 0.0004)],
+      [V(-len / 2 + 0.0001, 0.0005, 0.0004), V(len / 2 - 0.0001, 0.0005, 0.0004), V(len / 2 - 0.0001, 0.0005, 0), V(-len / 2 + 0.0001, 0.0005, 0)]], TRIM, { y: yT + 0.0024 }));
     for (const a of SIDE) {
-      p.push(ndFlat(ndBand(hw + 0.0018, hw + 0.0002, ysB, ysB - 0.0014, 0.85, 4), shade(ST, 0.8), { x: a * hx, z: 0.00012 }));
+      p.push(ndFlat(ndBand(hw + 0.0018, hw + 0.0002, ysB, ysB - 0.0014, 0.85, 2), shade(ST, 0.8), { x: a * hx, z: 0.00012 }));
     }
     return p;
   };
@@ -695,7 +789,7 @@ function notreDame(): G[] {
     out.push(...box(tw - 2 * tT - 0.0002, hT - 0.0004, td - 2 * tT - 0.0002, DARK, { x: xc, y: yT, z: tzc }, LEAD));
     for (const a of SIDE) for (const b of SIDE) {
       const x = xc + a * (tw / 2 - 0.0006), z = tzc + b * (td / 2 - 0.0006);
-      out.push(...box(0.0028, 0.021, 0.0028, ST, { x, y: yT, z }));
+      out.push(...box(0.0028, 0.021, 0.0028, ST, { x, y: yT, z }).map((g) => cull(g, 'y', yT + 0.021)));
       out.push(...frustum(0.0028, 0.0028, 0.0012, 0.0012, 0.0024, TRIM, { x, y: yT + 0.021, z }, TRIM));
       out.push(cone(0.0009, 0.0048, 4, ST, { x: xc + a * (tw / 2 - 0.0005), y: yT + hT, z: tzc + b * (td / 2 - 0.0005), ry: Math.PI / 4 }));
     }
@@ -712,44 +806,48 @@ function notreDame(): G[] {
     if (Math.abs(z - zt) < dt / 2 + 0.0006) continue;
     for (const s of SIDE) {
       const nx = (s * rH * nOff) / hyN, ny = (r1 * nOff) / hyN;
-      out.push(rod(V(s * r1 + nx, hN + ny, z), V(nx, hN + rH + ny - 0.0002, z), 0.00011, LEAD2, 3));
+      const w = 0.00012;
+      out.push(polys([[V(s * r1 + nx, hN + ny, z - w), V(s * r1 + nx, hN + ny, z + w), V(nx, hN + rH + ny - 0.0002, z + w), V(nx, hN + rH + ny - 0.0002, z - w)]], LEAD2));
     }
   }
   for (let x = r1 + 0.0016; x < xt - 0.0005; x += 0.0034) for (const s of SIDE) for (const q of SIDE) {
     const nz = (q * rH * nOff) / hyT, ny = ((dt / 2) * nOff) / hyT;
-    out.push(rod(V(s * x, hN + ny, zt + (q * dt) / 2 + nz), V(s * x, hN + rH + ny - 0.0002, zt + nz), 0.00011, LEAD2, 3));
+    const w = 0.00012;
+    out.push(polys([[V(s * x - w, hN + ny, zt + (q * dt) / 2 + nz), V(s * x + w, hN + ny, zt + (q * dt) / 2 + nz), V(s * x + w, hN + rH + ny - 0.0002, zt + nz), V(s * x - w, hN + rH + ny - 0.0002, zt + nz)]], LEAD2));
   }
   out.push(rod(V(0, hN + rH, zb + 0.0003), V(0, hN + rH, zf - 0.0003), 0.0003, LEAD2, 4), rod(V(-xt + 0.0003, hN + rH, zt), V(xt - 0.0003, hN + rH, zt), 0.0003, LEAD2, 4));
-  for (let z = zb + 0.0012; z < zf; z += 0.0024) if (Math.abs(z - zt) > 0.0062) out.push(cone(0.00035, 0.0011, 3, LEAD2, { y: hN + rH, z }));
-  for (let x = 0.0062; x < xt - 0.0008; x += 0.0024) for (const s of SIDE) out.push(cone(0.00035, 0.0011, 3, LEAD2, { x: s * x, y: hN + rH, z: zt }));
+  // (The crests' teeth: flat, along each ridge.)
+  const teeth: THREE.Vector3[][] = [], yR = hN + rH;
+  for (let z = zb + 0.0012; z < zf; z += 0.0024) if (Math.abs(z - zt) > 0.0062) teeth.push([V(0, yR, z - 0.0004), V(0, yR, z + 0.0004), V(0, yR + 0.0011, z)]);
+  for (let x = 0.0062; x < xt - 0.0008; x += 0.0024) for (const s of SIDE) teeth.push([V(s * x - 0.0004, yR, zt), V(s * x + 0.0004, yR, zt), V(s * x, yR + 0.0011, zt)]);
+  out.push(polys(teeth, LEAD2));
 
   // ----- the spire -----
   // Its octagonal base out of the crossing; two tiers, each a ring of
   // lancets under gablets with pinnacles at the corners and a cornice; the
   // needle with its crockets and bands; the gilt cross and rooster.
   const sp: G[] = [], yS = hN + rH * 0.6, R8 = Math.PI / 8, c8 = Math.cos(R8);
-  sp.push(drumC(0.0049, 0.0049, 0.0066, 8, LEAD, { y: yS, ry: R8 }));
+  sp.push(cyl(0.0049, 0.0049, 0.0066, 8, LEAD, { y: yS, ry: R8 }));
   const tier = (y: number, R: number, h: number, wl: number, hs: number, gh: number, ph: number) => {
     sp.push(cyl(R, R, h, 8, LEAD, { y, ry: R8 }));
     const fwid = 2 * R * Math.sin(R8);
     for (let i = 0; i < 8; i++) {
       const th = (i * Math.PI) / 4, ri = R * c8, tv = th + R8;
-      sp.push(ndFlat(ndArch(wl, hs, 0, 0.85, 3), DARK, { x: Math.sin(th) * (ri + 0.0001), y: y + 0.0008, z: Math.cos(th) * (ri + 0.0001), ry: th }));
+      sp.push(ndFlat(ndArch(wl, hs, 0, 0.85, 2), DARK, { x: Math.sin(th) * (ri + 0.0001), y: y + 0.0008, z: Math.cos(th) * (ri + 0.0001), ry: th }));
       sp.push(ndFlat([[-fwid * 0.48, 0], [fwid * 0.48, 0], [0, gh]], LEAD2, { x: Math.sin(th) * (ri + 0.0002), y: y + h - 0.0012, z: Math.cos(th) * (ri + 0.0002), ry: th }));
-      sp.push(rod(V(Math.sin(tv) * (R + 0.0002), y, Math.cos(tv) * (R + 0.0002)), V(Math.sin(tv) * (R + 0.0002), y + h * 0.55, Math.cos(tv) * (R + 0.0002)), 0.0003, LEAD, 3));
-      sp.push(cone(0.00045, ph, 4, LEAD, { x: Math.sin(tv) * (R + 0.0002), y: y + h * 0.55, z: Math.cos(tv) * (R + 0.0002) }));
+      sp.push(cone(0.00045, ph + h * 0.55, 4, LEAD, { x: Math.sin(tv) * (R + 0.0002), y, z: Math.cos(tv) * (R + 0.0002) }));
     }
-    sp.push(drumC(R + 0.0003, R + 0.0003, 0.0005, 8, LEAD2, { y: y + h, ry: R8 }));
+    sp.push(...drumT(R + 0.0003, R + 0.0003, 0.0005, 8, LEAD2, { y: y + h, ry: R8 }));
   };
   const y1 = yS + 0.0066, y2 = y1 + 0.0095 + 0.0005, y3 = y2 + 0.0072 + 0.0005, NH = 0.04, NR = 0.0028;
   tier(y1, 0.0042, 0.0095, 0.0016, 0.0062, 0.0032, 0.0068);
   tier(y2, 0.0031, 0.0072, 0.0012, 0.0045, 0.0024, 0.0052);
   sp.push(cone(NR, NH, 8, LEAD, { y: y3, ry: R8 }));
-  for (let j = 0; j < 8; j++) for (let f = 0.12; f < 0.86; f += 0.1) {
+  for (let j = 0; j < 8; j++) for (let f = 0.15; f < 0.86; f += 0.2) {
     const tv = R8 + (j * Math.PI) / 4, r = NR * (1 - f) + 0.00012;
     sp.push(cone(0.0003, 0.0008, 3, LEAD2, { x: Math.sin(tv) * r, y: y3 + NH * f, z: Math.cos(tv) * r }));
   }
-  for (const f of [0.33, 0.62]) sp.push(drumC(NR * (1 - f) + 0.0002, NR * (1 - f - 0.012) + 0.0002, 0.0005, 8, LEAD2, { y: y3 + NH * f, ry: R8 }));
+  for (const f of [0.33, 0.62]) sp.push(...drumT(NR * (1 - f) + 0.0002, NR * (1 - f - 0.012) + 0.0002, 0.0005, 8, LEAD2, { y: y3 + NH * f, ry: R8 }));
   const yA = y3 + NH;
   sp.push(rod(V(0, yA - 0.0006, 0), V(0, yA + 0.0046, 0), 0.00018, GOLD, 3), ball(0.0005, GOLD, { y: yA + 0.0008 }));
   sp.push(rod(V(-0.0011, yA + 0.0032, 0), V(0.0011, yA + 0.0032, 0), 0.00016, GOLD, 3), ball(0.00042, GOLD, { y: yA + 0.0049, sx: 1.4 }));
@@ -758,7 +856,7 @@ function notreDame(): G[] {
   // four roof valleys at its foot, in copper gone green, on their plinths.
   for (const a of SIDE) for (const b of SIDE) for (let i = 0; i < 4; i++) {
     const f = 0.44 + 0.13 * i, x = a * r1 * f, z = zt + (b * dt * f) / 2, y = hN + rH * (1 - f), ry = Math.atan2(a, b);
-    out.push(...box(0.0013, 0.003, 0.0013, shade(COPPER, 0.78), { x, y: y - 0.0018, z, ry }));
+    out.push(...drumT(0.00092, 0.00092, 0.003, 4, shade(COPPER, 0.78), { x, y: y - 0.0018, z, ry: ry + Math.PI / 4 }));
     if (i === 3) out.push(P(new THREE.OctahedronGeometry(0.0009), COPPER, { x, y: y + 0.0021, z, sx: 1.3 }));
     else out.push(...ndStatue(x, y + 0.0012, z, 0.0036, COPPER, ry));
   }
@@ -786,7 +884,7 @@ function dragon(x: number, y: number, z: number, s: number, l: number, c: number
   const p = (u: number, v: number) => V(x, y + v * l, z + s * u * l);
   const neck = [p(0, 0), p(0.22, 0.12), p(0.38, 0.34), p(0.45, 0.58), p(0.52, 0.78), p(0.7, 0.9)];
   const out: G[] = [];
-  for (let i = 0; i < neck.length - 1; i++) out.push(rod(neck[i]!, neck[i + 1]!, l * (0.075 - i * 0.008), c, 5, l * (0.075 - (i + 1) * 0.008)));
+  for (let i = 0; i < neck.length - 1; i++) out.push(rod(neck[i]!, neck[i + 1]!, l * (0.075 - i * 0.008), c, 4, l * (0.075 - (i + 1) * 0.008)));
   for (let i = 1; i < neck.length - 1; i++) { const q = neck[i]!; out.push(cone(l * 0.03, l * 0.11, 3, c, { x, y: q.y + l * 0.02, z: q.z - s * l * 0.05, rx: -s * 0.7 })); }
   const hy = y + 0.9 * l, hz = z + s * 0.78 * l;
   out.push(ball(l * 0.085, c, { x, y: hy, z: hz, sz: 1.5, sy: 0.9 }));
@@ -794,7 +892,7 @@ function dragon(x: number, y: number, z: number, s: number, l: number, c: number
   out.push(cone(l * 0.045, l * 0.24, 5, c, { x, y: hy - l * 0.04, z: hz + s * l * 0.04, rx: s * (Math.PI / 2 + 0.45) }));
   out.push(rod(V(x, hy - l * 0.02, hz + s * l * 0.12), V(x, hy + l * 0.07, hz + s * l * 0.33), l * 0.012, 0x8a3a28, 3));
   for (const e of [-1, 1]) {
-    out.push(ball(l * 0.022, SC.CARVE, { x: x + e * l * 0.06, y: hy + l * 0.035, z: hz + s * l * 0.03 }));
+    out.push(P(new THREE.OctahedronGeometry(l * 0.022), SC.CARVE, { x: x + e * l * 0.06, y: hy + l * 0.035, z: hz + s * l * 0.03 }));
     out.push(cone(l * 0.025, l * 0.14, 3, c, { x: x + e * l * 0.04, y: hy + l * 0.05, z: hz - s * l * 0.06, rx: -s * 0.9 }));
   }
   return out;
@@ -803,10 +901,12 @@ function dragon(x: number, y: number, z: number, s: number, l: number, c: number
 // Shingles: each face (eaves a0, a1; top b0, b1, equal for a triangle)
 // covered in rows of blunt-pointed tongues of rowH, about tw wide, every
 // other row staggered, their shades varying; the roof itself darker
-// between them, outlining each.
+// between them, outlining each. (All drawn SC_TILE times the size asked:
+// fewer, larger tongues, the same pattern.)
+const SC_TILE = 1.5;
 type SCFace = readonly [THREE.Vector3, THREE.Vector3, THREE.Vector3, THREE.Vector3];
-function shingled(faces: readonly SCFace[], rowH: number, tw: number, c: number, seed = 1): G[] {
-  const r = scRand(seed), base: number[] = [], tiles: number[][] = [[], [], []];
+function shingled(faces: readonly SCFace[], rowH0: number, tw0: number, c: number, seed = 1): G[] {
+  const rowH = rowH0 * SC_TILE, tw = tw0 * SC_TILE, r = scRand(seed), base: number[] = [], tiles: number[][] = [[], [], []];
   const push = (arr: number[], ...ps: THREE.Vector3[]) => { for (const q of ps) arr.push(q.x, q.y, q.z); };
   for (const [a0, a1, b0, b1] of faces) {
     push(base, a0, a1, b1);
@@ -864,7 +964,7 @@ function scWalls(w: number, d: number, y0: number, y1: number, p0: number, seed:
   const out: G[] = [...box(w, y1 - y0, d, SC.LINE, { y: y0 }, SC.WOOD)];
   out.push(...staves(0, 0, w, d, p0, y1 - 0.0011 - p0, SC.WOOD, seed));
   out.push(...box(w + 0.0007, 0.0012, d + 0.0007, SC.TRIM, { y: y1 - 0.001 }, SC.TRIM));
-  if (posts) for (const sx of [-1, 1]) for (const sz of [-1, 1]) out.push(cyl(0.0008, 0.0008, y1 - y0 - 0.001, 6, shade(SC.WOOD, 1.1), { x: sx * w / 2, y: y0, z: sz * d / 2 }));
+  if (posts) for (const sx of [-1, 1]) for (const sz of [-1, 1]) out.push(cyl(0.0008, 0.0008, y1 - y0 - 0.001, 4, shade(SC.WOOD, 1.1), { x: sx * w / 2, y: y0, z: sz * d / 2, ry: Math.PI / 4 }));
   return out;
 }
 // A flat board in the plane z (local), from (u0, v0) to (u1, v1), 2r wide.
@@ -885,7 +985,7 @@ function scSaltires(len: number, y0: number, y1: number, z: number): G[] {
 }
 // A little round window: a weathered ring, the dark opening (local, facing +z).
 const scOculus = (r: number, y: number, z: number): G[] => [
-  P(new THREE.RingGeometry(r, r * 1.45, 10), SC.TRIM, { y, z }), P(new THREE.CircleGeometry(r, 10), SC.DARK, { y, z: z + 0.0001 }),
+  P(new THREE.CircleGeometry(r * 1.45, 8), SC.TRIM, { y, z }), P(new THREE.CircleGeometry(r, 8), SC.DARK, { y, z: z + 0.0001 }),
 ];
 // A cross on a gable's apex (local, facing +z).
 const scCross = (y: number, z: number, s: number, c: number = SC.TRIM): G[] => [
@@ -902,7 +1002,7 @@ function scGable(a: number, d: number, y: number, h: number, ov: number, ovz: nu
     [V(E, ye, Z), V(E, ye, -Z), V(0, Y, Z), V(0, Y, -Z)],
     [V(-E, ye, -Z), V(-E, ye, Z), V(0, Y, -Z), V(0, Y, Z)],
   ], rowH, tw, SC.SH, seed);
-  out.push(rod(V(0, Y + 0.0002, -Z), V(0, Y + 0.0002, Z), 0.0004, SC.TRIM, 4));
+  out.push(rodO(V(0, Y + 0.0002, -Z), V(0, Y + 0.0002, Z), 0.0004, SC.TRIM, 4));
   for (const s of ends) {
     const z = s * d / 2;
     out.push(P(scGeo([-a, y, z, a, y, z, 0, Y, z]), SC.WOOD));
@@ -916,13 +1016,13 @@ function scGable(a: number, d: number, y: number, h: number, ov: number, ovz: nu
       scBar(0, b, 0, y + h * 0.92, d / 2 + 0.0003, 0.00026, SC.TRIM),
       scBar(-q, b, q, b + h * 0.5, d / 2 + 0.0004, 0.00026, SC.TRIM),
       scBar(q, b, -q, b + h * 0.5, d / 2 + 0.0004, 0.00026, SC.TRIM),
-      ...scOculus(Math.min(0.0011, a * 0.1), y + h * 0.68, d / 2 + 0.0004),
+      ...(a > 0.005 ? scOculus(Math.min(0.0011, a * 0.1), y + h * 0.68, d / 2 + 0.0004) : []),
     ]));
     // The barge boards along the roof's edge.
     const zb = s * (Z + 0.0002), lift = 0.00035;
     for (const e of [-1, 1]) {
       const p0 = V(e * E, ye + lift, zb), p1 = V(0, Y + lift, zb), dir = p1.clone().sub(p0).normalize();
-      out.push(rod(p0, crossed ? p1.clone().addScaledVector(dir, 0.0022) : p1, 0.00042, SC.TRIM, 4));
+      out.push(rodO(p0, crossed ? p1.clone().addScaledVector(dir, 0.0022) : p1, 0.00042, SC.TRIM, 4));
     }
   }
   return out;
@@ -939,16 +1039,17 @@ function scArcade(len: number, yT: number, seed: number, skip: (u: number) => bo
   for (let i = 0; i < n; i++) {
     const u = -len / 2 + (i + 0.5) * p;
     if (skip(u)) continue;
-    shape.holes.push(new THREE.Path([v2(u - hw, yp), v2(u + hw, yp), ...arcPts(hw, ys, 4, 0, Math.PI).map(([x, y]) => v2(u + x, y))]));
+    shape.holes.push(new THREE.Path([v2(u - hw, yp), v2(u + hw, yp), ...arcPts(hw, ys, 3, 0, Math.PI).map(([x, y]) => v2(u + x, y))]));
     // The post right of it with its capital (between two openings or one); the parapet's boards.
     const x = u + p / 2;
     if (i < n - 1 && !(skip(u) && skip(u + p))) {
-      out.push(cyl(0.0003, 0.0003, ys - yp, 4, shade(SC.WOOD, 1.12), { x, y: yp, z: D / 2 + 0.0003 }));
+      out.push(pane(0.0006, ys - yp, shade(SC.WOOD, 1.12), x, yp, D / 2 + 0.0003));
       out.push(pane(0.0012, 0.0005, SC.TRIM, x, ys - 0.0002, D / 2 + 0.0007));
     }
     for (const t of [-0.25, 0.25]) out.push(pane(0.0009, yp - 0.0016, shade(SC.WOOD, 0.85 + r() * 0.3), u + t * p, 0.0014, D / 2 + 0.0001));
   }
-  out.push(P(new THREE.ExtrudeGeometry(shape, { depth: D, bevelEnabled: false, curveSegments: 4 }).translate(0, 0, -D / 2), SC.WOOD));
+  // (Its face only: the dark gallery behind, the rails over and under it.)
+  out.push(P(new THREE.ShapeGeometry(shape).translate(0, 0, D / 2), SC.WOOD));
   out.push(...box(len + 0.0002, 0.0014, D + 0.0008, SC.TRIM, { y: 0 }, SC.TRIM));
   out.push(...box(len + 0.0004, 0.0004, D + 0.0006, SC.TRIM, { y: yp - 0.00045 }, SC.TRIM));
   out.push(...box(len + 0.0002, 0.0012, D + 0.0008, SC.TRIM, { y: yT - 0.001 }, SC.TRIM));
@@ -1041,7 +1142,7 @@ function staveChurch(): G[] {
   out.push(...scWalls(0.0095, 0.0095, t1 + 0.002, t2, t1 + 0.004, 83));
   for (const a of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
     const face: G[] = [];
-    for (const u of [-0.0021, 0.0021]) face.push(...archPane(0.0026, 0.0034, SC.TRIM, u, t1 + 0.0052, 0.0003), ...archPane(0.0018, 0.003, SC.DARK, u, t1 + 0.0055, 0.0004));
+    for (const u of [-0.0021, 0.0021]) face.push(archShape(0.0026, 0.0034, SC.TRIM, u, t1 + 0.0052, 0.0003), archShape(0.0018, 0.003, SC.DARK, u, t1 + 0.0055, 0.0004));
     face.push(...scAt(scGable(0.0034, 0.0036, t2 - 0.0012, 0.0045, 0.0008, 0.0008, 0.0014, 0.0014, 84, [1]), 0, 0, -0.0017));
     face.push(...scCross(t2 + 0.0035, 0.0011, 0.0024));
     out.push(...scAt(face, Math.sin(a) * 0.00475, 0, Math.cos(a) * 0.00475, a));
@@ -1079,86 +1180,254 @@ function staveChurch(): G[] {
 
 // ---------- Yucatán ----------
 
-// A feathered serpent's head at the foot of a stair, facing ry.
+// A feathered serpent's head at the foot of a stair, facing +z (s its
+// size), turned ry about (x, z): the head block and its brows over pale
+// eyes, the snout with its curled nose plate, the gaping jaws (dark within)
+// with their fangs and forked tongue, a ruff of feathers behind.
 function serpentHead(x: number, z: number, s: number, ry: number): G[] {
-  const c = 0xc8bea6, nx = Math.sin(ry), nz = Math.cos(ry);
-  return [
-    ...box(s, s * 0.8, s * 1.2, c, { x, z, ry }),
-    cone(s * 0.45, s * 0.8, 4, shade(c, 0.9), { x: x + nx * s * 0.8, y: s * 0.3, z: z + nz * s * 0.8, rx: nz * Math.PI / 2, rz: -nx * Math.PI / 2 }),
-    ...[-1, 1].map((k) => ball(s * 0.12, 0x3a2a22, { x: x + nx * s * 0.6 + Math.cos(ry) * k * s * 0.35, y: s * 0.65, z: z + nz * s * 0.6 - Math.sin(ry) * k * s * 0.35 })),
+  const c = 0xc8bea6, c2 = shade(c, 0.88), DARKM = 0x2e2420;
+  const p: G[] = [
+    ...box(s, s * 0.62, s * 0.9, c, { z: -s * 0.1 }),
+    ...box(s * 1.18, s * 0.58, s * 0.22, c2, { y: s * 0.12, z: -s * 0.62 }),
+    ...box(s * 0.92, s * 0.28, s * 0.62, c, { y: s * 0.52, z: s * 0.5 }),
+    ...box(s * 0.7, s * 0.2, s * 0.14, c2, { y: s * 0.8, z: s * 0.74 }),
+    ...box(s * 0.84, s * 0.16, s * 0.56, c2, { z: s * 0.5 }),
+    pane(s * 0.76, s * 0.36, DARKM, 0, s * 0.16, s * 0.6),
+    ...box(s * 0.16, s * 0.05, s * 0.5, 0x8a3a28, { y: s * 0.17, z: s * 0.86 }),
   ];
+  for (const e of [-1, 1]) {
+    p.push(cone(s * 0.06, s * 0.2, 3, 0xf0ead8, { x: e * s * 0.3, y: s * 0.32, z: s * 0.76, rx: Math.PI }));
+    p.push(P(new THREE.OctahedronGeometry(s * 0.1), 0xf0ead8, { x: e * s * 0.36, y: s * 0.5, z: s * 0.3 }));
+    p.push(...box(s * 0.36, s * 0.12, s * 0.3, c2, { x: e * s * 0.3, y: s * 0.62, z: s * 0.28 }));
+  }
+  const m = new THREE.Matrix4().makeTranslation(x, 0, z).multiply(new THREE.Matrix4().makeRotationY(ry));
+  return p.map((g) => g.applyMatrix4(m));
 }
 
-// Chichén Itzá: El Castillo, the pyramid of Kukulcán, its nine terraces
-// panelled, a stair up each side between serpent balustrades (the heads
-// at the foot of the north stair), the temple on the top; the Temple of
-// the Warriors and its hall of a thousand columns; the ball court with its
-// stone rings; the Platform of Venus; the sacred cenote; the forest round
-// the great plaza; people in white and red.
+// Chichén Itzá: El Castillo, the pyramid of Kukulcán. Its nine terraces,
+// each a sloping talud under an upright tablero with its row of recessed
+// panels and a cornice; a stair of steps up each side between ramped
+// balustrades (the feathered serpents' heads at the foot of the north
+// stair). On the top the temple: a plinth, its walls pierced by a door on
+// each side and in the north the portico's three openings between two
+// serpent columns (heads at their feet, rattles under the lintel), the
+// medial moulding, the frieze with its panels and corner masks, the
+// cornice and the cresting round the roof.
 function chichenItza(): G[] {
   const out: G[] = [];
-  const LS = 0xc8bea6, LS2 = shade(LS, 0.86), PANEL = shade(LS, 0.76);
-  // El Castillo.
+  const LS = 0xc8bea6, LS2 = shade(LS, 0.86), PANEL = shade(LS, 0.74), SHADOW = shade(LS, 0.56), DARKD = 0x2e2822;
+  const SIDES = [0, Math.PI / 2, Math.PI, -Math.PI / 2] as const;
   const px = 0.012, pz = -0.008, base = 0.074, top = 0.024, n = 9, th = 0.0042;
+  const SW = 0.0105, BW = 0.0014, yTop = n * th;
+  // The terraces.
   for (let i = 0; i < n; i++) {
-    const w = base - i * ((base - top) / n), y = i * th;
-    out.push(...frustum(w, w, w - 0.0016, w - 0.0016, th * 0.55, shade(LS, 0.97 + (i % 2) * 0.04), { x: px, y, z: pz }));
-    out.push(...box(w - 0.0016, th * 0.45, w - 0.0016, LS2, { x: px, y: y + th * 0.55, z: pz }, shade(LS, 1.04)));
-    for (const ry of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
-      const nx = Math.sin(ry), nz = Math.cos(ry), o = (w - 0.0016) / 2 + 0.0002, m = Math.max(2, Math.floor((w - 0.014) / 0.0045));
-      for (const sd of [-1, 1]) out.push(...rowOf(m, (w - 0.016) / 2 - 0.002, (x, z) => [pane(0.0026, th * 0.3, PANEL, x, y + th * 0.6, z, ry)], px + nx * o + Math.cos(ry) * sd * ((w - 0.016) / 4 + 0.0065), pz + nz * o - Math.sin(ry) * sd * ((w - 0.016) / 4 + 0.0065), ry));
+    const w = base - i * ((base - top) / n), y = i * th, w1 = w - 0.0016, yt = y + th * 0.55;
+    const q = (sx: number, sz: number, hw: number, yy: number) => V(px + sx * hw, yy, pz + sz * hw);
+    out.push(polys([[1, 1, 1, -1], [1, -1, -1, -1], [-1, -1, -1, 1], [-1, 1, 1, 1]].map(([a, b, c, d]) =>
+      [q(a!, b!, w / 2, y), q(c!, d!, w / 2, y), q(c!, d!, w1 / 2, yt), q(a!, b!, w1 / 2, yt)]), shade(LS, 0.97 + (i % 2) * 0.04)));
+    out.push(...box(w1, th * 0.45, w1, LS2, { x: px, y: yt, z: pz }).map((g) => cull(g, 'y', y + th)));
+    out.push(...box(w - 0.001, 0.0004, w - 0.001, shade(LS, 1.02), { x: px, y: y + th - 0.0003, z: pz }, shade(LS, 1.05)));
+    // The tablero's panels either side of the stair: each a shaded recess
+    // under the shadow of its head.
+    for (const ry of SIDES) {
+      const nx = Math.sin(ry), nz = Math.cos(ry), tx = Math.cos(ry), tz = -Math.sin(ry), o = w1 / 2 + 0.00015;
+      const u0 = SW / 2 + BW + 0.0008, u1 = w1 / 2 - 0.0007, m = Math.round((u1 - u0) / 0.0034), pw = (u1 - u0) / m - 0.0008;
+      if (m < 1 || pw < 0.0012) continue;
+      for (const sd of [-1, 1]) for (let k = 0; k < m; k++) {
+        const u = sd * (u0 + ((k + 0.5) * (u1 - u0)) / m), x = px + nx * o + tx * u, z = pz + nz * o + tz * u;
+        out.push(pane(pw, 0.0012, PANEL, x, yt + 0.0002, z, ry));
+        out.push(pane(pw, 0.0003, SHADOW, x + nx * 0.00008, yt + 0.0011, z + nz * 0.00008, ry));
+      }
     }
   }
-  const yTop = n * th;
-  for (const a of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
-    const st = stair(px, 0.0105, pz + base / 2 + 0.006, 0, pz + top / 2 - 0.0005, yTop, shade(LS, 1.06), 18);
+  // The stairs: steps (lit treads, shaded risers) between the balustrades,
+  // each a ramp from the ground to the top with its cap; the serpents'
+  // heads at the foot of the north (+z) stair.
+  const zf = pz + base / 2 + 0.006, zt = pz + top / 2 - 0.0005, NS = 45, hb = 0.0016;
+  for (const a of SIDES) {
+    const st: G[] = [], risers: THREE.Vector3[][] = [], treads: THREE.Vector3[][] = [];
+    for (let j = 0; j < NS; j++) {
+      const y0 = (j / NS) * yTop, y1 = ((j + 1) / NS) * yTop, z0 = zf - (j / NS) * (zf - zt), z1 = zf - ((j + 1) / NS) * (zf - zt);
+      risers.push([V(px - SW / 2, y0, z0), V(px + SW / 2, y0, z0), V(px + SW / 2, y1, z0), V(px - SW / 2, y1, z0)]);
+      treads.push([V(px - SW / 2, y1, z0), V(px + SW / 2, y1, z0), V(px + SW / 2, y1, z1), V(px - SW / 2, y1, z1)]);
+    }
+    st.push(polys(risers, shade(LS, 0.9)), polys(treads, shade(LS, 1.08)));
+    const dy = yTop / NS;
     for (const s of [-1, 1]) {
-      const a0 = V(px + s * 0.0058, 0.0016, pz + base / 2 + 0.006), a1 = V(px + s * 0.0058, yTop + 0.0012, pz + top / 2);
-      st.push(rod(a0, a1, 0.0011, LS2, 4));
-      if (a === 0) st.push(...serpentHead(px + s * 0.0058, pz + base / 2 + 0.0085, 0.0034, 0));
+      const xi = px + s * SW / 2, xo = px + s * (SW / 2 + BW);
+      st.push(polys([
+        [V(xo, 0, zf), V(xo, hb, zf), V(xo, yTop + hb, zt), V(xo, 0, zt)],
+        [V(xi, -dy, zf), V(xi, hb, zf), V(xi, yTop + hb, zt), V(xi, yTop - dy, zt)],
+        [V(xi, hb, zf), V(xo, hb, zf), V(xo, yTop + hb, zt), V(xi, yTop + hb, zt)],
+        [V(xi, 0, zf), V(xo, 0, zf), V(xo, hb, zf), V(xi, hb, zf)],
+      ], LS2));
+      if (a === 0) {
+        st.push(...serpentHead((xi + xo) / 2, zf + 0.0034, 0.0044, 0));
+        // The serpent's body down the balustrade: a band of scales on its outer face.
+        const sc: THREE.Vector3[][] = [], NB = 16, xs = xo + s * 0.0001;
+        for (let k = 0; k < NB; k++) {
+          const f0 = (k + 0.15) / NB, f1 = (k + 0.85) / NB, at = (f: number, dv: number) => V(xs, f * yTop + hb * 0.5 + dv, zf - f * (zf - zt));
+          sc.push([at(f0, -0.0004), at(f1, -0.0004), at(f1, 0.0004), at(f0, 0.0004)]);
+        }
+        st.push(polys(sc, PANEL));
+      }
     }
     out.push(...turned(st, a, px, pz));
   }
-  // The temple on top: its doors, the serpent columns at the north, the frieze, the cresting.
-  out.push(...box(0.017, 0.0115, 0.016, LS, { x: px, y: yTop, z: pz }, LS2));
-  for (const [ry, x, z] of [[Math.PI / 2, px + 0.0082, pz], [-Math.PI / 2, px - 0.0082, pz], [Math.PI, px, pz - 0.0077]] as const) out.push(pane(0.003, 0.0055, 0x2e2822, x, yTop, z, ry));
-  out.push(pane(0.009, 0.0058, 0x2e2822, px, yTop, pz + 0.0077));
-  for (const s of [-1, 1]) out.push(...box(0.0018, 0.0058, 0.0018, LS2, { x: px + s * 0.0018, y: yTop, z: pz + 0.0077 }));
-  out.push(...box(0.0166, 0.0024, 0.0156, PANEL, { x: px, y: yTop + 0.0068, z: pz }));
-  for (let k = 0; k < 7; k++) out.push(...box(0.0014, 0.0016, 0.0014, LS, { x: px - 0.0068 + k * 0.00227, y: yTop + 0.0105, z: pz + 0.0068 }));
+
+  // The temple: its plinth; the walls round a dark core, each face cut by
+  // its doorway(s); the moulding, frieze, cornice and cresting.
+  const TW = 0.017, TD = 0.016, yW = yTop + 0.0006, hW = 0.0052, dR = 0.0005;
+  out.push(...box(TW + 0.0016, 0.0006, TD + 0.0016, LS2, { x: px, y: yTop, z: pz }, LS));
+  out.push(...box(TW - 2 * dR, hW, TD - 2 * dR, DARKD, { x: px, y: yW, z: pz }));
+  const doorsOf = (front: boolean): { x: number; w: number }[] => front ? [{ x: -0.0034, w: 0.0026 }, { x: 0, w: 0.0026 }, { x: 0.0034, w: 0.0026 }] : [{ x: 0, w: 0.003 }];
+  for (const ry of SIDES) {
+    const len = ry === 0 || ry === Math.PI ? TW : TD, dep = ry === 0 || ry === Math.PI ? TD : TW, front = ry === 0, dh = 0.0042;
+    const sh = new THREE.Shape([new THREE.Vector2(-len / 2, 0), new THREE.Vector2(len / 2, 0), new THREE.Vector2(len / 2, hW), new THREE.Vector2(-len / 2, hW)]);
+    const reveals: THREE.Vector3[][] = [];
+    for (const d of doorsOf(front)) {
+      sh.holes.push(new THREE.Path([new THREE.Vector2(d.x - d.w / 2, 0), new THREE.Vector2(d.x - d.w / 2, dh), new THREE.Vector2(d.x + d.w / 2, dh), new THREE.Vector2(d.x + d.w / 2, 0)]));
+      for (const e of [-1, 1]) reveals.push([V(d.x + e * d.w / 2, 0, 0), V(d.x + e * d.w / 2, 0, -dR), V(d.x + e * d.w / 2, dh, -dR), V(d.x + e * d.w / 2, dh, 0)]);
+      reveals.push([V(d.x - d.w / 2, dh, 0), V(d.x + d.w / 2, dh, 0), V(d.x + d.w / 2, dh, -dR), V(d.x - d.w / 2, dh, -dR)]);
+    }
+    const face: G[] = [P(new THREE.ShapeGeometry(sh), LS), polys(reveals, LS2)];
+    if (front) for (const e of [-1, 1]) {
+      // A serpent column: its shaft, the head at its foot, the rattle under the lintel.
+      const cx = e * 0.0017;
+      face.push(...box(0.0009, dh - 0.0009, 0.0009, LS2, { x: cx, z: -0.0002 }));
+      face.push(...box(0.0013, 0.0011, 0.0017, LS, { x: cx, z: 0.0004 }), pane(0.0009, 0.0003, DARKD, cx, 0.0002, 0.0013));
+      face.push(...box(0.0012, 0.0008, 0.0012, LS, { x: cx, y: dh - 0.0009, z: -0.0002 }));
+    }
+    face.push(...box(len + 0.0004, 0.0005, 0.0006, LS2, { y: dh, z: -0.0001 }));
+    out.push(...face.map((g) => g.applyMatrix4(new THREE.Matrix4().makeTranslation(px + Math.sin(ry) * dep / 2, yW, pz + Math.cos(ry) * dep / 2).multiply(new THREE.Matrix4().makeRotationY(ry)))));
+  }
+  const yM = yW + hW;
+  out.push(...box(TW + 0.0008, 0.0008, TD + 0.0008, LS2, { x: px, y: yM, z: pz }));
+  out.push(...box(TW + 0.0002, 0.0029, TD + 0.0002, LS, { x: px, y: yM + 0.0008, z: pz }));
+  for (const ry of SIDES) {
+    const len = ry === 0 || ry === Math.PI ? TW : TD, dep = ry === 0 || ry === Math.PI ? TD : TW, nx = Math.sin(ry), nz = Math.cos(ry), tx = Math.cos(ry), tz = -Math.sin(ry);
+    const o = dep / 2 + 0.0001 + 0.00012;
+    for (let k = 0; k < 4; k++) {
+      const u = -len / 2 + 0.0026 + ((k + 0.5) * (len - 0.0052)) / 4;
+      out.push(pane((len - 0.0052) / 4 - 0.0006, 0.0018, PANEL, px + nx * o + tx * u, yM + 0.0013, pz + nz * o + tz * u, ry));
+      out.push(pane((len - 0.0052) / 4 - 0.0006, 0.0004, SHADOW, px + nx * (o + 0.00008) + tx * u, yM + 0.0027, pz + nz * (o + 0.00008) + tz * u, ry));
+    }
+  }
+  // The corner masks: a block, its hooked nose.
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    const x = px + sx * (TW / 2 - 0.0008), z = pz + sz * (TD / 2 - 0.0008);
+    out.push(...box(0.0022, 0.0022, 0.0022, LS2, { x, y: yM + 0.001, z }));
+    out.push(...box(0.0007, 0.0005, 0.0007, LS, { x: x + sx * 0.00125, y: yM + 0.0013, z: z + sz * 0.00125 }));
+  }
+  const yC = yM + 0.0037;
+  out.push(...box(TW + 0.001, 0.0005, TD + 0.001, LS2, { x: px, y: yC, z: pz }));
+  out.push(...box(TW + 0.0004, 0.0004, TD + 0.0004, LS, { x: px, y: yC + 0.0005, z: pz }, shade(LS, 1.05)));
+  // The cresting: little stepped merlons round the roof's edge.
+  const yR = yC + 0.0009;
+  for (const ry of SIDES) {
+    const len = ry === 0 || ry === Math.PI ? TW : TD, dep = ry === 0 || ry === Math.PI ? TD : TW, nx = Math.sin(ry), nz = Math.cos(ry), tx = Math.cos(ry), tz = -Math.sin(ry);
+    const nm = Math.round(len / 0.0026);
+    for (let k = 0; k < nm; k++) {
+      const u = -len / 2 + ((k + 0.5) * len) / nm, x = px + nx * (dep / 2 - 0.0003) + tx * u, z = pz + nz * (dep / 2 - 0.0003) + tz * u;
+      out.push(...box(0.0013, 0.0009, 0.0005, LS, { x, y: yR, z, ry }));
+      out.push(...box(0.0006, 0.0008, 0.0005, LS, { x, y: yR + 0.0009, z, ry }));
+    }
+  }
   return onPad(out, 2.8);
 }
 
 // ---------- Pisa ----------
 
-// The Leaning Tower of Pisa: its blind arcade, four open galleries ringed
-// with columns (two fewer than the real six, so it stands nearer the
-// town's height) and its belfry, leaning.
+// The Leaning Tower of Pisa in white marble: on its round plinth the
+// ground storey's blind arcade of fifteen tall arches on engaged columns,
+// grey lozenges in their heads, the door in the south; four open galleries
+// (two fewer than the real six, so it stands nearer the town's height),
+// each a ring of thirty columns with their capitals carrying little round
+// arches (their soffits deep) before the inner wall with its doors, a
+// corbelled cornice and the gallery's floor ring over it; the belfry on
+// top within its parapet, its arched openings between engaged columns,
+// its cornice. Leaning.
 function leaningTower(): G[] {
   const out: G[] = [];
-  const M = 0xece6d8, M2 = shade(M, 0.92), DARK = 0x3a3632;
-  // The tower.
+  const M = 0xece6d8, M2 = shade(M, 0.92), DARK = 0x3a3632, GREY = 0x8e958e;
   const tw: G[] = [];
-  const rb = 0.0094, h0 = 0.012, hg = 0.0074, rc = 0.0069, NG = 4;
-  tw.push(drumC(rb, rb, h0, 24, M));
-  tw.push(...roundPanes(15, rb + 0.0002, 0.0026, 0.009, shade(M, 0.86), 0, 0.0015, 0, 0, true));
-  tw.push(...archPane(0.0026, 0.0045, DARK, 0, 0.0005, rb + 0.0004));
-  for (let i = 0; i < NG; i++) {
-    const y = h0 + i * hg;
-    tw.push(drumC(rb + 0.0005, rb + 0.0005, 0.0009, 24, M2, { y }));
-    tw.push(cyl(rc, rc, hg, 16, M, { y: y + 0.0009 }));
-    tw.push(...roundPanes(8, rc + 0.0002, 0.0016, 0.0042, DARK, 0, y + 0.0015, 0, i * 0.25, true));
-    for (let k = 0; k < 24; k++) { const a = (k / 24) * Math.PI * 2; tw.push(cyl(0.00042, 0.00038, hg - 0.0021, 5, M, { x: Math.sin(a) * (rb - 0.0004), y: y + 0.0009, z: Math.cos(a) * (rb - 0.0004) })); }
-    tw.push(cyl(rb, rb, 0.0012, 24, M, { y: y + hg - 0.0012 }));
+  const rb = 0.0094, h0 = 0.012, hg = 0.0074, rc = 0.0069, NG = 4, NC = 30;
+  // A ring course: a drum's band with its top (r, h at y).
+  const course = (r: number, h: number, y: number, c: number) => drumT(r, r, h, NC, c, { y, ry: Math.PI / NC });
+  // An arcade bay's front: the spandrel over a round arch (ra its radius,
+  // springing at ys) across a chord c wide, up to yt, and the arch's soffit
+  // dd deep; set at angle a on radius r.
+  const bay = (a: number, r: number, c: number, ra: number, ys: number, yt: number, dd: number, col: number): G[] => {
+    const arc = arcPts(ra, ys, 5, Math.PI, 0), o = { x: Math.sin(a) * r, z: Math.cos(a) * r, ry: a };
+    const sh = new THREE.Shape([[-c / 2, yt] as const, [-c / 2, ys] as const, ...arc, [c / 2, ys] as const, [c / 2, yt] as const].map(([u, y]) => new THREE.Vector2(u, y)));
+    const faces: THREE.Vector3[][] = [];
+    for (let j = 0; j + 1 < arc.length; j++) { const [u0, y0] = arc[j]!, [u1, y1] = arc[j + 1]!; faces.push([V(u0, y0, 0), V(u1, y1, 0), V(u1, y1, -dd), V(u0, y0, -dd)]); }
+    return [P(new THREE.ShapeGeometry(sh), col, o), polys(faces, shade(col, 0.8), o)];
+  };
+  const chord = (r: number, n: number) => 2 * r * Math.sin(Math.PI / n);
+
+  // The ground storey: the wall, a base course, the blind arcade (each arch
+  // a frame round a shaded recess, a lozenge in its head) between engaged
+  // columns with their capitals; the door; its cornice.
+  tw.push(cyl(rb, rb, h0, NC, M, { ry: Math.PI / NC }));
+  tw.push(...course(rb + 0.0003, 0.0012, 0, M2));
+  for (let k = 0; k < 15; k++) {
+    const a = (k / 15) * Math.PI * 2, b = a + Math.PI / 15, r = rb + 0.00012;
+    const at = (q: number, rr: number) => ({ x: Math.sin(q) * rr, z: Math.cos(q) * rr });
+    const pa = at(a, r);
+    tw.push(archShape(0.0034, 0.0076, shade(M, 0.97), pa.x, 0.0012, pa.z, a, 4));
+    const pr = at(a, r + 0.0001);
+    tw.push(archShape(0.0026, 0.0074, shade(M, 0.84), pr.x, 0.0014, pr.z, a, 4));
+    const pl = at(a, r + 0.0002);
+    tw.push(P(new THREE.CircleGeometry(0.00055, 4), GREY, { x: pl.x, y: 0.0098, z: pl.z, ry: a }));
+    const pc = at(b, rb - 0.0001);
+    tw.push(cyl(0.00055, 0.0005, 0.0084, 6, M, { x: pc.x, y: 0.0012, z: pc.z }));
+    tw.push(cyl(0.0005, 0.0008, 0.0007, 4, M2, { x: pc.x, y: 0.0096, z: pc.z, ry: b + Math.PI / 4 }));
   }
+  tw.push(archShape(0.0018, 0.0032, DARK, 0, 0.0012, rb + 0.00035, 0, 4));
+  tw.push(...box(0.0024, 0.0004, 0.0006, M2, { y: 0.0044, z: rb + 0.0003 }));
+
+  // The galleries.
+  for (let i = 0; i < NG; i++) {
+    const y = h0 + i * hg, yf = y + 0.0009, ys = y + hg - 0.0024, ra = chord(rb, NC) / 2 - 0.00042;
+    // The floor ring, a moulding under it.
+    tw.push(...course(rb + 0.0005, 0.0009, y, M2));
+    tw.push(cyl(rb + 0.00022, rb + 0.00022, 0.0004, NC, M, { y: y - 0.0004, ry: Math.PI / NC }));
+    // The inner wall and its doors and windows.
+    tw.push(cyl(rc, rc, hg, 20, M, { y: yf, ry: Math.PI / 20 }));
+    for (let k = 0; k < 8; k++) {
+      const a = ((k + i * 0.5) / 8) * Math.PI * 2, r = rc * Math.cos(Math.PI / 20) + 0.0001, door = (k + i) % 2 === 0;
+      tw.push(...framedWin(door ? 0.0016 : 0.0012, door ? 0.0034 : 0.0018, Math.sin(a) * r, yf + (door ? 0 : 0.0016), Math.cos(a) * r, a, M2, 0.0003, DARK, 4));
+    }
+    // The columns (shaft and capital) and the arches they carry.
+    for (let k = 0; k < NC; k++) {
+      const a = (k / NC) * Math.PI * 2, x = Math.sin(a) * (rb - 0.0004), z = Math.cos(a) * (rb - 0.0004);
+      tw.push(cyl(0.00034, 0.0003, ys - yf - 0.0005, 5, M, { x, y: yf, z }));
+      tw.push(cyl(0.0003, 0.00046, 0.0005, 4, M2, { x, y: ys - 0.0005, z, ry: a + Math.PI / 4 }));
+      const am = ((k + 0.5) / NC) * Math.PI * 2;
+      tw.push(...bay(am, rb * Math.cos(Math.PI / NC), chord(rb, NC), ra, ys, y + hg, 0.0007, M));
+    }
+  }
+
+  // The belfry: its floor ring and the parapet round it; the drum, its
+  // arched openings between engaged columns; its cornice.
   const yb = h0 + NG * hg;
-  tw.push(drumC(rb + 0.0005, rb + 0.0005, 0.0009, 24, M2, { y: yb }));
-  tw.push(cyl(0.0058, 0.0058, 0.0072, 16, M, { y: yb + 0.0009 }));
-  tw.push(...roundPanes(6, 0.006, 0.0018, 0.0042, DARK, 0, yb + 0.0018, 0, 0, true));
-  tw.push(drumC(0.0062, 0.0062, 0.0008, 16, M2, { y: yb + 0.0081 }));
-  tw.push(cyl(rb, rb, 0.0011, 24, shade(M, 0.95), { y: yb + 0.0009 }));
+  tw.push(...course(rb + 0.0005, 0.0009, yb, M2));
+  tw.push(cyl(rb, rb, 0.0011, NC, shade(M, 0.95), { y: yb + 0.0009, ry: Math.PI / NC }));
+  tw.push(cyl(rb - 0.0003, rb - 0.0003, 0.0011, NC, shade(M, 0.9), { y: yb + 0.0009, ry: Math.PI / NC }));
+  tw.push(P(new THREE.RingGeometry(rb - 0.0003, rb, NC, 1, Math.PI / 2 + Math.PI / NC).rotateX(-Math.PI / 2), M, { y: yb + 0.002 }));
+  const rB = 0.0058, nB = 12;
+  tw.push(cyl(rB, rB, 0.0072, nB * 2, M, { y: yb + 0.0009, ry: Math.PI / (nB * 2) }));
+  for (let k = 0; k < 6; k++) {
+    const a = (k / 6) * Math.PI * 2, r = rB * Math.cos(Math.PI / (nB * 2)) + 0.0001;
+    tw.push(...framedWin(0.0018, 0.0034, Math.sin(a) * r, yb + 0.0022, Math.cos(a) * r, a, M2, 0.0004, DARK, 5));
+    const b = a + Math.PI / 6;
+    tw.push(cyl(0.0004, 0.00036, 0.0058, 5, M, { x: Math.sin(b) * rB, y: yb + 0.0018, z: Math.cos(b) * rB }));
+  }
+  tw.push(...drumT(rB + 0.0005, rB + 0.0005, 0.0006, nB * 2, M2, { y: yb + 0.0075, ry: Math.PI / (nB * 2) }));
+  tw.push(...drumT(rB + 0.0003, rB + 0.0003, 0.0004, nB * 2, M, { y: yb + 0.0081, ry: Math.PI / (nB * 2) }));
   // (Leaning on a low round plinth, its foot sunk into it on the low side.)
-  out.push(drumC(0.0112, 0.0112, 0.0018, 24, shade(M, 0.9)));
+  out.push(...drumT(0.0112, 0.0112, 0.0018, 32, shade(M, 0.9)));
   out.push(...leaning(tw, 0.09, 0, 0).map((g) => g.translate(0, rb * Math.sin(0.09) + 0.00002, 0)));
   // (At the scale the six-gallery tower had at 6 cells.)
   return onPad(out, 4.65);

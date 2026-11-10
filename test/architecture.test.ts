@@ -70,8 +70,12 @@ describe('AR5: no faces fight for the same pixels', () => {
 
 // (Was AR6: city halls. A painted city has none.)
 
+// (Wonders allowed more than AR7's 7500 triangles: the Eiffel Tower's
+// lattice, St Basil's curves, and those not yet reworked to the budget.)
+const TRI_CAP_EXCEPT: Partial<Record<string, number>> = { eiffelTower: 12000, stBasils: 11500, neuschwanstein: 8500, sagradaFamilia: 15000, burjKhalifa: 8000, cern: 8000 };
+
 describe('AR7: wonders on their site', () => {
-  it('every wonder (and the scaffolding) builds within its 7×7 site, stands up, keeps within 15000 triangles (wonders are showpieces), and has no faces fighting', async () => {
+  it('every wonder (and the scaffolding) builds within its 7×7 site, stands up, keeps within 7500 triangles (showpieces, yet of a piece with the town; a few not yet brought down allowed more), and has no faces fighting', async () => {
     const { SITE_HALF, SITE_MODELS, groundsBox, wonderGeometry, wonderGrounds, wonderModelKind } = await import('../src/wonderModels.ts');
     const { ISLET_DEPTH } = await import('../src/wonders/kit.ts');
     const { WONDERS } = await import('../src/cities.ts');
@@ -89,7 +93,7 @@ describe('AR7: wonders on their site', () => {
       if (Math.max(...groundsBox(m)) > SITE_HALF + 1e-6) bad.push(`${k}: grounds off its site`);
       // (One dug into the ground need not rise over it: the Terracotta Army's pits.)
       if ((b.max.y < 0.02 && dug === 0) || b.min.y < floor) bad.push(`${k}: height ${b.min.y.toFixed(4)}..${b.max.y.toFixed(4)}`);
-      if (triangles(g) > 15000) bad.push(`${k}: ${triangles(g)} triangles`);
+      if (triangles(g) > (TRI_CAP_EXCEPT[m] ?? 7500)) bad.push(`${k}: ${triangles(g)} triangles`);
       const c = coplanarClashes(g, 1);
       if (c.length) bad.push(`${k}: ${c[0]!.colorA} on ${c[0]!.colorB} in plane ${c[0]!.plane} at ${c[0]!.at.map((v) => v.toFixed(4))}`);
     }
