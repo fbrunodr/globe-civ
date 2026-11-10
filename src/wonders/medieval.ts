@@ -89,74 +89,195 @@ const turned = (parts: G[], ry: number, cx: number, cz: number) => {
 
 // ---------- Constantinople ----------
 
-// Hagia Sophia: the great shallow dome on its ring of forty windows, set
-// on the square of its four arches (the tympanum walls north and south
-// pierced with windows, the massive buttresses beside them), the half domes
-// east and west with their small semidomes, the galleries' long block, the
-// narthex before it; the four minarets of its Ottoman years; a fountain in
-// the court, cypresses and tombs in the gardens.
+// A prism: the polygon pts (u, y) extruded d along z, centred on z = 0
+// (an arched wall with its opening, a buttress's sloped cap, a lean-to roof).
+function prism(pts: readonly (readonly [number, number])[], d: number, c: number, o: Parameters<typeof P>[2] = {}): G {
+  const g = new THREE.ExtrudeGeometry(new THREE.Shape(pts.map(([u, y]) => new THREE.Vector2(u, y))), { depth: d, bevelEnabled: false });
+  return P(g.translate(0, 0, -d / 2), c, o);
+}
+// Points along a round arch of radius r centred at (0, cy), from angle a0 to a1.
+const arcPts = (r: number, cy: number, n: number, a0: number, a1: number) =>
+  Array.from({ length: n + 1 }, (_, i) => { const a = a0 + ((a1 - a0) * i) / n; return [r * Math.cos(a), cy + r * Math.sin(a)] as const; });
+// An arched window facing ry in its stone surround (f wide), the opening
+// standing just proud of the surround.
+function framedWin(w: number, h: number, x: number, y: number, z: number, ry: number, frame: number, f = 0.0004, glass = 0x3a3330): G[] {
+  return [...archPane(w + 2 * f, h + f, frame, x, y - f, z, ry), ...archPane(w, h, glass, x + Math.sin(ry) * 0.0001, y, z + Math.cos(ry) * 0.0001, ry)];
+}
+// Half a closed drum (a cornice round a half dome's drum), facing +z or -z.
+const halfDrumC = (r: number, h: number, c: number, x: number, y: number, z: number, toward: 1 | -1, n = 20) =>
+  P(new THREE.CylinderGeometry(r, r, h, n, 1, false, toward > 0 ? -Math.PI / 2 : Math.PI / 2, Math.PI).translate(0, h / 2, 0), c, { x, y, z });
+
+// Hagia Sophia: the great shallow dome, ribbed in lead, on its ring of forty
+// windows between little buttresses, set on the square of its four arches.
+// North and south each great arch is a deep niche in the square, its rim
+// standing proud, the tympanum wall at its back pierced with rows of
+// windows; the massive sloping buttresses stand either side of it. East and
+// west the half domes on their half drums, each with two small semidomes
+// (the exedrae) below; the galleries' long block under its low lead roofs,
+// on a stone base course with its string courses and cornice; the narthex
+// before it under a lean-to roof and the exonarthex with its row of little
+// domes and bronze doors. The four minarets of its Ottoman years, the two at
+// the front (west) of white stone with two balconies each, the two at the
+// back of red brick with one.
 function hagiaSophia(): G[] {
   const out: G[] = [];
-  const PL = 0xd6a07c, PL2 = shade(PL, 0.88), LEAD = 0x8d949a, WIN = 0x3a3330, GOLD = 0xd9b04a, WHITE = 0xe8e2d4;
+  const PL = 0xd6a07c, PL2 = shade(PL, 0.88), BAND = 0xe8cba6, STONE = 0xd9cdb6, LEAD = 0x8d949a, LEAD2 = shade(LEAD, 0.85);
+  const GOLD = 0xd9b04a, WHITE = 0xe8e2d4, BRICK = 0xa4553f, DOOR = 0x6a5030;
   const zc = -0.0025, DS = 0.5; // (DS: the domes' squash, before the lift below)
-  // The galleries' block, two rows of arched windows down each side.
-  out.push(...box(0.074, 0.024, 0.08, PL, { z: zc }, shade(LEAD, 0.95)));
-  for (const s of [-1, 1]) for (const y of [0.004, 0.014]) out.push(...rowOf(12, 0.072, (x, z) => archPane(0.0028, 0.004, WIN, x, y, z, s * Math.PI / 2), s * 0.0373, zc, s * Math.PI / 2));
-  // The square of the four great arches rising over it, its tympana windowed.
-  out.push(...box(0.042, 0.044, 0.042, PL, { z: zc }, LEAD));
-  for (const s of [-1, 1]) {
-    const x = s * 0.0213;
-    out.push(...archPane(0.03, 0.004, PL2, x, 0.024, zc, s * Math.PI / 2));
-    out.push(...rowOf(7, 0.03, (xx, z) => archPane(0.0024, 0.0045, WIN, xx, 0.0255, z, s * Math.PI / 2), x + s * 0.0003, zc, s * Math.PI / 2));
-    out.push(...rowOf(5, 0.022, (xx, z) => archPane(0.0024, 0.004, WIN, xx, 0.0335, z, s * Math.PI / 2), x + s * 0.0003, zc, s * Math.PI / 2));
-    // The buttresses either side of the arch, sloped on top.
-    for (const t of [-1, 1]) {
-      const bz = zc + t * 0.0185;
-      out.push(...box(0.0245, 0.034, 0.009, PL2, { x: s * 0.03275, z: bz }));
-      out.push(...frustum(0.0245, 0.009, 0.008, 0.007, 0.006, PL2, { x: s * 0.03275, y: 0.034, z: bz }, LEAD));
+  const SIDE = [-1, 1] as const;
+
+  // The galleries' block: a stone base course, a string course between its
+  // two rows of framed windows, a cornice, the low hipped lead roof.
+  out.push(...box(0.074, 0.024, 0.08, PL, { z: zc }, LEAD));
+  out.push(...box(0.0748, 0.0022, 0.0808, STONE, { z: zc }));
+  out.push(...box(0.0746, 0.0008, 0.0806, BAND, { y: 0.0112, z: zc }));
+  out.push(...box(0.0752, 0.0012, 0.0812, STONE, { y: 0.0234, z: zc }, LEAD));
+  out.push(...frustum(0.0752, 0.0812, 0.058, 0.064, 0.0018, LEAD, { y: 0.0246, z: zc }, LEAD));
+  for (const s of SIDE) for (const [y, h] of [[0.0034, 0.0048], [0.0136, 0.0052]] as const) {
+    out.push(...rowOf(12, 0.072, (x, z) => (Math.abs(z - zc) > 0.012 && Math.abs(z - zc) < 0.025 ? [] : framedWin(0.0026, h, x, y, z, s * Math.PI / 2, BAND)), s * 0.0371, zc, s * Math.PI / 2));
+  }
+  for (const [y, h] of [[0.0034, 0.0048], [0.0136, 0.0052]] as const) out.push(...rowOf(10, 0.068, (x, z) => framedWin(0.0026, h, x, y, z, Math.PI, BAND), 0, zc - 0.0401, Math.PI));
+
+  // The square of the four great arches. North and south (±x) each arch is
+  // a niche: the square's core stands back dr, and a wall with the arch cut
+  // out of it fills the rest; the tympanum at the back of the niche.
+  const SH = 0.046, dr = 0.0032, hw = 0.021, aw = 0.0135, yb = 0.0242, yc = 0.029, xi = hw - dr;
+  out.push(...box(2 * xi, SH, 2 * hw, PL, { z: zc }, LEAD));
+  out.push(...box(0.0436, 0.0014, 0.0436, STONE, { y: SH - 0.001, z: zc }, LEAD));
+  const opening = (r: number) => arcPts(r, yc, 16, Math.PI, 0);
+  for (const s of SIDE) {
+    const ry = s * Math.PI / 2;
+    const d = dr + 0.0002;
+    out.push(prism([[-hw, yb], [-aw, yb], ...opening(aw), [aw, yb], [hw, yb], [hw, SH - 0.0004], [-hw, SH - 0.0004]], d, PL, { x: s * (hw - d / 2), z: zc, ry }));
+    // The arch's rim: a thick moulding standing proud, its lip over the niche.
+    const yr = yb + 0.0004, ri = aw - 0.0003, ro = aw + 0.0016, rd0 = hw - 0.0004, rd1 = hw + 0.0009;
+    out.push(prism([[-ro, yr], ...arcPts(ro, yc, 16, Math.PI, 0), [ro, yr], [ri, yr], ...arcPts(ri, yc, 16, 0, Math.PI), [-ri, yr]], rd1 - rd0, BAND, { x: s * (rd0 + rd1) / 2, z: zc, ry }));
+    // The tympanum: a shaded wall, two ledges, three rows of windows.
+    const tym = new THREE.ShapeGeometry(new THREE.Shape([[-aw, yb] as const, ...opening(aw), [aw, yb] as const].map(([u, y]) => new THREE.Vector2(u, y))));
+    out.push(P(tym, PL2, { x: s * (xi + 0.0001), z: zc, ry }));
+    for (const y of [0.0322, 0.0377]) {
+      const half = Math.sqrt(aw * aw - (y + 0.0004 - yc) ** 2) - 0.0001;
+      out.push(...box(0.0006, 0.0004, 2 * half, BAND, { x: s * (xi + 0.00035), y, z: zc }));
+    }
+    const wx = s * (xi + 0.0002);
+    out.push(...rowOf(7, 0.025, (xx, z) => framedWin(0.0022, 0.0034, xx, 0.027, z, ry, STONE, 0.0003), wx, zc, ry));
+    out.push(...rowOf(7, 0.021, (xx, z) => framedWin(0.0019, 0.003, xx, 0.033, z, ry, STONE, 0.0003), wx, zc, ry));
+    out.push(...rowOf(3, 0.009, (xx, z) => framedWin(0.0017, 0.0018, xx, 0.0386, z, ry, STONE, 0.0003), wx, zc, ry));
+
+    // The buttresses either side of the arch: a tall inner pier and a lower
+    // outer one, each capped by a lead slope falling outward; a base course,
+    // string courses and small windows on every face.
+    for (const t of SIDE) {
+      const bz = zc + t * 0.0192, D = 0.0078, Do = D + 0.0004;
+      out.push(...box(0.015, 0.036, D, PL, { x: s * 0.028, z: bz }, LEAD));
+      out.push(...box(0.0095, 0.026, D, PL, { x: s * 0.04025, z: bz }, LEAD));
+      out.push(...box(0.025, 0.0022, Do, STONE, { x: s * 0.03275, z: bz }));
+      out.push(...box(0.0249, 0.0008, Do - 0.0001, BAND, { x: s * 0.03275, y: 0.0112, z: bz }));
+      out.push(...box(0.0152, 0.0008, Do - 0.0001, BAND, { x: s * 0.0283, y: 0.0318, z: bz }));
+      const m = (pts: [number, number][]) => pts.map(([u, y]) => [s * u, y] as const);
+      out.push(prism(m([[0.0205, 0.036], [0.0358, 0.036], [0.0358, 0.0368], [0.0205, 0.0405]]), Do, LEAD, { z: bz }));
+      out.push(prism(m([[0.0353, 0.026], [0.0453, 0.026], [0.0453, 0.0267], [0.0353, 0.0293]]), Do, LEAD, { z: bz }));
+      for (const y of [0.0040, 0.0140]) out.push(...framedWin(0.0022, 0.0042, s * 0.0451, y, bz, ry, BAND, 0.0003));
+      out.push(...framedWin(0.002, 0.0032, s * 0.0356, 0.0265, bz, ry, BAND, 0.0003));
+      for (const q of SIDE) for (const y of [0.0040, 0.0140]) out.push(...framedWin(0.0022, 0.0042, s * 0.04025, y, bz + q * (D / 2 + 0.0001), q > 0 ? 0 : Math.PI, BAND, 0.0003));
     }
   }
-  // The dome: its drum of forty windows between little buttresses, the shallow cap ribbed, a gilded crescent.
-  const yd = 0.044, rd = 0.0195;
-  out.push(drumC(rd, rd, 0.0052, 40, PL, { y: yd, z: zc }));
-  out.push(...roundPanes(40, rd + 0.0002, 0.0017, 0.003, WIN, 0, yd + 0.0009, zc, 0.5));
-  for (let i = 0; i < 40; i++) { const a = (i / 40) * Math.PI * 2; out.push(...box(0.0011, 0.0046, 0.0018, PL2, { x: Math.sin(a) * (rd + 0.0006), y: yd, z: zc + Math.cos(a) * (rd + 0.0006), ry: a })); }
-  const dome = (sc: number) => P(new THREE.SphereGeometry(0.0208 * sc, 40, 8, 0, Math.PI * 2, 0, Math.PI / 2), LEAD, { y: yd + 0.005, z: zc, sy: DS });
-  out.push(dome(1));
-  for (let i = 0; i < 20; i++) {
-    const a = (i / 20) * Math.PI * 2, pts = [0, 0.4, 0.75, 1].map((f) => { const th = f * Math.PI / 2 * 0.92; return V(Math.sin(a) * Math.cos(th) * 0.0209, yd + 0.005 + Math.sin(th) * 0.0209 * DS, zc + Math.cos(a) * Math.cos(th) * 0.0209); });
-    for (let k = 0; k < 3; k++) out.push(rod(pts[k]!, pts[k + 1]!, 0.00025, shade(LEAD, 0.85), 3));
+  // The four stair turrets at the square's corners, rising over its cornice.
+  for (const s of SIDE) for (const t of SIDE) {
+    const x = s * 0.0185, z = zc + t * 0.0185;
+    out.push(...box(0.005, 0.0048, 0.005, PL, { x, y: SH - 0.001, z }, LEAD));
+    out.push(cone(0.0037, 0.0024, 4, LEAD, { x, y: SH + 0.0038, z, ry: Math.PI / 4 }));
+    out.push(...framedWin(0.0012, 0.0014, x + s * 0.0026, SH + 0.0012, z, s * Math.PI / 2, BAND, 0.0002));
   }
-  out.push(rod(V(0, yd + 0.0162, zc), V(0, yd + 0.021, zc), 0.0003, GOLD, 4), ball(0.0007, GOLD, { y: yd + 0.0185, z: zc }));
-  out.push(P(new THREE.TorusGeometry(0.0013, 0.00035, 3, 8, Math.PI * 1.3), GOLD, { y: yd + 0.0225, z: zc, rz: Math.PI * 0.85 }));
-  // The half domes east and west on their half drums, each with two small semidomes below.
-  for (const t of [-1, 1] as const) {
-    const z = zc + t * 0.021;
+
+  // The dome: its drum of forty framed windows between little sloping
+  // buttresses, base ring and cornice; the shallow lead cap with its forty
+  // ribs, a crown ring and the gilded crescent.
+  const yd = SH - 0.0003, rd = 0.0195, yD = yd + 0.0057;
+  out.push(drumC(rd, rd, 0.0055, 40, PL, { y: yd, z: zc }));
+  out.push(drumC(rd + 0.0006, rd + 0.0006, 0.0008, 40, STONE, { y: yd + 0.0001, z: zc }));
+  out.push(drumC(rd + 0.0012, rd + 0.0012, 0.0007, 40, STONE, { y: yd + 0.0052, z: zc }));
+  for (let i = 0; i < 40; i++) {
+    const a = ((i + 0.5) / 40) * Math.PI * 2, r = rd * Math.cos(Math.PI / 40) + 0.0001;
+    out.push(...framedWin(0.0015, 0.0024, Math.sin(a) * r, yd + 0.0013, zc + Math.cos(a) * r, a, BAND, 0.0002));
+    const b = (i / 40) * Math.PI * 2;
+    out.push(...frustum(0.0009, 0.0026, 0.0009, 0.0012, 0.005, PL2, { x: Math.sin(b) * (rd + 0.0005), y: yd + 0.0002, z: zc + Math.cos(b) * (rd + 0.0005), ry: b }, PL2));
+  }
+  const R = 0.0209;
+  out.push(P(new THREE.SphereGeometry(R, 40, 10, 0, Math.PI * 2, 0, Math.PI / 2), LEAD, { y: yD, z: zc, sy: DS }));
+  for (let i = 0; i < 40; i++) {
+    const a = (i / 40) * Math.PI * 2, pts = [0, 0.35, 0.65, 0.9].map((f) => { const th = f * Math.PI / 2 * 0.9; return V(Math.sin(a) * Math.cos(th) * (R + 0.0001), yD + Math.sin(th) * (R + 0.0001) * DS, zc + Math.cos(a) * Math.cos(th) * (R + 0.0001)); });
+    for (let k = 0; k < 3; k++) out.push(rod(pts[k]!, pts[k + 1]!, 0.00022, LEAD2, 3));
+  }
+  out.push(drumC(0.0026, 0.0022, 0.0006, 12, LEAD2, { y: yD + R * DS - 0.0004, z: zc }));
+  out.push(rod(V(0, yD + R * DS, zc), V(0, yd + 0.0217, zc), 0.0003, GOLD, 4), ball(0.0007, GOLD, { y: yd + 0.0192, z: zc }));
+  out.push(P(new THREE.TorusGeometry(0.0013, 0.00035, 3, 8, Math.PI * 1.3), GOLD, { y: yd + 0.0232, z: zc, rz: Math.PI * 0.85 }));
+
+  // The half domes east and west on their half drums (five framed windows,
+  // a cornice, lead ribs), each with two small semidomes below, windowed too.
+  for (const t of SIDE) {
+    const z = zc + t * 0.021, base = t > 0 ? 0 : Math.PI;
     out.push(halfDrum(rd, 0.008, PL, 0, 0.024, z, t, 20));
-    for (let k = 0; k < 5; k++) { const a = (t > 0 ? 0 : Math.PI) + (k - 2) * 0.5; out.push(...archPane(0.002, 0.003, WIN, Math.sin(a) * (rd + 0.0002), 0.0255, z + Math.cos(a) * (rd + 0.0002), a)); }
+    out.push(halfDrumC(rd + 0.0007, 0.0008, STONE, 0, 0.0316, z, t));
+    for (let k = 0; k < 5; k++) { const a = base + (k - 2) * 0.5; out.push(...framedWin(0.002, 0.0028, Math.sin(a) * (rd + 0.0002), 0.0275, z + Math.cos(a) * (rd + 0.0002), a, BAND, 0.0003)); }
     out.push(halfDome(rd, LEAD, 0, 0.032, z, t, DS, 20));
-    for (const s of [-1, 1]) {
+    // The great arch over it, its rim proud of the square's face.
+    const ell = (r: number, a0: number, a1: number) => arcPts(r, 0, 16, a0, a1).map(([u, y]) => [u, 0.032 + y * (DS + 0.06)] as const);
+    out.push(prism([[-0.0209, 0.0255], ...ell(0.0209, Math.PI, 0), [0.0209, 0.0255], [0.0197, 0.0255], ...ell(0.0197, 0, Math.PI), [-0.0197, 0.0255]], 0.0012, BAND, { z: zc + t * 0.0212 }));
+    for (let k = 1; k < 8; k++) {
+      const a = base - Math.PI / 2 + (k / 8) * Math.PI, pts = [0, 0.4, 0.8].map((f) => { const th = f * Math.PI / 2 * 0.95; return V(Math.sin(a) * Math.cos(th) * (rd + 0.0001), 0.0324 + Math.sin(th) * (rd + 0.0001) * DS, z + Math.cos(a) * Math.cos(th) * (rd + 0.0001)); });
+      for (let j = 0; j < 2; j++) out.push(rod(pts[j]!, pts[j + 1]!, 0.0002, LEAD2, 3));
+    }
+    for (const s of SIDE) {
       const x = s * 0.0128, zz = zc + t * 0.033;
-      out.push(halfDrum(0.0085, 0.003, PL, x, 0.024, zz, t, 10), halfDome(0.0085, LEAD, x, 0.027, zz, t, DS + 0.05, 10));
+      out.push(halfDrum(0.0085, 0.0047, PL, x, 0.025, zz, t, 12), halfDrumC(0.0091, 0.0006, STONE, x, 0.0294, zz, t, 12), halfDome(0.0085, LEAD, x, 0.0297, zz, t, DS + 0.05, 12));
+      for (let k = 0; k < 3; k++) { const a = base + (k - 1) * 0.75; out.push(...framedWin(0.0014, 0.0016, x + Math.sin(a) * 0.0086, 0.0268, zz + Math.cos(a) * 0.0086, a, BAND, 0.0002)); }
     }
   }
-  // The narthex and exonarthex before it, windows and the bronze doors.
+
+  // The narthex before it under a lean-to lead roof, a row of framed windows
+  // over the exonarthex; the exonarthex with its pilasters, bronze doors in
+  // framed arches and a row of little lead domes.
   out.push(...box(0.0736, 0.02, 0.012, PL2, { z: 0.037 }, LEAD));
-  out.push(...rowOf(9, 0.068, (x, z) => archPane(0.0032, 0.004, WIN, x, 0.0128, z), 0, 0.0433, 0));
-  out.push(...box(0.07, 0.012, 0.006, PL, { z: 0.04625 }, shade(LEAD, 0.92)));
-  out.push(...rowOf(9, 0.064, (x, z) => archPane(0.0032, 0.0045, 0x6a5030, x, 0, z), 0, 0.0496, 0));
-  // The minarets, two taller at the west, close by the corners (so the
-  // whole stands nearly square and fills its lot).
-  const minaret = (x: number, z: number, h: number) => {
-    out.push(...box(0.0072, 0.012, 0.0072, WHITE, { x, z }));
-    out.push(cyl(0.0027, 0.0022, h - 0.012, 12, WHITE, { x, y: 0.012, z }));
-    for (const f of [0.62, 0.82]) {
-      const y = 0.012 + (h - 0.012) * f;
-      out.push(drumC(0.0036, 0.0034, 0.0011, 12, shade(WHITE, 0.95), { x, y, z }), cyl(0.0036, 0.0036, 0.0011, 12, shade(WHITE, 0.9), { x, y: y + 0.0011, z }));
+  out.push(...box(0.0744, 0.0022, 0.0124, STONE, { z: 0.037 }));
+  out.push(...box(0.0747, 0.001, 0.0126, STONE, { y: 0.0192, z: 0.037 }, LEAD));
+  out.push(prism([[-0.0063, 0.0202], [0.006, 0.0202], [0.006, 0.0232], [-0.0063, 0.0212]], 0.0749, LEAD, { z: 0.037, ry: Math.PI / 2 }));
+  out.push(...rowOf(9, 0.068, (x, z) => framedWin(0.003, 0.0038, x, 0.0136, z, 0, BAND, 0.0003), 0, 0.0431, 0));
+  const ze = 0.0461;
+  out.push(...box(0.07, 0.012, 0.006, PL, { z: ze }, LEAD));
+  out.push(...box(0.0704, 0.0022, 0.0064, STONE, { z: ze }));
+  out.push(...box(0.0706, 0.0008, 0.0066, STONE, { y: 0.0114, z: ze }, LEAD));
+  out.push(...rowOf(9, 0.07, (x, z) => [
+    ...framedWin(0.0032, 0.0046, x, 0.0004, z, 0, STONE, 0.0004, DOOR),
+    drumC(0.0025, 0.0025, 0.0008, 10, PL, { x, y: 0.0118, z: ze }),
+    P(new THREE.SphereGeometry(0.0024, 10, 4, 0, Math.PI * 2, 0, Math.PI / 2), LEAD, { x, y: 0.0126, z: ze, sy: 0.7 }),
+  ], 0, ze + 0.0033, 0));
+  for (let i = 0; i <= 9; i++) out.push(...box(0.0012, 0.0114, 0.0004, shade(PL, 0.94), { x: -0.035 + i * (0.07 / 9), z: ze + 0.00325 }));
+
+  // The minarets, two taller at the front (west), close by the corners (so
+  // the whole stands nearly square and fills its lot): a stone base, a
+  // shaft with its balconies (corbelled out, railed), the lead cone.
+  const minaret = (x: number, z: number, h: number, shaft: number, balconies: readonly number[]) => {
+    out.push(...box(0.0074, 0.0022, 0.0074, STONE, { x, z }));
+    out.push(...box(0.0068, 0.0125, 0.0068, shade(STONE, 1.03), { x, z }));
+    out.push(...box(0.0072, 0.0008, 0.0072, STONE, { x, y: 0.0125, z }));
+    out.push(...frustum(0.0062, 0.0062, 0.005, 0.005, 0.0028, STONE, { x, y: 0.0133, z }, STONE));
+    const y0 = 0.0161, rOf = (y: number) => 0.0027 - 0.0005 * (y - y0) / (h - y0);
+    out.push(cyl(0.0027, 0.0022, h - y0, 12, shaft, { x, y: y0, z }));
+    out.push(drumC(0.0031, 0.0029, 0.0008, 12, STONE, { x, y: y0, z }));
+    for (const f of balconies) {
+      const y = y0 + (h - y0) * f;
+      out.push(drumC(rOf(y - 0.0014) + 0.0001, 0.0038, 0.0014, 12, shade(shaft, 0.94), { x, y: y - 0.0014, z }));
+      out.push(drumC(0.0039, 0.0039, 0.0012, 12, WHITE, { x, y, z }));
+      out.push(drumC(0.0040, 0.0040, 0.0002, 12, shade(WHITE, 0.9), { x, y: y + 0.0011, z }));
+      out.push(...roundPanes(12, 0.0039 * Math.cos(Math.PI / 12) + 0.0001, 0.0012, 0.0006, shade(WHITE, 0.62), x, y + 0.0003, z, 0.5));
     }
-    out.push(cone(0.0027, 0.013, 12, LEAD, { x, y: h, z }), rod(V(x, h + 0.013, z), V(x, h + 0.0165, z), 0.0002, GOLD, 3));
+    out.push(drumC(0.0029, 0.0029, 0.0006, 12, STONE, { x, y: h - 0.0006, z }));
+    out.push(cone(0.0028, 0.013, 12, LEAD, { x, y: h, z }));
+    out.push(rod(V(x, h + 0.0125, z), V(x, h + 0.0165, z), 0.0002, GOLD, 3), ball(0.00045, GOLD, { x, y: h + 0.0142, z }));
   };
-  minaret(-0.042, 0.046, 0.076); minaret(0.042, 0.046, 0.076); minaret(-0.042, -0.042, 0.066); minaret(0.042, -0.042, 0.066);
+  minaret(-0.042, 0.046, 0.076, WHITE, [0.6, 0.8]); minaret(0.042, 0.046, 0.076, WHITE, [0.6, 0.8]);
+  minaret(-0.042, -0.042, 0.066, BRICK, [0.78]); minaret(0.042, -0.042, 0.066, BRICK, [0.78]);
   // Lifted a little (its domes squashed to match), so the mass reads as the
   // great building it is beside the town's houses.
   const lift = new THREE.Matrix4().makeScale(1, 1.15, 1);

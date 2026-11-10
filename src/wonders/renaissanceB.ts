@@ -154,19 +154,42 @@ export function florenceCathedral(): G[] {
     return 1;
   };
   for (let k = 0; k < 8; k++) out.push(rib(prof.map(([a, b]) => [a * Rm, ym + b * hm] as const), Math.PI / 8 + (k * Math.PI) / 4, zc, 0.0019, 0.0009, MARBLE));
-  // The lantern: an octagon with buttress scrolls (each standing on the
-  // shell at a rib's top, leaning in to the lantern), its cone, the golden ball and cross.
-  const yl = ym + hm;
-  out.push(drumC(0.0046, 0.0042, 0.0085, 8, MARBLE, { y: yl, z: zc, ry: Math.PI / 8 }));
+  // The lantern: on a moulded ring at the shell's top, an octagon of tall
+  // arched windows, a buttress at each corner (a marble plate standing on
+  // the shell, its outer edge sweeping up in a curve to a scroll under the
+  // cornice); the cornice, the fluted cone with its ribs, the gilded ball
+  // and cross.
+  const yl = ym + hm, rl = 0.0042, hl = 0.0085;
+  out.push(drumC(0.0064, 0.006, 0.0012, 16, shade(MARBLE, 0.95), { y: ym + shellAt(0.0062 / Rm) * hm - 0.0004, z: zc }));
+  out.push(drumC(rl, rl * 0.96, hl, 8, MARBLE, { y: yl, z: zc, ry: Math.PI / 8 }));
   for (let k = 0; k < 8; k++) {
-    const a = Math.PI / 8 + (k * Math.PI) / 4, rb = 0.0075, yb = ym + shellAt(rb / Rm) * hm - 0.0004;
-    out.push(rod(V(Math.sin(a) * rb, yb, zc + Math.cos(a) * rb), V(Math.sin(a) * 0.0044, yl + 0.007, zc + Math.cos(a) * 0.0044), 0.0008, MARBLE, 4));
-    const f = octFace(k, 0.0044);
-    out.push(...archPane(0.0011, 0.004, DARK, f.nx * (f.ap + 0.0003), yl + 0.0018, zc + f.nz * (f.ap + 0.0003), f.ry));
+    const a = Math.PI / 8 + (k * Math.PI) / 4, rb = 0.0078;
+    // (The plate's outline in its radial plane: r out from the axis, y up from yl.)
+    const sh = new THREE.Shape(), base = (r: number) => ym + shellAt(r / Rm) * hm - yl - 0.0003;
+    sh.moveTo(rl * 0.9, base(rl * 0.9));
+    sh.lineTo(rb, base(rb));
+    sh.quadraticCurveTo(rb - 0.0004, 0.0045, rl + 0.0012, 0.0066);
+    // (The scroll: a small round turned under the cornice.)
+    for (let j = 0; j <= 6; j++) { const t = -Math.PI / 2 + (j / 6) * Math.PI * 1.5; sh.lineTo(rl + 0.0007 + Math.cos(t) * 0.0006, 0.0072 + Math.sin(t) * 0.0006); }
+    sh.lineTo(rl * 0.9, hl - 0.0004);
+    sh.closePath();
+    const g = new THREE.ExtrudeGeometry(sh, { depth: 0.001, bevelEnabled: false, curveSegments: 6 }).translate(0, 0, -0.0005);
+    // (Shape x → outward along the bearing a, y → up, depth → across.)
+    g.applyMatrix4(new THREE.Matrix4().makeRotationY(a - Math.PI / 2));
+    out.push(P(g, shade(MARBLE, 1.02), { y: yl, z: zc }));
+    const f = octFace(k, rl * 0.98);
+    out.push(...archPane(0.0012, 0.0045, DARK, f.nx * (f.ap + 0.0002), yl + 0.0016, zc + f.nz * (f.ap + 0.0002), f.ry));
   }
-  out.push(P(new THREE.ConeGeometry(0.0046, 0.0075, 8).translate(0, 0.00375, 0), MARBLE, { y: yl + 0.0085, z: zc, ry: Math.PI / 8 }));
-  out.push(ball(0.0012, GOLD, { y: yl + 0.0165, z: zc }, 1), rod(V(0, yl + 0.017, zc), V(0, yl + 0.0205, zc), 0.0003, GOLD, 3));
-  out.push(rod(V(-0.0012, yl + 0.0194, zc), V(0.0012, yl + 0.0194, zc), 0.00025, GOLD, 3));
+  out.push(drumC(rl + 0.0009, rl + 0.0011, 0.0009, 8, shade(MARBLE, 0.95), { y: yl + hl, z: zc, ry: Math.PI / 8 }));
+  const yc = yl + hl + 0.0009, hc = 0.0072;
+  out.push(P(new THREE.ConeGeometry(rl, hc, 8).translate(0, hc / 2, 0), MARBLE, { y: yc, z: zc, ry: Math.PI / 8 }));
+  for (let k = 0; k < 8; k++) {
+    const a = Math.PI / 8 + (k * Math.PI) / 4;
+    out.push(rod(V(Math.sin(a) * rl * 1.02, yc, zc + Math.cos(a) * rl * 1.02), V(0, yc + hc * 0.92, zc), 0.00028, shade(MARBLE, 1.06), 3));
+  }
+  out.push(drumC(0.0005, 0.0007, 0.0012, 8, GOLD, { y: yc + hc - 0.0004, z: zc }));
+  out.push(ball(0.0012, GOLD, { y: yc + hc + 0.0018, z: zc }, 1), rod(V(0, yc + hc + 0.0026, zc), V(0, yc + hc + 0.0062, zc), 0.0003, GOLD, 3));
+  out.push(rod(V(-0.0012, yc + hc + 0.005, zc), V(0.0012, yc + hc + 0.005, zc), 0.00025, GOLD, 3));
   // The nave and its aisles, from the facade back to the octagon: four bays
   // (the true nave's length squeezed to fit a square site).
   const iNave = out.length;

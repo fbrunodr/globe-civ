@@ -148,12 +148,13 @@ camera.position.set(x / 2, 0.35, 0.55);
 // a distance in rectangles.)
 (window as unknown as { __wonders: unknown }).__wonders = {
   camera, controls,
-  focus(m: string, az = 30, el = 30, dist = 1.6): boolean {
+  // (ty: how high up the wonder to aim, as a fraction of its height.)
+  focus(m: string, az = 30, el = 30, dist = 1.6, ty = 0.4): boolean {
     const w = at.get(m);
     if (!w) return false;
     const r = dist * Math.max(RECT / 2, w.r) * 2, a = (az * Math.PI) / 180, e = (el * Math.PI) / 180;
-    controls.target.set(w.x, w.h * 0.4, 0);
-    camera.position.set(w.x + r * Math.sin(a) * Math.cos(e), w.h * 0.4 + r * Math.sin(e), r * Math.cos(a) * Math.cos(e));
+    controls.target.set(w.x, w.h * ty, 0);
+    camera.position.set(w.x + r * Math.sin(a) * Math.cos(e), w.h * ty + r * Math.sin(e), r * Math.cos(a) * Math.cos(e));
     controls.update();
     return true;
   },

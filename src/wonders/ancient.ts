@@ -157,6 +157,8 @@ export function stonehenge(): G[] {
 // and the spots along each ledge where its plants stand: a tree (a palm,
 // a cypress, a round-headed tree) or flowering bushes (pick 3).
 const TIERS = [0.146, 0.118, 0.092, 0.068, 0.046], TIER = 0.022, GARDEN_DZ = -0.002;
+// (Where the water runs down the front: inside every terrace's face it falls over.)
+const CASCADE = 0.022;
 function gardenSpots(i: number): { x: number; z: number; y: number; pick: number; k: number }[] {
   const w = TIERS[i]!, d = w * 0.94, next = TIERS[i + 1];
   if (next === undefined) return [];
@@ -165,7 +167,7 @@ function gardenSpots(i: number): { x: number; z: number; y: number; pick: number
   const nAlong = Math.max(3, Math.round(w / 0.016));
   for (let k = 0; k < nAlong; k++) {
     const t = -w / 2 + 0.006 + (k * (w - 0.012)) / (nAlong - 1);
-    if (Math.abs(t) > 0.01) spots.push([t, midD]);
+    if (Math.abs(t) > 0.01 && Math.abs(t - CASCADE) > 0.006) spots.push([t, midD]);
     spots.push([t, -midD]);
   }
   for (let k = 1; k < nAlong - 1; k++) { const t = -d / 2 + 0.006 + (k * (d - 0.012)) / (nAlong - 1); spots.push([mid, t], [-mid, t]); }
@@ -189,7 +191,7 @@ export function hangingGardens(H: number): G[] {
   const r = rnd(5), out: G[] = [];
   const BRICK = 0xc49c66, DARK = 0x3d3026, SOIL = 0x6f8a3c, GLAZE = 0x2f5e9e, GOLD = 0xe2b84a;
   out.push(flat(2 * H, 2 * H, 0xc8b48c, 0, 0, 0.0003));
-  const tiers = TIERS, th = TIER, dz = GARDEN_DZ, CASCADE = 0.034;
+  const tiers = TIERS, th = TIER, dz = GARDEN_DZ;
   const flowers = [0xd77aa0, 0xe8c84a, 0xf0ece0, 0x9a6ac0, 0xe0703a];
   tiers.forEach((w, i) => {
     const d = w * 0.94, y = i * th;
