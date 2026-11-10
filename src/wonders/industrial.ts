@@ -5,9 +5,9 @@
 // beside it.
 
 import * as THREE from 'three';
-import { chamfered, frustum, gable, prism, ring, spire } from '../houseKit.ts';
+import { frustum, gable, prism, ring, spire } from '../houseKit.ts';
 import {
-  P, V, H, archPane, ball, box, column, cone, cyl, disc, drumC, figure, flat, islet, pane, rnd, rod, shade, statue, steps,
+  P, V, H, archPane, ball, box, column, cone, cyl, disc, drumC, flat, islet, pane, rnd, rod, shade, statue, steps,
   type G, type Models,
 } from './kit.ts';
 import { LIBERTY } from './statues.ts';
@@ -171,116 +171,276 @@ function eiffelTower(): G[] {
 
 // ---------- London: Big Ben and the Palace of Westminster ----------
 
-// The palace: its long Gothic front of buttresses crowned with pinnacles,
-// tall windows in rows, the steep slate roof with its flèches; the
-// Victoria Tower at one end, the octagonal Central Tower; at the other end
-// the clock tower, panelled from foot to belfry, its four gilded clock faces
-// under their gables, the belfry's arches, the iron spire with its lucarnes
-// and cross (about 7 cells tall on its pad).
-function bigBen(): G[] {
-  const out: G[] = [], S = 0xcdb98e, SL = 0x56625e;
-  // The palace: a long range, buttresses, three rows of windows, a parapet, the roof.
-  const x0 = -0.04, x1 = 0.046, pz = -0.012, pd = 0.064, ph = 0.064, pw = x1 - x0, pcx = (x0 + x1) / 2;
-  out.push(...box(pw, ph, pd, S, { x: pcx, z: pz }));
-  for (const [ry, len, o, cx, cz] of [[0, pw, pd / 2, pcx, pz], [Math.PI, pw, pd / 2, pcx, pz], [Math.PI / 2, pd, pw / 2, pcx, pz]] as const) {
-    const { nx, nz, tx, tz } = frame(ry), n = Math.round(len / 0.0058);
-    for (let k = 0; k <= n; k++) {
-      const t = -len / 2 + (k * len) / n, x = cx + nx * (o + 0.0004) + tx * t, z = cz + nz * (o + 0.0004) + tz * t;
-      out.push(...box(0.0016, ph + 0.004, 0.0015, shade(S, 1.05), { x, z, ry }));
-      out.push(spire(0.0016, 0.0065, shade(S, 1.05), { x, y: ph + 0.004, z }));
+// Not to the real proportions: remade stout to fill its square lot, every
+// storey as tall as a town storey. The palace, two tall storeys of
+// Perpendicular Gothic: stepped buttresses between its bays rising through
+// the pierced parapet to pinnacles, a tall mullioned and transomed window
+// in each bay over a blind panel, string courses; the steep lead roof with
+// its dormers, iron cresting and flèches; the octagonal Central Tower on
+// its ridge, a tall window in each face, pinnacles round its parapet, its
+// stone spire with lucarnes. The Victoria Tower at the west end, square,
+// its octagonal corner turrets banded at each storey and capped with
+// spirelets, the Sovereign's Entrance in a deep porch, the bare flagpole
+// with its gilded finial. At the east end the clock tower: three panelled storeys, the
+// corbelled clock stage with its four gilded dials under gablets and
+// pinnacles, the iron roof, the belfry's arches, the iron spire with its
+// two tiers of lucarnes, lantern, orb and cross (about 6 cells tall).
+const BB_GLASS = 0x363c45, BB_LEAD = 0x56625e, BB_IRON = 0x4c5a56;
+const FOUR = [0, Math.PI / 2, Math.PI, -Math.PI / 2] as const;
+// A pointed window or panel: w wide, its sides h tall, its point pk above
+// them; its bottom middle at x, y, z, facing ry.
+function lancet(w: number, h: number, pk: number, c: number, x: number, y: number, z: number, ry: number): G[] {
+  const tri = new THREE.BufferGeometry();
+  tri.setAttribute('position', new THREE.Float32BufferAttribute([-w / 2, h, 0, w / 2, h, 0, 0, h + pk, 0], 3));
+  return [pane(w, h, c, x, y, z, ry), P(tri, c, { x, y, z, ry })];
+}
+// Perpendicular panelling on a face: its middle at (cx, cz), `o` out from
+// it, facing ry, len wide, storeys between the heights ys, nb bays. Shafts
+// between the bays (unless `noShafts`), a string course at each storey's
+// foot but the first; in each bay and storey a tall pointed window in its
+// moulded surround, a mullion and a transom, a blind panel under it (the
+// storeys in `blind` all blind tracery; bays `skip` left bare).
+function perpFace(cx: number, cz: number, o: number, ry: number, len: number, ys: readonly number[], nb: number, S: number,
+  opt: { blind?: readonly number[]; skip?: (storey: number, bay: number) => boolean; noShafts?: boolean; win?: number } = {}): G[] {
+  const { nx, nz, tx, tz } = frame(ry), out: G[] = [], bw = len / nb, y0 = ys[0]!, y1 = ys[ys.length - 1]!;
+  const at = (t: number, off: number) => ({ x: cx + nx * (o + off) + tx * t, z: cz + nz * (o + off) + tz * t });
+  if (!opt.noShafts) for (let k = 1; k < nb; k++) out.push(...box(0.0015, y1 - y0 + 0.0004, 0.0016, shade(S, 1.06), { ...at(-len / 2 + k * bw, 0.0006), y: y0, ry }));
+  for (let i = 1; i < ys.length - 1; i++) out.push(...box(len, 0.0012, 0.0012, shade(S, 0.88), { ...at(0, 0.0005), y: ys[i]! - 0.0006, ry }));
+  for (let i = 0; i < ys.length - 1; i++) {
+    const sh = ys[i + 1]! - ys[i]!, w = bw * (opt.win ?? 0.56), yw = ys[i]! + sh * 0.2, h = sh * 0.52, pk = w * 0.6;
+    const blind = opt.blind?.includes(i) ?? false, glass = blind ? shade(S, 0.84) : BB_GLASS;
+    for (let b = 0; b < nb; b++) {
+      if (opt.skip?.(i, b)) continue;
+      const t = -len / 2 + (b + 0.5) * bw, a1 = at(t, 0.0003), a2 = at(t, 0.0005), a3 = at(t, 0.0007);
+      out.push(...lancet(w + 0.0018, h + 0.0009, pk + 0.0011, shade(S, 1.08), a1.x, yw - 0.0009, a1.z, ry));
+      out.push(...lancet(w, h, pk, glass, a2.x, yw, a2.z, ry));
+      out.push(pane(0.00045, h + pk * 0.75, shade(S, 1.1), a3.x, yw, a3.z, ry), pane(w, 0.00045, shade(S, 1.1), a3.x, yw + h * 0.55, a3.z, ry));
+      out.push(pane(w + 0.0018, sh * 0.2 - 0.0026, shade(S, 0.92), a1.x, ys[i]! + 0.0012, a1.z, ry));
     }
-    const ts = Array.from({ length: n }, (_, k) => -len / 2 + ((k + 0.5) * len) / n);
-    out.push(...panes(cx, cz, o + 0.0003, ry, ts, [0.007, 0.027, 0.047], 0.0026, 0.012, 0x3a3e44, true));
-    for (const yb of [0.0225, 0.0425]) out.push(...box(len - 0.0006, 0.0014, 0.0008, shade(S, 0.9), { x: cx + nx * (o + 0.0002), y: yb, z: cz + nz * (o + 0.0002), ry }));
   }
-  out.push(...merlonsAlong(x0, pz + pd / 2 - 0.0006, x1, pz + pd / 2 - 0.0006, ph, 0.0014, shade(S, 1.03)));
-  out.push(...gable(pw - 0.004, pd - 0.008, 0.022, SL, { x: pcx, y: ph, z: pz }, false, shade(S, 0.95)));
-  for (let k = 0; k < 5; k++) out.push(spire(0.0028, 0.01, SL, { x: x0 + 0.012 + k * 0.016, y: ph + 0.02, z: pz }), ...box(0.0022, 0.006, 0.0022, shade(S, 0.85), { x: x0 + 0.02 + k * 0.016, y: ph + 0.008, z: pz + 0.014 }));
-  // The Central Tower: an octagonal lantern and its spire, pinnacles round it.
-  const cxT = 0.0;
-  out.push(...chamfered(0.021, 0.06, 0.021, 0.29, shade(S, 1.02), { x: cxT, y: ph, z: pz }));
+  return out;
+}
+// An octagonal shaft (a turret, a pinnacle's stem) of apothem a, from y up h, its flat faces square to the axes.
+const oct = (a: number, h: number, c: number, x: number, y: number, z: number) => cyl(a / Math.cos(Math.PI / 8), a / Math.cos(Math.PI / 8), h, 8, c, { x, y, z, ry: Math.PI / 8 });
+// An octagonal spirelet of apothem a, h tall, on y.
+const octCone = (a: number, h: number, c: number, x: number, y: number, z: number) => cone(a / Math.cos(Math.PI / 8), h, 8, c, { x, y, z, ry: Math.PI / 8 });
+// A dormer facing ry: its cheeks and front, a little gable roof, its window.
+function dormer(x: number, y: number, z: number, ry: number, S: number): G[] {
+  const { nx, nz } = frame(ry);
+  return [
+    ...box(0.0046, 0.0062, 0.005, S, { x, y, z, ry }),
+    ...gable(0.0056, 0.006, 0.0042, BB_LEAD, { x, y: y + 0.0062, z, ry: ry + Math.PI / 2 }, false, S),
+    ...lancet(0.0022, 0.0026, 0.0012, BB_GLASS, x + nx * 0.00255, y + 0.0018, z + nz * 0.00255, ry),
+  ];
+}
+
+function bigBen(): G[] {
+  const out: G[] = [], S = 0xcdb98e, S2 = shade(S, 0.9), TRIM = shade(S, 1.07);
+  // ----- the palace: two storeys, buttressed, the pierced parapet, the lead roof -----
+  const x0 = -0.03, x1 = 0.038, z0 = -0.05, z1 = 0.024, pcx = (x0 + x1) / 2, pcz = (z0 + z1) / 2, pw = x1 - x0, pd = z1 - z0;
+  const ys = [0.007, 0.041, 0.075] as const, ph = ys[2];
+  out.push(...box(pw + 0.003, ys[0], pd + 0.003, S2, { x: pcx, z: pcz }));
+  out.push(...box(pw, ph, pd, S, { x: pcx, z: pcz }));
+  out.push(P(new THREE.CylinderGeometry(Math.SQRT1_2, Math.SQRT1_2, 1, 4, 1, true).rotateY(Math.PI / 4).translate(0, 0.5, 0).scale(pw + 0.0024, 0.0055, pd + 0.0024), S, { x: pcx, y: ph, z: pcz }));
+  out.push(...box(pw + 0.0034, 0.0012, pd + 0.0034, TRIM, { x: pcx, y: ph + 0.0055, z: pcz }));
+  for (const [ry, len, o, nb] of [[0, pw, pd / 2, 6], [Math.PI, pw, pd / 2, 6], [Math.PI / 2, pd, pw / 2, 6]] as const) {
+    const { nx, nz, tx, tz } = frame(ry), L = len - 0.002, bw = L / nb;
+    const at = (t: number, off: number) => ({ x: pcx + nx * (o + off) + tx * t, z: pcz + nz * (o + off) + tz * t });
+    out.push(...perpFace(pcx, pcz, o, ry, L, ys, nb, S, { noShafts: true }));
+    // Buttresses: two stages (a weathering between), a pinnacle each over the parapet.
+    for (let k = 0; k <= nb; k++) {
+      const t = -L / 2 + k * bw;
+      out.push(...box(0.0028, ys[1], 0.0034, shade(S, 1.04), { ...at(t, 0.0013), ry }));
+      out.push(...box(0.0024, ph + 0.0058 - ys[1], 0.0024, shade(S, 1.04), { ...at(t, 0.0008), y: ys[1], ry }));
+      out.push(spire(0.003, 0.011, shade(S, 1.06), { ...at(t, 0.0008), y: ph + 0.0058 }));
+    }
+    // The parapet's openwork: quatrefoils in a row between the buttresses.
+    for (let b = 0; b < nb; b++) for (const f of [-0.3, 0, 0.3]) {
+      const p = at(-L / 2 + (b + 0.5 + f) * bw, 0.0013);
+      out.push(pane(0.0019, 0.0024, shade(S, 0.62), p.x, ph + 0.0016, p.z, ry));
+    }
+  }
+  // The entrance pavilion in the middle of the front: a portal in three
+  // orders, a great window over it, its gable with a niche, octagonal
+  // turrets at its corners.
+  {
+    const ex = pcx, ew = 0.017, ed = 0.008, ez = z1 + ed / 2 - 0.001, eh = ph + 0.008, zf = z1 + ed - 0.001;
+    out.push(...box(ew, eh, ed, S, { x: ex, z: ez }));
+    out.push(...gable(ew, ed + 0.006, 0.013, BB_LEAD, { x: ex, y: eh, z: ez - 0.003 }, true, S));
+    const tri = new THREE.BufferGeometry();
+    tri.setAttribute('position', new THREE.Float32BufferAttribute([-ew / 2 - 0.0006, 0, 0, ew / 2 + 0.0006, 0, 0, 0, 0.0142, 0], 3));
+    out.push(P(tri, TRIM, { x: ex, y: eh - 0.0004, z: zf + 0.0003 }));
+    out.push(...lancet(0.0026, 0.0045, 0.0016, shade(S, 0.7), ex, eh + 0.002, zf + 0.0006, 0));
+    out.push(...lancet(0.0128, 0.017, 0.0068, TRIM, ex, ys[0], zf + 0.0003, 0));
+    out.push(...lancet(0.0098, 0.0162, 0.0052, shade(S, 0.9), ex, ys[0], zf + 0.0006, 0));
+    out.push(...lancet(0.007, 0.0152, 0.0038, 0x2a2622, ex, ys[0], zf + 0.0009, 0));
+    out.push(...lancet(0.0108, 0.021, 0.0062, TRIM, ex, ys[1] + 0.003, zf + 0.0003, 0));
+    out.push(...lancet(0.0086, 0.0204, 0.005, BB_GLASS, ex, ys[1] + 0.0033, zf + 0.0006, 0));
+    for (const t of [-0.0022, 0.0022]) out.push(pane(0.0004, 0.024, TRIM, ex + t, ys[1] + 0.0033, zf + 0.0008, 0));
+    for (const y of [ys[1] + 0.012, ys[1] + 0.019]) out.push(pane(0.0086, 0.0004, TRIM, ex, y, zf + 0.0008, 0));
+    out.push(...box(ew + 0.0006, 0.0012, ed + 0.0006, shade(S, 0.88), { x: ex, y: ys[1] - 0.0006, z: ez }));
+    for (const s of [-1, 1]) {
+      const tx = ex + s * ew / 2, tz = zf - 0.0004;
+      out.push(oct(0.0026, eh + 0.012, shade(S, 1.04), tx, 0, tz), oct(0.0032, 0.0016, TRIM, tx, eh + 0.012, tz), octCone(0.003, 0.016, shade(S, 1.04), tx, eh + 0.0136, tz));
+      for (const y of [ys[1], ph]) out.push(oct(0.0031, 0.0012, S2, tx, y - 0.0006, tz));
+      out.push(rod(V(tx, eh + 0.029, tz), V(tx, eh + 0.033, tz), 0.0003, GOLD, 3));
+    }
+  }
+  // The bit of the west end clear of the Victoria Tower.
+  out.push(...perpFace(x0, 0.0105, 0, -Math.PI / 2, 0.025, ys, 2, S, { noShafts: true }), ...box(0.0034, ph + 0.0058, 0.0024, shade(S, 1.04), { x: x0 - 0.0008, z: 0.0105 }));
+  // The roof: steep lead, dormers on both slopes, the iron cresting, three flèches.
+  const rh = 0.03, rd = pd - 0.002;
+  out.push(...gable(pw - 0.002, rd, rh, BB_LEAD, { x: pcx, y: ph, z: pcz }, false, S));
+  for (const s of [1, -1]) for (const x of [-0.019, -0.009, 0.017, 0.028]) {
+    const u = rd / 2 - 0.009, y = ph + rh * (1 - (u + 0.001) / (rd / 2)) - 0.0012;
+    out.push(...dormer(x, y, pcz + s * (u - 0.0015), s > 0 ? 0 : Math.PI, S));
+  }
+  out.push(rod(V(x0 + 0.002, ph + rh + 0.0004, pcz), V(x1 - 0.002, ph + rh + 0.0004, pcz), 0.0005, BB_IRON, 4));
+  for (let k = 0; k < 13; k++) out.push(spire(0.0008, 0.003, BB_IRON, { x: x0 + 0.004 + k * 0.005, y: ph + rh + 0.0006, z: pcz }));
+  for (const x of [-0.02, 0.028]) out.push(oct(0.0018, 0.005, BB_LEAD, x, ph + rh - 0.001, pcz), octCone(0.0022, 0.014, BB_LEAD, x, ph + rh + 0.004, pcz), rod(V(x, ph + rh + 0.017, pcz), V(x, ph + rh + 0.021, pcz), 0.0003, GOLD, 3));
+
+  // ----- the Central Tower: an octagonal lantern on the ridge, its stone spire -----
+  const lx = 0.004, lz = pcz, la = 0.0125, ly0 = ph + 0.012, ly1 = ph + 0.052, lr = la / Math.cos(Math.PI / 8);
+  out.push(drumC(lr, lr, ly1 - ly0, 8, S, { x: lx, y: ly0, z: lz, ry: Math.PI / 8 }));
+  out.push(cyl(lr + 0.0008, lr + 0.0008, 0.0012, 8, S2, { x: lx, y: ly0 + 0.0095, z: lz, ry: Math.PI / 8 }));
   for (let k = 0; k < 8; k++) {
-    const a = (k / 8) * Math.PI * 2 + Math.PI / 8, rr = 0.0108;
-    out.push(spire(0.002, 0.009, shade(S, 1.04), { x: cxT + Math.cos(a) * rr, y: ph + 0.06, z: pz + Math.sin(a) * rr }));
-    const ry = (k * Math.PI) / 4;
-    out.push(...archPane(0.0028, 0.016, 0x3a3e44, cxT + Math.sin(ry) * 0.0109, ph + 0.024, pz + Math.cos(ry) * 0.0109, ry));
+    const ry = (k * Math.PI) / 4, { nx, nz } = frame(ry), fx = lx + nx * la, fz = lz + nz * la;
+    out.push(...lancet(0.0066, 0.016, 0.004, TRIM, fx + nx * 0.0003, ph + 0.0262, fz + nz * 0.0003, ry));
+    out.push(...lancet(0.0048, 0.0154, 0.003, BB_GLASS, fx + nx * 0.0005, ph + 0.0268, fz + nz * 0.0005, ry));
+    out.push(pane(0.0004, 0.0175, TRIM, fx + nx * 0.0007, ph + 0.0268, fz + nz * 0.0007, ry), pane(0.0048, 0.0004, TRIM, fx + nx * 0.0007, ph + 0.036, fz + nz * 0.0007, ry));
+    // A buttress-shaft up each angle, a pinnacle on it over the parapet.
+    const va = ry + Math.PI / 8, vx = lx + Math.sin(va) * (lr + 0.0004), vz = lz + Math.cos(va) * (lr + 0.0004);
+    out.push(...box(0.0018, ly1 - ly0 + 0.004, 0.0018, shade(S, 1.05), { x: vx, y: ly0, z: vz, ry: va }));
+    out.push(spire(0.0024, 0.01, shade(S, 1.06), { x: vx, y: ly1 + 0.004, z: vz }));
   }
-  out.push(cone(0.0105, 0.04, 8, SL, { x: cxT, y: ph + 0.06, z: pz }), rod(V(cxT, ph + 0.099, pz), V(cxT, ph + 0.107, pz), 0.0004, GOLD, 3));
-  // The Victoria Tower: square, its corner turrets, the royal entrance, a flag (drawn, then raised by a third).
-  const vx = -0.056, vz = -0.022, vw = 0.026, vh = 0.138, vic: G[] = [];
-  vic.push(...box(vw, vh, vw, S, { x: vx, z: vz }));
-  for (const ry of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
-    vic.push(...panes(vx, vz, vw / 2 + 0.0003, ry, [-0.0055, 0, 0.0055], [0.04, 0.058, 0.076, 0.094, 0.112], 0.0022, 0.011, 0x3a3e44, true));
-    for (const yb of [0.035, 0.1235]) { const { nx, nz } = frame(ry); vic.push(...box(vw + 0.001, 0.0016, 0.0008, shade(S, 0.9), { x: vx + nx * (vw / 2 + 0.0002), y: yb, z: vz + nz * (vw / 2 + 0.0002), ry })); }
+  out.push(cyl(lr + 0.0006, lr + 0.0006, 0.004, 8, TRIM, { x: lx, y: ly1, z: lz, ry: Math.PI / 8 }));
+  for (let k = 0; k < 8; k++) {
+    const ry = (k * Math.PI) / 4, { nx, nz } = frame(ry);
+    out.push(pane(0.003, 0.002, shade(S, 0.62), lx + nx * (la + 0.0007), ly1 + 0.001, lz + nz * (la + 0.0007), ry));
   }
-  vic.push(...archPane(0.012, 0.022, 0x2c2a28, vx, 0, vz + vw / 2 + 0.0003));
+  out.push(octCone(la - 0.001, 0.05, shade(S, 0.97), lx, ly1, lz));
+  for (const ry of FOUR) {
+    const { nx, nz } = frame(ry), d = la - 0.0033;
+    out.push(...box(0.0034, 0.006, 0.004, shade(S, 0.97), { x: lx + nx * d, y: ly1 + 0.004, z: lz + nz * d, ry }));
+    out.push(...gable(0.0042, 0.0046, 0.004, shade(S, 0.97), { x: lx + nx * d, y: ly1 + 0.01, z: lz + nz * d, ry: ry + Math.PI / 2 }));
+    out.push(...lancet(0.0016, 0.0026, 0.001, BB_GLASS, lx + nx * (d + 0.0021), ly1 + 0.0055, lz + nz * (d + 0.0021), ry));
+  }
+  out.push(ball(0.0012, GOLD, { x: lx, y: ly1 + 0.05, z: lz }), rod(V(lx, ly1 + 0.049, lz), V(lx, ly1 + 0.058, lz), 0.0004, GOLD, 3));
+
+  // ----- the Victoria Tower -----
+  const vx = -0.049, vz = -0.022, vw = 0.042, vys = [0.007, 0.052, 0.09, 0.128, 0.165] as const, vh = vys[4], ta = 0.005;
+  out.push(...box(vw + 0.004, vys[0], vw + 0.004, S2, { x: vx, z: vz }));
+  out.push(...box(vw, vh, vw, S, { x: vx, z: vz }));
+  for (const ry of FOUR) {
+    const { nx, nz, tx, tz } = frame(ry), o = vw / 2, L = vw - 2 * ta + 0.002, front = ry === 0;
+    out.push(...perpFace(vx, vz, o, ry, L, vys, 3, S, { blind: [0], skip: (i) => front && i === 0 }));
+    // The pierced parapet, pinnacles on its shafts.
+    const pc = { x: vx + nx * (o + 0.0007), z: vz + nz * (o + 0.0007) };
+    out.push(...box(L, 0.008, 0.0016, S, { ...pc, y: vh, ry }), ...box(L + 0.0006, 0.0012, 0.0024, TRIM, { ...pc, y: vh + 0.008, ry }));
+    for (const f of [-1 / 3, 0, 1 / 3]) out.push(pane(0.006, 0.0042, shade(S, 0.6), pc.x + nx * 0.0009 + tx * f * L, vh + 0.0018, pc.z + nz * 0.0009 + tz * f * L, ry));
+    for (const f of [-1 / 6, 1 / 6]) out.push(spire(0.0028, 0.013, shade(S, 1.06), { x: pc.x + tx * f * L, y: vh + 0.0092, z: pc.z + tz * f * L }));
+  }
+  // The Sovereign's Entrance: a deep porch, the arch in three orders, the royal arms, niches either side.
+  {
+    const zf = vz + vw / 2 + 0.004;
+    out.push(...box(0.03, 0.048, 0.008, shade(S, 1.02), { x: vx, z: vz + vw / 2 }));
+    out.push(...lancet(0.022, 0.024, 0.011, TRIM, vx, vys[0], zf + 0.0003, 0));
+    out.push(...lancet(0.0175, 0.0225, 0.0088, shade(S, 0.9), vx, vys[0], zf + 0.0006, 0));
+    out.push(...lancet(0.013, 0.021, 0.0066, 0x2a2622, vx, vys[0], zf + 0.0009, 0));
+    out.push(pane(0.005, 0.0033, GOLD, vx, 0.0425, zf + 0.0003, 0), pane(0.03, 0.0012, TRIM, vx, 0.048 - 0.0018, zf + 0.0003, 0));
+    for (const s of [-1, 1]) out.push(...lancet(0.0028, 0.011, 0.0018, shade(S, 0.78), vx + s * 0.0128, 0.016, zf + 0.0003, 0));
+  }
+  // The corner turrets: octagons banded at each storey, open stages over the parapet, spirelets.
   for (const [sx, sz] of [[1, 1], [-1, 1], [-1, -1], [1, -1]] as const) {
-    vic.push(...chamfered(0.0058, vh + 0.008, 0.0058, 0.29, shade(S, 1.04), { x: vx + sx * vw / 2, z: vz + sz * vw / 2 }));
-    vic.push(spire(0.0055, 0.014, shade(S, 1.04), { x: vx + sx * vw / 2, y: vh + 0.008, z: vz + sz * vw / 2 }));
+    const x = vx + sx * vw / 2, z = vz + sz * vw / 2, top = vh + 0.019;
+    out.push(oct(ta, top, shade(S, 1.03), x, 0, z));
+    for (const y of [vys[1], vys[2], vys[3], vh]) out.push(oct(ta + 0.0006, 0.0014, S2, x, y - 0.0007, z));
+    for (const ry of [sx > 0 ? Math.PI / 2 : -Math.PI / 2, sz > 0 ? 0 : Math.PI]) {
+      const { nx, nz } = frame(ry);
+      out.push(...lancet(0.0026, 0.007, 0.0016, BB_GLASS, x + nx * (ta + 0.0002), vh + 0.0085, z + nz * (ta + 0.0002), ry));
+    }
+    out.push(oct(ta + 0.0007, 0.0018, TRIM, x, top, z), octCone(ta + 0.0004, 0.022, shade(S, 1.04), x, top + 0.0018, z));
+    out.push(rod(V(x, top + 0.022, z), V(x, top + 0.027, z), 0.00035, GOLD, 3));
   }
-  vic.push(...merlonsAlong(vx - vw / 2, vz + vw / 2, vx + vw / 2, vz + vw / 2, vh, 0.0016, S), ...merlonsAlong(vx - vw / 2, vz - vw / 2, vx + vw / 2, vz - vw / 2, vh, 0.0016, S));
-  vic.push(rod(V(vx, vh, vz), V(vx, vh + 0.028, vz), 0.0004, 0xe0e0e0, 3), pane(0.011, 0.0065, 0xb23a3a, vx, vh + 0.02, vz + 0.0058, Math.PI / 2));
-  vic.push(pane(0.011, 0.0018, 0xf0f0f0, vx + 0.0002, vh + 0.0224, vz + 0.0058, Math.PI / 2), pane(0.0024, 0.0065, 0xf0f0f0, vx + 0.0002, vh + 0.02, vz + 0.0058, Math.PI / 2));
-  out.push(...about(vic, vx, vz, 1.3));
-  // The clock tower, raised by two fifths.
-  out.push(...about(clockTower(0.0585, 0.006, S), 0.0585, 0.006, 1.42));
+  // The flagpole, bare, its gilded finial.
+  out.push(rod(V(vx, vh, vz), V(vx, vh + 0.05, vz), 0.0005, 0xe8e8e8, 4), ball(0.001, GOLD, { x: vx, y: vh + 0.0505, z: vz }));
+
+  // ----- the clock tower -----
+  out.push(...clockTower(0.052, 0.018, S));
+  // (All a little forward, to sit in the middle of the lot.)
+  for (const g of out) g.translate(0, 0, 0.007);
   return [pad(), ...out];
 }
-// Parts scaled by k about a point on the ground (x, z).
-function about(parts: G[], x: number, z: number, k: number): G[] {
-  const m = new THREE.Matrix4().makeTranslation(x, 0, z).multiply(new THREE.Matrix4().makeScale(k, k, k)).multiply(new THREE.Matrix4().makeTranslation(-x, 0, -z));
-  for (const g of parts) g.applyMatrix4(m);
-  return parts;
-}
 function clockTower(x: number, z: number, S: number): G[] {
-  const out: G[] = [], w = 0.021, h1 = 0.1, IRON = 0x4c5a56;
-  out.push(...box(w + 0.003, 0.006, w + 0.003, shade(S, 0.92), { x, z }));
-  out.push(...box(w, h1, w, S, { x, z }));
-  for (const ry of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
-    const { nx, nz, tx, tz } = frame(ry), o = w / 2;
-    // Panels: slender shafts up the faces, narrow lancets between them.
-    for (const t of [-0.0072, -0.0024, 0.0024, 0.0072]) out.push(...box(0.0011, h1 - 0.008, 0.0011, shade(S, 1.06), { x: x + nx * (o + 0.0003) + tx * t, y: 0.006, z: z + nz * (o + 0.0003) + tz * t, ry }));
-    out.push(...panes(x, z, o + 0.0003, ry, [-0.0048, 0, 0.0048], [0.014, 0.027, 0.04, 0.053, 0.066, 0.079], 0.0017, 0.0075, 0x3a3e44, true));
-    for (const yb of [0.0085, 0.0215, 0.0345, 0.0475, 0.0605, 0.0735, 0.0865]) out.push(...box(w + 0.001, 0.0009, 0.0007, shade(S, 0.9), { x: x + nx * (o + 0.0002), y: yb, z: z + nz * (o + 0.0002), ry }));
-  }
-  // The clock stage: wider, a face on each side under a gable, pinnacles at the corners.
-  const yc = h1, wc = w + 0.003, hc = 0.024;
+  const out: G[] = [], w = 0.032, S2 = shade(S, 0.9), TRIM = shade(S, 1.07), ys = [0.008, 0.045, 0.082, 0.118] as const, ca = 0.00225;
+  // The shaft: a plinth, clasping angle shafts, three panelled storeys.
+  out.push(...box(w + 0.005, ys[0], w + 0.005, S2, { x, z }));
+  out.push(...box(w, ys[3], w, S, { x, z }));
+  for (const [sx, sz] of [[1, 1], [-1, 1], [-1, -1], [1, -1]] as const) out.push(...box(2 * ca, ys[3] + 0.0005, 2 * ca, shade(S, 1.05), { x: x + sx * w / 2, z: z + sz * w / 2 }));
+  for (const ry of FOUR) out.push(...perpFace(x, z, w / 2, ry, w - 2 * ca + 0.002, ys, 2, S, { win: 0.6 }));
+  // The clock stage, corbelled out: a gilded dial on each face over its inscription, a gablet over it, pinnacles at the corners.
+  const wc = w + 0.005, yc = ys[3] + 0.004, hc = 0.044, cy = yc + 0.0235, R = 0.0135;
+  out.push(...frustum(w + 0.0012, w + 0.0012, wc, wc, 0.004, S2, { x, y: ys[3], z }));
   out.push(...box(wc, hc, wc, shade(S, 1.03), { x, y: yc, z }));
-  for (const ry of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
-    const { nx, nz, tx, tz } = frame(ry), o = wc / 2;
-    const cx = x + nx * (o + 0.0003), cz = z + nz * (o + 0.0003), cy = yc + 0.012;
-    out.push(P(new THREE.PlaneGeometry(0.019, 0.019), GOLD, { x: cx, y: cy, z: cz, ry }));
-    out.push(P(new THREE.CircleGeometry(0.0084, 24), 0xf4ecd4, { x: cx + nx * 0.0002, y: cy, z: cz + nz * 0.0002, ry }));
-    out.push(P(new THREE.RingGeometry(0.0084, 0.0094, 24), 0x2a2620, { x: cx + nx * 0.0003, y: cy, z: cz + nz * 0.0003, ry }));
+  out.push(...box(wc + 0.0014, 0.0014, wc + 0.0014, S2, { x, y: yc + hc - 0.001, z }));
+  for (const ry of FOUR) {
+    const { nx, nz, tx, tz } = frame(ry), o = wc / 2, cx = x + nx * o, cz = z + nz * o;
+    const L = (d: number) => ({ x: cx + nx * d, z: cz + nz * d });
+    out.push(pane(0.032, 0.032, GOLD, L(0.0003).x, cy - 0.016, L(0.0003).z, ry));
+    out.push(P(new THREE.CircleGeometry(R, 24), 0xf2ead2, { ...L(0.0005), y: cy, ry }));
+    out.push(P(new THREE.RingGeometry(R - 0.0001, R + 0.0013, 24), 0x2a2620, { ...L(0.0006), y: cy, ry }));
+    out.push(P(new THREE.RingGeometry(R * 0.42, R * 0.48, 12), shade(GOLD, 0.8), { ...L(0.0006), y: cy, ry }));
     for (let k = 0; k < 12; k++) {
-      const a = (k / 12) * Math.PI * 2;
-      out.push(P(new THREE.PlaneGeometry(0.0007, 0.0016), 0x2a2620, { x: cx + nx * 0.0004 + tx * Math.sin(a) * 0.0072, y: cy + Math.cos(a) * 0.0072, z: cz + nz * 0.0004 + tz * Math.sin(a) * 0.0072, ry, rz: -a * (ry === 0 || ry === Math.PI ? 1 : 1) }));
+      const a = (k / 12) * Math.PI * 2, rr = R * 0.83;
+      out.push(P(new THREE.PlaneGeometry(0.0008, 0.0026), 0x2a2620, { x: cx + nx * 0.0007 + tx * Math.sin(a) * rr, y: cy + Math.cos(a) * rr, z: cz + nz * 0.0007 + tz * Math.sin(a) * rr, ry, rz: -a }));
     }
-    const hand = (a: number, l: number) => rod(V(cx + nx * 0.0006, cy, cz + nz * 0.0006), V(cx + nx * 0.0006 + tx * Math.sin(a) * l, cy + Math.cos(a) * l, cz + nz * 0.0006 + tz * Math.sin(a) * l), 0.00035, 0x1a1816, 3);
-    out.push(hand(2.1, 0.0045), hand(0, 0.0068));
+    const hand = (a: number, l: number, r: number) => rod(V(cx + nx * 0.001, cy, cz + nz * 0.001), V(cx + nx * 0.001 + tx * Math.sin(a) * l, cy + Math.cos(a) * l, cz + nz * 0.001 + tz * Math.sin(a) * l), r, 0x1a1816, 3);
+    out.push(hand(2.1, 0.0075, 0.0005), hand(0, 0.0112, 0.00035));
+    // Its inscription, gold letters on a dark band under the dial; the gablet with its finial over it.
+    out.push(pane(0.03, 0.0026, 0x2a2f3a, L(0.0003).x, yc + 0.0018, L(0.0003).z, ry));
+    for (let k = 0; k < 9; k++) out.push(pane(0.0018, 0.0012, GOLD, L(0.0005).x + tx * (k - 4) * 0.0032, yc + 0.0025, L(0.0005).z + tz * (k - 4) * 0.0032, ry));
     const tri = new THREE.BufferGeometry();
-    tri.setAttribute('position', new THREE.Float32BufferAttribute([-0.011, 0, 0, 0.011, 0, 0, 0, 0.007, 0], 3));
-    out.push(P(tri, shade(S, 1.08), { x: x + nx * (o + 0.0002), y: yc + hc, z: z + nz * (o + 0.0002), ry }));
-    out.push(spire(0.0014, 0.004, GOLD, { x: x + nx * (o + 0.0002), y: yc + hc + 0.007, z: z + nz * (o + 0.0002) }));
+    tri.setAttribute('position', new THREE.Float32BufferAttribute([-0.016, 0, 0, 0.016, 0, 0, 0, 0.0095, 0], 3));
+    out.push(P(tri, TRIM, { ...L(0.0002), y: yc + hc, ry }));
+    out.push(...lancet(0.0042, 0.0022, 0.0026, shade(S, 0.8), L(0.0004).x, yc + hc + 0.0012, L(0.0004).z, ry));
+    out.push(spire(0.0018, 0.006, GOLD, { ...L(0.0002), y: yc + hc + 0.0092 }));
   }
-  for (const [sx, sz] of [[1, 1], [-1, 1], [-1, -1], [1, -1]] as const) out.push(...chamfered(0.0034, hc + 0.004, 0.0034, 0.29, shade(S, 1.05), { x: x + sx * wc / 2, y: yc, z: z + sz * wc / 2 }), spire(0.0034, 0.011, shade(S, 1.05), { x: x + sx * wc / 2, y: yc + hc + 0.004, z: z + sz * wc / 2 }));
-  // A low iron roof over the clock stage, then the belfry: arches on each side, a gallery.
-  out.push(...frustum(wc + 0.0008, wc + 0.0008, w - 0.001, w - 0.001, 0.004, IRON, { x, y: yc + hc, z }));
-  const yb = yc + hc + 0.004, wb = w - 0.001, hb = 0.016;
+  for (const [sx, sz] of [[1, 1], [-1, 1], [-1, -1], [1, -1]] as const) {
+    const px = x + sx * wc / 2, pz = z + sz * wc / 2;
+    out.push(oct(0.0026, hc + 0.007, shade(S, 1.05), px, yc, pz), octCone(0.0031, 0.014, shade(S, 1.05), px, yc + hc + 0.007, pz));
+  }
+  // The iron roof, then the belfry: three arches a side, the gallery, pinnacles.
+  const wb = 0.027, yb = yc + hc + 0.003, hb = 0.022;
+  out.push(...frustum(wc + 0.0008, wc + 0.0008, wb, wb, 0.006, BB_IRON, { x, y: yc + hc, z }));
   out.push(...box(wb, hb, wb, S, { x, y: yb, z }));
-  for (const ry of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) out.push(...panes(x, z, wb / 2 + 0.0003, ry, [-0.0055, 0, 0.0055], [yb + 0.003], 0.0034, 0.011, 0x2c2a26, true));
-  out.push(...box(wb + 0.003, 0.0016, wb + 0.003, shade(S, 0.95), { x, y: yb + hb }));
-  // The iron spire: lucarnes on its faces, a lantern, the cross.
-  const ys = yb + hb + 0.0016;
-  out.push(spire(wb + 0.001, 0.034, IRON, { x, y: ys, z }));
-  for (const ry of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
-    const { nx, nz } = frame(ry);
-    out.push(...box(0.0044, 0.006, 0.003, IRON, { x: x + nx * 0.0068, y: ys + 0.004, z: z + nz * 0.0068, ry }, IRON));
-    out.push(...gable(0.0048, 0.0034, 0.0032, IRON, { x: x + nx * 0.0068, y: ys + 0.01, z: z + nz * 0.0068, ry }, true));
-    out.push(pane(0.0022, 0.0035, GOLD, x + nx * 0.0084, ys + 0.005, z + nz * 0.0084, ry));
+  for (const ry of FOUR) {
+    const { nx, nz, tx, tz } = frame(ry), o = wb / 2;
+    for (const t of [-0.0076, 0, 0.0076]) {
+      const p = { x: x + nx * o + tx * t, z: z + nz * o + tz * t };
+      out.push(...lancet(0.0062, 0.0115, 0.0034, TRIM, p.x + nx * 0.0003, yb + 0.0035, p.z + nz * 0.0003, ry));
+      out.push(...lancet(0.0048, 0.0112, 0.0026, 0x24221f, p.x + nx * 0.0005, yb + 0.0038, p.z + nz * 0.0005, ry));
+    }
+    out.push(...box(wb + 0.0024, 0.0012, 0.0012, S2, { x: x + nx * (o + 0.0004), y: yb + 0.0024, z: z + nz * (o + 0.0004), ry }));
   }
-  out.push(...box(0.004, 0.006, 0.004, GOLD, { x, y: ys + 0.024, z }));
-  out.push(rod(V(x, ys + 0.03, z), V(x, ys + 0.046, z), 0.0005, GOLD, 4), rod(V(x - 0.0022, ys + 0.042, z), V(x + 0.0022, ys + 0.042, z), 0.0004, GOLD, 3));
+  out.push(...box(wb + 0.004, 0.0018, wb + 0.004, TRIM, { x, y: yb + hb, z }));
+  for (const [sx, sz] of [[1, 1], [-1, 1], [-1, -1], [1, -1]] as const) out.push(spire(0.003, 0.01, shade(S, 1.05), { x: x + sx * (wb / 2 + 0.0006), y: yb + hb + 0.0018, z: z + sz * (wb / 2 + 0.0006) }));
+  // The iron spire: two tiers of lucarnes, the lantern, the slender cap, orb and cross.
+  const ys0 = yb + hb + 0.0018, sh = 0.036, sw0 = wb + 0.001, sw1 = 0.0072;
+  out.push(...frustum(sw0, sw0, sw1, sw1, sh, BB_IRON, { x, y: ys0, z }));
+  for (const ry of FOUR) {
+    const { nx, nz } = frame(ry);
+    for (const [f, s] of [[0.13, 1], [0.55, 0.62]] as const) {
+      const hw = (sw0 + (sw1 - sw0) * f) / 2, d = hw - 0.0018 * s, y = ys0 + f * sh;
+      out.push(...box(0.0052 * s, 0.0068 * s, 0.0048 * s, BB_IRON, { x: x + nx * d, y, z: z + nz * d, ry }));
+      out.push(...gable(0.0062 * s, 0.0056 * s, 0.0042 * s, BB_IRON, { x: x + nx * d, y: y + 0.0068 * s, z: z + nz * d, ry: ry + Math.PI / 2 }));
+      out.push(...lancet(0.0024 * s, 0.003 * s, 0.0014 * s, GOLD, x + nx * (d + 0.0024 * s + 0.0001), y + 0.0014 * s, z + nz * (d + 0.0024 * s + 0.0001), ry));
+    }
+  }
+  const yl = ys0 + sh;
+  out.push(...box(sw1 - 0.0008, 0.0068, sw1 - 0.0008, BB_IRON, { x, y: yl, z }));
+  for (const ry of FOUR) { const { nx, nz } = frame(ry); out.push(pane(0.0036, 0.0046, GOLD, x + nx * (sw1 / 2 - 0.0002), yl + 0.0011, z + nz * (sw1 / 2 - 0.0002), ry)); }
+  out.push(spire(sw1, 0.014, BB_IRON, { x, y: yl + 0.0068, z }));
+  out.push(ball(0.0013, GOLD, { x, y: yl + 0.0215, z }), rod(V(x, yl + 0.02, z), V(x, yl + 0.029, z), 0.0004, GOLD, 4), rod(V(x - 0.0022, yl + 0.0262, z), V(x + 0.0022, yl + 0.0262, z), 0.00035, GOLD, 3));
   return out;
 }
 
@@ -449,50 +609,185 @@ function crane(x: number, z: number, h: number, ry: number, c: number, jib: numb
 
 // ---------- Berlin: the Brandenburg Gate ----------
 
-// Twelve Doric columns in two rows making five passages, the widest in the
-// middle; the entablature with its triglyphs, the stepped attic with its
-// reliefs, the Quadriga in copper on top.
+// In sandstone on its two steps: twelve Doric columns in two rows making
+// five passages, the widest in the middle, the passages' sides walled
+// (framed relief panels on the walls); the entablature, its triglyphs and
+// metopes carved with centaurs and riders, guttae under the taenia, the
+// mutuled cornice; the attic with its long relief panel front and back,
+// smaller panels over the outer passages and at the ends; the stepped
+// pedestal and on it the Quadriga in verdigris copper: four horses abreast,
+// prancing, the chariot, Victoria with her wings spread, her staff raised
+// with its wreath, iron cross and eagle. Either side, joined by low walls,
+// the small guardhouses, each with a Doric portico of four columns front and
+// back under its own triglyph frieze (about 2.6 cells tall).
+const BG_STONE = 0xdac7a2, BG_CU = 0x6f9e88;
+// A triangle a, b, c (one face).
+function tri3(a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, col: number): G {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute([a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z], 3));
+  return P(g, col);
+}
+// A Doric frieze's carving along a face: triglyphs (with their grooves and
+// guttae) at the tangents ts, metopes with a relief between them. The face's
+// middle at (cx, cz), o out from it, facing ry; the frieze from y, fh tall.
+function doricFrieze(cx: number, cz: number, o: number, ry: number, ts: readonly number[], y: number, fh: number, S: number, s = 1): G[] {
+  const { nx, nz, tx, tz } = frame(ry), out: G[] = [], tw = 0.0026 * s;
+  const at = (t: number, off: number) => ({ x: cx + nx * (o + off) + tx * t, z: cz + nz * (o + off) + tz * t });
+  for (let i = 0; i < ts.length; i++) {
+    const t = ts[i]!;
+    out.push(...box(tw, fh - 0.0002, 0.0008, shade(S, 0.92), { ...at(t, 0.0002), y, ry }));
+    for (const g of [-tw / 6, tw / 6]) { const p = at(t + g, 0.00065); out.push(pane(0.00042 * s, fh - 0.0012 * s, shade(S, 0.7), p.x, y + 0.0004 * s, p.z, ry)); }
+    const r = at(t, 0.0005);
+    out.push(pane(tw, 0.0005 * s, shade(S, 0.86), r.x, y - 0.0012 * s, r.z, ry));
+    if (i === ts.length - 1) break;
+    // The metope: a smooth slab, a rider or a centaur on it.
+    const m = (t + ts[i + 1]!) / 2, mw = ts[i + 1]! - t - tw - 0.0004, a = at(m, 0.0001), b = at(m, 0.0003), d = i % 2 ? -1 : 1;
+    out.push(pane(mw, fh - 0.0012 * s, shade(S, 1.05), a.x, y + 0.0005 * s, a.z, ry));
+    out.push(pane(mw * 0.62, fh * 0.17, shade(S, 0.86), b.x, y + fh * 0.28, b.z, ry));
+    const c = at(m + d * mw * 0.16, 0.0003);
+    out.push(pane(mw * 0.18, fh * 0.32, shade(S, 0.86), c.x, y + fh * 0.42, c.z, ry));
+    for (const f of [-0.22, 0.22]) { const l = at(m + f * mw, 0.0003); out.push(pane(mw * 0.08, fh * 0.26, shade(S, 0.86), l.x, y + fh * 0.12, l.z, ry)); }
+  }
+  return out;
+}
+// Triglyph positions over the columns at xs and `k` between each pair (k
+// from the gap), plus one at each end at ±end.
+function triglyphsAt(xs: readonly number[], pitch: number, end?: number): number[] {
+  const out: number[] = end === undefined ? [] : [-end];
+  for (let i = 0; i < xs.length; i++) {
+    out.push(xs[i]!);
+    if (i < xs.length - 1) { const g = xs[i + 1]! - xs[i]!, n = Math.max(1, Math.round(g / pitch)); for (let k = 1; k < n; k++) out.push(xs[i]! + (g * k) / n); }
+  }
+  if (end !== undefined) out.push(end);
+  return out;
+}
+// A framed relief panel on a face: the frame, the sunk field, n figures in a procession.
+function reliefPanel(x: number, y: number, z: number, ry: number, w: number, h: number, n: number, S: number): G[] {
+  const { nx, nz, tx, tz } = frame(ry), out: G[] = [
+    pane(w, h, shade(S, 1.05), x + nx * 0.0002, y, z + nz * 0.0002, ry),
+    pane(w - 0.0012, h - 0.0012, shade(S, 0.9), x + nx * 0.0004, y + 0.0006, z + nz * 0.0004, ry),
+  ];
+  for (let k = 0; k < n; k++) {
+    const t = -w / 2 + 0.0012 + ((k + 0.5) * (w - 0.0024)) / n, fx = x + nx * 0.0006 + tx * t, fz = z + nz * 0.0006 + tz * t;
+    if (k % 3 === 1) out.push(pane(((w - 0.0024) / n) * 0.7, (h - 0.0012) * 0.3, shade(S, 1.08), fx + tx * ((w - 0.0024) / n) * 0.3, y + 0.0006 + h * 0.18, fz + tz * ((w - 0.0024) / n) * 0.3, ry));
+    out.push(pane(((w - 0.0024) / n) * 0.3, (h - 0.0012) * 0.78, shade(S, 1.08), fx, y + 0.0009, fz, ry));
+  }
+  return out;
+}
+
 function brandenburgGate(): G[] {
-  const out: G[] = [], S = 0xddd2bc, CU = 0x6f9e88;
-  // The gate: twelve columns, walls between the pairs, the entablature, the attic.
-  const xs = [-0.042, -0.0265, -0.0105, 0.0105, 0.0265, 0.042], zf = 0.0095, ch = 0.034, cr = 0.0021, y0 = 0.004;
-  out.push(...steps(0.108, 0.034, 2, 0.002, 0.0015, shade(S, 0.92), {}).parts);
+  const out: G[] = [], S = BG_STONE, S2 = shade(S, 0.9), LT = shade(S, 1.05), CU = BG_CU;
+  // ----- the gate: its steps, twelve columns, the walled passages -----
+  const st = steps(0.104, 0.036, 2, 0.0022, 0.0016, S2, {}, S), y0 = st.y;
+  const xs = [-0.044, -0.0278, -0.011, 0.011, 0.0278, 0.044], zf = 0.0108, cr = 0.0024, ch = 0.039, ye = y0 + ch;
   for (const x of xs) {
     for (const z of [-zf, zf]) out.push(...column(x, y0, z, cr, ch, S, 'doric'));
-    out.push(...box(0.0034, ch - 0.0006, 2 * zf - 0.004, shade(S, 0.95), { x, y: y0 }));
+    const wh = ch - 0.0048;
+    out.push(...box(0.0042, wh, 2 * zf - 0.002, shade(S, 0.97), { x, y: y0 }));
+    out.push(...box(0.0048, 0.0012, 2 * zf - 0.0036, LT, { x, y: y0 + wh - 0.0022 }));
+    out.push(...box(0.0048, 0.0016, 2 * zf - 0.0036, S2, { x, y: y0 }));
+    for (const s of [-1, 1]) out.push(...reliefPanel(x + s * 0.0021, y0 + 0.008, 0, s > 0 ? Math.PI / 2 : -Math.PI / 2, 0.0128, 0.016, 4, S));
   }
-  const ye = y0 + ch, ew = 0.098, ed = 0.03;
-  out.push(...box(ew, 0.004, ed, S, { y: ye }));
-  out.push(...box(ew + 0.001, 0.0045, ed + 0.001, shade(S, 1.02), { y: ye + 0.004 }));
-  for (const s of [-1, 1]) for (let k = 0; k < 26; k++) out.push(pane(0.0016, 0.0045, shade(S, 0.82), -ew / 2 + 0.0019 + k * ((ew - 0.0038) / 25), ye + 0.004, s * (ed / 2 + 0.0008), s > 0 ? 0 : Math.PI));
-  out.push(...box(ew + 0.005, 0.0022, ed + 0.005, shade(S, 1.04), { y: ye + 0.0085 }, shade(S, 0.95)));
-  const ya = ye + 0.0107;
-  out.push(...box(ew - 0.004, 0.006, ed - 0.004, S, { y: ya }));
-  out.push(...box(0.05, 0.004, ed - 0.006, shade(S, 1.02), { y: ya + 0.006 }));
+  // ----- the entablature -----
+  const ew = 0.1, ed = 0.03;
+  out.push(...box(ew, 0.0046, ed, S, { y: ye }));
+  out.push(...box(ew + 0.0006, 0.0007, ed + 0.0006, LT, { y: ye + 0.0042 }));
+  const fy = ye + 0.0049, fh = 0.0056, fw = ew - 0.0006, fd = ed - 0.0006;
+  out.push(...box(fw, fh, fd, S, { y: fy }));
+  const tf = triglyphsAt(xs, 0.0054, fw / 2 - 0.0016), ts = triglyphsAt([-zf, zf], 0.0054, fd / 2 - 0.0016);
+  for (const ry of [0, Math.PI]) out.push(...doricFrieze(0, 0, fd / 2, ry, tf, fy, fh, S));
+  for (const ry of [Math.PI / 2, -Math.PI / 2]) out.push(...doricFrieze(0, 0, fw / 2, ry, ts, fy, fh, S));
+  out.push(...box(ew + 0.003, 0.0012, ed + 0.003, S2, { y: fy + fh }));
+  out.push(...box(ew + 0.005, 0.0024, ed + 0.005, LT, { y: fy + fh + 0.0012 }, S));
+  // ----- the attic: its reliefs, the stepped pedestal -----
+  const ya = fy + fh + 0.0036, aw = ew - 0.004, ad = ed - 0.004, ah = 0.0095;
+  out.push(...box(ew - 0.002, 0.0014, ed - 0.002, S2, { y: ya }));
+  out.push(...box(aw, ah, ad, S, { y: ya + 0.0014 }));
+  for (const s of [1, -1]) {
+    const ry = s > 0 ? 0 : Math.PI, z = s * ad / 2;
+    out.push(...reliefPanel(0, ya + 0.0028, z, ry, 0.05, 0.0068, 15, S));
+    for (const x of [-0.036, 0.036]) out.push(...reliefPanel(x, ya + 0.0034, z, ry, 0.016, 0.0056, 4, S));
+    out.push(...reliefPanel(s * aw / 2, ya + 0.0034, 0, s > 0 ? Math.PI / 2 : -Math.PI / 2, 0.016, 0.0056, 4, S));
+  }
+  const yac = ya + 0.0014 + ah;
+  out.push(...box(aw + 0.0012, 0.0016, ad + 0.0012, LT, { y: yac }));
+  out.push(...box(0.042, 0.0045, 0.02, S, { y: yac + 0.0016 }));
+  for (const s of [1, -1]) out.push(...reliefPanel(0, yac + 0.0024, s * 0.01, s > 0 ? 0 : Math.PI, 0.03, 0.0028, 9, S));
+  out.push(...box(0.044, 0.001, 0.022, LT, { y: yac + 0.0061 }));
+  out.push(...box(0.032, 0.0022, 0.016, S2, { y: yac + 0.0071 }, S));
+  const yq = yac + 0.0093;
+
+  // ----- the Quadriga -----
+  for (const [x, rear] of [[-0.0114, true], [-0.0038, false], [0.0038, false], [0.0114, true]] as const) out.push(...horse(x, 0.0022, yq, 0.011, CU, rear ? (x < 0 ? -1 : 1) : 0));
+  const CU2 = shade(CU, 0.85), zc = -0.0058;
+  // The chariot: its body, shell-fronted, two wheels, the pole.
+  out.push(...box(0.0086, 0.0042, 0.0042, CU2, { y: yq + 0.0016, z: zc }));
+  out.push(P(new THREE.CylinderGeometry(0.0043, 0.0043, 0.0042, 8, 1, true, -Math.PI / 2, Math.PI).rotateY(0).translate(0, 0.0021, 0), CU, { y: yq + 0.0016, z: zc + 0.0021, sz: 0.5 }));
+  for (const s of [-1, 1]) out.push(P(new THREE.CylinderGeometry(0.0026, 0.0026, 0.0006, 10).rotateZ(Math.PI / 2), CU2, { x: s * 0.0048, y: yq + 0.0026, z: zc }));
+  out.push(rod(V(0, yq + 0.0028, zc + 0.002), V(0, yq + 0.0062, 0.0035), 0.0003, CU2, 4));
+  // Victoria: her robe, her body and head, wings spread, the staff raised in her right hand.
+  const vy = yq + 0.0042, vz2 = zc - 0.0002;
+  out.push(cyl(0.0021, 0.001, 0.0088, 8, CU, { y: vy, z: vz2 }));
+  out.push(drumC(0.001, 0.0008, 0.0034, 6, CU, { y: vy + 0.0088, z: vz2 }));
+  out.push(ball(0.00085, CU, { y: vy + 0.0129, z: vz2 }, 1));
   for (const s of [-1, 1]) {
-    for (let k = 0; k < 5; k++) out.push(pane(0.012, 0.0036, shade(S, 0.88), -0.04 + k * 0.02, ya + 0.0012, s * ((ed - 0.004) / 2 + 0.0003), s > 0 ? 0 : Math.PI));
-    out.push(pane(0.044, 0.0026, shade(S, 0.86), 0, ya + 0.0068, s * ((ed - 0.006) / 2 + 0.0003), s > 0 ? 0 : Math.PI));
+    const sh = V(s * 0.0008, vy + 0.011, vz2 - 0.0006);
+    out.push(tri3(sh, V(s * 0.0036, vy + 0.0168, vz2 - 0.0026), V(s * 0.0022, vy + 0.0078, vz2 - 0.002), shade(CU, 1.06)));
+    out.push(tri3(sh, V(s * 0.0024, vy + 0.0154, vz2 - 0.003), V(s * 0.0036, vy + 0.0168, vz2 - 0.0026), shade(CU, 0.95)));
   }
-  // The Quadriga: four horses abreast, the chariot, Victoria with her staff and its wreath.
-  const yq = ya + 0.01;
-  out.push(...box(0.02, 0.0025, 0.01, shade(S, 0.95), { y: yq }));
-  for (const x of [-0.0066, -0.0022, 0.0022, 0.0066]) out.push(...horse(x, 0.002, yq + 0.0025, 0.0062, CU));
-  out.push(...box(0.008, 0.004, 0.005, shade(CU, 0.9), { y: yq + 0.0025, z: -0.003 }));
-  out.push(drumC(0.0014, 0.0014, 0.0006, 8, shade(CU, 0.85), { x: -0.0042, y: yq + 0.0025, z: -0.003 }));
-  out.push(...figure(0, -0.003, 0.011, CU, { y: yq + 0.006, skin: CU, arm: 1 }));
-  out.push(rod(V(0.0018, yq + 0.012, -0.003), V(0.0022, yq + 0.024, -0.0025), 0.0003, shade(CU, 0.9), 3), P(new THREE.TorusGeometry(0.0018, 0.0004, 4, 10), shade(CU, 1.1), { x: 0.0022, y: yq + 0.025, z: -0.0025 }));
-  // (About 2.5 cells tall on its pad.)
-  for (const g of out) g.scale(1.13, 1.13, 1.13);
-  return [pad(), ...out];
+  out.push(rod(V(0.0009, vy + 0.0115, vz2), V(0.0022, vy + 0.0168, vz2 + 0.0004), 0.00035, CU, 4));
+  out.push(rod(V(-0.0009, vy + 0.0112, vz2), V(-0.0016, vy + 0.0072, vz2 + 0.0026), 0.00035, CU, 4));
+  out.push(rod(V(-0.0016, vy + 0.0072, vz2 + 0.0026), V(-0.0038, yq + 0.0085, 0.006), 0.00012, CU2, 3), rod(V(-0.0016, vy + 0.0072, vz2 + 0.0026), V(0.0038, yq + 0.0085, 0.006), 0.00012, CU2, 3));
+  const sx = 0.0024, sTop = vy + 0.0215;
+  out.push(rod(V(sx, vy + 0.0005, vz2 + 0.0004), V(sx, sTop, vz2 + 0.0004), 0.00025, CU2, 4));
+  out.push(P(new THREE.TorusGeometry(0.0022, 0.00042, 4, 12), shade(CU, 1.08), { x: sx, y: sTop + 0.0022, z: vz2 + 0.0004 }));
+  out.push(...box(0.0024, 0.0006, 0.0004, 0x3a3f3c, { x: sx, y: sTop + 0.0019, z: vz2 + 0.0004 }), ...box(0.0006, 0.0024, 0.0004, 0x3a3f3c, { x: sx, y: sTop + 0.001, z: vz2 + 0.0004 }));
+  out.push(ball(0.0007, CU, { x: sx, y: sTop + 0.0052, z: vz2 + 0.0004 }));
+  for (const s of [-1, 1]) out.push(tri3(V(sx, sTop + 0.0052, vz2 + 0.0004), V(sx + s * 0.0028, sTop + 0.0068, vz2 + 0.0002), V(sx + s * 0.0016, sTop + 0.0042, vz2 + 0.0004), CU));
+
+  // ----- the guardhouses either side, the walls joining them -----
+  for (const s of [-1, 1]) {
+    const gx = s * 0.063, gs = steps(0.02, 0.054, 2, 0.0016, 0.0012, S2, { x: gx }, S), gy = gs.y, gh = 0.025, gd = 0.05, gw = 0.0172;
+    out.push(...box(0.008, 0.021, 0.008, shade(S, 0.97), { x: s * 0.0495 }), ...box(0.0088, 0.0014, 0.0088, LT, { x: s * 0.0495, y: 0.021 }));
+    out.push(...box(0.0145, gh, 0.032, S, { x: gx, y: gy }));
+    // Its blind windows and door, to the side and to the gate.
+    for (const t of [-0.008, 0.008]) out.push(...reliefPanel(gx + s * 0.00725, gy + 0.008, t, s > 0 ? Math.PI / 2 : -Math.PI / 2, 0.0056, 0.009, 1, S));
+    out.push(pane(0.0062, 0.013, 0x4a3d30, gx + s * 0.0075, gy, 0, s > 0 ? Math.PI / 2 : -Math.PI / 2), pane(0.0076, 0.0012, LT, gx + s * 0.0076, gy + 0.013, 0, s > 0 ? Math.PI / 2 : -Math.PI / 2));
+    const cxs = [-0.0063, -0.0021, 0.0021, 0.0063].map((d) => gx + d);
+    for (const zz of [-0.022, 0.022]) {
+      for (const x of cxs) out.push(...column(x, gy, zz, 0.00125, gh, S, 'doric'));
+      out.push(pane(0.0055, 0.012, 0x4a3d30, gx, gy, zz > 0 ? 0.0161 : -0.0161, zz > 0 ? 0 : Math.PI));
+    }
+    const ge = gy + gh;
+    out.push(...box(gw, 0.0026, gd, S, { x: gx, y: ge }));
+    out.push(...box(gw + 0.0004, 0.0005, gd + 0.0004, LT, { x: gx, y: ge + 0.0023 }));
+    const gfy = ge + 0.0028, gfh = 0.0034;
+    out.push(...box(gw - 0.0004, gfh, gd - 0.0004, S, { x: gx, y: gfy }));
+    for (const ry of [0, Math.PI]) out.push(...doricFrieze(gx, 0, (gd - 0.0004) / 2, ry, triglyphsAt(cxs.map((x) => (x - gx) * (ry === 0 ? 1 : -1)).sort((a, b) => a - b), 0.004, (gw - 0.0004) / 2 - 0.0011), gfy, gfh, S, 0.7));
+    for (const ry of [Math.PI / 2, -Math.PI / 2]) out.push(...doricFrieze(gx, 0, (gw - 0.0004) / 2, ry, triglyphsAt([-0.022, 0.022], 0.0042, (gd - 0.0004) / 2 - 0.0011), gfy, gfh, S, 0.7));
+    out.push(...box(gw + 0.0024, 0.0016, gd + 0.0024, LT, { x: gx, y: gfy + gfh }, S));
+    out.push(...box(gw - 0.002, 0.0035, gd - 0.006, S, { x: gx, y: gfy + gfh + 0.0016 }), ...box(gw - 0.0012, 0.0008, gd - 0.0052, LT, { x: gx, y: gfy + gfh + 0.0051 }));
+  }
+  return [pad(), ...st.parts, ...out];
 }
-// A horse, l long, facing +z, its hooves at y.
-function horse(x: number, z: number, y: number, l: number, c: number): G[] {
-  return [
-    ball(l * 0.24, c, { x, y: y + l * 0.55, z, sz: 1.9, sx: 0.8 }),
-    rod(V(x, y + l * 0.62, z + l * 0.32), V(x, y + l * 0.98, z + l * 0.5), l * 0.09, c, 4),
-    ball(l * 0.1, c, { x, y: y + l * 0.98, z: z + l * 0.58, sz: 1.6 }),
-    ...[[-0.06, 0.28], [0.06, 0.28], [-0.06, -0.28], [0.06, -0.28]].map(([dx, dz]) => rod(V(x + dx! * l, y, z + dz! * l + (dz! > 0 ? l * 0.1 : 0)), V(x + dx! * l, y + l * 0.5, z + dz! * l), l * 0.045, shade(c, 0.9), 3)),
+// A horse, l long, facing +z, its hooves at y: its body, neck and head,
+// ears, tail and legs; `rear` lifts a foreleg (that side: -1 or 1, 0 none).
+function horse(x: number, z: number, y: number, l: number, c: number, rear = 0): G[] {
+  const c2 = shade(c, 0.9), p = (dx: number, dy: number, dz: number) => V(x + dx * l, y + dy * l, z + dz * l);
+  const out: G[] = [
+    P(new THREE.SphereGeometry(1, 8, 5), c, { x, y: y + l * 0.62, z, sx: l * 0.16, sy: l * 0.19, sz: l * 0.42 }),
+    rod(p(0, 0.66, 0.26), p(0, 0.98, 0.44), l * 0.11, c, 5, l * 0.07),
+    rod(p(0, 1.0, 0.42), p(0, 0.84, 0.66), l * 0.075, c, 5, l * 0.045),
+    rod(p(0, 0.98, 0.3), p(0, 0.72, 0.18), l * 0.025, c2, 3),
+    rod(p(0, 0.64, -0.4), p(0, 0.3, -0.5), l * 0.05, c2, 4, l * 0.03),
   ];
+  for (const s of [-1, 1]) out.push(cone(l * 0.025, l * 0.09, 3, c2, { x: x + s * l * 0.035, y: y + l * 1.03, z: z + l * 0.43 }));
+  for (const s of [-1, 1]) {
+    out.push(rod(p(s * 0.08, 0.55, -0.28), p(s * 0.08, 0.26, -0.36), l * 0.05, c2, 4, l * 0.035), rod(p(s * 0.08, 0.26, -0.36), p(s * 0.08, 0, -0.3), l * 0.032, c2, 4));
+    if (s === rear) out.push(rod(p(s * 0.08, 0.55, 0.3), p(s * 0.08, 0.38, 0.48), l * 0.045, c2, 4, l * 0.035), rod(p(s * 0.08, 0.38, 0.48), p(s * 0.08, 0.28, 0.4), l * 0.032, c2, 4));
+    else out.push(rod(p(s * 0.08, 0.55, 0.3), p(s * 0.08, 0, 0.33), l * 0.045, c2, 4, l * 0.032));
+  }
+  return out;
 }
 
 // ---------- Bavaria: Neuschwanstein ----------
