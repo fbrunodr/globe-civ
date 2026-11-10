@@ -1,6 +1,6 @@
 // The statues of the wonders that are figures (the Colossus, Zeus on his
-// throne, Liberty, Christ the Redeemer): meshes the author made with Meshy
-// (assets/wonders), packed by scripts/statues.py: do not edit by hand.
+// throne, Liberty, Christ the Redeemer): meshes the author made with Meshy,
+// trimmed to the figure and packed (generated data: do not edit by hand).
 // Each: its vertices as int16 (x, y, z; times s, the base at y = 0, the
 // front +z) and its triangles as uint16 indices, both base64.
 
