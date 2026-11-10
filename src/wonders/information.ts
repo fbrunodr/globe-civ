@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { prism } from '../houseKit.ts';
 import {
-  P, V, box, cone, cyl, drumC, flat, pane, rnd, rod, shade, type G, type Models,
+  CRAG_DEPTH, P, V, box, cone, cyl, drumC, flat, pane, rod, shade, type G, type Models,
 } from './kit.ts';
 
 const PAVING = 0xd8d2c4;
@@ -140,63 +140,100 @@ function burjKhalifa(): G[] {
 
 // ---------- Guizhou ----------
 
-// FAST, the five-hundred-metre dish: its reflector of triangular panels set
-// into a bowl among karst peaks, the ring beam at its rim; six towers on the
-// hills round it, their cables holding the receiver cabin over the dish,
-// tie cables down to the dish.
+// FAST, the five-hundred-metre dish, as it stands in its hollow (the hills
+// round it are the game's own): its reflector a spherical cap of triangular
+// panels, open to the sky, its steel underside showing; the white truss of
+// its ring beam round the rim, held up on a ring of tall slender columns
+// whose feet run on down into the hill (CRAG_DEPTH), so on a slope none
+// stands short of the ground; six white lattice towers round it, their legs
+// as deep, their cables holding the receiver cabin over the dish, its tie
+// cables down to the panels; two service sheds.
+// (Its dish, shared with the clearance below: radius, angle, the sphere's
+// radius, the lowest panel's height.)
+const FAST_A = 0.056, FAST_THETA = (56 * Math.PI) / 180, FAST_RC = FAST_A / Math.sin(FAST_THETA), FAST_Y0 = 0.012;
+// How high the dish's underside is over the point (x, z) of the model, or
+// null off it (wonderModels.ts CLEARANCE: the hill must keep under it).
+export function fastUnderside(x: number, z: number): number | null {
+  const d = Math.hypot(x, z), back = FAST_RC + 0.0016;
+  return d > FAST_A ? null : FAST_Y0 + FAST_RC - Math.sqrt(back * back - d * d);
+}
 function fastTelescope(): G[] {
-  const r = rnd(41), out: G[] = [];
-  const PANEL = 0xd6dde2, PANEL2 = 0xb9c3ca, BEAM = 0x8a929a, FOREST = 0x4f7a3a, ROCK = 0x9a978e;
-  // The reflector: a spherical cap, its panels in two tones.
-  const a = 0.054, theta = (56 * Math.PI) / 180, Rc = a / Math.sin(theta), sag = Rc * (1 - Math.cos(theta)), y0 = 0.0012, yr = y0 + sag;
-  const cap = new THREE.SphereGeometry(Rc, 44, 11, 0, Math.PI * 2, Math.PI - theta, theta).translate(0, Rc + y0, 0);
-  out.push(P(someTris(cap, (i) => (i + Math.floor(i / 88)) % 2 === 0), PANEL), P(someTris(cap, (i) => (i + Math.floor(i / 88)) % 2 === 1), PANEL2));
-  // Its ring beam, and the skirt of ground from the rim down to the bowl's floor.
-  out.push(P(new THREE.TorusGeometry(a, 0.0011, 4, 48).rotateX(Math.PI / 2), BEAM, { y: yr }));
-  out.push(cyl(a + 0.016, a + 0.0008, yr - 0.0003, 36, shade(FOREST, 1.05), {}));
-  for (let i = 0; i < 48; i++) {
-    const t = (i / 48) * Math.PI * 2;
-    out.push(rod(V(Math.cos(t) * a, yr, Math.sin(t) * a), V(Math.cos(t) * (a + 0.006), 0.0006 + yr * 0.55, Math.sin(t) * (a + 0.006)), 0.0004, BEAM, 3));
-  }
-  // The ring of karst peaks hemming the bowl in, higher than its rim: steep, wooded, rock showing on some.
-  const towers = Array.from({ length: 6 }, (_, k) => (k / 6) * Math.PI * 2 + Math.PI / 6);
-  const peak = (x: number, z: number, rr: number, hh: number, c: number) =>
-    P(new THREE.SphereGeometry(rr, 8, 5, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, hh / rr, 1), c, { x, z, ry: r() * 6 });
-  for (let i = 0; i < 26; i++) {
-    const t = ((i + r() * 0.5) / 26) * Math.PI * 2;
-    const rr = 0.0085 + r() * 0.0035, d = Math.min(a + 0.01 + r() * 0.005, 0.0775 - rr);
-    out.push(peak(Math.cos(t) * d, Math.sin(t) * d, rr, yr + 0.004 + r() * 0.014, r() < 0.18 ? shade(ROCK, 0.9 + r() * 0.2) : shade(FOREST, 0.85 + r() * 0.3)));
-  }
-  // The towers on their peaks, the cables to the cabin, the cabin.
-  const cabin = V(0, yr + 0.004, 0), tops: THREE.Vector3[] = [];
-  for (let k = 0; k < 6; k++) {
-    const t = towers[k]!, R = 0.064, x = Math.cos(t) * R, z = Math.sin(t) * R, base = yr + 0.008, h = 0.036;
-    out.push(peak(x, z, 0.0105, base + 0.002, shade(FOREST, 0.95 + r() * 0.1)));
-    for (const [ux, uz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]] as const) out.push(rod(V(x + ux * 0.0028, base - 0.002, z + uz * 0.0028), V(x + ux * 0.001, base + h, z + uz * 0.001), 0.00035, 0xe6e6e0, 3));
-    for (let lv = 1; lv <= 4; lv++) {
-      const f = lv / 5, s = 0.0028 - f * 0.0018, yy = base - 0.002 + f * (h + 0.002);
-      for (const [p, q] of [[[-1, -1], [1, -1]], [[1, -1], [1, 1]], [[1, 1], [-1, 1]], [[-1, 1], [-1, -1]]] as const) out.push(rod(V(x + p[0] * s, yy, z + p[1] * s), V(x + q[0] * s, yy, z + q[1] * s), 0.00022, 0xe6e6e0, 3));
+  const out: G[] = [];
+  const PANEL = 0xd3d9de, PANEL2 = 0xcad0d5, PANEL3 = 0xdadfe3, BACK = 0xa2a8ae, WHITE = 0xeceeea, COLUMN = 0xc9cac5, CABLE = 0x3a3c3e;
+  const FOOT = -CRAG_DEPTH + 0.004;
+  // The reflector: a spherical cap (56° from its axis to the rim), its panels
+  // in three near tones; its steel back a little below it.
+  const a = FAST_A, theta = FAST_THETA, Rc = FAST_RC, sag = Rc * (1 - Math.cos(theta)), y0 = FAST_Y0, yr = y0 + sag;
+  const cap = new THREE.SphereGeometry(Rc, 48, 10, 0, Math.PI * 2, Math.PI - theta, theta).translate(0, Rc + y0, 0);
+  const tone = (i: number) => { const h = Math.sin(i * 12.9898) * 43758.5453; return Math.floor((h - Math.floor(h)) * 5); };
+  out.push(P(someTris(cap, (i) => tone(i) <= 2), PANEL), P(someTris(cap, (i) => tone(i) === 3), PANEL2), P(someTris(cap, (i) => tone(i) === 4), PANEL3));
+  const back = Rc + 0.0016;
+  out.push(P(new THREE.SphereGeometry(back, 32, 7, 0, Math.PI * 2, Math.PI - Math.asin(a / back), Math.asin(a / back)).translate(0, Rc + y0, 0), BACK));
+  // Its back frame: ribs down the underside from the rim toward the middle.
+  const under = (d: number) => y0 + Rc - Math.sqrt(back * back - d * d) - 0.0004;
+  for (let k = 0; k < 16; k++) {
+    const t = (k / 16) * Math.PI * 2, c = Math.cos(t), s = Math.sin(t);
+    for (let j = 0; j < 3; j++) {
+      const d0 = a * (1 - j / 3), d1 = a * (1 - (j + 1) / 3) + 0.004;
+      out.push(rodO(V(c * d0, under(d0), s * d0), V(c * d1, under(d1), s * d1), 0.0005, shade(BACK, 0.8), 3));
     }
-    out.push(drumC(0.0016, 0.0016, 0.0016, 6, 0xc04a3a, { x, y: base + h, z }));
-    const tp = V(x, base + h + 0.0008, z);
-    tops.push(tp);
-    out.push(rod(tp, cabin, 0.00028, 0x2a2a2a, 3));
   }
-  // The cabin: a hexagonal drum under its dome, its feed below; tie cables down to the dish.
-  out.push(drumC(0.004, 0.004, 0.0024, 6, 0xe8e8e2, { y: cabin.y - 0.0012 }), P(new THREE.SphereGeometry(0.004, 6, 3, 0, Math.PI * 2, 0, Math.PI / 2), 0xc8ccd0, { y: cabin.y + 0.0012 }));
-  out.push(cone(0.0022, 0.003, 6, 0x6a6a6a, { y: cabin.y - 0.0042 }));
+  // The ring beam: a white truss round the rim, its chords and diagonals.
+  const ringR = a + 0.0016, rb = yr - 0.0036;
+  const chord = (rr: number, y: number, tr: number) => P(new THREE.TorusGeometry(rr, tr, 3, 60).rotateX(Math.PI / 2), WHITE, { y });
+  out.push(chord(a + 0.0002, yr + 0.0003, 0.0006), chord(a + 0.0032, yr + 0.0001, 0.0006), chord(ringR + 0.0008, rb, 0.0006));
+  const NZ = 72;
+  for (let i = 0; i < NZ; i++) {
+    const t0 = (i / NZ) * Math.PI * 2, t1 = ((i + 1) / NZ) * Math.PI * 2, R0 = a + 0.0032, R1 = ringR + 0.0008;
+    const [p, q] = i % 2 ? [V(Math.cos(t0) * R0, yr, Math.sin(t0) * R0), V(Math.cos(t1) * R1, rb, Math.sin(t1) * R1)] : [V(Math.cos(t0) * R1, rb, Math.sin(t0) * R1), V(Math.cos(t1) * R0, yr, Math.sin(t1) * R0)];
+    out.push(rodO(p, q, 0.0003, WHITE, 3));
+  }
+  // The columns holding the ring up, their feet run on into the ground.
+  const NC = 40;
+  for (let i = 0; i < NC; i++) {
+    const t = ((i + 0.5) / NC) * Math.PI * 2, x = Math.cos(t) * (ringR + 0.0008), z = Math.sin(t) * (ringR + 0.0008);
+    out.push(P(new THREE.CylinderGeometry(0.0009, 0.0012, rb - FOOT, 4, 1, true).translate(0, (rb + FOOT) / 2, 0), COLUMN, { x, z, ry: -t + Math.PI / 4 }));
+    out.push(drumC(0.0016, 0.0016, 0.0012, 4, WHITE, { x, y: rb - 0.0012, z, ry: -t + Math.PI / 4 }));
+  }
+  // The six lattice towers round the dish: four legs tapering to the top
+  // (running on down into the ground), a zigzag lattice on each face, a
+  // platform at the head; the cables to the cabin.
+  const cabin = V(0, yr + 0.009, 0), towerTop = 0.08, R = 0.068;
   for (let k = 0; k < 6; k++) {
-    const t = (k / 6) * Math.PI * 2, d = 0.02, yd = y0 + Rc - Math.sqrt(Rc * Rc - d * d);
-    out.push(rod(V(Math.cos(t) * 0.003, cabin.y - 0.0012, Math.sin(t) * 0.003), V(Math.cos(t) * d, yd + 0.0004, Math.sin(t) * d), 0.0002, 0x2a2a2a, 3));
+    const t = (k / 6) * Math.PI * 2 + Math.PI / 6, x = Math.cos(t) * R, z = Math.sin(t) * R;
+    const ex = V(Math.cos(t), 0, Math.sin(t)), ez = V(-Math.sin(t), 0, Math.cos(t));
+    const half = (y: number) => 0.0012 + (0.0036 - 0.0012) * (1 - y / towerTop);
+    const at = (y: number, ux: number, uz: number) => V(x, y, z).addScaledVector(ex, ux * half(y)).addScaledVector(ez, uz * half(y));
+    const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]] as const;
+    for (const [ux, uz] of corners) out.push(rodO(at(FOOT, ux, uz), at(towerTop, ux, uz), 0.00042, WHITE, 4));
+    const L = 9, ys = Array.from({ length: L + 1 }, (_, i) => -0.012 + (i / L) * (towerTop + 0.012));
+    for (let lv = 0; lv < L; lv++) {
+      const y = ys[lv]!, y2 = ys[lv + 1]!;
+      for (let f = 0; f < 4; f++) {
+        const [p, q] = [corners[f]!, corners[(f + 1) % 4]!];
+        if (lv > 0) out.push(rodO(at(y, p[0], p[1]), at(y, q[0], q[1]), 0.00024, WHITE, 3));
+        out.push(lv % 2 ? rodO(at(y, p[0], p[1]), at(y2, q[0], q[1]), 0.0002, WHITE, 3) : rodO(at(y, q[0], q[1]), at(y2, p[0], p[1]), 0.0002, WHITE, 3));
+      }
+    }
+    out.push(...box(0.0034, 0.0016, 0.0034, 0xb8bcc0, { x, y: towerTop, z, ry: -t }, 0xd0d3d6));
+    const tp = V(x, towerTop + 0.0012, z);
+    out.push(rod(tp, cabin.clone().addScaledVector(ex, 0.003), 0.0003, CABLE, 3));
   }
-  // Lesser peaks beyond, to the site's edge.
-  for (let i = 0; i < 60; i++) {
-    const x = (r() - 0.5) * 0.136, z = (r() - 0.5) * 0.136, d = Math.hypot(x, z);
-    if (d < a + 0.024) continue;
-    if (towers.some((u) => Math.hypot(x - Math.cos(u) * 0.064, z - Math.sin(u) * 0.064) < 0.014)) continue;
-    const rr = 0.005 + r() * 0.006;
-    if (Math.max(Math.abs(x), Math.abs(z)) > 0.0775 - rr) continue;
-    out.push(peak(x, z, rr, rr * (1.4 + r() * 1.4), r() < 0.2 ? shade(ROCK, 0.9 + r() * 0.2) : shade(FOREST, 0.85 + r() * 0.3)));
+  // The cabin: a hexagonal drum under its dome, its feed below, the cable
+  // net round it; tie cables down to the dish.
+  out.push(drumC(0.004, 0.004, 0.0026, 6, 0xe8e8e2, { y: cabin.y - 0.0013 }), P(new THREE.SphereGeometry(0.004, 6, 2, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.5, 1), 0xc8ccd0, { y: cabin.y + 0.0013 }));
+  out.push(P(new THREE.TorusGeometry(0.0046, 0.0004, 3, 12).rotateX(Math.PI / 2), 0x9aa0a6, { y: cabin.y }));
+  out.push(P(new THREE.ConeGeometry(0.0024, 0.0034, 6, 1, true).rotateX(Math.PI).translate(0, -0.0017, 0), 0x6a6a6a, { y: cabin.y - 0.0013 }));
+  for (let k = 0; k < 6; k++) {
+    const t = (k / 6) * Math.PI * 2, d = 0.024, yd = y0 + Rc - Math.sqrt(Rc * Rc - d * d);
+    out.push(rod(V(Math.cos(t) * 0.0046, cabin.y - 0.0013, Math.sin(t) * 0.0046), V(Math.cos(t) * d, yd + 0.0004, Math.sin(t) * d), 0.00018, CABLE, 3));
+  }
+  // Two service sheds by the dish, each on a concrete plinth run on into the
+  // ground (a terrace's wall where the hill falls away): the blue-roofed one, a white one.
+  for (const [t, w, d, roof] of [[Math.PI / 4 + 0.02, 0.016, 0.0065, 0x4f78b0], [Math.PI * 1.25 + 0.05, 0.011, 0.006, 0xc9ccce]] as const) {
+    const rr = 0.07, x = Math.cos(t) * rr, z = Math.sin(t) * rr;
+    out.push(...box(w, 0.0055, d, 0xe4e2dc, { x, z, ry: -t + Math.PI / 2 }, roof));
+    out.push(P(new THREE.CylinderGeometry(Math.SQRT1_2, Math.SQRT1_2, 1, 4, 1, true).rotateY(Math.PI / 4).translate(0, 0.5, 0).scale(w + 0.0012, -FOOT, d + 0.0012), 0x9c9a92, { x, y: FOOT, z, ry: -t + Math.PI / 2 }));
   }
   return out;
 }

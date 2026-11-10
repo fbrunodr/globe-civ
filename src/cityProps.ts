@@ -14,7 +14,7 @@ import * as THREE from 'three';
 import type { Game, City } from './game.ts';
 import { USE, BORDER_MAX, wonderBeside, isWonderKey, type ImprovementKey, type EraIndex } from './cities.ts';
 import { ROOFS, buildingEntry, isFloraModel, isLotModel, placedGeometry, waterRule, type BuildingKind, type LotModelKind, type PlacedKind } from './buildingCatalog.ts';
-import { ON_BARE_GROUND, ON_SUMMIT, groundsBox, isWonderModelKind, landHalf, seaScale, siteModelOf, wonderGrounds, wonderModelKind, wonderPieces, type SiteModel, type WonderGrounds, type WonderModelKind } from './wonderModels.ts';
+import { CLEARANCE, ON_BARE_GROUND, ON_SUMMIT, groundsBox, isWonderModelKind, landHalf, seaScale, siteModelOf, wonderGrounds, wonderModelKind, wonderPieces, type SiteModel, type WonderGrounds, type WonderModelKind } from './wonderModels.ts';
 import { ROUND_SIDES } from './wonders/kit.ts';
 import type { TerrainHole } from './terrainMaterial.ts';
 import { CATALOG, type CatalogKind } from './propCatalog.ts';
@@ -1261,8 +1261,25 @@ export class CityProps {
     // highest corners, sunk into the slope: no foundation; barely sunk, so
     // what lies flat on its ground (a garden's lawns and gravel) shows.)
     const bare = isWonderModelKind(kind) && ON_BARE_GROUND.has(kind.slice('wonder|'.length));
-    const base = bare ? (low + high) / 2 : high;
+    let base = bare ? (low + high) / 2 : high;
     const sink = (bare ? 0.00002 : 0.00012) * this.scale, shade = 0.92 + 0.12 * rand();
+    // (One with something held up over the ground, as FAST's dish: raised
+    // until the ground keeps under it everywhere, a sixteenth of a town cell
+    // to spare. Its underside sampled over the model every few thousandths.)
+    const m = isWonderModelKind(kind) ? (kind.slice('wonder|'.length) as SiteModel) : null, under = m ? CLEARANCE[m] : undefined;
+    if (m && under) {
+      // (A town cell in model units: the city's cell over the scale a wonder beside it is drawn at.)
+      const cell = (CITY_CELL * Math.max(lw, ld)) / landHalf(m);
+      const room = (cell / 16) * s, step = 0.006;
+      let lift = 0;
+      for (let x = -lw; x <= lw; x += step) for (let z = -ld; z <= ld; z += step) {
+        const u = under(x, z);
+        if (u === null) continue;
+        const g = this.sampleDir(dir.clone().addScaledVector(X, x / lw).addScaledVector(Z, z / ld).normalize()).ground;
+        lift = Math.max(lift, g + room - (base - sink + u * s));
+      }
+      base += lift;
+    }
     const out: PlacedBuilding[] = [{
       kind,
       matrix: new THREE.Matrix4().compose(dir.clone().multiplyScalar(1 + base - sink), q, new THREE.Vector3(s * stretch[0], s, s * stretch[1])),

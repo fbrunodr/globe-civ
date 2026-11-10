@@ -24,7 +24,7 @@ import { hangingGardensGrounds } from './wonders/ancient.ts';
 import type { CatalogKind } from './propCatalog.ts';
 import { INDUSTRIAL } from './wonders/industrial.ts';
 import { MODERN } from './wonders/modern.ts';
-import { INFORMATION } from './wonders/information.ts';
+import { INFORMATION, fastUnderside } from './wonders/information.ts';
 
 export { SITE_HALF } from './wonders/kit.ts';
 // What stands on a site: a wonder, or the scaffolding of one being built.
@@ -55,6 +55,11 @@ export const ON_BARE_GROUND: ReadonlySet<string> = new Set(Object.keys(LAND_HALF
 // Wonders beside a city that stand on the highest point of their tile (on
 // its summit, not near its middle).
 export const ON_SUMMIT: ReadonlySet<SiteModel> = new Set<SiteModel>(['cristoRedentor']);
+// Wonders beside a city with something held up over the ground (FAST's
+// dish): how high its underside is over each point of the model (model
+// units; null where there is none). cityProps.ts raises such a wonder
+// until the hill keeps clear under it, with room to spare.
+export const CLEARANCE: Partial<Record<SiteModel, (x: number, z: number) => number | null>> = { fastTelescope: fastUnderside };
 export const landHalf = (m: SiteModel): number => LAND_HALF[m] ?? 2 * CITY_HALF;
 export const seaScale = (m: SiteModel): number => SEA_SCALE[m] ?? 0.9;
 
