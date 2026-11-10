@@ -956,8 +956,7 @@ function scArcade(len: number, yT: number, seed: number, skip: (u: number) => bo
 }
 
 // The west portal (local, facing +z, on the porch's face): its broad
-// weathered frame, columns of carved interlace up either side and round
-// the arch, little capitals; the plank door with its iron straps and ring.
+// weathered frame; the plank door with its iron straps and ring.
 function scPortal(): G[] {
   const out: G[] = [], z = 0.0002, yb = 0.0004, fw = 0.0088, fh = 0.0082, dw = 0.0044, dh = 0.0066;
   out.push(...archPane(fw, fh, SC.TRIM, 0, yb, z));
@@ -965,16 +964,6 @@ function scPortal(): G[] {
   for (const u of [-0.0011, 0, 0.0011]) out.push(pane(0.00018, dh, SC.LINE, u, yb + 0.0002, z + 0.0003));
   for (const y of [0.0022, 0.0056]) out.push(scBar(-0.002, y, 0.0014, y, z + 0.00045, 0.00017, SC.IRON));
   out.push(P(new THREE.TorusGeometry(0.00035, 0.0001, 3, 6), SC.IRON, { x: 0.0012, y: 0.0045, z: z + 0.00045 }));
-  const tor = (x: number, y: number, rr: number) => P(new THREE.TorusGeometry(rr, 0.00015, 3, 6), SC.CARVE, { x, y, z: z + 0.0005, rz: x * 900 });
-  const xc = (fw / 2 + dw / 2) / 2;
-  for (const e of [-1, 1]) {
-    for (let i = 0; i < 7; i++) out.push(tor(e * xc + (i % 2 ? 0.00022 : -0.00022), yb + 0.0009 + i * 0.00095, 0.00068));
-    out.push(...box(0.0018, 0.0005, 0.0006, SC.CARVE, { x: e * xc, y: yb + dh - 0.0001, z: z + 0.0003 }));
-    out.push(...box(0.0018, 0.0005, 0.0006, SC.CARVE, { x: e * xc, y: yb, z: z + 0.0003 }));
-  }
-  const rc = xc, yc = yb + dh + 0.0002;
-  for (let i = 0; i < 6; i++) { const a = Math.PI * (0.08 + (0.84 * i) / 5); out.push(tor(Math.cos(a) * rc, yc + Math.sin(a) * rc, 0.0006)); }
-  out.push(ball(0.0006, SC.CARVE, { y: yc + rc + 0.0008, z: z + 0.0004, sz: 0.5 }));
   return out;
 }
 

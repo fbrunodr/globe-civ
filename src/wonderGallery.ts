@@ -129,7 +129,8 @@ for (const { m, era, by } of models) {
   paint.model(house, new THREE.Vector3(x + half + 0.03, 0, 0.02), 0, new THREE.Vector3(HOUSE_SCALE, HOUSE_SCALE, HOUSE_SCALE), 0xb5523a);
   at.set(m, { x, h: b.max.y * s, r: half });
   label(WONDERS[m].name, x + 0.015, half + 0.04, true);
-  label(`${ERAS[era].name} · ${by} · ${(b.max.y * s / CITY_CELL).toFixed(1)} cells tall`, x + 0.015, half + 0.058);
+  const tris = (g.index ? g.index.count : g.getAttribute('position').count) / 3;
+  label(`${ERAS[era].name} · ${by} · ${(b.max.y * s / CITY_CELL).toFixed(1)} cells tall · ${Math.round(tris).toLocaleString('en')} triangles`, x + 0.015, half + 0.058);
   x += half + 0.09;
 }
 // (The floor, cut round the sinks.)
