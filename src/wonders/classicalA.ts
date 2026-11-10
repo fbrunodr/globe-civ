@@ -526,6 +526,8 @@ export const terracottaArmy = (): G[] => assemble(terracottaGrounds());
 // fills each pit, on its floor; the bank of spoil along the back, on the
 // ground.
 const PITS: readonly (readonly [number, number, number, number])[] = [[-0.058, 0.058, -0.058, 0.012], [-0.058, -0.004, 0.022, 0.062], [0.006, 0.046, 0.024, 0.062]];
+// (The figures' size: three times the first army's, 0.0042 tall.)
+const FIG = 1.2;
 const LOESS = 0xb89a72, PIT_FLOOR = 0x6e5840, PIT_DEPTH = 0.0115, CLAY = 0xb09884;
 export function terracottaGrounds(): WonderGrounds {
   const sinks = PITS.map(([x0, x1, z0, z1]) => sinkOf({ x: (x0 + x1) / 2, z: (z0 + z1) / 2, hw: (x1 - x0) / 2, hd: (z1 - z0) / 2 }, PIT_DEPTH, shade(LOESS, 0.82), PIT_FLOOR));
@@ -569,7 +571,7 @@ function pit1(): G[] {
 function pit2(): G[] {
   const r = rnd(42), out: G[] = [];
   const [s0, , t0, t1] = PITS[1]!, zc = (t0 + t1) / 2;
-  for (const dx of [0.0105, 0.0285]) out.push(...chariot(s0 + dx, zc - 0.0005));
+  out.push(...chariot(s0 + 0.017, zc - 0.002));
   for (let i = 0; i < 2; i++) out.push(...horse(s0 + 0.0435, t0 + 0.009 + i * 0.02, r), ...soldier(s0 + 0.0495, t0 + 0.012 + i * 0.02, CLAY, r));
   return out;
 }
@@ -578,7 +580,7 @@ function pit2(): G[] {
 function pit3(): G[] {
   const r = rnd(43), out: G[] = [];
   const [u0, u1, v0] = PITS[2]!, cx = (u0 + u1) / 2;
-  out.push(...chariot(cx, v0 + 0.024));
+  out.push(...chariot(cx, v0 + 0.014));
   for (let i = 0; i < 3; i++) for (const s of [-1, 1]) out.push(...soldier(cx + s * 0.0155, v0 + 0.0045 + i * 0.0085, shade(CLAY, 1.05), r, -s * Math.PI / 2));
   return out;
 }
@@ -587,8 +589,8 @@ function pit3(): G[] {
 // it to the shoulders, one arm hanging, the other bent to hold the weapon
 // long gone, his head with its hair knotted on the right; each a little
 // different. About 0.0105 tall: life size at a maquette's scale.
-function soldier(x: number, z: number, c: number, r: () => number, ry = 0, y0 = 0): G[] {
-  const k = shade(c, 0.9 + r() * 0.18), h = 0.0105 * (0.96 + r() * 0.08), y = y0 + 0.0004;
+function soldier(x: number, z: number, c: number, r: () => number, ry = 0, y0 = 0, fig = FIG): G[] {
+  const k = shade(c, 0.9 + r() * 0.18), h = 0.0105 * fig * (0.96 + r() * 0.08), y = y0 + 0.0004;
   const cs = Math.cos(ry), sn = Math.sin(ry);
   // (u across him, to his left; v forward.)
   const at = (u: number, v: number) => ({ x: x + cs * u + sn * v, z: z - sn * u + cs * v });
@@ -606,26 +608,31 @@ function soldier(x: number, z: number, c: number, r: () => number, ry = 0, y0 = 
 }
 // A clay horse facing +z: body, legs in pairs, the neck raised, the head
 // bowed, the tail.
-function horse(x: number, z: number, r: () => number): G[] {
+function horse(x: number, z: number, r: () => number, fig = FIG): G[] {
   const c = shade(0xa48a72, 0.92 + r() * 0.12);
-  return [
+  return about(x, z, fig, [
     ...box(0.0031, 0.004, 0.0108, c, { x, y: 0.0063, z }),
     ...[-0.0042, 0.0042].flatMap((f) => [-1, 1].map((s) => rodO(V(x + s * 0.0009, 0.0004, z + f + s * 0.0002), V(x + s * 0.0009, 0.0068, z + f), 0.00062, shade(c, 0.85), 3))),
     ...box(0.0022, 0.0055, 0.003, c, { x, y: 0.0088, z: z + 0.0042, rx: 0.6 }),
     ...box(0.002, 0.0022, 0.0048, shade(c, 0.95), { x, y: 0.0125, z: z + 0.0078, rx: 0.5 }),
     rodO(V(x, 0.0098, z - 0.0055), V(x, 0.0052, z - 0.0068), 0.0005, shade(c, 0.75), 3),
-  ];
+  ]);
 }
 // A chariot facing +z: its team of four, the box on its two wheels, the
 // pole, and its two crew standing in it.
-function chariot(x: number, z: number): G[] {
+function chariot(x: number, z: number, fig = FIG): G[] {
   const r = rnd(Math.round((x + z) * 10000)), out: G[] = [], WOOD = 0x6a5038;
-  for (let i = 0; i < 4; i++) out.push(...horse(x - 0.00675 + i * 0.0045, z + 0.008, r));
+  for (let i = 0; i < 4; i++) out.push(...horse(x - 0.00675 + i * 0.0045, z + 0.008, r, 1));
   const zc = z - 0.0065;
   out.push(ring(0.0095, 0.003, 0.0075, WOOD, { x, y: 0.0032, z: zc }), flat(0.0095, 0.0075, shade(WOOD, 0.8), x, zc, 0.0034));
   for (const s of [-1, 1]) out.push(P(new THREE.TorusGeometry(0.0045, 0.0006, 3, 8).rotateY(Math.PI / 2), 0x5a4430, { x: x + s * 0.0058, y: 0.005, z: zc }));
   out.push(rodO(V(x - 0.0058, 0.005, zc), V(x + 0.0058, 0.005, zc), 0.0004, 0x5a4430, 3));
   out.push(rodO(V(x, 0.0045, zc + 0.0037), V(x, 0.0075, z + 0.016), 0.0004, 0x5a4430, 3));
-  for (const s of [-1, 1]) out.push(...soldier(x + s * 0.0022, zc - 0.0004, CLAY, r, 0, 0.003));
-  return out;
+  for (const s of [-1, 1]) out.push(...soldier(x + s * 0.0022, zc - 0.0004, CLAY, r, 0, 0.003, 1));
+  return about(x, z, fig, out);
+}
+// Parts scaled by k about the spot (x, 0, z).
+function about(x: number, z: number, k: number, parts: G[]): G[] {
+  const m = new THREE.Matrix4().makeTranslation(x, 0, z).multiply(new THREE.Matrix4().makeScale(k, k, k)).multiply(new THREE.Matrix4().makeTranslation(-x, 0, -z));
+  return parts.map((g) => g.applyMatrix4(m));
 }
