@@ -559,13 +559,41 @@ function sfMitre(out: G[], x: number, y: number, z: number, s: number, i: number
   for (let k = 0; k < 4; k++) { const a = (k * Math.PI) / 2 + i; out.push(sfOct(0.24 * s, SF_WHITE, x + Math.sin(a) * 0.42 * s, y + 2.05 * s, z + Math.cos(a) * 0.42 * s)); }
   out.push(sfOct(0.3 * s, SF_WHITE, x, y + 3.1 * s, z, 1.3));
 }
-// The apostles' towers' profile: near round and straight, then the parabola to the pinnacle.
-const SF_APOSTLE: SfProfile = [[0, 1], [0.3, 0.95], [0.52, 0.86], [0.68, 0.7], [0.8, 0.48], [0.88, 0.27]];
+// The apostles' towers' profile: swelling a little from the foot, then the
+// parabola sweeping in to the pinnacle (cut at SF_TIP, where the mitre sits).
+const SF_TIP = 0.9;
+const SF_APOSTLE: SfProfile = [[0, 0.93], [0.24, 1], [0.48, 0.93], [0.67, 0.7], [0.81, 0.44], [SF_TIP, 0.24]];
 // An apostle's bell tower from the ground to `top` (its mitre's tip), radius r.
 function sfApostle(T: SfT, out: G[], x: number, z: number, top: number, r: number, c: number, i: number): void {
-  const h = (top - 3.4 * r) / 0.88;
-  sfShaft(T, x, z, 0, h, r, SF_APOSTLE, 10, c, [5, 4, 3, 2, 1], () => SF_HOLE, i * 0.37);
-  sfMitre(out, x, h * 0.88 - 0.05 * r, z, r, i);
+  const h = (top - 3.4 * r) / SF_TIP;
+  sfShaft(T, x, z, 0, h, r, SF_APOSTLE, 10, c, [4, 4, 3, 2, 1], () => SF_HOLE, i * 0.37);
+  sfMitre(out, x, h * SF_TIP - 0.05 * r, z, r, i);
+}
+
+// A slender pinnacle-spire rising from a buttress (the forest of lesser
+// spires between the towers): six faces swelling and sweeping to a point,
+// pierced in rows, a basket of fruit on the tip.
+function sfSpire(T: SfT, out: G[], x: number, z: number, y0: number, top: number, r: number, c: number, i: number): void {
+  const h = (top - y0 - 1.6 * r) / SF_TIP;
+  sfShaft(T, x, z, y0, h, r, SF_APOSTLE, 6, c, [2, 1, 1, 1], () => SF_HOLE, i);
+  const y = y0 + h * SF_TIP;
+  out.push(cone(0.3 * r, 1.1 * r, 6, c, { x, y, z, ry: i }), sfOct(0.42 * r, sfPick(SF_FRUIT, i), x, y + 1.15 * r, z, 1.3));
+}
+// A sacristy at a corner of the site: an octagonal chapel of tall lancets,
+// steep gables round its eaves, a pinnacle at each corner, the pointed,
+// ribbed dome pierced with lights, its lantern of spikes and fruit on top.
+function sfSacristy(T: SfT, out: G[], x: number, z: number, i: number): void {
+  const R = 0.0125, WH = 0.032, DH = 0.04, n = 8, a0 = i * 0.2 + Math.PI / 8;
+  sfShaft(T, x, z, 0, WH, R, [[0, 1], [1, 1]], n, SF_ST, [2], (_b, k, j) => (j === 0 ? SF_HOLE : sfPick(SF_GLASS, k + i)), a0);
+  sfShaft(T, x, z, WH, DH, R, [[0, 0.93], [0.3, 0.88], [0.56, 0.7], [0.78, 0.44], [0.92, 0.19], [1, 0]], n, shade(SF_ST, 1.04), [0, 1, 1, 1], () => SF_HOLE, a0);
+  const rc = R * Math.cos(Math.PI / n);
+  for (let k = 0; k < n; k++) {
+    const am = a0 + ((k + 0.5) / n) * Math.PI * 2, ac = a0 + (k / n) * Math.PI * 2;
+    out.push(...gable(0.0085, 0.006, 0.014, shade(SF_ST, 0.88), { x: x + Math.sin(am) * (rc - 0.0026), y: WH, z: z + Math.cos(am) * (rc - 0.0026), ry: am }, true, shade(SF_ST, 1.1)));
+    out.push(cone(0.0013, 0.02, 5, SF_ST, { x: x + Math.sin(ac) * R, y: WH, z: z + Math.cos(ac) * R, ry: k }), sfOct(0.0012, sfPick(SF_FRUIT, k + i), x + Math.sin(ac) * R, WH + 0.02, z + Math.cos(ac) * R, 1.3));
+  }
+  out.push(cone(0.002, 0.016, 6, shade(SF_ST, 1.08), { x, y: WH + DH - 0.002, z }), sfOct(0.0019, SF_GOLD, x, WH + DH + 0.0145, z, 1.4));
+  for (let k = 0; k < 4; k++) { const a = (k * Math.PI) / 2 + a0; out.push(sfOct(0.0009, SF_WHITE, x + Math.sin(a) * 0.0018, WH + DH + 0.006, z + Math.cos(a) * 0.0018, 1.5)); }
 }
 
 // The basilica as Gaudí designed it, finished: a Latin cross, the nave along
@@ -588,8 +616,8 @@ function sagradaFamilia(): G[] {
   const glass = (i: number) => sfPick(SF_GLASS, i);
   // A rose window in its stone frame, facing ry.
   const rose = (rad: number, c: number, x: number, y: number, z: number, ry: number) => [
-    P(new THREE.CircleGeometry(rad * 1.4, 10), shade(SF_ST, 0.8), { x, y, z, ry }),
-    P(new THREE.CircleGeometry(rad, 10), c, { x: x + Math.sin(ry) * 0.00025, y, z: z + Math.cos(ry) * 0.00025, ry }),
+    P(new THREE.CircleGeometry(rad * 1.4, 8), shade(SF_ST, 0.8), { x, y, z, ry }),
+    P(new THREE.CircleGeometry(rad, 8), c, { x: x + Math.sin(ry) * 0.00025, y, z: z + Math.cos(ry) * 0.00025, ry }),
   ];
   const pinnacle = (x: number, y: number, z: number, rad: number, h: number, i: number, c = SF_ST) =>
     out.push(cone(rad, h, 6, c, { x, y, z, ry: i }), sfOct(rad * 0.95, sfPick(SF_FRUIT, i), x, y + h, z, 1.3));
@@ -614,9 +642,10 @@ function sagradaFamilia(): G[] {
     }
     for (let j = 0; j <= 5; j++) {
       const xb = 0.0025 + 0.0111 * j;
-      out.push(...box(0.0022, AH + 0.0012, 0.003, shade(SF_ST, 1.05), { x: xb, z: s * 0.0311 }));
-      pinnacle(xb, AH + 0.0012, s * 0.0311, 0.0017, 0.02, j * 2 + s);
-      pinnacle(xb, NH, s * 0.0125, 0.0016, 0.026, j * 3 + s + 1);
+      out.push(...box(0.0028, AH + 0.0012, 0.0076, shade(SF_ST, 1.05), { x: xb, z: s * 0.0336 }), ...box(0.0024, 0.006, 0.0036, shade(SF_ST, 1.05), { x: xb, y: AH + 0.0012, z: s * 0.0318 }));
+      if (j === 0 || j === 5) sfSpire(T, out, xb, s * 0.034, 0, j ? 0.158 : 0.168, 0.0042, shade(SF_ST, 1.06), j + s);
+      else pinnacle(xb, AH + 0.0072, s * 0.0336, 0.0019, 0.03, j * 2 + s);
+      pinnacle(xb, NH, s * 0.0125, 0.0019, 0.046, j * 3 + s + 1);
     }
     // The transept's flanks between the aisles and the façades.
     for (const [xw, rw] of [[0.0023, Math.PI / 2], [-0.0423, -Math.PI / 2]] as const) {
@@ -721,32 +750,37 @@ function sagradaFamilia(): G[] {
   const spread4 = [-0.0215, -0.0075, 0.0075, 0.0215] as const;
   for (const [k, o] of spread4.entries()) {
     const inner = k === 1 || k === 2;
-    sfApostle(T, out, XC + o, 0.052, inner ? 0.235 : 0.215, 0.0062, shade(SF_NAT, 1.02 + r() * 0.05), k);
-    sfApostle(T, out, XC + o, -0.052, inner ? 0.25 : 0.235, 0.0062, shade(SF_PAS, 0.98 + r() * 0.04), k + 4);
-    sfApostle(T, out, 0.06, -o, inner ? 0.268 : 0.25, 0.0064, shade(SF_GLO, 0.99 + r() * 0.04), k + 8);
+    sfApostle(T, out, XC + o, 0.052, inner ? 0.2 : 0.182, 0.0066, shade(SF_NAT, 1.02 + r() * 0.05), k);
+    sfApostle(T, out, XC + o, -0.052, inner ? 0.208 : 0.19, 0.0066, shade(SF_PAS, 0.98 + r() * 0.04), k + 4);
+    sfApostle(T, out, 0.06, -o, inner ? 0.218 : 0.198, 0.0068, shade(SF_GLO, 0.99 + r() * 0.04), k + 8);
   }
   // The Evangelists' towers round the crossing, each crowned with its gilt
   // symbol on a white orb.
   for (const [k, [sx, sz]] of ([[1, 1], [-1, 1], [-1, -1], [1, -1]] as const).entries()) {
-    const x = XC + sx * 0.0165, z = sz * 0.0165, rr = 0.0075, h = (0.3 - 0.09 - 3.2 * rr) / 0.88;
-    sfShaft(T, x, z, 0.09, h, rr, SF_APOSTLE, 10, shade(SF_ST, 1.04), [5, 4, 3, 2, 1], () => SF_HOLE, k);
-    const y = 0.09 + h * 0.88 - 0.05 * rr;
+    const x = XC + sx * 0.0165, z = sz * 0.0165, rr = 0.008, h = (0.236 - 0.09 - 3.2 * rr) / SF_TIP;
+    sfShaft(T, x, z, 0.09, h, rr, SF_APOSTLE, 10, shade(SF_ST, 1.04), [4, 4, 3, 2, 1], () => SF_HOLE, k);
+    const y = 0.09 + h * SF_TIP - 0.05 * rr;
     out.push(cyl(0.3 * rr, 0.7 * rr, 0.8 * rr, 6, SF_GOLD, { x, y, z }), ball(0.75 * rr, SF_WHITE, { x, y: y + 1.5 * rr, z }));
     for (let j = 0; j < 4; j++) { const a = (j * Math.PI) / 2 + k; out.push(sfOct(0.32 * rr, SF_GOLD, x + Math.sin(a) * 0.75 * rr, y + 1.6 * rr, z + Math.cos(a) * 0.75 * rr, 1.5)); }
     out.push(sfOct(0.35 * rr, SF_GOLD, x, y + 2.6 * rr, z, 1.6));
   }
   // Mary's tower over the apse, its twelve-pointed star of glass.
-  sfShaft(T, AX - 0.003, 0, 0.1, 0.19, 0.009, [[0, 1], [0.35, 0.92], [0.6, 0.76], [0.8, 0.5], [0.93, 0.24], [1, 0]], 10, shade(SF_ST, 1.06), [5, 4, 3, 2, 1],
+  sfShaft(T, AX - 0.003, 0, 0.1, 0.118, 0.0095, [[0, 1], [0.35, 0.92], [0.6, 0.76], [0.8, 0.5], [0.93, 0.24], [1, 0]], 10, shade(SF_ST, 1.06), [4, 4, 3, 2, 1],
     (b, k) => (b >= 2 && k % 2 ? 0x8fb4d8 : SF_HOLE), 0.3);
-  out.push(sfOct(0.0105, SF_WHITE, AX - 0.003, 0.3, 0), P(new THREE.OctahedronGeometry(0.0095, 0), 0xbcd8f0, { x: AX - 0.003, y: 0.3, z: 0, rx: Math.PI / 4, ry: Math.PI / 4 }));
+  out.push(sfOct(0.0095, SF_WHITE, AX - 0.003, 0.226, 0), P(new THREE.OctahedronGeometry(0.0086, 0), 0xbcd8f0, { x: AX - 0.003, y: 0.226, z: 0, rx: Math.PI / 4, ry: Math.PI / 4 }));
   // The tower of Jesus Christ at the crossing, tallest of all: its glass
   // brightening as it rises, the white four-armed cross on top.
-  sfShaft(T, XC, 0, 0.095, 0.265, 0.0135, [[0, 1], [0.3, 0.94], [0.55, 0.8], [0.75, 0.58], [0.88, 0.36], [0.96, 0.15], [1, 0]], 12, shade(SF_ST, 1.08), [5, 5, 4, 3, 2, 1],
+  sfShaft(T, XC, 0, 0.095, 0.168, 0.0145, [[0, 1], [0.3, 0.94], [0.55, 0.8], [0.75, 0.58], [0.88, 0.36], [0.96, 0.15], [1, 0]], 12, shade(SF_ST, 1.08), [5, 5, 4, 3, 2, 1],
     (b, k, j) => (b < 2 ? SF_HOLE : glass(k + j + b)), 0.13);
-  const ct = 0.355;
-  out.push(...box(0.0034, 0.03, 0.0034, SF_WHITE, { x: XC, y: ct, z: 0 }));
-  out.push(...box(0.016, 0.0029, 0.0029, SF_WHITE, { x: XC, y: ct + 0.019, z: 0 }), ...box(0.0029, 0.0029, 0.016, SF_WHITE, { x: XC, y: ct + 0.0191, z: 0 }));
-  return [pad(), ...T.done(), ...out];
+  const ct = 0.259;
+  out.push(...box(0.003, 0.025, 0.003, SF_WHITE, { x: XC, y: ct, z: 0 }));
+  out.push(...box(0.0135, 0.0026, 0.0026, SF_WHITE, { x: XC, y: ct + 0.016, z: 0 }), ...box(0.0026, 0.0026, 0.0135, SF_WHITE, { x: XC, y: ct + 0.0161, z: 0 }));
+  // The sacristies at the apse's corners.
+  for (const s of [-1, 1]) sfSacristy(T, out, -0.06, s * 0.06, s);
+  // All on its stepped plinth.
+  const PL = 0.005, parts = [...T.done(), ...out];
+  for (const g of parts) g.translate(0, PL, 0);
+  return [pad(), ...steps(0.147, 0.147, 2, PL / 2, 0.0022, shade(PAVE, 0.96)).parts, ...parts];
 }
 
 // ---------- Berlin: the Brandenburg Gate ----------
