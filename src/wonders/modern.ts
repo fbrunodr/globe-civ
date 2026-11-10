@@ -300,73 +300,178 @@ function empireState(): G[] {
 
 // ---------- Sydney ----------
 
-// A shell: a curved triangular vault over a w-wide mouth, h high at its
-// peak, its ridge running l back; tiles in chevrons of white and cream;
-// its mouth glazed. Local mouth at z = 0 facing +z, turned by ry.
-function shell(cx: number, cz: number, y: number, w: number, l: number, h: number, ry: number): G[] {
-  const W = 0xf2efe6, CREAM = 0xdcd6c4;
-  const m = new THREE.Matrix4().makeRotationY(ry).setPosition(cx, y, cz);
-  const A = V(0, h, l * 0.32), B = V(0, 0, -l);
-  const half = (side: number) => surface((u, v) => {
-    // u along the ridge (back to peak), v from the ridge down to the base.
-    const R = B.clone().lerp(A, u); R.y = h * Math.pow(u, 0.62) + 0.0004;
-    const E = V(side * (w / 2) * Math.pow(u, 0.7), 0, -l + l * u);
-    const p = R.clone().lerp(E, Math.pow(v, 1.15));
-    const bulge = Math.sin(Math.PI * v) * (0.09 * w) * Math.pow(u, 0.6);
-    p.x += side * bulge; p.y += bulge * 0.7;
-    return p.applyMatrix4(m);
-  }, 12, 6, (i) => (i % 2 ? W : CREAM));
-  const out = [...half(-1), ...half(1)];
-  // The mouth's glass wall: a fan from its foot to the arch's edge, set back.
-  const pts: number[] = [];
-  const edge = (side: number, v: number) => {
-    const R = A.clone(); R.y = h + 0.0004;
-    const E = V(side * (w / 2), 0, 0.0);
-    const p = R.clone().lerp(E, Math.pow(v, 1.15)), bulge = Math.sin(Math.PI * v) * 0.09 * w;
-    return V(p.x + side * bulge * 0.9, p.y + bulge * 0.7 * 0.9, p.z * 0.75 - 0.0008);
-  };
-  const foot = V(0, 0, -0.0006);
-  for (const side of [-1, 1]) for (let k = 0; k < 6; k++) {
-    const a = edge(side, k / 6), b = edge(side, (k + 1) / 6);
-    pts.push(foot.x, foot.y, foot.z, a.x, a.y, a.z, b.x, b.y, b.z);
+// Triangles gathered by colour, each turned to face `out` (so the model's
+// one-sided faces show on the right side whatever order they come in).
+class OperaSoup {
+  private readonly by = new Map<number, number[]>();
+  tri(c: number, a: THREE.Vector3, b: THREE.Vector3, d: THREE.Vector3, out: THREE.Vector3): void {
+    const n = b.clone().sub(a).cross(d.clone().sub(a));
+    if (n.lengthSq() < 1e-18) return;
+    const [p, q] = n.dot(out) >= 0 ? [b, d] : [d, b];
+    const arr = this.by.get(c) ?? [];
+    arr.push(a.x, a.y, a.z, p.x, p.y, p.z, q.x, q.y, q.z);
+    this.by.set(c, arr);
   }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
-  out.push(P(g.applyMatrix4(m), 0x8a7c6a));
-  // Its mullions: bronze ribs fanning from the foot up to the arch.
-  for (const side of [-1, 1]) for (let k = 1; k < 4; k++) out.push(rod(foot.clone().applyMatrix4(m), edge(side, k / 4).applyMatrix4(m), w * 0.006, 0x5a4a3a, 3));
-  return out;
+  quad(c: number, a: THREE.Vector3, b: THREE.Vector3, d: THREE.Vector3, e: THREE.Vector3, out: THREE.Vector3): void {
+    this.tri(c, a, b, d, out); this.tri(c, a, d, e, out);
+  }
+  parts(): G[] {
+    return [...this.by].map(([k, p]) => {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(p, 3));
+      return P(g, k);
+    });
+  }
 }
-// The Opera House on Bennelong Point: its granite podium, the grand stairs
-// up from the forecourt, the two halls' shells side by side opening onto
-// the harbour, the restaurant's small pair; the water round the point, a
-// ferry; people on the stairs and the forecourt, fig trees.
-function sydneyOperaHouse(): G[] {
-  const out: G[] = [], GRANITE = 0xc9a98e;
-  // The podium, its joints, the concourse's openings.
-  const y0 = 0.016, pz = -0.004;
-  out.push(...box(0.112, y0, 0.128, GRANITE, { z: pz }, shade(GRANITE, 1.08)));
-  for (let k = 1; k < 4; k++) for (const [ry, len, o] of [[Math.PI, 0.112, 0.064], [Math.PI / 2, 0.128, 0.056], [-Math.PI / 2, 0.128, 0.056]] as const) out.push(pane(len, 0.0004, shade(GRANITE, 0.86), Math.sin(ry) * (o + 0.00025), (k * y0) / 4, pz + Math.cos(ry) * (o + 0.00025), ry));
-  for (const s of [-1, 1]) for (let k = 0; k < 5; k++) out.push(pane(0.012, 0.007, 0x3a3430, s * (0.056 + 0.0003), 0.002, pz + 0.01 + k * 0.016, s * Math.PI / 2));
-  // The grand stairs, the full width of the podium's front.
-  const n = 10, z0 = 0.07, z1 = pz + 0.064;
-  for (let k = 0; k < n; k++) {
-    const zf = z0 - (k * (z0 - z1)) / n, zb = z1 - 0.0006;
-    out.push(...box(0.086, (y0 * (k + 1)) / n - 0.00015, zf - zb, shade(GRANITE, 1.02), { y: 0, z: (zf + zb) / 2 }, shade(GRANITE, k % 2 ? 1.1 : 1.15)));
-  }
-  // The halls' shells: three opening onto the harbour, a fourth over the stairs.
-  const HS = 1.75, WS = 1.3; // (the shells raised over the town, and widened with it)
-  const hall = (x: number, s: number) => {
-    out.push(...shell(x, -0.05, y0, WS * 0.036 * s, 1.2 * 0.03 * s, HS * 0.058 * s, Math.PI));
-    out.push(...shell(x, -0.05 + 0.027 * s, y0, WS * 0.031 * s, 1.2 * 0.026 * s, HS * 0.046 * s, Math.PI));
-    out.push(...shell(x, -0.05 + 0.05 * s, y0, WS * 0.026 * s, 1.2 * 0.022 * s, HS * 0.034 * s, Math.PI));
-    out.push(...shell(x, 0.04, y0, WS * 0.024 * s, 1.2 * 0.017 * s, HS * 0.025 * s, 0));
+
+interface OperaShell { readonly h: number; readonly w: number; readonly a: number; readonly L: number; readonly k?: number }
+const TILE = 0xf6f4ee, TILE_SEAM = 0xddd5c2, SHELL_RIM = 0xcfc6b0;
+const GLASS = [0x7a6249, 0x8c745a] as const, MULLION = 0x3a2d21;
+// One of Utzon's shells, two mirrored spherical triangles meeting at a
+// sharp crest. In its own frame: its mouth's feet at (±w/2, 0, 0), its crest
+// at (0, h, a) leaning out over the mouth, its ridge falling back to the
+// podium at (0, 0, -L). Each half is the outer face of a sphere centred on
+// the ground's level beside the other half, so the ridge is a circle in the
+// middle plane, the mouth's edge a pointed arch and the foot a leaf-shaped
+// curve on the podium. The tiles in chevrons: ribs fanning up from each
+// foot to the crest, white glazed panels between cream seams that meet in
+// V's along the ridge. The mouth's rim, the shell's thickness; under it the
+// folded wall of bronze glass, its mullions and transoms. `m` places it.
+function operaShell(s: OperaSoup, sh: OperaShell, m: THREE.Matrix4, detail: number, glazed = true): void {
+  const { h, w, a, L } = sh;
+  const Cy = -(sh.k ?? 0.5) * h;
+  const Cz = (h * h + a * a - L * L - 2 * Cy * h) / (2 * (L + a));
+  const rho2 = Cy * Cy + (Cz + L) ** 2, rho = Math.sqrt(rho2);
+  const Cx = (rho2 - Cy * Cy - Cz * Cz - (w * w) / 4) / w, r2 = rho2 + Cx * Cx;
+  if (!(Cx > 0)) throw new Error(`opera shell ${h} ${w} ${a} ${L}: no sphere`);
+  const thR = Math.atan2(-Cy, -L - Cz), thA = Math.atan2(h - Cy, a - Cz);
+  const ribs = Math.max(4, Math.round(12 * detail)), rows = Math.max(4, Math.round(14 * detail));
+  // The ribs' angles: each rib a narrow seam then a wide panel.
+  const phis: number[] = [];
+  for (let k = 0; k < ribs; k++) phis.push(k / ribs, (k + 0.22) / ribs);
+  phis.push(1);
+  const T = (v: THREE.Vector3) => v.applyMatrix4(m);
+  const dir = (v: THREE.Vector3) => v.transformDirection(m);
+  const at = (phi: number, t: number, side: number) => {
+    const th = thR + (thA - thR) * phi;
+    const y = t * (Cy + rho * Math.sin(th)), z = t * (Cz + rho * Math.cos(th));
+    const q = r2 - (y - Cy) ** 2 - (z - Cz) ** 2;
+    return V(side * (Math.sqrt(Math.max(q, Cx * Cx)) - Cx), y, z);
   };
-  hall(-0.026, 1);
-  hall(0.027, 0.86);
-  // The restaurant's pair at the forecourt's corner.
-  out.push(...shell(-0.046, 0.05, y0, 0.014, 0.012, HS * 0.015, 0), ...shell(-0.046, 0.038, y0, 0.011, 0.01, HS * 0.011, Math.PI));
-  return [pad(), ...stretch(out, 1.1, 1, 1.03)];
+  const centre = (side: number) => V(-side * Cx, Cy, Cz);
+  for (const side of [-1, 1]) {
+    const C = centre(side);
+    const grid = phis.map((phi) => Array.from({ length: rows + 1 }, (_, j) => at(phi, j / rows, side)));
+    for (let i = 0; i + 1 < phis.length; i++) {
+      const c = i % 2 ? TILE : TILE_SEAM;
+      for (let j = 0; j < rows; j++) {
+        const p00 = grid[i]![j]!, p10 = grid[i + 1]![j]!, p11 = grid[i + 1]![j + 1]!, p01 = grid[i]![j + 1]!;
+        const out = dir(p11.clone().add(p00).multiplyScalar(0.5).sub(C));
+        if (j === 0) s.tri(c, T(p00.clone()), T(p11.clone()), T(p01.clone()), out);
+        else s.quad(c, T(p00.clone()), T(p10.clone()), T(p11.clone()), T(p01.clone()), out);
+      }
+    }
+  }
+  // The mouth's rim and, under it, the glass wall (left foot, crest, right foot).
+  const t = w * 0.035, edge: THREE.Vector3[] = [], inner: THREE.Vector3[] = [];
+  for (const side of [-1, 1]) {
+    const C = centre(side);
+    for (let jj = 0; jj <= rows; jj++) {
+      const j = side < 0 ? jj : rows - jj;
+      if (side > 0 && j === rows) continue;
+      const e = at(1, j / rows, side);
+      edge.push(e); inner.push(e.clone().add(C.clone().sub(e).normalize().multiplyScalar(t)));
+    }
+  }
+  const fwd = dir(V(0, 0, 1));
+  for (let k = 0; k + 1 < edge.length; k++) s.quad(SHELL_RIM, T(edge[k]!.clone()), T(edge[k + 1]!.clone()), T(inner[k + 1]!.clone()), T(inner[k]!.clone()), fwd);
+  if (!glazed) return;
+  // The glass: from the rim straight down to a prow in plan, folded at
+  // every mullion.
+  const foot = (e: THREE.Vector3, k: number) => {
+    const f = Math.max(0, 1 - Math.abs(e.x) / (w / 2));
+    return V(e.x * 0.97, 0, a * 0.55 * f - (k % 2 ? w * 0.025 * f : 0) - t);
+  };
+  const tops = inner, bots = inner.map(foot);
+  for (let k = 0; k + 1 < tops.length; k++) s.quad(GLASS[k % 2]!, T(tops[k]!.clone()), T(tops[k + 1]!.clone()), T(bots[k + 1]!.clone()), T(bots[k]!.clone()), fwd);
+  const off = 0.00022, mw = w * 0.006;
+  for (let k = 1; k + 1 < tops.length; k++) {
+    const a0 = tops[k]!, b0 = bots[k]!;
+    if (a0.y - b0.y < w * 0.05) continue;
+    s.quad(MULLION, T(V(a0.x - mw, a0.y, a0.z + off)), T(V(a0.x + mw, a0.y, a0.z + off)), T(V(b0.x + mw, b0.y, b0.z + off)), T(V(b0.x - mw, b0.y, b0.z + off)), fwd);
+  }
+  // The transoms: level bars across the glass.
+  const crest = tops.reduce((m0, p) => Math.max(m0, p.y), 0);
+  for (let n = 1; n <= 4; n++) {
+    const Y = (crest * n) / 5, tb = w * 0.007;
+    const cut = (k: number, y: number) => {
+      const a0 = tops[k]!, b0 = bots[k]!, u = (y - b0.y) / (a0.y - b0.y);
+      return u >= 0 && u <= 1 ? b0.clone().lerp(a0, u).add(V(0, 0, off * 1.6)) : null;
+    };
+    for (let k = 0; k + 1 < tops.length; k++) {
+      const p = cut(k, Y), q = cut(k + 1, Y), p1 = cut(k, Y + tb), q1 = cut(k + 1, Y + tb);
+      if (p && q && p1 && q1) s.quad(MULLION, T(p), T(q), T(q1), T(p1), fwd);
+    }
+  }
+}
+
+// The Opera House on Bennelong Point: its massive podium of pink-brown
+// granite, dark openings under its overhanging edge, the broad
+// monumental stair up from the forecourt; on it the Concert Hall (west)
+// and the Joan Sutherland Theatre side by side, each a run of nested
+// shells leaning out toward the harbour, the largest over the stage, with
+// a smaller shell back to back over the stairs; the Bennelong restaurant's
+// pair on its own corner by the forecourt.
+function sydneyOperaHouse(): G[] {
+  const out: G[] = [pad()], s = new OperaSoup();
+  const GR = 0xb4826c, TOP = 0xc9a28c, DARK = 0x2c2420;
+  const y0 = 0.022, yp = 0.005, yl = 0.016;
+  // A wall of the podium len long, its face at (cx, cz), facing ry: a dark
+  // recess behind n openings between granite piers, a deep lintel over
+  // them and the edge's coping overhanging.
+  const arcade = (len: number, n: number, cx: number, cz: number, ry: number) => {
+    const sn = Math.sin(ry), cs = Math.cos(ry), dep = 0.0032;
+    const W = (lx: number, lz: number) => ({ x: cx + lx * cs + lz * sn, z: cz - lx * sn + lz * cs });
+    out.push(P(new THREE.PlaneGeometry(len, yl - yp).translate(0, (yl - yp) / 2, 0), DARK, { ...W(0, -dep), y: yp, ry }));
+    const pw = 0.0034, gap = (len - pw) / n;
+    for (let i = 0; i <= n; i++) out.push(...box(pw, yl - yp, dep, GR, { ...W(-len / 2 + pw / 2 + i * gap, -dep / 2), y: yp, ry }));
+    out.push(...box(len, y0 - yl - 0.0016, dep, shade(GR, 1.05), { ...W(0, -dep / 2), y: yl, ry }, TOP));
+    out.push(...box(len + 0.0024, 0.0016, dep + 0.0024, shade(GR, 1.12), { ...W(0, -dep / 2 + 0.0012), y: y0 - 0.0016, ry }, TOP));
+  };
+  // The broadwalk's plinth all round, then the podium filling the site.
+  out.push(...box(0.1476, yp, 0.1476, shade(GR, 0.9), {}, shade(TOP, 0.94)));
+  out.push(flat(0.1424, 0.1424, TOP, 0, 0, y0 + 0.0001));
+  for (let i = 0; i < 4; i++) {
+    const ry = (i * Math.PI) / 2;
+    arcade(0.1424, 13, Math.sin(ry) * 0.0712, Math.cos(ry) * 0.0712, ry);
+  }
+  // The halls: shells from the stage's out to the harbour (-z), one back
+  // to back over the south end (+z). The Theatre a little smaller, drawn
+  // out longer to fill the site beside the Concert Hall and Bennelong.
+  const hallShells: readonly (OperaShell & { z: number; face: 1 | -1 })[] = [
+    { h: 0.11, w: 0.07, a: 0.026, L: 0.05, z: -0.018, face: -1 },
+    { h: 0.083, w: 0.06, a: 0.019, L: 0.034, z: -0.039, face: -1 },
+    { h: 0.058, w: 0.05, a: 0.013, L: 0.024, z: -0.055, face: -1 },
+    { h: 0.034, w: 0.04, a: 0.007, L: 0.014, z: -0.064, face: -1 },
+    { h: 0.056, w: 0.058, a: 0.011, L: 0.034, z: 0.034, face: 1 },
+  ];
+  const hall = (hx: number, sc: number, ry: number, f: number) => {
+    const z0 = -0.0705 + 0.071 * sc * f;
+    const hm = new THREE.Matrix4().makeRotationY(ry).setPosition(hx, y0, z0);
+    for (const q of hallShells) {
+      const m = hm.clone().multiply(new THREE.Matrix4().makeTranslation(0, 0, q.z * sc * f)).multiply(new THREE.Matrix4().makeRotationY(q.face < 0 ? Math.PI : 0));
+      operaShell(s, { h: q.h * sc, w: q.w * sc, a: q.a * sc * f, L: q.L * sc * f }, m, (q.h * sc) / 0.1 + 0.2);
+    }
+  };
+  hall(-0.036, 1, 0.02, 1.12);
+  hall(0.0355, 0.88, -0.02, 1.3);
+  // Bennelong at the south-west corner: the larger shell toward the city,
+  // the smaller behind.
+  const bm = (d: number, face: number) => new THREE.Matrix4().makeRotationY(-0.7).setPosition(-0.054, y0, 0.058)
+    .multiply(new THREE.Matrix4().makeTranslation(0, 0, d)).multiply(new THREE.Matrix4().makeRotationY(face < 0 ? Math.PI : 0));
+  operaShell(s, { h: 0.046, w: 0.034, a: 0.01, L: 0.022 }, bm(0.003, 1), 0.65);
+  operaShell(s, { h: 0.03, w: 0.028, a: 0.007, L: 0.013 }, bm(-0.013, -1), 0.5);
+  return [...out, ...s.parts()];
 }
 
 // ---------- Tokyo ----------

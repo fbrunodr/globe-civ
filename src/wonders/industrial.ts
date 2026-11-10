@@ -479,132 +479,274 @@ function statueOfLiberty(): G[] {
 
 // ---------- Barcelona: the Sagrada Família ----------
 
-// A Gaudí bell tower: a slender paraboloid of stone, louvred openings
-// winding up it, a mosaic pinnacle of bright knots and a cross at its tip.
-function gaudiSpire(x: number, z: number, y0: number, h: number, r: number, c: number, seed: number, crown = true): G[] {
-  const out: G[] = [], rr = rnd(seed), pts: THREE.Vector2[] = [];
-  const n = 12;
-  for (let i = 0; i <= n; i++) { const t = i / n; pts.push(new THREE.Vector2(r * Math.pow(1 - t * 0.94, 0.62), t * h)); }
-  out.push(P(new THREE.LatheGeometry(pts, 10), c, { x, y: y0, z }));
-  // The openings, winding up.
-  const m = Math.floor(h / 0.0045);
-  for (let k = 1; k < m - 2; k++) {
-    const t = k / m, a = k * 1.15 + rr() * 0.3, rad = r * Math.pow(1 - t * 0.94, 0.62) + 0.0002, yy = y0 + t * h;
-    out.push(pane(rad * 0.55, 0.0026, 0x3a302a, x + Math.sin(a) * rad, yy, z + Math.cos(a) * rad, a));
-  }
-  if (crown) {
-    const top = y0 + h * 0.94;
-    out.push(ball(r * 0.42, 0xe8e2d4, { x, y: top, z }, 1));
-    for (let k = 0; k < 6; k++) { const a = (k / 6) * Math.PI * 2; out.push(ball(r * 0.18, [0xc23a2a, 0xe8c84a, 0xf0ece4][k % 3]!, { x: x + Math.cos(a) * r * 0.36, y: top + r * 0.1, z: z + Math.sin(a) * r * 0.36 })); }
-    out.push(ball(r * 0.22, 0xc23a2a, { x, y: top + r * 0.5, z }), rod(V(x, top + r * 0.6, z), V(x, top + r * 1.35, z), r * 0.06, 0xe8c84a, 3));
-  }
-  return out;
+const SF_ST = 0xc8ab82, SF_NAT = 0xb09670, SF_PAS = 0xd6c4a2, SF_GLO = 0xcfb890, SF_HOLE = 0x3a2e26, SF_WHITE = 0xf2ede2, SF_GOLD = 0xe0b040, SF_RED = 0xc23a2a;
+const SF_GLASS = [0x34507a, 0x7a3a40, 0x9a7a3a, 0x3a6650, 0x8a5a36] as const;
+const SF_FRUIT = [0xc23a2a, 0xe8c84a, 0x6aa04a, 0xd8803a, 0xf0ece4, 0x9a3a7a] as const;
+const sfPick = <T>(a: readonly T[], i: number): T => a[((i % a.length) + a.length) % a.length]!;
+const sfOct = (r: number, c: number, x: number, y: number, z: number, sy = 1) => P(new THREE.OctahedronGeometry(r, 0), c, { x, y, z, sy });
+type SfProfile = readonly (readonly [number, number])[];
+
+// Loose triangles gathered by colour (each turned to face `want` when given),
+// merged into one part a colour.
+function sfTris() {
+  const by = new Map<number, number[]>();
+  const add = (c: number, a: THREE.Vector3, b: THREE.Vector3, d: THREE.Vector3, want?: THREE.Vector3) => {
+    let p = b, q = d;
+    if (want && b.clone().sub(a).cross(d.clone().sub(a)).dot(want) < 0) { p = d; q = b; }
+    let arr = by.get(c);
+    if (!arr) { arr = []; by.set(c, arr); }
+    arr.push(a.x, a.y, a.z, p.x, p.y, p.z, q.x, q.y, q.z);
+  };
+  const quad = (c: number, a: THREE.Vector3, b: THREE.Vector3, d: THREE.Vector3, e: THREE.Vector3, want?: THREE.Vector3) => { add(c, a, b, d, want); add(c, a, d, e, want); };
+  const done = (): G[] => [...by].map(([c, p]) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(p, 3)); return P(g, c); });
+  return { add, quad, done };
 }
-// The basilica on its cross plan: the nave and aisles with their windows
-// of coloured glass and roofs of little lanterns; the Nativity façade to
-// one side, rich and dripping, its four towers and the green cypress with
-// its doves; the Passion façade to the other, stark under its leaning bone
-// columns; the Glory façade at the front still rising in scaffolding,
-// cranes over it; the towers of the Evangelists round the great tower of
-// Jesus with its cross, Mary's tower and its star over the apse (about 10
-// cells tall on its pad).
+type SfT = ReturnType<typeof sfTris>;
+
+// A Gaudí shaft of n flat faces (over `arc` of the circle from angle a0),
+// its profile [height fraction, radius fraction] up h from y0; on every face
+// the openings in vertical rows, holes[i] of them stacked in band i, each
+// coloured holeC(band, face, row) (the honeycomb of the bell towers, the
+// apse's windows).
+function sfShaft(T: SfT, x: number, z: number, y0: number, h: number, r: number, prof: SfProfile, n: number, c: number,
+  holes: readonly number[], holeC: (band: number, face: number, row: number) => number, a0 = 0, arc = Math.PI * 2): void {
+  const pt = (i: number, k: number) => { const [t, f] = prof[i]!, a = a0 + (k / n) * arc; return V(x + Math.sin(a) * r * f, y0 + t * h, z + Math.cos(a) * r * f); };
+  for (let i = 0; i + 1 < prof.length; i++) for (let k = 0; k < n; k++) {
+    const p0 = pt(i, k), p1 = pt(i, k + 1), p2 = pt(i + 1, k + 1), p3 = pt(i + 1, k);
+    if (prof[i + 1]![1] === 0) T.add(c, p0, p1, p2); else T.quad(c, p0, p1, p2, p3);
+    const m = holes[i] ?? 0;
+    if (!m) continue;
+    const nrm = p1.clone().sub(p0).cross(p3.clone().sub(p0)).normalize();
+    const L = (u: number, s: number) => p0.clone().lerp(p1, u).lerp(p3.clone().lerp(p2, u), s).addScaledVector(nrm, 0.00012);
+    for (let j = 0; j < m; j++) { const s0 = (j + 0.18) / m, s1 = (j + 0.82) / m; T.quad(holeC(i, k, j), L(0.33, s0), L(0.67, s0), L(0.67, s1), L(0.33, s1)); }
+  }
+}
+
+// A slab of wall drawn in elevation: its outline (u to the right, v up, seen
+// from the front) on the plane through (cx, cz) facing ry, d deep behind it;
+// the front and the edges (not those on the ground), no back.
+function sfSlab(T: SfT, cx: number, cz: number, ry: number, d: number, outline: readonly (readonly [number, number])[], c: number, side = c): void {
+  const pts = THREE.ShapeUtils.isClockWise(outline.map(([u, v]) => new THREE.Vector2(u, v))) ? [...outline].reverse() : outline;
+  const n = V(Math.sin(ry), 0, Math.cos(ry)), t = V(Math.cos(ry), 0, -Math.sin(ry));
+  const p = (k: number, o: number) => { const [u, v] = pts[k]!; return V(cx + t.x * u + n.x * o, v, cz + t.z * u + n.z * o); };
+  for (const [a, b, e] of THREE.ShapeUtils.triangulateShape(pts.map(([u, v]) => new THREE.Vector2(u, v)), [])) T.add(c, p(a!, 0), p(b!, 0), p(e!, 0), n);
+  if (d <= 0) return;
+  for (let k = 0; k < pts.length; k++) {
+    const k2 = (k + 1) % pts.length, [u0, v0] = pts[k]!, [u1, v1] = pts[k2]!;
+    if (v0 < 1e-6 && v1 < 1e-6) continue;
+    T.quad(side, p(k, 0), p(k, -d), p(k2, -d), p(k2, 0), V(t.x * (v1 - v0), -(u1 - u0), t.z * (v1 - v0)));
+  }
+}
+// A façade's outline: the ground from -w to w with parabolic portals cut up
+// into it ([middle, half width, height], left to right), then the roof line
+// `top` from the right edge to the left.
+function sfFront(w: number, doors: readonly (readonly [number, number, number])[], top: readonly (readonly [number, number])[]): [number, number][] {
+  const pts: [number, number][] = [[-w, 0]];
+  for (const [m, hw, hh] of doors) pts.push(...sfArch(m, hw, hh));
+  pts.push([w, 0], ...top.map(([u, v]): [number, number] => [u, v]));
+  return pts;
+}
+// A parabolic arch (Gaudí's catenary), left foot to right foot.
+const sfArch = (m: number, hw: number, hh: number): [number, number][] => Array.from({ length: 9 }, (_, i) => { const s = -1 + i / 4; return [m + s * hw, hh * (1 - s * s)]; });
+
+// The coloured mosaic pinnacle on an apostle's tower: the bishop's mitre on
+// its flaring collar, the white knobs of its crozier round the tip (s the
+// tower's radius, from y).
+function sfMitre(out: G[], x: number, y: number, z: number, s: number, i: number): void {
+  const c1 = sfPick([SF_RED, SF_GOLD, 0xc84a3a, 0xd8a838], i), c2 = sfPick([SF_GOLD, SF_RED, SF_WHITE, SF_RED], i);
+  out.push(cyl(0.3 * s, 0.72 * s, 0.8 * s, 6, c2, { x, y, z, ry: i }), cone(0.72 * s, 2.3 * s, 6, c1, { x, y: y + 0.8 * s, z, ry: i }));
+  out.push(drumC(0.74 * s, 0.6 * s, 0.22 * s, 6, SF_WHITE, { x, y: y + 0.8 * s, z, ry: i }));
+  for (let k = 0; k < 4; k++) { const a = (k * Math.PI) / 2 + i; out.push(sfOct(0.24 * s, SF_WHITE, x + Math.sin(a) * 0.42 * s, y + 2.05 * s, z + Math.cos(a) * 0.42 * s)); }
+  out.push(sfOct(0.3 * s, SF_WHITE, x, y + 3.1 * s, z, 1.3));
+}
+// The apostles' towers' profile: near round and straight, then the parabola to the pinnacle.
+const SF_APOSTLE: SfProfile = [[0, 1], [0.3, 0.95], [0.52, 0.86], [0.68, 0.7], [0.8, 0.48], [0.88, 0.27]];
+// An apostle's bell tower from the ground to `top` (its mitre's tip), radius r.
+function sfApostle(T: SfT, out: G[], x: number, z: number, top: number, r: number, c: number, i: number): void {
+  const h = (top - 3.4 * r) / 0.88;
+  sfShaft(T, x, z, 0, h, r, SF_APOSTLE, 10, c, [5, 4, 3, 2, 1], () => SF_HOLE, i * 0.37);
+  sfMitre(out, x, h * 0.88 - 0.05 * r, z, r, i);
+}
+
+// The basilica as Gaudí designed it, finished: a Latin cross, the nave along
+// x (the Glory façade at +x, the apse at −x), the transept's Nativity façade
+// to the front (+z) and the Passion façade behind. The nave's flanks in two
+// tiers of steep gables, each with its rose window, between pinnacles
+// crowned with baskets of coloured fruit; tall lancets and roses of
+// coloured glass. The Nativity: three deep parabolic portals in layers of
+// stone, its gables rich with carving, the green cypress over the middle
+// one. The Passion: stark, its canopy on six leaning bone columns under a
+// tall pediment of bones. The Glory: the portico of five doors and its row
+// of lanterns. The eighteen towers: four apostles' over each façade, porous
+// with rows of openings, each tipped with its mosaic mitre; the four
+// Evangelists' round the crossing; Mary's with its star over the apse; and
+// tallest of all the tower of Jesus Christ, its glass and its four-armed
+// cross (about 10 cells tall).
 function sagradaFamilia(): G[] {
-  const out: G[] = [], ST = 0xc2a988, NAT = 0xa18a6c, PAS = 0xd6c6a8, r = rnd(53);
-  const glass = [0x3a6ab0, 0x3a9a6a, 0xd8803a, 0xc23a4a, 0xe8c84a];
-  // The nave (along z) and aisles, the transept (along x).
-  const nz0 = -0.044, nz1 = 0.04, nw = 0.026, aw = 0.046, nh = 0.05, ah = 0.03, tz = -0.004, tw = 0.03, tx = 0.05;
-  out.push(...box(aw, ah, nz1 - nz0 - 0.002, ST, { z: (nz0 + nz1) / 2 }, shade(ST, 0.9)));
-  out.push(...box(nw, nh, nz1 - nz0, shade(ST, 1.03), { z: (nz0 + nz1) / 2 }, shade(ST, 0.92)));
-  out.push(...box(2 * tx, nh, tw, shade(ST, 1.01), { z: tz }, shade(ST, 0.92)));
-  // Windows: tall, of coloured glass, along the clerestory and the aisles.
+  const T = sfTris(), out: G[] = [], r = rnd(53);
+  const XC = -0.02, AH = 0.062, NH = 0.1, AX = -0.0415, ROOF = shade(SF_ST, 0.88);
+  const glass = (i: number) => sfPick(SF_GLASS, i);
+  // A rose window in its stone frame, facing ry.
+  const rose = (rad: number, c: number, x: number, y: number, z: number, ry: number) => [
+    P(new THREE.CircleGeometry(rad * 1.4, 10), shade(SF_ST, 0.8), { x, y, z, ry }),
+    P(new THREE.CircleGeometry(rad, 10), c, { x: x + Math.sin(ry) * 0.00025, y, z: z + Math.cos(ry) * 0.00025, ry }),
+  ];
+  const pinnacle = (x: number, y: number, z: number, rad: number, h: number, i: number, c = SF_ST) =>
+    out.push(cone(rad, h, 6, c, { x, y, z, ry: i }), sfOct(rad * 0.95, sfPick(SF_FRUIT, i), x, y + h, z, 1.3));
+
+  // The nave and its aisles, the clerestory and the steep roof; the transept.
+  out.push(...box(0.057, AH, 0.06, SF_ST, { x: 0.0295 }), ...box(0.057, NH - AH, 0.024, shade(SF_ST, 1.03), { x: 0.0295, y: AH }, SF_ST));
+  out.push(...gable(0.057, 0.0244, 0.032, ROOF, { x: 0.0295, y: NH }));
+  out.push(...box(0.044, NH, 0.1, SF_ST, { x: XC }), ...gable(0.044, 0.1, 0.032, ROOF, { x: XC, y: NH }, true));
+  // The nave's five bays a side: doors and windows, the two tiers of gables, the pinnacles.
   for (const s of [-1, 1]) {
-    const ry = s > 0 ? Math.PI / 2 : -Math.PI / 2;
-    for (let k = 0; k < 7; k++) {
-      const zz = nz0 + 0.006 + k * 0.0118;
-      if (Math.abs(zz - tz) < tw / 2 + 0.002) continue;
-      out.push(...archPane(0.0042, 0.016, glass[k % glass.length]!, s * (nw / 2 + 0.0003), ah + 0.003, zz, ry));
-      out.push(...archPane(0.0046, 0.018, glass[(k + 2) % glass.length]!, s * (aw / 2 + 0.0003), 0.006, zz, ry));
+    const ry = s > 0 ? 0 : Math.PI;
+    for (let i = 0; i < 5; i++) {
+      const bx = 0.0025 + 0.0111 * (i + 0.5), g = i * 2 + (s > 0 ? 0 : 1);
+      out.push(...archPane(0.0042, 0.007, SF_HOLE, bx, 0.002, s * 0.0303, ry));
+      for (const o of [-0.0022, 0.0022]) out.push(...archPane(0.0026, 0.015, glass(g + (o > 0 ? 1 : 0)), bx + o, 0.016, s * 0.0303, ry));
+      out.push(...rose(0.0024, glass(g + 2), bx, 0.045, s * 0.0303, ry));
+      pinnacle(bx, AH + 0.022, s * 0.0301, 0.0012, 0.008, g + 5, shade(SF_ST, 1.1));
+      out.push(...gable(0.0098, 0.008, 0.024, ROOF, { x: bx, y: AH, z: s * 0.0264 }, true, shade(SF_ST, 1.1)), ...rose(0.0021, glass(g + 3), bx, AH + 0.0085, s * 0.0307, ry));
+      out.push(...archPane(0.0034, 0.019, glass(g + 4), bx, AH + 0.004, s * 0.0123, ry), ...rose(0.002, glass(g), bx, AH + 0.0305, s * 0.0123, ry));
+      pinnacle(bx, NH + 0.03, s * 0.0121, 0.0012, 0.009, g + 2, shade(SF_ST, 1.1));
+      out.push(...gable(0.0098, 0.01, 0.032, ROOF, { x: bx, y: NH, z: s * 0.0074 }, true, shade(SF_ST, 1.12)), ...rose(0.0023, glass(g + 1), bx, NH + 0.011, s * 0.0127, ry));
     }
-    for (const zz of [tz - 0.008, tz, tz + 0.008]) out.push(...archPane(0.0045, 0.024, glass[(Math.round(zz * 1000) + 5) % 5]!, s * (tx - 0.012), 0.012, zz, ry).map((g) => g.translate(s * 0.0003, 0, 0)));
+    for (let j = 0; j <= 5; j++) {
+      const xb = 0.0025 + 0.0111 * j;
+      out.push(...box(0.0022, AH + 0.0012, 0.003, shade(SF_ST, 1.05), { x: xb, z: s * 0.0311 }));
+      pinnacle(xb, AH + 0.0012, s * 0.0311, 0.0017, 0.02, j * 2 + s);
+      pinnacle(xb, NH, s * 0.0125, 0.0016, 0.026, j * 3 + s + 1);
+    }
+    // The transept's flanks between the aisles and the façades.
+    for (const [xw, rw] of [[0.0023, Math.PI / 2], [-0.0423, -Math.PI / 2]] as const) {
+      out.push(...archPane(0.0042, 0.03, glass(s + 3), xw, 0.03, s * 0.04, rw), ...rose(0.0026, glass(s + 1), xw, 0.077, s * 0.04, rw));
+      out.push(...archPane(0.004, 0.009, SF_HOLE, xw, 0.004, s * 0.04, rw));
+    }
   }
-  // Roofs: the nave's steep ridge, rows of lanterns along it and over the aisles.
-  out.push(...gable(nw + 0.002, nz1 - nz0, 0.014, shade(ST, 0.88), { y: nh, z: (nz0 + nz1) / 2 }, true, shade(ST, 0.95)));
-  out.push(...gable(2 * tx, tw + 0.002, 0.014, shade(ST, 0.88), { y: nh, z: tz }, false, shade(ST, 0.95)));
-  for (let k = 0; k < 9; k++) {
-    const zz = nz0 + 0.004 + k * 0.0098;
-    for (const s of [-1, 1]) out.push(cone(0.0028, 0.012, 6, shade(ST, 1.05), { x: s * (aw / 2 - 0.004), y: ah, z: zz }), ball(0.0012, glass[k % 5]!, { x: s * (aw / 2 - 0.004), y: ah + 0.0125, z: zz }));
+
+  // The apse: its chapels in a half ring under steep gables and pinnacles,
+  // the ribbed dome over them with its windows, a ring of pinnacles.
+  sfShaft(T, AX, 0, 0, AH, 0.028, [[0, 1], [1, 1]], 7, SF_ST, [2], (_b, k, j) => (j === 0 ? SF_HOLE : glass(k)), Math.PI, Math.PI);
+  const DOME: SfProfile = [[0, 1], [0.06, 0.8], [0.35, 0.7], [0.6, 0.52], [0.8, 0.32], [0.94, 0.14], [1, 0]];
+  sfShaft(T, AX, 0, AH, 0.08, 0.028, DOME, 7, shade(SF_ST, 1.03), [0, 2, 2, 1, 1], (b, k) => (b < 2 ? glass(k + b) : SF_HOLE), Math.PI, Math.PI);
+  sfSlab(T, AX, 0, Math.PI / 2, 0, [...DOME.map(([t, f]): [number, number] => [-0.028 * f, AH + t * 0.08]), ...[...DOME].reverse().slice(1, -1).map(([t, f]): [number, number] => [0.028 * f, AH + t * 0.08])], SF_ST);
+  for (let k = 0; k < 7; k++) {
+    const a = Math.PI + ((k + 0.5) / 7) * Math.PI, rc = 0.028 * Math.cos(Math.PI / 14);
+    out.push(...gable(0.0105, 0.008, 0.026, ROOF, { x: AX + Math.sin(a) * (rc - 0.0036), y: AH, z: Math.cos(a) * (rc - 0.0036), ry: a }, true, shade(SF_ST, 1.1)));
+    out.push(...rose(0.0022, glass(k + 2), AX + Math.sin(a) * (rc + 0.0007), AH + 0.0085, Math.cos(a) * (rc + 0.0007), a));
   }
-  // The apse: a half round at the back, a crown of pinnacles.
-  out.push(P(new THREE.CylinderGeometry(nw / 2 + 0.008, nw / 2 + 0.008, 0.042, 14, 1, true, Math.PI / 2, Math.PI).translate(0, 0.021, 0), ST, { z: nz0 }));
-  for (let k = 0; k <= 6; k++) { const a = Math.PI + (k / 6) * Math.PI, rr = nw / 2 + 0.008; out.push(...gaudiSpire(Math.cos(a) * rr, nz0 + Math.sin(a) * rr, 0.042, 0.022, 0.0028, ST, 200 + k, false), ball(0.0016, glass[k % 5]!, { x: Math.cos(a) * rr, y: 0.0635, z: nz0 + Math.sin(a) * rr })); }
-  // The Nativity façade (+x): three portals, its dripping stone, the cypress with doves; four towers.
-  const fx = tx + 0.003;
-  out.push(...box(0.008, 0.04, tw + 0.008, NAT, { x: fx, z: tz }));
-  for (const [zz, w] of [[tz - 0.0095, 0.006], [tz, 0.008], [tz + 0.0095, 0.006]] as const) out.push(...archPane(w, 0.018, 0x2e2622, fx + 0.0043, 0, zz, Math.PI / 2));
-  const drips: THREE.Vector3[] = [];
-  for (let k = 0; k < 60 && drips.length < 40; k++) {
-    const p = V(fx + 0.004 + r() * 0.0015, 0.02 + r() * 0.022, tz + (r() - 0.5) * 0.034);
-    if (drips.some((q) => q.distanceTo(p) < 0.0034)) continue;
-    drips.push(p);
-    out.push(P(new THREE.IcosahedronGeometry(0.0012 + r() * 0.0016, 0).rotateY(r() * 6).rotateX(r() * 6), shade(NAT, 0.85 + r() * 0.3), { x: p.x, y: p.y, z: p.z, sy: 1.6 }));
+  for (let k = 0; k <= 7; k++) {
+    const a = Math.PI + (k / 7) * Math.PI;
+    pinnacle(AX + Math.sin(a) * 0.028, AH, Math.cos(a) * 0.028, 0.0019, 0.026, k);
+    if (k > 0 && k < 7) pinnacle(AX + Math.sin(a) * 0.0224, AH + 0.0048, Math.cos(a) * 0.0224, 0.0015, 0.02, k + 3, shade(SF_ST, 1.03));
   }
-  out.push(cone(0.0045, 0.018, 8, 0x3f6a3a, { x: fx + 0.003, y: 0.04, z: tz }));
-  for (let k = 0; k < 5; k++) out.push(ball(0.0007, 0xf4f0e8, { x: fx + 0.004 + r() * 0.002, y: 0.044 + r() * 0.012, z: tz + (r() - 0.5) * 0.006 }));
-  // The Passion façade (−x): a canopy on six leaning bone columns, a stark frieze; four towers.
-  const px = -tx - 0.003;
-  out.push(...box(0.008, 0.04, tw + 0.008, PAS, { x: px, z: tz }));
-  out.push(...box(0.012, 0.004, tw + 0.006, shade(PAS, 0.94), { x: px - 0.008, y: 0.028, z: tz }));
-  for (let k = 0; k < 6; k++) { const zz = tz - 0.014 + k * 0.0056; out.push(rod(V(px - 0.012, 0, zz + (k % 2 ? 0.0015 : -0.0015)), V(px - 0.009, 0.028, zz), 0.0013, shade(PAS, 1.04), 6, 0.0018)); }
-  for (const [zz, w] of [[tz - 0.0085, 0.006], [tz + 0.0085, 0.006]] as const) out.push(...archPane(w, 0.016, 0x2e2622, px - 0.0043, 0, zz, -Math.PI / 2));
-  for (let k = 0; k < 6; k++) out.push(...box(0.0007, 0.005, 0.004, shade(PAS, 0.85), { x: px - 0.0044, y: 0.034, z: tz - 0.012 + k * 0.0048 }));
-  // The façades' towers: four on each, the inner pair taller.
-  for (const [cx, sign, c] of [[fx, 1, NAT], [px, -1, PAS]] as const) {
-    for (const [o, hh] of [[-0.0135, 0.15], [-0.0045, 0.162], [0.0045, 0.162], [0.0135, 0.15]] as const) out.push(...gaudiSpire(cx + sign * 0.001, tz + o, 0.04, hh - 0.04, 0.0042, c, Math.round((cx + o) * 9999)));
+
+  // The Nativity façade (+z): three portals in three layers of stone, each
+  // deeper and narrower, the doors in the dark at the back; the gables rich
+  // with carving, the cypress over the middle portal with its white doves.
+  const natDoors = (s: number, hs: number) => [[-0.0165, 0.0055 * s, 0.05 * hs], [0, 0.0088 * s, 0.074 * hs], [0.0165, 0.0055 * s, 0.05 * hs]] as const;
+  const L3 = [[0.024, 0.06], [0.0165, 0.09], [0.0095, 0.07], [0, 0.108], [-0.0095, 0.07], [-0.0165, 0.09], [-0.024, 0.06]] as const;
+  const L2 = [[0.0245, 0.068], [0.0165, 0.098], [0.0095, 0.08], [0, 0.118], [-0.0095, 0.08], [-0.0165, 0.098], [-0.0245, 0.068]] as const;
+  const L1 = [[0.025, 0.088], [0.0165, 0.104], [0.0095, 0.094], [0, 0.128], [-0.0095, 0.094], [-0.0165, 0.104], [-0.025, 0.088]] as const;
+  sfSlab(T, XC, 0.068, 0, 0.0045, sfFront(0.024, natDoors(1, 1), L3), SF_NAT, shade(SF_NAT, 0.92));
+  sfSlab(T, XC, 0.0635, 0, 0.0045, sfFront(0.0245, natDoors(0.8, 0.9), L2), shade(SF_NAT, 1.05), shade(SF_NAT, 0.9));
+  sfSlab(T, XC, 0.059, 0, 0.009, sfFront(0.025, natDoors(0.6, 0.8), L1), shade(SF_NAT, 1.08), shade(SF_NAT, 0.88));
+  for (const [m, hw, hh] of natDoors(0.6, 0.8)) sfSlab(T, XC, 0.0502, 0, 0, sfArch(m, hw, hh), SF_HOLE);
+  out.push(rod(V(XC, 0, 0.0545), V(XC, 0.036, 0.0545), 0.0009, shade(SF_NAT, 1.1), 6));
+  // The carving: stalactites dripping from the portals' arches, the figures in relief over the gables.
+  for (const [li, z, s, hs] of [[0, 0.0675, 1, 1], [1, 0.063, 0.8, 0.9]] as const) for (const [m, hw, hh] of natDoors(s, hs)) {
+    for (let k = 1; k < 8; k++) {
+      const sx = -1 + k / 4, l = (0.0024 + r() * 0.003) * (1 - 0.4 * Math.abs(sx)) * (1 + li * 0.3);
+      out.push(cone(0.0008 + r() * 0.0004, l, 4, shade(SF_NAT, 0.88 + r() * 0.2), { x: XC + m + sx * hw, y: hh * (1 - sx * sx) + 0.0004, z, rx: Math.PI, ry: r() }));
+    }
   }
-  // The Glory façade (+z): its towers' stumps in scaffolding, the portico going up.
-  const gz = nz1 + 0.004;
-  out.push(...box(nw + 0.012, 0.03, 0.008, shade(ST, 1.06), { z: gz }));
-  for (const t of [-0.009, -0.003, 0.003, 0.009]) out.push(...archPane(0.0045, 0.014, 0x2e2622, t, 0, gz + 0.0043));
-  for (const o of [-0.0135, -0.0045, 0.0045, 0.0135]) {
-    out.push(...gaudiSpire(o, gz, 0.03, 0.09, 0.0042, shade(ST, 1.08), 300 + Math.round(o * 1e4), false).slice(0, 1).map((g) => { g.computeBoundingBox(); return g; }));
+  const topAt = (u: number) => { for (let k = 0; k + 1 < L3.length; k++) { const [ua, va] = L3[k]!, [ub, vb] = L3[k + 1]!; if (u <= ua && u >= ub) return va + ((u - ua) / (ub - ua)) * (vb - va); } return 0; };
+  const archAt = (u: number) => { let v = 0; for (const [m, hw, hh] of natDoors(1, 1)) { const s = (u - m) / hw; if (Math.abs(s) < 1.25) v = Math.max(v, hh * (1 - Math.min(1, s * s)) + 0.004); } return v; };
+  for (let u = -0.0225; u < 0.0226; u += 0.0025) {
+    const lo = archAt(u), hi = topAt(u) - 0.003 - r() * 0.012;
+    if (hi - lo > 0.006) out.push(rod(V(XC + u, lo, 0.0683), V(XC + u, hi, 0.0683), 0.0006, shade(SF_NAT, 0.92 + r() * 0.16), 4, 0.0002));
   }
-  out.push(...box(nw + 0.016, 0.0005, 0.012, 0x7a6a50, { y: 0.06, z: gz }));
-  for (const x of [-0.019, -0.009, 0.0, 0.009, 0.019]) for (const zz of [gz - 0.006, gz + 0.006]) out.push(rod(V(x, 0, zz), V(x, 0.072, zz), 0.0003, 0x6a5a48, 3));
-  for (const y of [0.024, 0.048, 0.072]) for (const zz of [gz - 0.006, gz + 0.006]) out.push(rod(V(-0.019, y, zz), V(0.019, y, zz), 0.00025, 0x6a5a48, 3));
-  // The Evangelists' towers round the tower of Jesus; Mary's over the apse.
-  for (const [sx, sz] of [[1, 1], [-1, 1], [-1, -1], [1, -1]] as const) {
-    const x = sx * 0.0165, zz = tz + sz * 0.0165;
-    out.push(...gaudiSpire(x, zz, nh, 0.135, 0.0058, shade(ST, 1.04), 400 + sx * 7 + sz * 3, false));
-    out.push(ball(0.003, [0xe8c84a, 0xc23a2a, 0xf0ece4, 0x3a6ab0][(sx + 1 + (sz + 1) / 2) % 4]!, { x, y: nh + 0.133, z: zz }, 1));
+  for (let k = 0, n = 0; k < 400 && n < 22; k++) {
+    const u = (r() - 0.5) * 0.044, v = 0.01 + r() * 0.09;
+    if (v > topAt(u) - 0.004 || v < archAt(u)) continue;
+    n++;
+    out.push(P(new THREE.OctahedronGeometry(0.0011, 0), shade(SF_NAT, 0.85 + r() * 0.25), { x: XC + u, y: v, z: 0.0681, sx: 0.8, sy: 2.2, sz: 0.45 }));
   }
-  out.push(...gaudiSpire(0, nz0 + 0.004, nh, 0.148, 0.0068, shade(ST, 1.04), 501, false));
-  out.push(P(new THREE.OctahedronGeometry(0.0045, 0), 0xf0ece4, { y: nh + 0.15, z: nz0 + 0.004 }), P(new THREE.OctahedronGeometry(0.0045, 0), 0xe8c84a, { y: nh + 0.15, z: nz0 + 0.004, ry: Math.PI / 4, rx: Math.PI / 4 }));
-  out.push(...gaudiSpire(0, tz, nh, 0.205, 0.009, shade(ST, 1.06), 777, false));
-  const ct = nh + 0.205;
-  out.push(...box(0.0024, 0.016, 0.0024, 0xf4f0e8, { y: ct - 0.004, z: tz }), ...box(0.012, 0.0024, 0.0024, 0xf4f0e8, { y: ct + 0.006, z: tz }), ...box(0.0024, 0.0024, 0.012, 0xf4f0e8, { y: ct + 0.006, z: tz }));
-  // (Raised to about 10 cells tall on its pad, a little wider.)
-  for (const g of out) g.scale(1.08, 1.46, 1.08);
-  // Two tower cranes over the building site.
-  return [pad(), ...out, ...crane(0.042, 0.064, 0.3, 2.498, 0xe0b030, 0.07), ...crane(-0.058, -0.058, 0.26, -0.927, 0xc84a32, 0.06)];
-}
-// A tower crane: a lattice mast, the cab, the jib turned to ry and its counter-jib, a hook on its cable.
-function crane(x: number, z: number, h: number, ry: number, c: number, jib: number): G[] {
-  const out: G[] = [], m = 0.0018;
-  const cs = [V(x - m, 0, z - m), V(x + m, 0, z - m), V(x + m, 0, z + m), V(x - m, 0, z + m)];
-  for (const p of cs) out.push(rod(p, V(p.x, h, p.z), 0.00035, c, 3));
-  const n = Math.round(h / 0.008);
-  for (let i = 0; i < n; i++) {
-    const y0 = (i * h) / n, y1 = ((i + 1) * h) / n;
-    for (let k = 0; k < 4; k++) { const a = cs[k]!, b = cs[(k + 1) % 4]!; out.push(rod(V(a.x, y0, a.z), V(b.x, y1, b.z), 0.0002, c, 3)); }
+  for (const [u, v] of [L3[1]!, L3[5]!, L2[1]!, L2[5]!, L1[1]!, L1[5]!]) pinnacle(XC + u, v - 0.002, v > 0.095 ? 0.055 : v > 0.085 ? 0.0612 : 0.0657, 0.0016, 0.011, Math.round(v * 1000), shade(SF_NAT, 1.08));
+  for (const [y, rad, h] of [[0.102, 0.0062, 0.02], [0.113, 0.005, 0.018], [0.125, 0.0036, 0.017]] as const) out.push(cone(rad, h, 8, shade(0x4f7a3e, 1 + (y - 0.1) * 3), { x: XC, y, z: 0.0645, ry: y * 50 }));
+  out.push(sfOct(0.0014, SF_RED, XC, 0.1435, 0.0645, 1.4));
+  for (let k = 0; k < 7; k++) { const a = k * 2.4, y = 0.108 + k * 0.004, rad = 0.0058 - k * 0.0006; out.push(sfOct(0.0008, SF_WHITE, XC + Math.sin(a) * rad, y, 0.0645 + Math.cos(a) * rad)); }
+
+  // The Passion façade (−z): the wall with its three portals under the tall
+  // pediment, its row of bones; the canopy on six leaning bone columns, the
+  // stark figures on it, the slit windows above.
+  const pasDoors = [[-0.012, 0.0045, 0.034], [0, 0.006, 0.042], [0.012, 0.0045, 0.034]] as const;
+  sfSlab(T, XC, -0.058, Math.PI, 0.008, sfFront(0.025, pasDoors, [[0.025, 0.08], [0, 0.135], [-0.025, 0.08]]), SF_PAS, shade(SF_PAS, 0.9));
+  for (const [m, hw, hh] of pasDoors) sfSlab(T, XC, -0.0502, Math.PI, 0, sfArch(m, hw, hh), SF_HOLE);
+  out.push(...box(0.052, 0.004, 0.0148, shade(SF_PAS, 0.95), { x: XC, y: 0.05, z: -0.0656 }));
+  for (const [k, u] of spread(6, 0.044).entries()) out.push(rod(V(XC + u + (k % 2 ? 0.0016 : -0.0016), 0, -0.0705), V(XC + u, 0.05, -0.068), 0.0011, shade(SF_PAS, 1.03), 6, 0.0017));
+  // Subirachs' angular figures in tiers: on the canopy, on two ledges up the pediment.
+  for (const [y, z, n, w] of [[0.054, -0.0625, 7, 0.042], [0.074, -0.0605, 5, 0.03], [0.096, -0.0605, 3, 0.016]] as const) {
+    if (y > 0.06) out.push(...box(w + 0.008, 0.0015, 0.0024, shade(SF_PAS, 0.93), { x: XC, y: y - 0.0015, z: -0.0592 }));
+    for (const [k, u] of spread(n, w).entries()) out.push(...box(0.0017, 0.0052 + (k % 3) * 0.0008, 0.0015, shade(SF_PAS, 0.78 + (k % 2) * 0.08), { x: XC + u, y, z: y > 0.06 ? -0.0593 : z }));
   }
-  const dx = Math.cos(ry), dz = -Math.sin(ry);
-  out.push(...box(0.004, 0.004, 0.004, shade(c, 0.9), { x, y: h, z, ry }));
-  out.push(rod(V(x, h + 0.003, z), V(x + dx * jib, h + 0.003, z + dz * jib), 0.0011, c, 3), rod(V(x, h + 0.003, z), V(x - dx * jib * 0.3, h + 0.003, z - dz * jib * 0.3), 0.0011, c, 3));
-  out.push(rod(V(x, h + 0.003, z), V(x, h + 0.012, z), 0.0006, c, 3), rod(V(x, h + 0.012, z), V(x + dx * jib, h + 0.0035, z + dz * jib), 0.0002, 0x3a3a3a, 3), rod(V(x, h + 0.012, z), V(x - dx * jib * 0.3, h + 0.0035, z - dz * jib * 0.3), 0.0002, 0x3a3a3a, 3));
-  out.push(...box(0.004, 0.004, 0.004, 0x8a8a84, { x: x - dx * jib * 0.27, y: h, z: z - dz * jib * 0.27 }));
-  const hx = x + dx * jib * 0.6, hz = z + dz * jib * 0.6;
-  out.push(rod(V(hx, h + 0.002, hz), V(hx, h * 0.55, hz), 0.00015, 0x2a2a2a, 3), ...box(0.004, 0.003, 0.003, 0xb8a88e, { x: hx, y: h * 0.55 - 0.003, z: hz }));
-  return out;
+  for (const u of [-0.006, 0.006]) out.push(pane(0.0014, 0.012, SF_HOLE, XC + u, 0.106, -0.0583, Math.PI));
+  out.push(sfOct(0.0016, SF_GOLD, XC, 0.137, -0.058, 1.8));
+  // The pediment's bones: leaning columns from the canopy up to its slopes.
+  for (const [k, u] of spread(8, 0.04).entries()) {
+    const top = 0.135 - (0.055 * Math.abs(u)) / 0.025 + 0.004;
+    out.push(rod(V(XC + u * 0.9, 0.054, -0.0612), V(XC + u, top, -0.0596), 0.0012, shade(SF_PAS, 1.06 - (k % 2) * 0.05), 5, 0.0007));
+  }
+  for (const s of [-1, 1]) for (let k = 0; k < 5; k++) {
+    const f = (k + 0.5) / 5, u = s * 0.025 * (1 - f), v = 0.08 + 0.055 * f;
+    out.push(rod(V(XC + u, v - 0.004, -0.0586), V(XC + u, v + 0.009 - k * 0.0008, -0.0586), 0.0009, shade(SF_PAS, 1.06), 4, 0.0006));
+  }
+
+  // The Glory façade (+x): the great front with its gables and five doors;
+  // before it the portico, five deeper doors, the row of lanterns on it.
+  const gloDoors = (s: number, hs: number) => spread(5, 0.048).map((u) => [u, (u === 0 ? 0.005 : 0.0042) * s, (u === 0 ? 0.044 : 0.038) * hs] as const);
+  sfSlab(T, 0.064, 0, Math.PI / 2, 0.006, sfFront(0.031, gloDoors(0.68, 0.8), [[0.031, 0.075], [0.0245, 0.075], [0.018, 0.095], [0.0115, 0.08], [0, 0.122], [-0.0115, 0.08], [-0.018, 0.095], [-0.0245, 0.075], [-0.031, 0.075]]), SF_GLO, shade(SF_GLO, 0.9));
+  sfSlab(T, 0.0712, 0, Math.PI / 2, 0.0072, sfFront(0.0305, gloDoors(1, 1), [[0.0305, 0.052], [-0.0305, 0.052]]), shade(SF_GLO, 1.04), shade(SF_GLO, 0.92));
+  for (const [m, hw, hh] of gloDoors(0.68, 0.8)) sfSlab(T, 0.0582, 0, Math.PI / 2, 0, sfArch(m, hw, hh), SF_HOLE);
+  for (const [k, u] of spread(7, 0.054).entries()) {
+    out.push(cyl(0.0024, 0.003, 0.007, 6, shade(SF_GLO, 1.05), { x: 0.0676, y: 0.052, z: -u }), cone(0.003, 0.013, 6, shade(SF_GLO, 1.08), { x: 0.0676, y: 0.059, z: -u }));
+    out.push(sfOct(0.0016, sfPick(SF_FRUIT, k + 1), 0.0676, 0.072, -u, 1.3));
+  }
+  for (const [u, v] of [[0.018, 0.095], [-0.018, 0.095], [0, 0.122]] as const) pinnacle(0.0612, v - 0.002, -u, 0.0018, 0.013, Math.round(v * 100), shade(SF_GLO, 1.05));
+  out.push(...rose(0.005, glass(0), 0.0643, 0.093, 0, Math.PI / 2), ...rose(0.0034, glass(2), 0.0643, 0.064, 0.012, Math.PI / 2), ...rose(0.0034, glass(3), 0.0643, 0.064, -0.012, Math.PI / 2));
+
+  // The twelve apostles' towers, four over each façade: the Nativity's, the
+  // Passion's a little taller, the Glory's tallest.
+  const spread4 = [-0.0215, -0.0075, 0.0075, 0.0215] as const;
+  for (const [k, o] of spread4.entries()) {
+    const inner = k === 1 || k === 2;
+    sfApostle(T, out, XC + o, 0.052, inner ? 0.235 : 0.215, 0.0062, shade(SF_NAT, 1.02 + r() * 0.05), k);
+    sfApostle(T, out, XC + o, -0.052, inner ? 0.25 : 0.235, 0.0062, shade(SF_PAS, 0.98 + r() * 0.04), k + 4);
+    sfApostle(T, out, 0.06, -o, inner ? 0.268 : 0.25, 0.0064, shade(SF_GLO, 0.99 + r() * 0.04), k + 8);
+  }
+  // The Evangelists' towers round the crossing, each crowned with its gilt
+  // symbol on a white orb.
+  for (const [k, [sx, sz]] of ([[1, 1], [-1, 1], [-1, -1], [1, -1]] as const).entries()) {
+    const x = XC + sx * 0.0165, z = sz * 0.0165, rr = 0.0075, h = (0.3 - 0.09 - 3.2 * rr) / 0.88;
+    sfShaft(T, x, z, 0.09, h, rr, SF_APOSTLE, 10, shade(SF_ST, 1.04), [5, 4, 3, 2, 1], () => SF_HOLE, k);
+    const y = 0.09 + h * 0.88 - 0.05 * rr;
+    out.push(cyl(0.3 * rr, 0.7 * rr, 0.8 * rr, 6, SF_GOLD, { x, y, z }), ball(0.75 * rr, SF_WHITE, { x, y: y + 1.5 * rr, z }));
+    for (let j = 0; j < 4; j++) { const a = (j * Math.PI) / 2 + k; out.push(sfOct(0.32 * rr, SF_GOLD, x + Math.sin(a) * 0.75 * rr, y + 1.6 * rr, z + Math.cos(a) * 0.75 * rr, 1.5)); }
+    out.push(sfOct(0.35 * rr, SF_GOLD, x, y + 2.6 * rr, z, 1.6));
+  }
+  // Mary's tower over the apse, its twelve-pointed star of glass.
+  sfShaft(T, AX - 0.003, 0, 0.1, 0.19, 0.009, [[0, 1], [0.35, 0.92], [0.6, 0.76], [0.8, 0.5], [0.93, 0.24], [1, 0]], 10, shade(SF_ST, 1.06), [5, 4, 3, 2, 1],
+    (b, k) => (b >= 2 && k % 2 ? 0x8fb4d8 : SF_HOLE), 0.3);
+  out.push(sfOct(0.0105, SF_WHITE, AX - 0.003, 0.3, 0), P(new THREE.OctahedronGeometry(0.0095, 0), 0xbcd8f0, { x: AX - 0.003, y: 0.3, z: 0, rx: Math.PI / 4, ry: Math.PI / 4 }));
+  // The tower of Jesus Christ at the crossing, tallest of all: its glass
+  // brightening as it rises, the white four-armed cross on top.
+  sfShaft(T, XC, 0, 0.095, 0.265, 0.0135, [[0, 1], [0.3, 0.94], [0.55, 0.8], [0.75, 0.58], [0.88, 0.36], [0.96, 0.15], [1, 0]], 12, shade(SF_ST, 1.08), [5, 5, 4, 3, 2, 1],
+    (b, k, j) => (b < 2 ? SF_HOLE : glass(k + j + b)), 0.13);
+  const ct = 0.355;
+  out.push(...box(0.0034, 0.03, 0.0034, SF_WHITE, { x: XC, y: ct, z: 0 }));
+  out.push(...box(0.016, 0.0029, 0.0029, SF_WHITE, { x: XC, y: ct + 0.019, z: 0 }), ...box(0.0029, 0.0029, 0.016, SF_WHITE, { x: XC, y: ct + 0.0191, z: 0 }));
+  return [pad(), ...T.done(), ...out];
 }
 
 // ---------- Berlin: the Brandenburg Gate ----------
