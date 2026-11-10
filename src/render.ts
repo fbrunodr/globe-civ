@@ -146,6 +146,9 @@ const ROAD_ACROSS = [-1, -0.88, -0.45, 0, 0.45, 0.88, 1] as const;
 const ROAD_MID = 3;
 const ROAD_STEP = 0.012;
 const ROAD_LIFT = 0.00004; // nearly flush with the ground
+// How far a road's surface may stray from the ground between the points
+// kept along it (drape), and the most steps it may run straight.
+const ROAD_TOL = 0.000025, ROAD_RUN = 16, ROAD_BEND = 0.08;
 // A wonder's water (cityProps.ts SinkSheet), standing in its basin: how
 // deep the water shader takes it to be (a formal basin's: still, a lake's
 // colour, no foam at its sides).
@@ -1891,11 +1894,30 @@ export class GlobeRenderer {
     const on = (d: THREE.Vector3) => { const h = at(d); return d.clone().multiplyScalar(Math.max(h.ground, h.water) + lift); };
     // A fine fan (rings in from the edge, the edge subdivided) so the paving
     // follows the ground: big flat triangles would dip under bumps and let
-    // the kerbs of the streets under them show through.
+    // the kerbs of the streets under them show through. (Unless the ground
+    // under it is flat enough: then a plain fan from its middle, if every
+    // point of the fine one keeps within ROAD_TOL of it.)
+    const SUB = 4, RINGS = 4;
     const ring: THREE.Vector3[] = [];
-    pts.forEach((p, k) => { const q = pts[(k + 1) % pts.length]!; for (let s = 0; s < 4; s++) ring.push(p.clone().lerp(q, s / 4).normalize()); });
-    const RINGS = 4;
-    const inner = (p: THREE.Vector3, r: number) => (r === 0 ? on(mid) : on(mid.clone().lerp(p, r / RINGS).normalize()));
+    pts.forEach((p, k) => { const q = pts[(k + 1) % pts.length]!; for (let s = 0; s < SUB; s++) ring.push(p.clone().lerp(q, s / SUB).normalize()); });
+    const point = (p: THREE.Vector3, r: number) => (r === 0 ? mid : mid.clone().lerp(p, r / RINGS).normalize());
+    const lvl = (d: THREE.Vector3) => { const h = at(d); return Math.max(h.ground, h.water); };
+    const hMid = lvl(mid), hCorner = pts.map(lvl), tol = ROAD_TOL * this.scale;
+    let flat = true;
+    for (let k = 0; k < ring.length && flat; k++) {
+      const c = Math.floor(k / SUB), f = (k % SUB) / SUB, he = hCorner[c]! + (hCorner[(c + 1) % pts.length]! - hCorner[c]!) * f;
+      for (let r = 1; r <= RINGS; r++) if (Math.abs(hMid + (he - hMid) * (r / RINGS) - lvl(point(ring[k]!, r))) > tol) { flat = false; break; }
+    }
+    if (flat) {
+      const m0 = on(mid);
+      pts.forEach((p, k) => {
+        const a = on(p), b = on(pts[(k + 1) % pts.length]!);
+        pos.push(m0.x, m0.y, m0.z, a.x, a.y, a.z, b.x, b.y, b.z);
+        for (let n = 0; n < 3; n++) col.push(rgb[0], rgb[1], rgb[2]);
+      });
+      return;
+    }
+    const inner = (p: THREE.Vector3, r: number) => on(point(p, r));
     ring.forEach((p, k) => {
       const q = ring[(k + 1) % ring.length]!;
       for (let r = 0; r < RINGS; r++) {
@@ -1930,7 +1952,41 @@ export class GlobeRenderer {
       }
       fine.push(p); fineW.push(w);
     });
-    pts = fine;
+    // (Then thinned: a point dropped where the strip, straight from the
+    // last kept to the next, would keep within ROAD_TOL of the ground along
+    // its middle and both edges, and the road keep its line: fine where the
+    // ground or the road bends, long straight runs where neither does. Every
+    // point near water or unexplored ground kept, for the bridges and the ends.)
+    {
+      const m = fine.length, hs = fine.map((d) => at(d));
+      const lvl = (h: { ground: number; water: number }) => Math.max(h.ground, h.water);
+      const sideAt = (k: number) => fine[k]!.clone().cross(fine[Math.min(m - 1, k + 1)]!.clone().sub(fine[Math.max(0, k - 1)]!)).normalize().multiplyScalar(fineW[k]!);
+      const prof = fine.map((d, k) => { const sd = sideAt(k); return [lvl(hs[k]!), lvl(at(d.clone().add(sd).normalize())), lvl(at(d.clone().sub(sd).normalize()))]; });
+      const dist = [0];
+      for (let k = 1; k < m; k++) dist.push(dist[k - 1]! + fine[k]!.angleTo(fine[k - 1]!));
+      const tol = ROAD_TOL * this.scale;
+      const pin = (k: number) => !g.explored[hs[k]!.t] || [k - 1, k, k + 1].some((j) => j >= 0 && j < m && hs[j]!.water > hs[j]!.ground);
+      const kept = [0];
+      let a = 0;
+      for (let b = 1; b < m; b++) {
+        const fits = (end: number) => {
+          // (Off the straight line from a to end by no more than a little of
+          // its width: the given points dropped only where the road runs straight.)
+          const nrm = fine[a]!.clone().cross(fine[end]!);
+          if (nrm.lengthSq() < 1e-24) return false;
+          nrm.normalize();
+          for (let i = a + 1; i < end; i++) {
+            if (Math.abs(fine[i]!.dot(nrm)) > ROAD_BEND * fineW[i]!) return false;
+            const t = (dist[i]! - dist[a]!) / Math.max(1e-12, dist[end]! - dist[a]!);
+            for (let j = 0; j < 3; j++) if (Math.abs(prof[a]![j]! + (prof[end]![j]! - prof[a]![j]!) * t - prof[i]![j]!) > tol) return false;
+          }
+          return true;
+        };
+        if (pin(b) || b === m - 1 || !fits(b + 1) || b - a >= ROAD_RUN) { kept.push(b); a = b; }
+      }
+      pts = kept.map((k) => fine[k]!);
+      fineW.splice(0, fineW.length, ...kept.map((k) => fineW[k]!));
+    }
     const n = pts.length;
     const hwAt = (k: number) => fineW[k]!;
     const here = pts.map((d) => at(d));
