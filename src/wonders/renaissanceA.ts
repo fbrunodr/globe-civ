@@ -355,7 +355,7 @@ export function stBasils(): G[] {
   }
   let y = gy + ch;
   out.push(...kokoshniks(0, cz, y, cw, 8, TRIM, BRICK), ...kokoshniks(0, cz, y + 0.0032, cw * 0.82, 8, TRIM, BRICK, Math.PI / 8));
-  out.push(...frustum(cw * 0.98, cw * 0.98, cw * 0.62, cw * 0.62, 0.0065, BRICK, { y, z: cz }));
+  out.push(octFrustum(cw * 0.98, cw * 0.62, 0.0065, BRICK, 0, y, cz));
   y += 0.0065;
   out.push(...chamfered(cw * 0.62, 0.0035, cw * 0.62, 0.29, TRIM, { y, z: cz }));
   y += 0.0035;
@@ -388,16 +388,35 @@ function archTop(w: number, h: number, c: number, x: number, y: number, z: numbe
   ];
 }
 // A ring of kokoshniks (the round gables of Russian churches) round an
-// octagon w across, standing on y.
+// octagon w across, standing on y: each a solid round-topped gable running
+// back into the chapel (in `inner`, the wall's colour), its front edged by a
+// white arch (c).
 function kokoshniks(x: number, z: number, y: number, w: number, n: number, c: number, inner: number, turn = 0): G[] {
-  const out: G[] = [];
+  const out: G[] = [], side = w * 0.42, R = side / 2, k = 1.25, depth = w * 0.32, S = 6;
+  // (Its front and its rounded top, open behind and below: those are inside the chapel.)
+  const arc = Array.from({ length: S + 1 }, (_, j) => { const a = Math.PI - (j / S) * Math.PI; return [Math.cos(a) * R, Math.sin(a) * R * k] as const; });
+  const p: number[] = [];
+  for (let j = 0; j < S; j++) {
+    const [ax, ay] = arc[j]!, [bx, by] = arc[j + 1]!;
+    p.push(0, 0, 0, bx, by, 0, ax, ay, 0);
+    p.push(ax, ay, 0, bx, by, 0, bx, by, -depth, ax, ay, 0, bx, by, -depth, ax, ay, -depth);
+  }
+  const body = new THREE.BufferGeometry();
+  body.setAttribute('position', new THREE.Float32BufferAttribute(p, 3));
+  const rim = new THREE.RingGeometry(R * 0.7, R, S, 1, 0, Math.PI).scale(1, k, 1);
   for (let i = 0; i < n; i++) {
-    const ry = turn + (i * Math.PI * 2) / n, side = w * 0.42, [fx, fz] = onFace(x, z, w / 2 + 0.0004, ry, 0);
-    out.push(P(new THREE.CircleGeometry(side / 2, 6, 0, Math.PI).scale(1, 1.25, 1), c, { x: fx, y, z: fz, ry }));
+    const ry = turn + (i * Math.PI * 2) / n, [fx, fz] = onFace(x, z, w / 2 + 0.0004, ry, 0);
+    out.push(P(body.clone(), inner, { x: fx, y, z: fz, ry }));
     const [ix, iz] = shift(fx, fz, ry, 0.0002);
-    out.push(P(new THREE.CircleGeometry(side * 0.34, 6, 0, Math.PI).scale(1, 1.25, 1), inner, { x: ix, y: y + 0.0003, z: iz, ry }));
+    out.push(P(rim.clone(), c, { x: ix, y, z: iz, ry }));
   }
   return out;
+}
+// An octagonal frustum (a roof between a chapel's rings of gables) from w0
+// across its flats at y to w1 at y + h, its faces where the chapel's are.
+function octFrustum(w0: number, w1: number, h: number, c: number, x: number, y: number, z: number): G {
+  const k = 1 / Math.cos(Math.PI / 8);
+  return P(new THREE.CylinderGeometry((w1 / 2) * k, (w0 / 2) * k, h, 8, 1, false).translate(0, h / 2, 0).rotateY(Math.PI / 8), c, { x, y, z });
 }
 // An onion dome r wide and h high, its base at y: n stripes in turn of
 // `cols`, twisted round by `twist` turns' worth (radians) from base to
@@ -442,10 +461,10 @@ function chapel(x: number, z: number, y: number, w: number, h: number, dr: numbe
     if (f % 2 === 0) out.push(...archTop(w * 0.13, h * 0.17, trim, fx, y + h * 0.1, fz, ry));
   }
   let yy = y + h;
-  out.push(...kokoshniks(x, z, yy, w, 8, trim, brick, Math.PI / 8));
-  out.push(...frustum(w * 0.98, w * 0.98, dr * 2.3, dr * 2.3, h * 0.2, brick, { x, y: yy, z }));
+  out.push(...kokoshniks(x, z, yy, w, 8, trim, brick));
+  out.push(octFrustum(w * 0.98, dr * 2.3, h * 0.2, brick, x, yy, z));
   yy += h * 0.2;
-  out.push(...kokoshniks(x, z, yy - 0.0002, dr * 2.3, 8, trim, brick));
+  out.push(...kokoshniks(x, z, yy - 0.0002, dr * 2.3, 8, trim, brick, Math.PI / 8));
   out.push(drumC(dr, dr, dh, 12, brick, { x, y: yy, z }));
   for (const f of [0.15, 0.85]) out.push(cyl(dr + 0.0002, dr + 0.0002, 0.0007, 12, trim, { x, y: yy + dh * f, z }));
   for (let i = 0; i < 8; i++) {
