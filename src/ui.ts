@@ -11,6 +11,8 @@ import { resourceDef, empireBonus } from './resources.ts';
 import { BORDER_AT, BORDER_MAX, OUTPUT_KEYS } from './cities.ts';
 import { icon, unitIcon, resourceIcon, YIELD_ICON, type IconKey } from './icons.ts';
 import { inkOn } from './mapIcons.ts';
+import { cityUpkeep, inflation } from './economy.ts';
+import { total } from './effects.ts';
 import { RESOURCE_KEYS } from './resources.ts';
 import {
   USE, FOCUSES, IMPROVEMENTS, ERAS, SPECIALISTS, SPECIALIST_KINDS, isFocusKey, specialistYield,
@@ -300,7 +302,13 @@ export class UI {
       `<button class="abtn ${cls} ${why ? 'off' : ''}" data-act="${act}" ${tip(title, why ?? sub)} ${why ? 'aria-disabled="true"' : ''}>${icon(ic)}${key ? `<kbd>${key}</kbd>` : ''}</button>`;
     const orders: string[] = [];
     if (mine) {
-      if (u.type === 'settler') orders.push(order('found', 'flag', 'Found a city', 'Here, on this tile', 'B', g.canFoundCity(u.tile, u.owner) ? null : 'Too close to another city, or no ground for one'));
+      if (u.type === 'settler') {
+        // (Its bill, before it exists: what a city here would cost a turn now.)
+        const me = g.players[u.owner]!, cap = me.capital === null ? undefined : g.cityById.get(me.capital), mine = g.cities.filter((c) => c.owner === u.owner).length;
+        const bill = cap ? cityUpkeep(Math.round(g.approxDist(u.tile, cap.tile)), mine, false, total(g.effectsOf(me), 'upkeep')) * inflation(g.turn) : 0;
+        orders.push(order('found', 'flag', 'Found a city', cap ? `Here. It would cost ${bill.toFixed(1)} gold a turn in upkeep now (its distance from the capital, and your ${plural(mine, 'city', 'cities')}), more as it grows` : 'Here: your capital, which costs no upkeep',
+          'B', g.canFoundCity(u.tile, u.owner) ? null : 'Too close to another city, or no ground for one'));
+      }
       if (T.improves) {
         // (On its own tile; fishing boats on the water beside it.)
         const t = g.improveTarget(u) ?? u.tile, k = g.improvementAt(t, u.owner), why = g.improveBlock(u, t);
