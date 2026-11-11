@@ -91,6 +91,16 @@ describe('V1: the game is won', () => {
     expect(g.winner).toEqual({ player: 1, how: 'science' });
     expect(g.over).toBe('defeat');
   });
+  it('by conquest: every civ\'s first capital in one hand', () => {
+    const { g, a, b } = two();
+    // (The others never founded: out of the game for this test.)
+    for (const p of g.players.slice(2)) { p.alive = false; for (const u of g.units.filter((x) => x.owner === p.id)) g.removeUnit(u); }
+    expect(g.capitalsHeld(0)).toBe(1);
+    b.owner = 0;
+    g.endTurn();
+    expect(g.winner).toEqual({ player: 0, how: 'conquest' });
+    void a;
+  });
   it('on time: the best score when the last turn ends', () => {
     const g = new Game({ size: 'small', seed: 5, turnLimit: 3 });
     for (const p of g.players) p.isHuman = false;

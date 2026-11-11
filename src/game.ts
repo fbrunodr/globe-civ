@@ -82,6 +82,7 @@ export interface Player {
   government: GovernmentKey;
   policies: Record<PolicySlot, (PolicyKey | null)[]>;
   capital: number | null;    // the city with its palace (the first it founded, or the oldest left)
+  firstCapital: number | null; // the first city it founded, whoever holds it now (the conquest victory counts these)
   goldFrac: number;          // the treasury's fraction of a gold (upkeep is fractional)
   ledger: Ledger;            // last turn's accounts, for the panels
 }
@@ -103,7 +104,7 @@ export interface Relation { war: boolean; since: number }
 // How the game is won (game.ts checkVictory).
 export type Victory = 'conquest' | 'science' | 'religion' | 'time';
 export const VICTORIES: Record<Victory, { name: string; rule: string }> = {
-  conquest: { name: 'Conquest', rule: 'Be the last civilization standing.' },
+  conquest: { name: 'Conquest', rule: 'Hold the first capital of every civilization (your own among them).' },
   science: { name: 'Science', rule: 'Be the first to discover Artificial Superintelligence, the last technology.' },
   religion: { name: 'Religion', rule: 'Found a religion that more than two thirds of the world\'s people follow (the citizens of the cities that follow it).' },
   time: { name: 'Time', rule: 'Have the best score when the last turn ends, if no one has won before.' },
@@ -439,7 +440,7 @@ export class Game {
       techs: new Set(), research: null, researchQueue: [], techProgress: {}, scienceBank: 0,
       politics: new Set(), studying: null, politicsQueue: [], politicsProgress: {}, cohesionBank: 0,
       identity: new Set(), identityPoints: 0, arrears: 0, dishonor: 0,
-      government: 'chiefdom', policies: emptySlots('chiefdom'), capital: null, goldFrac: 0, ledger: EMPTY_LEDGER,
+      government: 'chiefdom', policies: emptySlots('chiefdom'), capital: null, firstCapital: null, goldFrac: 0, ledger: EMPTY_LEDGER,
     }));
     const n = this.players.length;
     this.aiPolicies = this.players.map((_, i) => policies?.[i] ?? LEVELS[Math.min(LEVELS.length - 1, Math.max(0, level))]!.policy);
@@ -1158,6 +1159,7 @@ export class Game {
     this.removeUnit(u);
     if (p.capital === null) {
       p.capital = city.id;
+      if (p.firstCapital === null) p.firstCapital = city.id;
       // (A religion founded before it had a city: its holy city now.)
       for (const [r, f] of this.religions) if (f.founder === p.id && f.holyCity === null) { f.holyCity = city.id; city.religion = r; }
     }
@@ -2643,6 +2645,19 @@ export class Game {
     return this.faithCache;
   }
   faithOf(id: number): ReligionKey | null { return this.faiths().of[id] ?? null; }
+  // The first capitals still standing that a civ holds, its own among them.
+  capitalsHeld(id: number): number {
+    let n = 0;
+    for (const p of this.players) { const c = p.firstCapital === null ? undefined : this.cityById.get(p.firstCapital); if (c && c.owner === id) n++; }
+    return n;
+  }
+  // The civ that holds every first capital still standing (once every civ
+  // has founded one, and there are two at least), or null.
+  private capitalsLord(): number | null {
+    if (this.players.some((p) => p.alive && p.firstCapital === null)) return null;
+    const caps = this.players.flatMap((p) => { const c = p.firstCapital === null ? undefined : this.cityById.get(p.firstCapital); return c ? [c] : []; });
+    return caps.length >= 2 && caps.every((c) => c.owner === caps[0]!.owner) ? caps[0]!.owner : null;
+  }
   // The share of the world's people following the religion a civ founded
   // (its cities' citizens over all cities'; 0: it founded none). People,
   // not cities: founding many small cities of the faith wins nothing.
@@ -2655,7 +2670,7 @@ export class Game {
     }
     return 0;
   }
-  // The game is won (VICTORIES): by conquest, the last civ standing; by
+  // The game is won (VICTORIES): by conquest, holding every civ's first capital (or the last civ standing); by
   // science, the first to know every tech; by religion, the founder of a
   // faith most of the world's cities follow; and, if no one has won by the
   // turn limit, on time by the best score. Checked as each turn ends.
@@ -2663,7 +2678,9 @@ export class Game {
     if (this.winner) return;
     const alive = this.players.filter((p) => p.alive);
     const best = (f: (p: Player) => number) => alive.reduce((a, b) => (f(b) > f(a) ? b : a));
+    const lord = this.capitalsLord();
     if (alive.length === 1 && this.players.length > 1) this.winner = { player: alive[0]!.id, how: 'conquest' };
+    else if (lord !== null) this.winner = { player: lord, how: 'conquest' };
     else if (alive.some((p) => p.techs.has(FINAL_TECH))) this.winner = { player: best((p) => (p.techs.has(FINAL_TECH) ? 1e9 : 0) + this.score(p.id)).id, how: 'science' };
     else if (alive.some((p) => this.faithShare(p.id) > FAITH_VICTORY)) this.winner = { player: best((p) => this.faithShare(p.id)).id, how: 'religion' };
     else if (this.turn > this.turnLimit && alive.length) this.winner = { player: best((p) => this.score(p.id)).id, how: 'time' };

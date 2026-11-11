@@ -17,7 +17,7 @@ const pct = (x: number) => `${Math.round(100 * x)}%`;
 
 const won = new Map<string, number>();
 const length: number[] = [], winnerCities: number[] = [], allCities: number[] = [], firstWar: number[] = [], wars: number[] = [], captured: number[] = [], eliminated: number[] = [];
-const wonders: number[] = [], buildings: number[] = [], founders: number[] = [];
+const wonders: number[] = [], buildings: number[] = [], founders: number[] = [], capitals: number[] = [], faithTop: number[] = [], techTop: number[] = [];
 let crippled = 0, winnersWithFaith = 0, arrears = 0, civTurns = 0, needRes = 0, army = 0;
 const warBy = { same: 0, rival: 0, none: 0 }, exposure = { same: 0, rival: 0, none: 0 };
 const t0 = Date.now();
@@ -43,6 +43,9 @@ for (let k = 0; k < GAMES; k++) {
     }
   }
   const w = g.winner;
+  capitals.push(Math.max(...g.players.map((p) => g.capitalsHeld(p.id))) / g.players.length);
+  faithTop.push(Math.max(...g.players.map((p) => g.faithShare(p.id))));
+  techTop.push(Math.max(...g.players.map((p) => p.techs.size)));
   won.set(w?.how ?? 'none', (won.get(w?.how ?? 'none') ?? 0) + 1);
   length.push(g.turn);
   const cities = (id: number) => g.cities.filter((c) => c.owner === id).length;
@@ -68,6 +71,7 @@ const share = (o: { same: number; rival: number; none: number }, k: 'same' | 'ri
 const lean = (k: 'same' | 'rival' | 'none') => (share(exposure, k) > 0 ? (share(warBy, k) / share(exposure, k)).toFixed(2) : '–');
 const rows: [string, string, string][] = [
   ['How games are won', [...won].map(([h, n]) => `${h} ${n}`).join(', ') + `; ${mean(length).toFixed(0)} turns on average`, 'every way of winning shows up'],
+  ['How near each victory comes', `the leader in each, at the game's end: ${pct(mean(capitals))} of the first capitals (conquest: all), ${pct(mean(faithTop))} of the world's people in its faith (religion: 67%), ${mean(techTop).toFixed(0)} of 95 techs (science: the last)`, 'each within reach in some games'],
   ['Compact and wide can both win', `winners hold ${Math.min(...winnerCities)}–${Math.max(...winnerCities)} cities (median ${median(winnerCities)}); all civs ${Math.min(...allCities)}–${Math.max(...allCities)} (median ${median(allCities)})`, 'winners spread over a wide range'],
   ['Expanding past what can be paid loses', `${pct(arrears / Math.max(1, civTurns))} of a civ's turns in arrears`, 'rare: the best play pays its way'],
   ['Wars are frequent, from the first eras', `${mean(wars).toFixed(1)} wars a game; the first at turn ${median(firstWar)} (median)`, 'several a game; the first before turn 60'],

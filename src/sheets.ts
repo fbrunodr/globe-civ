@@ -476,9 +476,9 @@ export class Sheets {
     const civs = g.players.filter((o) => o.alive && (o.id === HUMAN || g.met[HUMAN]![o.id])).sort((a, b) => g.score(b.id) - g.score(a.id));
     // (Toward each way of winning, in broad: the score, the era, a tenth of the world's people at a time.)
     const rows = civs.map((o) => `<tr><td><span class="swatch" style="background:${o.color}"></span> ${esc(o.name)}</td><td class="num">${g.score(o.id)}</td>
-      <td>${ERAS[o.era].name}${o.id === HUMAN ? ` <small>${o.techs.size} of ${TECH_KEYS.length} technologies</small>` : ''}</td><td>${g.faithShare(o.id) > 0 ? `about ${Math.round(10 * g.faithShare(o.id)) * 10}%` : '—'}</td></tr>`).join('');
+      <td>${ERAS[o.era].name}${o.id === HUMAN ? ` <small>${o.techs.size} of ${TECH_KEYS.length} technologies</small>` : ''}</td><td>${g.faithShare(o.id) > 0 ? `about ${Math.round(10 * g.faithShare(o.id)) * 10}%` : '—'}</td><td class="num">${g.capitalsHeld(o.id)} of ${g.players.length}</td></tr>`).join('');
     return `<h3>How the game is won</h3><p class="note">${(Object.keys(VICTORIES) as Victory[]).map((k) => `<b>${VICTORIES[k].name}:</b> ${VICTORIES[k].rule}`).join(' ')} The last turn is ${g.turnLimit}.</p>
-      <table class="grid"><tr><th>Civilization</th><th>Score</th><th>Era</th><th>World's people of its faith</th></tr>${rows}</table><h3>Relations</h3>`;
+      <table class="grid"><tr><th>Civilization</th><th>Score</th><th>Era</th><th>World's people of its faith</th><th>First capitals held</th></tr>${rows}</table><h3>Relations</h3>`;
   }
 
   // ---- trade ----

@@ -49,6 +49,7 @@ export const GENES = {
   retreatHp: [10, 60, 35],         // a unit hurt below this falls back
   musterShare: [0.4, 1, 0.7],      // the share of an army that must have gathered before it moves on
   offensiveSpare: [1, 10, 3],      // units out of garrison before it marches on a city
+  capitalLust: [0, 8, 2],          // what a civ's first capital adds to a city's worth as a target (the conquest victory is won by holding them all)
   warAfter: [10, 150, 45],         // no war before this turn
   warChance: [0, 0.3, 0.05],       // the chance a turn it declares one, with a target
   warRatio: [0.8, 3, 1.25],        // how much stronger than its target it must be

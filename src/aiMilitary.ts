@@ -165,7 +165,7 @@ export function militaryPhase(g: Game, p: Player, P: AiPolicy, cities: readonly 
         const home = cities.reduce((a, b) => (dist(b.tile, c.tile) < dist(a.tile, c.tile) ? b : a));
         const d = dist(home.tile, c.tile);
         if (d > 16) continue;
-        const s = -d - 1.5 * g.cityStrength(c) / (1 + 0.5 * g.players[c.owner]!.era) + (g.cityStrength(c) === 0 ? 4 : 0) - 0.02 * near(g.units.filter((u) => u.owner === c.owner && landFighter(u)), c.tile, 3) + 0.3 * c.pop;
+        const s = -d - 1.5 * g.cityStrength(c) / (1 + 0.5 * g.players[c.owner]!.era) + (g.cityStrength(c) === 0 ? 4 : 0) + (g.players.some((x) => x.firstCapital === c.id) ? P.capitalLust : 0) - 0.02 * near(g.units.filter((u) => u.owner === c.owner && landFighter(u)), c.tile, 3) + 0.3 * c.pop;
         if (s > bestS) { best = c; bestS = s; from = home; }
       }
       if (best) {
