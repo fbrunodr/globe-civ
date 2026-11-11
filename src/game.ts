@@ -140,6 +140,12 @@ const STARTING: readonly BuildKey[] = ['warrior', 'slinger', 'scout', 'settler',
 // ---- combat (shared with the Units page's battle sandbox) ----
 // Fortified, a unit defends this much better.
 export const FORTIFY_BONUS = 0.5;
+// What a unit that did not move heals a turn: in a city of its own, in the
+// field, and when it was attacked that turn (wherever it stands: nothing:
+// an assault kept up wears a garrison down; scripts/siege.ts: two of a
+// kind take an open city from one of the same more often than not, walls
+// ask for three).
+export const GARRISON_HEAL = 25, FIELD_HEAL = 10, BESIEGED_HEAL = 0;
 // Which of its strengths a unit fights with (rules.ts): at close quarters
 // (attacking or defending), shooting, or under fire.
 export type Stat = 'melee' | 'ranged' | 'guard';
@@ -234,6 +240,7 @@ export interface Unit {
   job: WorkerJob | null;                // and what it does there
   charges: number;                      // a worker's: the improvements it can still build (roads and repairs cost none)
   faith: ReligionKey | null;            // the religion its city followed when it was raised (it keeps it: religion.ts)
+  struck: boolean;                      // it was attacked this turn (it heals less: BESIEGED_HEAL)
 }
 // What a worker does on a tile: builds its improvement (a charge, of
 // WORKER_CHARGES), repairs it when pillaged, or lays a road (both free, as
@@ -704,7 +711,7 @@ export class Game {
     this.record('unitCreated', owner, { unit: type, tile });
     const u: Unit = { id: this.nextId++, type, owner, tile, packedIn: null, moves: this.maxMoves(type, owner), hp: 100,
       fortified: false, skipped: false, goal: null, goalMode: null, dead: false, aiTarget: null, work: null, job: null,
-      charges: unitDef(type).improves ? WORKER_CHARGES : 0, faith };
+      charges: unitDef(type).improves ? WORKER_CHARGES : 0, faith, struck: false };
     this.units.push(u);
     return u;
   }
@@ -998,6 +1005,7 @@ export class Game {
       this.onBattle?.(u, tile, style, { defender: d.id, attackerHp: after.attacker, defenderHp: after.defender });
       u.hp = after.attacker;
       d.hp = after.defender;
+      d.struck = true;
       this.record('attack', u.owner, { unit: u.type, defender: d.type, defenderOwner: d.owner, tile, A: +A.toFixed(2), D: +D.toFixed(2), hp: [before.a, Math.max(0, u.hp)], defenderHp: [before.d, Math.max(0, d.hp)] });
       if (u.hp <= 0) this.record('unitLost', u.owner, { unit: u.type, tile: u.tile, by: d.owner });
       if (d.hp <= 0) this.record('unitLost', d.owner, { unit: d.type, tile, by: u.owner });
@@ -2523,10 +2531,12 @@ export class Game {
       const mv = this.maxMoves(u.type, u.owner);
       if (u.moves >= mv && u.hp < 100) {
         const home = this.cityByTile.get(u.tile)?.owner === u.owner;
-        u.hp = Math.min(100, u.hp + (home ? 25 : 10) + total(this.effectsOf(this.players[u.owner]!), 'heal'));
+        // (A unit attacked this turn mends less: BESIEGED_HEAL; so an assault kept up wears a garrison down.)
+        u.hp = Math.min(100, u.hp + (u.struck ? BESIEGED_HEAL : home ? GARRISON_HEAL : FIELD_HEAL) + total(this.effectsOf(this.players[u.owner]!), 'heal'));
       }
       u.moves = mv;
       u.skipped = false;
+      u.struck = false;
     }
     for (const p of this.players) if (p.dishonor > 0) p.dishonor--;
     for (const p of this.players) if (p.alive) this.record('summary', p.id, this.summary(p));

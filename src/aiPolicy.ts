@@ -42,7 +42,8 @@ export const GENES = {
   wWalls: [0, 1.5, 0.4],           // walls
   scoutRate: [0, 0.6, 0.2],        // a scout's pull, while it has none out and land near the city is unknown:
   scoutUnknown: [0.05, 0.8, 0.25], // more than this share of the land within ten tiles
-  attackOdds: [0.4, 0.9, 0.6],     // the chance of winning a fight to the end it wants before closing in
+  attackOdds: [0.3, 0.8, 0.5],     // the odds of an exchange it wants before a blade closes in,
+  gangUp: [0, 0.3, 0.1],           // less this for each other unit of its own that can strike the same target this turn (they wear it down together)
   assaultOdds: [-0.25, 0.15, -0.05], // added to it for an army assaulting its city
   retreatHp: [10, 60, 35],         // a unit hurt below this falls back
   musterShare: [0.4, 1, 0.7],      // the share of an army that must have gathered before it moves on

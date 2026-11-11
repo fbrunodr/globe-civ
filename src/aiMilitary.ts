@@ -34,7 +34,7 @@
 
 import { unitDef, domainOf } from './rules.ts';
 import { canAttackType, canShoot, canAssault, isShooter } from './unitClasses.ts';
-import { VOLLEY_ROUNDS, type Game, type Player, type Unit, type City } from './game.ts';
+import { VOLLEY_ROUNDS, MELEE_ROUNDS, type Game, type Player, type Unit, type City } from './game.ts';
 import type { AiPolicy } from './aiPolicy.ts';
 
 // An army on its way to take a city.
@@ -66,13 +66,6 @@ const landFighter = (u: Unit): boolean => !u.dead && u.packedIn === null && !uni
 export const strength = (u: Unit): number => { const T = unitDef(u.type); return Math.max(T.melee, T.rangedAtk ?? 0) * (0.5 + u.hp / 200); };
 const shoots = (u: Unit): boolean => canShoot(u.type) && isShooter(u.type);
 
-// The chance a fight to the end is won: exchanges each won with odds p, the
-// attacker needing `kills` of them before it loses `lives`.
-function winChance(p: number, kills: number, lives: number): number {
-  let sum = 0, term = Math.pow(p, kills);
-  for (let i = 0; i < lives; i++) { sum += term; term *= ((kills + i) / (i + 1)) * (1 - p); }
-  return Math.min(1, sum);
-}
 const HIT = 24.5; // an exchange's damage, on average (game.ts fightRounds)
 
 // The army's part of a civ's turn (ai.ts aiTurn).
@@ -201,9 +194,12 @@ export function militaryPhase(g: Game, p: Player, P: AiPolicy, cities: readonly 
   const enter = (): void => {
     for (const u of live()) {
       if (!canAssault(u.type) || shoots(u)) continue;
-      for (const t of g.tiles[u.tile]!.neighbors) {
-        const c = g.cityByTile.get(t);
-        if (c && foes.includes(c.owner) && !g.bestDefender(t, p.id) && g.attackBlockAt(u, t, 'melee') === null) { g.attack(u, t, 'melee'); done.add(u.id); break; }
+      // (An enemy city within three tiles that no one holds: it goes for it, and takes it if it gets there.)
+      for (const c of g.cities) {
+        if (!foes.includes(c.owner) || dist(c.tile, u.tile) > 3.5 || g.bestDefender(c.tile, p.id) || !g.known[p.id]![c.tile]) continue;
+        g.goTo(u, c.tile, 'melee');
+        done.add(u.id);
+        break;
       }
     }
   };
@@ -254,9 +250,16 @@ export function militaryPhase(g: Game, p: Player, P: AiPolicy, cities: readonly 
       const pv = g.combatPreview(u, t, 'melee'), c = g.cityByTile.get(t);
       let s = 0;
       if (pv) {
-        const w = winChance(pv.atk / (pv.atk + pv.def), Math.ceil(pv.defender.hp / HIT), Math.ceil(u.hp / HIT));
-        const gain = w * unitDef(pv.defender.type).cost * (c ? 1.5 : 1) - (1 - w) * unitDef(u.type).cost;
-        if (w >= P.attackOdds + (assault ? P.assaultOdds : 0) && gain > 0) s = w + gain / 200;
+        // (A clash is a few exchanges now, not a fight to the end: what
+        // counts is the odds of an exchange, and how many of its own can
+        // strike the same target this turn: together they wear down what
+        // none would go at alone, a garrison above all.)
+        const odds = pv.atk / (pv.atk + pv.def);
+        const others = mine.filter((x) => x !== u && !x.dead && x.moves > 0 && (shoots(x) ? g.fireReach(x).has(t) : canAssault(x.type) && dist(x.tile, t) <= 1.5)).length;
+        const need = P.attackOdds + (assault ? P.assaultOdds : 0) - P.gangUp * Math.min(4, others);
+        // (Or the kill: a target that one more clash would likely finish.)
+        const finish = pv.defender.hp <= MELEE_ROUNDS * HIT * odds;
+        if (u.hp >= 45 && (odds >= need || finish)) s = odds + (finish ? 1 : 0) + (c ? 0.3 : 0);
       } else if (c) s = 5; // (a city with no one in it: taken)
       if (s > bestS) { best = t; bestS = s; }
     }
@@ -293,23 +296,9 @@ export function militaryPhase(g: Game, p: Player, P: AiPolicy, cities: readonly 
         const reach = unitDef(u.type).reach ?? 1;
         const spot = stand(u, city.tile, reach, (t) => t !== city.tile);
         if (spot !== null) go(u, spot); else g.goTo(u, city.tile);
-      } else {
-        // The blades, until the garrison is worth going at (3.): between
-        // the city and their shooters (the tile by most of them, on the
-        // city's side); with no shooter to cover, up against the city.
-        let spot: number | null = null, spotS = 0;
-        for (const sh of mine) {
-          if (!op.units.has(sh.id) || !shoots(sh) || dist(sh.tile, city.tile) > 4) continue;
-          for (const t of g.tiles[sh.tile]!.neighbors) {
-            if (g.isWater(t) || (t !== u.tile && !g.canStand(u, t)) || dist(t, city.tile) >= dist(sh.tile, city.tile) || t === city.tile) continue;
-            const by = mine.filter((x) => shoots(x) && dist(x.tile, t) <= 1.5).length;
-            const sc = by - 0.3 * dist(u.tile, t) - (mine.some((x) => x !== u && blade(x) && dist(x.tile, t) <= 1.5) ? 0.5 : 0);
-            if (sc > spotS) { spot = t; spotS = sc; }
-          }
-        }
-        if (spot !== null) go(u, spot);
-        else if (d > 1.5) go(u, stand(u, city.tile, 1, (t) => t !== city.tile));
-      }
+      } else if (!g.bestDefender(city.tile, p.id)) g.goTo(u, city.tile, 'melee'); // (no one holds it: straight in)
+      // The blades: up against the city, between it and their shooters, in reach to strike its garrison together (3.).
+      else if (d > 1.5) go(u, stand(u, city.tile, 1, (t) => t !== city.tile));
     }
   }
 
