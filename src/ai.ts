@@ -1,5 +1,5 @@
 import { unitDef, buildDef, domainOf, UNITS, type BuildKey, type UnitKey, type UnitDef } from './rules.ts';
-import { BUILDING_KEYS, BUILDINGS, WONDER_KEYS, USE, CITY_REACH, weigh, addOut, OUTPUT_KEYS, type BuildingKey } from './cities.ts';
+import { BUILDING_KEYS, BUILDINGS, WONDER_KEYS, USE, CITY_REACH, weigh, addOut, OUTPUT_KEYS, ERAS, type BuildingKey } from './cities.ts';
 import { resourceDef, empireBonus, type ResourceKey } from './resources.ts';
 import { flat } from './effects.ts';
 import { buildingUpkeep } from './economy.ts';
@@ -13,7 +13,7 @@ import { BEST, type AiPolicy } from './aiPolicy.ts';
 import { militaryPhase, planWar, planning, onCampaign, operationOf } from './aiMilitary.ts';
 import { isShooter, canAssault } from './unitClasses.ts';
 import { canAttackType } from './unitClasses.ts';
-import { MIN_WAR, type Game, type Player, type Unit, type City, type DealSide } from './game.ts';
+import { MIN_WAR, FAITH_VICTORY, type Game, type Player, type Unit, type City, type DealSide } from './game.ts';
 
 // Deliberately simple AI: expand with settlers, improve the land with
 // workers (about one for every WORKER_POP citizens), keep a garrison in every
@@ -571,7 +571,13 @@ function appetite(g: Game, p: Player, o: Player, react = true): { want: number; 
   const lead = (1 / RANK_WORTH[st.tech]) ** P.warTech * (1 / RANK_WORTH[st.prod]) ** P.warProd;
   const ratio = 1 / RANK_WORTH[st.army];
   const strike = react && attitude(g, o, p.id) === 'hostile' ? Math.max(0, 1 + P.warHostile) : 1;
-  const want = (ratio * Math.max(0, faith) * Math.max(0, truce) * lead * strike) / P.warRatio;
+  // (And how near o is to winning the game, as the Diplomacy sheet tells
+  // anyone: the first capitals it holds of those a conquest takes, the
+  // world's people in its faith by tenths, its era. A civ past half way
+  // to a victory is one to stop, the more the nearer: stopLeader.)
+  const near = Math.max(g.capitalsHeld(o.id) / g.capitalsToWin, Math.round(10 * g.faithShare(o.id)) / 10 / FAITH_VICTORY, 0.9 * (o.era / (ERAS.length - 1)));
+  const stop = 1 + P.stopLeader * Math.max(0, Math.min(1, near) - 0.5) * 2;
+  const want = (ratio * Math.max(0, faith) * Math.max(0, truce) * lead * strike * stop) / P.warRatio;
   return { want, near: d <= 14, score: want * (1 + 6 / d) * (g.players.some((x) => x.id !== p.id && g.atWar(o.id, x.id)) ? 1.3 : 1) };
 }
 // How a computer civ stands toward another, in broad: what the other may

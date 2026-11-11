@@ -57,6 +57,7 @@ export const GENES = {
   warTech: [-1.5, 1.5, 0],         // how its lead in techs over a civ moves it to war on it (a power of the ratio; below 0: it goes for the more learned),
   warProd: [-1.5, 1.5, 0],         // and its lead in production
   warHostile: [-1, 2, 0],          // how much a civ's hostility toward it draws it to strike first (below 0: it keeps clear)
+  stopLeader: [0, 3, 0.5],         // how much a civ's nearness to winning (capitals, faith, era: what the scoreboard shows) draws war on it
   techUnits: [0, 3, 1.2],          // what a tech's (or politics') units are worth to it,
   techBuildings: [0, 3, 1.15],     // its buildings,
   techWonders: [0, 3, 0.75],       // its wonders,
