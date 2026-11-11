@@ -41,6 +41,9 @@ export const religionDef = (k: ReligionKey): ReligionDef => RELIGIONS[k];
 //   the defender carries the same religion   FAITH_SAME weaker (a bad conscience)
 //   the defender carries another             FAITH_RIVAL stronger (zeal)
 //   either carries none                      nothing
+// Attacking a unit in a city, it is the city's religion that counts, not
+// the garrison's: the attackers' conscience is about the people they
+// would take, and no garrison of a convenient creed shields a city.
 // So a faith spread to one's neighbours is a shield against the armies
 // they raise, an army of another creed fights the harder, and the
 // faithless are left out of it: one figure in the fight's odds, shown

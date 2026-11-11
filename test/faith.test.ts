@@ -37,6 +37,25 @@ describe('F1: faith in war', () => {
   });
 });
 
+describe('F1b: in a city, the city\'s religion counts, not the garrison\'s', () => {
+  it('a garrison of the attackers\' creed does not shield a city of another', () => {
+    const { g, a, b } = two();
+    g.declareWar(0, 1);
+    a.religion = 'hinduism';
+    const nb = g.tiles[b.tile]!.neighbors.find((n) => !g.isWater(n) && g.relief[n] !== 'mountains')!;
+    const w = g.createUnit('warrior', 0, a.tile);
+    w.tile = nb;
+    const guard = g.createUnit('warrior', 1, b.tile);
+    guard.faith = 'hinduism'; // (the attackers' own creed, on the walls)
+    const plain = (() => { b.religion = null; return g.combatPreview(w, b.tile, 'melee')!.atk; })();
+    b.religion = 'judaism';
+    expect(g.combatPreview(w, b.tile, 'melee')!.atk).toBeCloseTo(plain * (1 + FAITH_RIVAL));
+    b.religion = 'hinduism';
+    guard.faith = 'judaism';
+    expect(g.combatPreview(w, b.tile, 'melee')!.atk).toBeCloseTo(plain * (1 - FAITH_SAME));
+  });
+});
+
 describe('F2: what faith buys', () => {
   it('a city\'s conversion, in reach of the holy city, kept a while; a unit raised in the faith', () => {
     const { g, a, b } = two();

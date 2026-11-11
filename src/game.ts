@@ -971,7 +971,7 @@ export class Game {
   combatPreview(u: Unit, tile: number, mode: AttackMode = this.attackModeFor(u, tile)): CombatPreview | null {
     const d = this.bestDefender(tile, u.owner, mode);
     if (!d) return null;
-    return { atk: this.unitStrength(u, mode, 'atk', tile) * matchup(u.type, d.type, 'atk') * this.siegeEdge(u, tile) * this.faithEdge(u, d), def: this.unitStrength(d, mode, 'def', tile) * matchup(d.type, u.type, 'def'), defender: d, mode };
+    return { atk: this.unitStrength(u, mode, 'atk', tile) * matchup(u.type, d.type, 'atk') * this.siegeEdge(u, tile) * this.faithEdge(u, this.faithAt(d, tile)), def: this.unitStrength(d, mode, 'def', tile) * matchup(d.type, u.type, 'def'), defender: d, mode };
   }
 
   // (`mode`: by fire, or closing in: unless told, attackModeFor.)
@@ -991,7 +991,7 @@ export class Game {
     if (!d) this.onBattle?.(u, tile, style);
     if (d) {
       // (The counters: pikes against horse, a charge against archers...)
-      const A = this.unitStrength(u, mode, 'atk', tile) * matchup(u.type, d.type, 'atk') * this.siegeEdge(u, tile) * this.faithEdge(u, d);
+      const A = this.unitStrength(u, mode, 'atk', tile) * matchup(u.type, d.type, 'atk') * this.siegeEdge(u, tile) * this.faithEdge(u, this.faithAt(d, tile));
       const D = this.unitStrength(d, mode, 'def', tile) * matchup(d.type, u.type, 'def');
       const before = { a: u.hp, d: d.hp };
       const after = fightRounds(u.hp, d.hp, A, D, mode, this.rng);
@@ -1050,6 +1050,13 @@ export class Game {
   // another, with zeal (FAITH_RIVAL). Either with none: nothing.
   faithEdge(u: { faith: ReligionKey | null }, d: { faith: ReligionKey | null }): number {
     return !u.faith || !d.faith ? 1 : u.faith === d.faith ? 1 - FAITH_SAME : 1 + FAITH_RIVAL;
+  }
+  // Whose faith an attack on a tile is weighed against: in a city, the
+  // city's (its people's: no garrison of a convenient creed changes what
+  // the attackers think of taking it); in the field, the defender's own.
+  private faithAt(d: Unit, tile: number): { faith: ReligionKey | null } {
+    const c = this.cityByTile.get(tile);
+    return c ? { faith: c.religion } : d;
   }
   // An engine against a garrison: built for it (SIEGE_VS_CITY over what
   // engines lose against units, so twice as strong as its attack says).
