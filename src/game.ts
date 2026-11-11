@@ -13,6 +13,7 @@ import {
 import {
   isWaterBiome, terrainMoveCost, terrainFireCost, terrainDefense,
   type BiomeKey, type ReliefKey, type FeatureKey, type TileTerrain, type Yields,
+  BIOMES,
 } from './terrain.ts';
 import { aiTurn, aiPickTech, aiPickPolitics, aiGovern, aiAcceptsPeace, aiAcceptsDeal, aiPickTraits } from './ai.ts';
 import {
@@ -133,7 +134,7 @@ export function combatStrength(type: UnitKey, stat: Stat, hp: number, bonus: num
 }
 // Siege engines are this much weaker against units than their attack
 // (they are built for walls: twice as strong against a city).
-export const SIEGE_VS_UNITS = 0.67;
+export const SIEGE_VS_UNITS = 0.5;
 // The counters between two units (rules.ts): what `self`'s strength is
 // multiplied by against `other`, `self` attacking or defending. Spears and
 // pikes hold off horse (not armour: only anti-tank guns stop that), a charge
@@ -2316,13 +2317,53 @@ export class Game {
     else if (this.players.every((p) => p.isHuman || !p.alive)) this.over = 'victory';
   }
 
+  // How high a tile stands in the way of a view: open ground and water 0,
+  // woods or hills 1, wooded hills 2, mountains 3 (terrain.ts terrainFireCost's woods).
+  viewHeight(t: number): number {
+    const tt = this.terrainAt(t);
+    if (tt.relief === 'mountains' || tt.feature === 'volcano') return 3;
+    const b = BIOMES[tt.biome], wooded = (!b.water && b.move >= 2 && b.defense > 0) || tt.feature === 'mangrove';
+    return (tt.relief === 'hills' ? 1 : 0) + (wooded ? 1 : 0);
+  }
+  // The tiles seen from `t`, out to `r`: the tiles next to it always;
+  // further ones only along a line of tiles no higher than the viewer's
+  // eye (on flat ground woods and hills hide what is behind them; from a
+  // hill one sees over them, but not over wooded hills or mountains), or
+  // when the tile itself stands above all that is before it (a mountain
+  // range shows over a forest).
+  sightFrom(t: number, r: number): number[] {
+    const eye = this.relief[t] === 'flat' ? 0 : this.relief[t] === 'hills' ? 1 : 2;
+    // (Ring by ring: the lowest screen any shortest way to each tile crosses.)
+    const screen = new Map<number, number>([[t, -1]]);
+    let ring = [t];
+    const out = [t];
+    for (let d = 1; d <= r; d++) {
+      const next = new Map<number, number>();
+      for (const p of ring) {
+        const through = d === 1 ? -1 : Math.max(screen.get(p)!, this.viewHeight(p));
+        for (const x of this.tiles[p]!.neighbors) {
+          if (screen.has(x)) continue;
+          next.set(x, Math.min(next.get(x) ?? Infinity, through));
+        }
+      }
+      ring = [];
+      for (const [x, s] of next) {
+        screen.set(x, s);
+        ring.push(x);
+        if (s <= eye || this.viewHeight(x) > s) out.push(x);
+      }
+    }
+    return out;
+  }
+
   updateVisibility(): void {
     this.visible.fill(0);
     const reveal = (t: number, r: number) => { for (const x of this.tilesWithin(t, r)) this.visible[x] = 1; };
     for (const u of this.units) {
       if (u.owner !== HUMAN) continue;
-      const high = this.relief[u.tile] !== 'flat';
-      reveal(u.tile, (unitDef(u.type).sight ?? 2) + (high ? 1 : 0));
+      // (Aircraft see all below them.)
+      if (domainOf(unitDef(u.type)) === 'air') reveal(u.tile, unitDef(u.type).sight ?? 2);
+      else for (const x of this.sightFrom(u.tile, unitDef(u.type).sight ?? 2)) this.visible[x] = 1;
     }
     for (const c of this.cities) if (c.owner === HUMAN) reveal(c.tile, 2);
     // (Its territory is in sight too.)
