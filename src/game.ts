@@ -27,7 +27,7 @@ import { IMPROVEMENTS, IMPROVEMENT_KEYS, IMPROVE_TURNS, drained, out, OUTPUT_KEY
 import { techDef, techPath, improvementStage, STAGE_TECHS, TECHS, type TechKey, FINAL_TECH } from './techs.ts';
 import { politicsDef, politicsPath, GOVERNMENTS, governmentDef, policyDef, fits, SLOT_KINDS, type PoliticsKey, type GovernmentKey, type PolicyKey, type PolicySlot } from './politics.ts';
 import { traitDef, traitBlock, traitCost, type TraitKey } from './identity.ts';
-import { FAITH_SAME, FAITH_RIVAL, religionDef, PRESSURE_REACH, HOLY_PRESSURE, CITY_PRESSURE, BUILDING_PRESSURE, CONVERT_AT, TITHE, type ReligionKey } from './religion.ts';
+import { FAITH_SAME, FAITH_RIVAL, CONVERT_REACH, CONVERT_BASE, CONVERT_PER_POP, DEVOUT_TURNS, religionDef, PRESSURE_REACH, HOLY_PRESSURE, CITY_PRESSURE, BUILDING_PRESSURE, CONVERT_AT, TITHE, type ReligionKey } from './religion.ts';
 import { placeResources, resourceDef, empireBonus, RESOURCE_IMPROVEMENT, type ResourceKey } from './resources.ts';
 import { total, yieldBonus, prodBonus, flat, tileBonus, specialistBonus, movesBonus, type Effect, type ProdTarget } from './effects.ts';
 import { cityUpkeep, unitUpkeep, buildingUpkeep, inflation, arrearsOf, WEALTH_RATE } from './economy.ts';
@@ -270,6 +270,8 @@ export interface City {
   founder: number;                     // the civ that founded it
   razing: boolean;                     // burning down, a citizen a turn
   religion: ReligionKey | null;        // the religion it follows
+  devout: number;                      // the turn until which no pressure changes it (it was converted by faith: convert)
+  blessed: boolean;                    // what it is building was bought with faith (a unit so raised carries its civ's faith)
   culture: number;                     // culture it made so far (its borders grow with it)
   ring: number;                        // how far its borders reach (cities.ts borderRing)
 }
@@ -1120,7 +1122,7 @@ export class Game {
     p.citiesFounded++;
     const city: City = { id: this.nextId++, name, owner: u.owner, tile: u.tile, pop: 1, food: 0, prod: 0,
       building: p.isHuman ? 'warrior' : null, buildings: new Set(), founded: this.turn, focus: 'balanced', growth: 0, specialists: noSpecialists(), wonderTile: null, bought: 0,
-      hp: CITY_HP, founder: u.owner, razing: false, religion: null, culture: 0, ring: START_REACH };
+      hp: CITY_HP, founder: u.owner, razing: false, religion: null, devout: 0, blessed: false, culture: 0, ring: START_REACH };
     this.cities.push(city);
     this.cityById.set(city.id, city);
     this.cityByTile.set(city.tile, city);
@@ -1827,7 +1829,10 @@ export class Game {
         } else {
           city.prod -= item.cost;
           if (isUnitKey(key)) {
-            this.createUnit(key, city.owner, city.tile);
+            const raised = this.createUnit(key, city.owner, city.tile);
+            // (Bought with faith: it carries its civ's faith, whatever its city follows.)
+            if (city.blessed) raised.faith = this.faithOf(city.owner) ?? raised.faith;
+            city.blessed = false;
             this.record('built', city.owner, { city: city.name, item: key });
             if (key === 'settler') this.removeCitizen(city);
             if (!p.isHuman) city.building = null;
@@ -2215,12 +2220,39 @@ export class Game {
 
   // Each city takes up the religion pressed on it hardest, once that beats
   // what it follows (holy cities keep theirs).
+  // Faith spent to convert a city: the founder of a religion may turn any
+  // city within CONVERT_REACH of its holy city to it (its own or
+  // another's, not another religion's holy city), for faith by the city's
+  // size; the city then keeps to it for DEVOUT_TURNS whatever presses on it.
+  convertCost(city: City): number { return CONVERT_BASE + CONVERT_PER_POP * city.pop; }
+  convertBlock(id: number, city: City): string | null {
+    const mine = [...this.religions].find(([, f]) => f.founder === id);
+    if (!mine) return 'Only the founder of a religion converts cities.';
+    const [r, f] = mine, holy = f.holyCity === null ? undefined : this.cityById.get(f.holyCity);
+    if (!holy) return 'Its holy city is no more.';
+    if (city.religion === r) return 'It follows your religion already.';
+    if ([...this.religions.values()].some((x) => x.holyCity === city.id)) return 'A holy city keeps its faith.';
+    if (this.approxDist(city.tile, holy.tile) > CONVERT_REACH) return `Beyond ${CONVERT_REACH} tiles of your holy city, ${holy.name}.`;
+    return this.players[id]!.faith < this.convertCost(city) ? `Needs ${this.convertCost(city)} faith.` : null;
+  }
+  convert(id: number, city: City): boolean {
+    if (this.convertBlock(id, city) !== null) return false;
+    const r = [...this.religions].find(([, f]) => f.founder === id)![0];
+    this.players[id]!.faith -= this.convertCost(city);
+    city.religion = r;
+    city.devout = this.turn + DEVOUT_TURNS;
+    this.useVersion++;
+    this.record('converted', city.owner, { city: city.name, religion: r, by: id });
+    if (city.owner === HUMAN || id === HUMAN) this.log(`${city.name} was converted to ${religionDef(r).name}.`);
+    return true;
+  }
+
   private spreadReligions(): void {
     if (!this.religions.size) return;
     const holy = new Set([...this.religions.values()].map((f) => f.holyCity).filter((c): c is number => c !== null));
     const changes: [City, ReligionKey][] = [];
     for (const c of this.cities) {
-      if (holy.has(c.id)) continue;
+      if (holy.has(c.id) || c.devout > this.turn) continue;
       const pressure = new Map<ReligionKey, number>();
       for (const o of this.cities) {
         if (!o.religion || o === c) continue;
@@ -2358,7 +2390,8 @@ export class Game {
   buyCost(city: City, currency: 'gold' | 'faith'): number | null {
     const k = city.building;
     if (!k || isWonder(k)) return null;
-    if (currency === 'faith' && !FAITH_BUYS.includes(k)) return null;
+    // (Faith buys shrines and temples; and, for a civ with a faith, fighting units, raised in that faith.)
+    if (currency === 'faith' && !FAITH_BUYS.includes(k) && !(isUnitKey(k) && !unitDef(k).civilian && this.faithOf(city.owner) !== null)) return null;
     const left = Math.max(0, buildDef(k).cost - city.prod);
     const discount = currency === 'gold' ? Math.max(0.2, 1 + total(this.effectsOf(this.players[city.owner]!), 'buyCost') / 100) : 1;
     return Math.ceil(left * (currency === 'gold' ? GOLD_PER_PROD : FAITH_PER_PROD) * discount);
@@ -2369,6 +2402,7 @@ export class Game {
     if (currency === 'gold') p.gold -= cost; else p.faith -= cost;
     this.record('bought', p.id, { city: city.name, item: city.building, currency, cost });
     city.prod = buildDef(city.building!).cost;
+    city.blessed = currency === 'faith';
     return true;
   }
 

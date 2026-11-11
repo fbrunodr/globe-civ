@@ -6,7 +6,7 @@ import type { Selection } from './render.ts';
 import { canAssault, canShoot, type AttackMode } from './unitClasses.ts';
 import { techDef } from './techs.ts';
 import { politicsDef } from './politics.ts';
-import { RELIGIONS, FAITH_SAME, FAITH_RIVAL } from './religion.ts';
+import { RELIGIONS, FAITH_SAME, FAITH_RIVAL, DEVOUT_TURNS } from './religion.ts';
 import { resourceDef, empireBonus } from './resources.ts';
 import { BORDER_AT, BORDER_MAX, OUTPUT_KEYS } from './cities.ts';
 import { icon, unitIcon, resourceIcon, YIELD_ICON, type IconKey } from './icons.ts';
@@ -39,6 +39,7 @@ export type Action =
   | { type: 'governorPlace' }
   | { type: 'focus'; focus: FocusKey }
   | { type: 'buyMode' }
+  | { type: 'convert' }
   | { type: 'buy'; currency: 'gold' | 'faith' }
   | { type: 'endTurn' }
   | { type: 'next' };
@@ -59,7 +60,7 @@ const isBuildKey = (s: string): s is BuildKey => (BUILDABLE as string[]).include
 function parseAction(el: HTMLElement): Action | null {
   const type = el.dataset['act'];
   switch (type) {
-    case 'found': case 'improve': case 'road': case 'fortify': case 'wake': case 'skip': case 'disband': case 'endTurn': case 'next': case 'governorPlace': case 'pillage': case 'raze': case 'buyMode': case 'rally': case 'deploy': case 'upgrade':
+    case 'found': case 'improve': case 'road': case 'fortify': case 'wake': case 'skip': case 'disband': case 'endTurn': case 'next': case 'governorPlace': case 'pillage': case 'raze': case 'buyMode': case 'convert': case 'rally': case 'deploy': case 'upgrade':
       return { type };
     case 'buy': {
       const c = el.dataset['currency'];
@@ -404,6 +405,12 @@ export class UI {
       <span>Borders</span><b>${c.ring} tiles out${c.ring < BORDER_MAX ? ` · next at ${BORDER_AT[c.ring + 1]} culture (${Math.floor(c.culture)})` : ''}</b></div>`;
     const more: string[] = [];
     if (mine && placing !== 'buy' && g.buyableTiles(c).length) more.push(`<button data-act="buyMode" ${tip('Buy tiles', 'A city grows into the ring beyond its first by buying it')}>${icon('grid')} Buy tiles <small>${g.tilePrice(c)} gold</small></button>`);
+    // (Faith converts a city, anyone's, in reach of your holy city.)
+    const mineFaith = [...g.religions].find(([, f]) => f.founder === HUMAN);
+    if (mineFaith && c.religion !== mineFaith[0]) {
+      const why = g.convertBlock(HUMAN, c);
+      more.push(`<button data-act="convert" class="${why ? 'off' : ''}" ${tip(`Convert ${esc(c.name)} to ${RELIGIONS[mineFaith[0]].name}`, why ?? `It keeps to it for ${DEVOUT_TURNS} turns whatever presses on it; the units it raises carry it`)}>${icon('faith')} Convert <small>${g.convertCost(c)} faith</small></button>`);
+    }
     if (mine && g.canRaze(c)) more.push(`<button data-act="raze" class="danger" ${tip(`Raze ${esc(c.name)}`, 'Burn the city down, a citizen a turn; ruins remain')}>${icon('fire')} Raze</button>`);
     const left = `<div class="cityhead" style="--civ:${p.color};--on:${inkOn(p.color)}"><div class="pop" ${tip('Citizens')}>${c.pop}</div>
         <div class="who"><h3>${capital ? icon('star') : ''}${esc(c.name)}</h3><small>${esc(p.name)}${capital ? ' · capital' : ''}${c.razing ? ' · <span class="bad">being razed</span>' : ''}</small></div></div>
@@ -444,7 +451,7 @@ export class UI {
         <span class="pic">${icon(ic)}</span><span class="pn"><b>${esc(d.name)}</b><small>${note}</small></span><span class="pt">${turnsFor(k)} t</span></button>`;
     };
     const buyGold = g.buyCost(c, 'gold'), buyFaith = g.buyCost(c, 'faith');
-    const buy = buyGold !== null || buyFaith !== null ? `<div class="buttons">${buyGold !== null ? `<button data-act="buy" data-currency="gold" ${p.gold >= buyGold ? '' : 'disabled'}>${icon('gold')} Buy <small>${buyGold} gold</small></button>` : ''}${buyFaith !== null ? `<button data-act="buy" data-currency="faith" ${p.faith >= buyFaith ? '' : 'disabled'}>${icon('faith')} Buy <small>${buyFaith} faith</small></button>` : ''}</div>` : '';
+    const buy = buyGold !== null || buyFaith !== null ? `<div class="buttons">${buyGold !== null ? `<button data-act="buy" data-currency="gold" ${p.gold >= buyGold ? '' : 'disabled'}>${icon('gold')} Buy <small>${buyGold} gold</small></button>` : ''}${buyFaith !== null ? `<button data-act="buy" data-currency="faith" ${p.faith >= buyFaith ? '' : 'disabled'} ${c.building && isUnitKey(c.building) ? tip('Raise it with faith', 'It will carry your faith, whatever this city follows') : ''}>${icon('faith')} Buy <small>${buyFaith} faith</small></button>` : ''}</div>` : '';
     const right = `<div class="phead"><h4>${esc(c.name)} is building</h4><div class="now"><b>${esc(now)}</b><small>${sub}</small></div>
         <div class="meter prod"><i style="width:${(100 * Math.min(1, frac)).toFixed(1)}%"></i></div>${buy}</div>
       <div class="plist">

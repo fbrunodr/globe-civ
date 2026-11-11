@@ -4,7 +4,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { Game, HUMAN, VICTORIES } from '../src/game.ts';
-import { FAITH_SAME, FAITH_RIVAL } from '../src/religion.ts';
+import { FAITH_SAME, FAITH_RIVAL, CONVERT_REACH } from '../src/religion.ts';
 import { FINAL_TECH } from '../src/techs.ts';
 import { TRUCE_TURNS } from '../src/game.ts';
 
@@ -34,6 +34,32 @@ describe('F1: faith in war', () => {
     expect(g.faithEdge(of('hinduism'), of('judaism'))).toBeCloseTo(1 + FAITH_RIVAL);
     expect(g.faithEdge(of(null), of('judaism'))).toBe(1);
     expect(g.faithEdge(of('hinduism'), of(null))).toBe(1);
+  });
+});
+
+describe('F2: what faith buys', () => {
+  it('a city\'s conversion, in reach of the holy city, kept a while; a unit raised in the faith', () => {
+    const { g, a, b } = two();
+    const p = g.players[0]!;
+    expect(g.convertBlock(0, b)).not.toBeNull(); // (no religion founded)
+    g.religions.set('hinduism', { founder: 0, holyCity: a.id, turn: 1 });
+    a.religion = 'hinduism';
+    g.useVersion++;
+    p.faith = 0;
+    expect(g.convert(0, b)).toBe(false);
+    p.faith = 1000;
+    const far = g.approxDist(a.tile, b.tile) > CONVERT_REACH;
+    expect(g.convert(0, b)).toBe(!far);
+    if (!far) { expect(b.religion).toBe('hinduism'); expect(b.devout).toBeGreaterThan(g.turn); expect(p.faith).toBe(1000 - g.convertCost(b)); }
+    // A unit bought with faith carries the civ's faith, whatever its city follows.
+    a.religion = null;
+    a.building = 'warrior';
+    a.prod = 0;
+    expect(g.buyCost(a, 'faith')).not.toBeNull();
+    expect(g.buy(a, 'faith')).toBe(true);
+    g.endTurn();
+    const w = g.units.filter((u) => u.owner === 0 && u.type === 'warrior').pop()!;
+    expect(w.faith).toBe('hinduism');
   });
 });
 

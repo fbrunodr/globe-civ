@@ -404,6 +404,9 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey, leve
       case 'focus':
         if (sel?.kind === 'city' && sel.city.owner === HUMAN) sel.city.focus = a.focus;
         break;
+      case 'convert':
+        if (sel?.kind === 'city') game.convert(HUMAN, sel.city);
+        break;
       case 'buyMode':
         if (sel?.kind === 'city' && sel.city.owner === HUMAN) placing = 'buy';
         break;

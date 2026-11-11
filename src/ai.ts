@@ -96,6 +96,9 @@ export function aiTurn(g: Game, p: Player): void {
     // of the gold (half at least, when the treasury overflows).
     const cost = g.buyCost(c, 'gold');
     if (cost !== null && p.gold > P.goldReserve && cost < p.gold * (p.gold > 1000 ? Math.max(0.5, P.buyShare) : P.buyShare)) g.buy(c, 'gold');
+    // Faith buys too: a shrine or a temple whenever it can; a unit while the army is short.
+    const fc = g.buyCost(c, 'faith');
+    if (fc !== null && p.faith >= fc && (!(c.building! in UNITS) || (military + coming <= armyTarget && g.rng() < P.faithUnits))) g.buy(c, 'faith');
     // Running out of room to grow: buy the best tile of the ring beyond (while the gold lasts).
     while (g.growthOptions(c).filter((o) => o.kind !== 'specialist').length < 2) {
       const t = g.governorTileToBuy(c);
@@ -115,6 +118,12 @@ export function aiTurn(g: Game, p: Player): void {
     else if (u.type === 'worker') workerTurn(g, u);
     else if (domainOf(unitDef(u.type)) === 'air') airTurn(g, u);
     else if (domainOf(unitDef(u.type)) === 'sea') seaTurn(g, u);
+  }
+  // Faith converts: a city in reach of its holy city, its own first, then the largest it has found.
+  if (g.rng() < P.faithConvert) {
+    const pick = g.cities.filter((c) => g.known[p.id]![c.tile] && g.convertBlock(p.id, c) === null)
+      .sort((a, b) => Number(b.owner === p.id) - Number(a.owner === p.id) || b.pop - a.pop)[0];
+    if (pick) g.convert(p.id, pick);
   }
   // The army (aiMilitary.ts): operations, tactics, garrisons and posts.
   militaryPhase(g, p, P, cities);

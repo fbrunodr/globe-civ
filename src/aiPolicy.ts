@@ -69,6 +69,8 @@ export const GENES = {
   buyShare: [0.1, 1, 0.33],        // the most of its gold one purchase may take
   upgradeReserve: [0, 300, 60],    // gold it keeps over an upgrade's price
   pillageRate: [0, 1, 0.6],        // how readily a unit on enemy fields burns them
+  faithUnits: [0, 1, 0.5],         // how readily it spends faith on a unit a city is building, while its army is short
+  faithConvert: [0, 1, 0.5],       // and on converting a city in reach of its holy city (its own first)
 } as const satisfies Record<string, readonly [number, number, number]>;
 export type Gene = keyof typeof GENES;
 export const GENE_KEYS = Object.keys(GENES) as Gene[];

@@ -48,6 +48,16 @@ export const religionDef = (k: ReligionKey): ReligionDef => RELIGIONS[k];
 export const FAITH_SAME = 0.3;
 export const FAITH_RIVAL = 0.2;
 
+// What faith buys (game.ts): a Shrine or a Temple; for a civ with a faith,
+// a fighting unit, which then carries that faith whatever its city
+// follows; and, for the founder of a religion, a city's conversion
+// (convert): any city within CONVERT_REACH tiles of its holy city, for
+// CONVERT_BASE faith and CONVERT_PER_POP more a citizen, which then keeps
+// to it for DEVOUT_TURNS whatever presses on it.
+export const CONVERT_REACH = 10;
+export const CONVERT_BASE = 30, CONVERT_PER_POP = 15;
+export const DEVOUT_TURNS = 15;
+
 // Spreading.
 export const PRESSURE_REACH = 6;        // tiles
 export const HOLY_PRESSURE = 6;         // from the holy city
