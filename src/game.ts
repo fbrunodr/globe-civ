@@ -361,6 +361,11 @@ export class Game {
   aiPolicies: AiPolicy[];           // how each computer civ decides (aiPolicy.ts), by player id
   policyVersion = 0;                // bumped when they are changed mid-game
   readonly explored: Uint8Array;
+  // What each civ has explored (1: seen at least once), by player id: the
+  // player's is `explored` itself; a computer civ's is filled by what its
+  // units and cities see (explore), and it settles, scouts and marches by
+  // it: it knows no more of the map than it has been to see.
+  readonly known: Uint8Array[];
   readonly visible: Uint8Array;
   readonly messages: Message[] = [];
   readonly players: Player[];
@@ -417,7 +422,9 @@ export class Game {
     this.met = Array.from({ length: n }, () => new Uint8Array(n));
     this.resources = placeResources(this.globe, this.map, this.world.starts, seed).at;
 
+    this.known = this.players.map((p) => (p.id === HUMAN ? this.explored : new Uint8Array(this.N)));
     this.placeUnits();
+    for (const p of this.players) this.explore(p.id);
     this.updateVisibility();
     this.record('start', -1, { seed, size, script, players: this.players.map((p) => p.name) });
   }
@@ -2467,7 +2474,7 @@ export class Game {
     for (const c of this.cities) if (c.growth > 0) this.autoPlace(c);
     this.dealOffers.length = 0; // (unanswered offers lapse; the computer may make new ones)
     for (const p of this.players) {
-      if (!p.isHuman && p.alive) aiTurn(this, p);
+      if (!p.isHuman && p.alive) { this.explore(p.id); aiTurn(this, p); this.explore(p.id); }
     }
     this.advanceWork();
     this.turnIncome = [];
@@ -2627,6 +2634,18 @@ export class Game {
       }
     }
     return out;
+  }
+
+  // What a civ's units and cities see now is added to what it has explored
+  // (units by line of sight: sightFrom; a city its surroundings; its land).
+  explore(id: number): void {
+    const known = this.known[id]!;
+    for (const u of this.units) {
+      if (u.owner !== id) continue;
+      const r = unitDef(u.type).sight ?? 2;
+      for (const x of domainOf(unitDef(u.type)) === 'air' ? this.tilesWithin(u.tile, r) : this.sightFrom(u.tile, r)) known[x] = 1;
+    }
+    for (const c of this.cities) if (c.owner === id) for (const x of this.tilesWithin(c.tile, Math.max(2, c.ring))) known[x] = 1;
   }
 
   updateVisibility(): void {

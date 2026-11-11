@@ -189,12 +189,20 @@ function chooseBuild(g: Game, city: City, P: AiPolicy, n: BuildNeeds): BuildKey 
     [city.pop >= 2 ? P.wBuild * 0.6 : P.wBuild * 0.15, () => bestBuilding(g, city)],
     [city.pop >= 5 && !n.atWar ? P.wWonder * 0.5 : 0, wonder],
     [!city.buildings.has('walls') && g.turn > 40 && g.canBuild(city, 'walls') ? P.wWalls * (n.threatened || n.atWar ? 0.8 : 0.3) : 0, () => 'walls'],
-    [g.turn < 15 && g.canBuild(city, 'scout') && !g.units.some((u) => u.owner === city.owner && u.type === 'scout') ? P.scoutRate : 0, () => 'scout'],
+    // (A scout while the land round it is still mostly unknown and it has none out.)
+    [g.turn < 80 && g.canBuild(city, 'scout') && !g.units.some((u) => u.owner === city.owner && (u.type === 'scout' || u.type === 'explorer')) && unknownNear(g, city) > 0.25 ? P.scoutRate * 1.5 : 0, () => 'scout'],
   ];
   const order = pulls.filter(([w]) => w > 0).map(([w, make]) => ({ w: w + 0.15 * g.rng(), make })).sort((a, b) => b.w - a.w);
   for (const o of order) { const k = o.make(); if (k) return k; }
   // (Nothing to build: a wonder rather than idle production; else the production is banked as gold.)
   return wonder();
+}
+
+// The share of the land within ten tiles of a city its civ has not explored.
+function unknownNear(g: Game, city: City): number {
+  let land = 0, dark = 0;
+  for (const t of g.tilesWithin(city.tile, 10)) { if (g.isWater(t)) continue; land++; if (!g.known[city.owner]![t]) dark++; }
+  return dark / Math.max(1, land);
 }
 
 // The building worth most for the city's focus per point of cost (one of
@@ -223,7 +231,7 @@ function bestBuilding(g: Game, city: City): BuildingKey | null {
 function resourcesNear(g: Game, owner: number, t: number): number {
   let n = 0;
   for (const x of g.tilesWithin(t, 2)) {
-    const r = g.ownerOf(x) < 0 ? g.resourceFor(x, owner) : null;
+    const r = g.ownerOf(x) < 0 && g.known[owner]![x] ? g.resourceFor(x, owner) : null;
     if (r) n += g.hasResource(owner, r) ? 1 : 2;
   }
   return n;
@@ -235,7 +243,8 @@ function settlerTurn(g: Game, u: Unit, P: AiPolicy): void {
     const dist = g.tilesWithinMap(u.tile, Math.round(P.settleReach));
     const cand: { t: number; s: number }[] = [];
     for (const [t, d] of dist) {
-      if (g.canFoundCity(t, u.owner)) cand.push({ t, s: g.siteScore(t) - P.settleDist * d + P.siteResource * resourcesNear(g, u.owner, t) });
+      // (Only land it has explored: it settles where it has been to look.)
+      if (g.known[u.owner]![t] && g.canFoundCity(t, u.owner)) cand.push({ t, s: g.siteScore(t) - P.settleDist * d + P.siteResource * resourcesNear(g, u.owner, t) });
     }
     cand.sort((a, b) => b.s - a.s);
     u.aiTarget = cand.slice(0, 6).find((c) => g.findPath(u, c.t))?.t ?? null;
@@ -514,7 +523,8 @@ export function standing(g: Game, a: number, b: number): Standing {
 function appetite(g: Game, p: Player, o: Player, react = true): { want: number; near: boolean; score: number } {
   const P = mind(g, p), st = standing(g, p.id, o.id);
   const own = g.cities.filter((c) => c.owner === p.id);
-  const d = g.cities.reduce((m, c) => (c.owner === o.id ? Math.min(m, own.reduce((x, h) => Math.min(x, g.approxDist(c.tile, h.tile)), 99)) : m), 99);
+  // (Their cities it has seen: one it has not found is out of its reach.)
+  const d = g.cities.reduce((m, c) => (c.owner === o.id && g.known[p.id]![c.tile] ? Math.min(m, own.reduce((x, h) => Math.min(x, g.approxDist(c.tile, h.tile)), 99)) : m), 99);
   const mineF = g.faithOf(p.id), theirF = g.faithOf(o.id);
   const faith = !mineF || !theirF ? 1 : mineF === theirF ? 1 - P.faithBond : 1 + P.faithRival;
   const truce = 1 - P.truceRespect * Math.min(1, g.truceLeft(p.id, o.id) / 10);
