@@ -13,7 +13,7 @@ import { RESOURCE_KEYS, resourceDef, empireBonus, type ResourceKey } from './res
 import { describe as describeEffect, describeAll, flat } from './effects.ts';
 import { ERAS, BUILDINGS, WONDERS, type EraIndex } from './cities.ts';
 import { UNITS, unitDef } from './rules.ts';
-import { aiAcceptsDeal, resourceWorth, standing, attitude, ATTITUDES } from './ai.ts';
+import { aiAcceptsDeal, resourceWorth, standing, attitude, ATTITUDES, RANKS, type Rank } from './ai.ts';
 import { outStr, bonusStr, tip } from './ui.ts';
 import { icon, unitIcon, resourceIcon, type IconKey } from './icons.ts';
 
@@ -435,7 +435,7 @@ export class Sheets {
     const others = g.players.filter((o) => o.id !== HUMAN && o.alive && g.met[HUMAN]![o.id]);
     if (!others.length) return this.standingsHtml() + '<p class="note">You have not met another civilization yet. Civilizations meet when their units or cities come within sight of each other.</p>';
     // (How each compares with you: what anyone who has met them can see; the computer civs weigh the same.)
-    const cmp = (x: number) => { const [w, c] = x > 1.4 ? ['Far ahead', 'bad'] : x > 1.1 ? ['Ahead', 'warn'] : x > 0.9 ? ['Even', ''] : x > 0.7 ? ['Behind', 'good'] : ['Far behind', 'good']; return `<span class="${c}">${w}</span> <small>×${x.toFixed(1)}</small>`; };
+    const cmp = (x: Rank) => `<span class="${x >= 3 ? 'bad' : x <= 1 ? 'good' : ''}">${RANKS[x]}</span>`;
     const rows = others.map((o) => {
       const r = g.relations[HUMAN]![o.id]!, war = r.war, st = standing(g, HUMAN, o.id), mood = attitude(g, o, HUMAN);
       const offered = g.peaceOffers.has(`${o.id}>${HUMAN}`);
@@ -447,10 +447,10 @@ export class Sheets {
       const trade = g.canTrade(HUMAN, o.id) ? `<button data-do="tradeWith" data-civ="${o.id}" class="${this.draft?.civ === o.id ? 'active' : ''}">Trade</button>` : '';
       return `<tr><td><span class="swatch" style="background:${o.color}"></span> ${esc(o.name)}${known ? ` <small>${esc(known)}</small>` : ''}<br><small>${esc(governmentDef(o.government).name)}${faith ? ` · ${religionDef(faith).name}` : ''}</small></td>
         <td><span class="pill ${mood === 'war' || mood === 'hostile' ? 'war' : mood === 'friendly' ? 'peace' : ''}" ${tip(ATTITUDES[mood].name, ATTITUDES[mood].tells)}>${ATTITUDES[mood].name}</span>${war ? ` <small>since turn ${r.since}</small>` : ''}</td>
-        <td>${cmp(st.army)}</td><td>${cmp(st.tech)}</td><td>${cmp(st.prod)}</td><td>${cmp(st.gold)}</td><td class="num">${g.cities.filter((c) => c.owner === o.id).length}</td><td>${trade}</td><td>${action}</td></tr>`;
+        <td>${cmp(st.army)}</td><td>${cmp(st.tech)}</td><td>${cmp(st.prod)}</td><td>${cmp(st.gold)}</td><td>${trade}</td><td>${action}</td></tr>`;
     }).join('');
-    return `${this.standingsHtml()}<p class="note">How each civilization stands toward you is its own weighing of you, in broad: its plans stay its own. The columns compare it with you (×: theirs over yours), and the computer's civilizations weigh the same figures. Everyone starts at peace; at peace, units cannot enter each other's tiles, and attacking a civilization declares war. A war lasts at least 8 turns before peace can be made; a peace is a truce for ${TRUCE_TURNS} turns, which can be broken at a price.</p>
-      <table class="grid"><tr><th>Civilization</th><th>Toward you</th><th>Army</th><th>Technology</th><th>Production</th><th>Gold income</th><th>Cities</th><th></th><th></th></tr>${rows}</table>
+    return `${this.standingsHtml()}<p class="note">How each civilization stands toward you is its own weighing of you, in broad: its plans stay its own. The columns rank it against you, in broad (no one knows another's exact figures); the computer's civilizations know of you, and of each other, the same ranks and no more. Everyone starts at peace; at peace, units cannot enter each other's tiles, and attacking a civilization declares war. A war lasts at least 8 turns before peace can be made; a peace is a truce for ${TRUCE_TURNS} turns, which can be broken at a price.</p>
+      <table class="grid"><tr><th>Civilization</th><th>Toward you</th><th>Army</th><th>Technology</th><th>Production</th><th>Gold income</th><th></th><th></th></tr>${rows}</table>
       ${this.tradeHtml()}`;
   }
 
@@ -458,10 +458,11 @@ export class Sheets {
   private standingsHtml(): string {
     const g = this.game;
     const civs = g.players.filter((o) => o.alive && (o.id === HUMAN || g.met[HUMAN]![o.id])).sort((a, b) => g.score(b.id) - g.score(a.id));
+    // (Toward each way of winning, in broad: the score, the era, a tenth of the world's people at a time.)
     const rows = civs.map((o) => `<tr><td><span class="swatch" style="background:${o.color}"></span> ${esc(o.name)}</td><td class="num">${g.score(o.id)}</td>
-      <td class="num">${o.techs.size} / ${TECH_KEYS.length}</td><td class="num">${Math.round(100 * g.faithShare(o.id))}%</td><td class="num">${g.cities.filter((c) => c.owner === o.id).length}</td></tr>`).join('');
+      <td>${ERAS[o.era].name}${o.id === HUMAN ? ` <small>${o.techs.size} of ${TECH_KEYS.length} technologies</small>` : ''}</td><td>${g.faithShare(o.id) > 0 ? `about ${Math.round(10 * g.faithShare(o.id)) * 10}%` : '—'}</td></tr>`).join('');
     return `<h3>How the game is won</h3><p class="note">${(Object.keys(VICTORIES) as Victory[]).map((k) => `<b>${VICTORIES[k].name}:</b> ${VICTORIES[k].rule}`).join(' ')} The last turn is ${g.turnLimit}.</p>
-      <table class="grid"><tr><th>Civilization</th><th>Score</th><th>Technologies</th><th>World's people of its faith</th><th>Cities</th></tr>${rows}</table><h3>Relations</h3>`;
+      <table class="grid"><tr><th>Civilization</th><th>Score</th><th>Era</th><th>World's people of its faith</th></tr>${rows}</table><h3>Relations</h3>`;
   }
 
   // ---- trade ----

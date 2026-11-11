@@ -462,11 +462,11 @@ export function power(g: Game, owner: number): number {
 // War when much stronger than a civ it has met nearby (warlike civs sooner);
 // peace when the war goes badly or has lasted.
 function aiDiplomacy(g: Game, p: Player): void {
-  const mine = power(g, p.id), P = pol(g, p);
+  const P = pol(g, p);
   const wars = g.players.filter((o) => o.alive && g.atWar(p.id, o.id));
   for (const o of wars) {
     const long = g.turn - g.relations[p.id]![o.id]!.since;
-    if (g.canMakePeace(p.id, o.id) && (mine < P.peaceRatio * power(g, o.id) || (long > 30 && g.rng() < 0.15))) g.offerPeace(p.id, o.id);
+    if (g.canMakePeace(p.id, o.id) && (1 / RANK_WORTH[standing(g, p.id, o.id).army] < P.peaceRatio || (long > 30 && g.rng() < 0.15))) g.offerPeace(p.id, o.id);
   }
   if (wars.length || g.turn < P.warAfter || g.rng() > P.warChance) return;
   if (planning(g, p)) return;
@@ -486,15 +486,24 @@ function aiDiplomacy(g: Game, p: Player): void {
 // The policy a civ is taken to decide by: its own; the player's, the best there is.
 const mind = (g: Game, p: Player): AiPolicy => (p.isHuman ? BEST() : pol(g, p));
 
-// How two civs compare, as anyone who has met them can see (the Diplomacy
-// sheet shows it; the computer weighs it): b's army, techs, production and
-// gold income over a's (1: even).
-export interface Standing { army: number; tech: number; prod: number; gold: number }
+// How two civs compare, as anyone who has met them can know it: not in
+// figures but in five ranks (as Stellaris tells it), b against a, for
+// each of army, techs, production and gold income. The Diplomacy sheet
+// shows the ranks; the computer's civs decide by the ranks alone, never
+// by a rival's exact figures: what the player cannot know, they do not.
+export type Rank = 0 | 1 | 2 | 3 | 4;
+export const RANKS = ['Pathetic', 'Inferior', 'Equivalent', 'Superior', 'Overwhelming'] as const;
+// (Theirs over yours: under a half, under four fifths, within a quarter, under double, beyond.)
+const RANK_CUTS = [0.5, 0.8, 1.25, 2] as const;
+// What a rank is taken to be worth, when a decision needs a number.
+const RANK_WORTH = [0.35, 0.65, 1, 1.6, 2.8] as const;
+const rankOf = (theirs: number, mine: number): Rank => { const x = (theirs + 1) / (mine + 1); return (RANK_CUTS.findIndex((c) => x < c) + 5) % 5 as Rank; };
+export interface Standing { army: Rank; tech: Rank; prod: Rank; gold: Rank }
 export function standing(g: Game, a: number, b: number): Standing {
-  const A = g.players[a]!, B = g.players[b]!, over = (x: number, y: number) => (x + 1) / (y + 1);
-  return { army: over(power(g, b), power(g, a)), tech: over(B.techs.size, A.techs.size), prod: over(B.ledger.income.prod, A.ledger.income.prod), gold: over(B.ledger.income.gold, A.ledger.income.gold) };
+  const A = g.players[a]!, B = g.players[b]!;
+  return { army: rankOf(power(g, b), power(g, a)), tech: rankOf(B.techs.size, A.techs.size), prod: rankOf(B.ledger.income.prod, A.ledger.income.prod), gold: rankOf(B.ledger.income.gold, A.ledger.income.gold) };
 }
-// A civ's appetite for a war on another: how much stronger it is, against
+// A civ's appetite for a war on another: how much stronger it is (by rank), against
 // what its policy asks (want: 1 and over, it would go), moved by what its
 // faith makes of it, a truce still running, and how they compare in techs
 // and production; `near`: within reach; `score`: for choosing among
@@ -509,9 +518,8 @@ function appetite(g: Game, p: Player, o: Player, react = true): { want: number; 
   const mineF = g.faithOf(p.id), theirF = g.faithOf(o.id);
   const faith = !mineF || !theirF ? 1 : mineF === theirF ? 1 - P.faithBond : 1 + P.faithRival;
   const truce = 1 - P.truceRespect * Math.min(1, g.truceLeft(p.id, o.id) / 10);
-  const clamp = (x: number) => Math.min(4, Math.max(0.25, x));
-  const lead = clamp(1 / st.tech) ** P.warTech * clamp(1 / st.prod) ** P.warProd;
-  const ratio = power(g, p.id) / (power(g, o.id) + 2);
+  const lead = (1 / RANK_WORTH[st.tech]) ** P.warTech * (1 / RANK_WORTH[st.prod]) ** P.warProd;
+  const ratio = 1 / RANK_WORTH[st.army];
   const strike = react && attitude(g, o, p.id) === 'hostile' ? Math.max(0, 1 + P.warHostile) : 1;
   const want = (ratio * Math.max(0, faith) * Math.max(0, truce) * lead * strike) / P.warRatio;
   return { want, near: d <= 14, score: want * (1 + 6 / d) * (g.players.some((x) => x.id !== p.id && g.atWar(o.id, x.id)) ? 1.3 : 1) };
@@ -534,7 +542,7 @@ export function attitude(g: Game, o: Player, toward: number): Attitude {
   if (g.atWar(o.id, toward)) return 'war';
   const P = mind(g, o), a = appetite(g, o, g.players[toward]!, false), st = standing(g, o.id, toward);
   if (a.near && a.want >= 1 && P.warChance > 0.005 && g.turn >= P.warAfter) return 'hostile';
-  if (st.army > 1.7) return 'afraid';
+  if (st.army === 4) return 'afraid';
   const f = g.faithOf(o.id), bond = (f !== null && f === g.faithOf(toward)) || g.deals.some((d) => d.sides.some((s) => s.civ === o.id) && d.sides.some((s) => s.civ === toward));
   if (bond) return 'friendly';
   return a.near && a.want >= 0.7 ? 'wary' : 'neutral';
@@ -546,8 +554,9 @@ export function aiAcceptsPeace(g: Game, p: Player, from: number): boolean {
   if (long < MIN_WAR) return false;
   // (Not while its army is out to take one of their cities and the war is young: it means to finish.)
   const op = operationOf(g, p.id), target = op ? g.cityById.get(op.target) : undefined;
-  if (target && target.owner === from && long < 40 && power(g, p.id) >= power(g, from)) return false;
-  return power(g, p.id) < 1.25 * power(g, from) || long > 25;
+  const them = standing(g, p.id, from).army;
+  if (target && target.owner === from && long < 40 && them <= 2) return false;
+  return them >= 2 || long > 25;
 }
 
 // ---- trade ----
@@ -566,7 +575,7 @@ export function resourceWorth(g: Game, p: Player, r: ResourceKey): number {
 // What giving a spare copy away costs it: a little (it would rather keep
 // its goods), more for a strategic to a civ stronger than itself.
 const giveCost = (g: Game, p: Player, r: ResourceKey | null, to: number): number =>
-  !r ? 0 : resourceDef(r).kind === 'strategic' && power(g, to) > power(g, p.id) ? 3 : 1;
+  !r ? 0 : resourceDef(r).kind === 'strategic' && standing(g, p.id, to).army >= 3 ? 3 : 1;
 
 // Whether it signs a deal: what it gets must beat what it gives by a point.
 export function aiAcceptsDeal(g: Game, p: Player, sides: readonly [DealSide, DealSide]): boolean {
