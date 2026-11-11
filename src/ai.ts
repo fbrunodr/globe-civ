@@ -9,7 +9,7 @@ import { TRAIT_KEYS, traitDef, PATH_KEYS, PATHS, type PathKey, type TraitKey } f
 import { mulberry32 } from './rng.ts';
 import { routeRoads } from './roads.ts';
 import { RESOURCE_KEYS } from './resources.ts';
-import type { AiPolicy } from './aiPolicy.ts';
+import { BEST, type AiPolicy } from './aiPolicy.ts';
 import { militaryPhase, planWar, planning, onCampaign, operationOf } from './aiMilitary.ts';
 import { isShooter, canAssault } from './unitClasses.ts';
 import { canAttackType } from './unitClasses.ts';
@@ -80,7 +80,9 @@ export function aiTurn(g: Game, p: Player): void {
     const spare = units.filter((u) => isMilitary(u) && !g.cityByTile.has(u.tile)).sort((a, b) => unitDef(a.type).cost - unitDef(b.type).cost);
     for (const u of spare.slice(0, 2)) g.removeUnit(u);
   }
-  const armyTarget = broke ? 0 : (P.armyBase + P.armyPerCity * cities.length) * (atWar || planning(g, p) ? P.armyWar : 1);
+  // (A civ hostile toward it, as it reads them: it arms.)
+  const menaced = !atWar && g.players.some((o) => o.alive && o.id !== p.id && g.met[p.id]![o.id] && attitude(g, o, p.id) === 'hostile');
+  const armyTarget = broke ? 0 : (P.armyBase + P.armyPerCity * cities.length) * (atWar || planning(g, p) ? P.armyWar : menaced ? P.armyThreat : 1);
   let coming = cities.filter((c) => c.building && c.building in UNITS && !unitDef(c.building as UnitKey).civilian).length;
   for (const c of cities) {
     g.rework(c);
@@ -481,6 +483,9 @@ function aiDiplomacy(g: Game, p: Player): void {
   if (pick) planWar(g, p, pick.id);
 }
 
+// The policy a civ is taken to decide by: its own; the player's, the best there is.
+const mind = (g: Game, p: Player): AiPolicy => (p.isHuman ? BEST() : pol(g, p));
+
 // How two civs compare, as anyone who has met them can see (the Diplomacy
 // sheet shows it; the computer weighs it): b's army, techs, production and
 // gold income over a's (1: even).
@@ -494,8 +499,11 @@ export function standing(g: Game, a: number, b: number): Standing {
 // faith makes of it, a truce still running, and how they compare in techs
 // and production; `near`: within reach; `score`: for choosing among
 // several (nearer, and already at war with another, the better).
-function appetite(g: Game, p: Player, o: Player): { want: number; near: boolean; score: number } {
-  const P = pol(g, p), st = standing(g, p.id, o.id);
+// (`react`: counting what o's own attitude toward it adds, a first strike
+// or a wide berth; off when it is o's attitude that is being read, so the
+// two do not chase each other.)
+function appetite(g: Game, p: Player, o: Player, react = true): { want: number; near: boolean; score: number } {
+  const P = mind(g, p), st = standing(g, p.id, o.id);
   const own = g.cities.filter((c) => c.owner === p.id);
   const d = g.cities.reduce((m, c) => (c.owner === o.id ? Math.min(m, own.reduce((x, h) => Math.min(x, g.approxDist(c.tile, h.tile)), 99)) : m), 99);
   const mineF = g.faithOf(p.id), theirF = g.faithOf(o.id);
@@ -504,7 +512,8 @@ function appetite(g: Game, p: Player, o: Player): { want: number; near: boolean;
   const clamp = (x: number) => Math.min(4, Math.max(0.25, x));
   const lead = clamp(1 / st.tech) ** P.warTech * clamp(1 / st.prod) ** P.warProd;
   const ratio = power(g, p.id) / (power(g, o.id) + 2);
-  const want = (ratio * Math.max(0, faith) * Math.max(0, truce) * lead) / P.warRatio;
+  const strike = react && attitude(g, o, p.id) === 'hostile' ? Math.max(0, 1 + P.warHostile) : 1;
+  const want = (ratio * Math.max(0, faith) * Math.max(0, truce) * lead * strike) / P.warRatio;
   return { want, near: d <= 14, score: want * (1 + 6 / d) * (g.players.some((x) => x.id !== p.id && g.atWar(o.id, x.id)) ? 1.3 : 1) };
 }
 // How a computer civ stands toward another, in broad: what the other may
@@ -519,9 +528,11 @@ export const ATTITUDES: Record<Attitude, { name: string; tells: string }> = {
   friendly: { name: 'Friendly', tells: 'A bond holds between you: a shared faith, or trade.' },
   afraid: { name: 'Afraid', tells: 'You are much the stronger, and it knows it.' },
 };
+// (The player's attitude, which no one can ask for, is read as if the
+// player decided by the best policy there is: mind.)
 export function attitude(g: Game, o: Player, toward: number): Attitude {
   if (g.atWar(o.id, toward)) return 'war';
-  const P = pol(g, o), a = appetite(g, o, g.players[toward]!), st = standing(g, o.id, toward);
+  const P = mind(g, o), a = appetite(g, o, g.players[toward]!, false), st = standing(g, o.id, toward);
   if (a.near && a.want >= 1 && P.warChance > 0.005 && g.turn >= P.warAfter) return 'hostile';
   if (st.army > 1.7) return 'afraid';
   const f = g.faithOf(o.id), bond = (f !== null && f === g.faithOf(toward)) || g.deals.some((d) => d.sides.some((s) => s.civ === o.id) && d.sides.some((s) => s.civ === toward));

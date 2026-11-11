@@ -26,7 +26,8 @@ export const GENES = {
   workerResource: [0, 10, 4],      // what a resource adds to a tile's worth to a worker
   armyBase: [0, 6, 2],             // the army it wants: this many units...
   armyPerCity: [0.5, 5, 2],        // ...and this many more a city
-  armyWar: [1, 3, 1],              // times this while at war
+  armyWar: [1, 3, 1],              // times this while at war,
+  armyThreat: [1, 3, 1],           // and times this while a civ it has met is hostile toward it (as it reads them: ai.ts attitude)
   rangedShare: [0, 0.7, 0.35],     // of its land army, the share of shooters,
   mountedShare: [0, 0.5, 0.15],    // of horse and armour,
   siegeShare: [0, 0.3, 0.12],      // of engines (a third of it while no city is to be taken);
@@ -55,6 +56,7 @@ export const GENES = {
   truceRespect: [0, 1, 0.5],       // how much a truce still running holds it back (1: it never breaks one)
   warTech: [-1.5, 1.5, 0],         // how its lead in techs over a civ moves it to war on it (a power of the ratio; below 0: it goes for the more learned),
   warProd: [-1.5, 1.5, 0],         // and its lead in production
+  warHostile: [-1, 2, 0],          // how much a civ's hostility toward it draws it to strike first (below 0: it keeps clear)
   techUnits: [0, 3, 1.2],          // what a tech's (or politics') units are worth to it,
   techBuildings: [0, 3, 1.15],     // its buildings,
   techWonders: [0, 3, 0.75],       // its wonders,
@@ -95,3 +97,7 @@ export interface AiLevel { readonly name: string; readonly generation: number; r
 export const LEVELS: readonly AiLevel[] = (levels as { name: string; generation: number; genes: Record<string, number> }[])
   .map((l) => ({ name: l.name, generation: l.generation, policy: policy(l.genes) }));
 export const DEFAULT_LEVEL = Math.min(2, LEVELS.length - 1);
+// The best policy there is: what a computer civ takes the player to decide
+// by when it reads the player's attitude toward it (it cannot ask; it
+// assumes the player plays as well as anything it knows).
+export const BEST = (): AiPolicy => LEVELS[LEVELS.length - 1]!.policy;
