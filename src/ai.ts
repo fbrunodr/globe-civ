@@ -514,7 +514,7 @@ export function standing(g: Game, a: number, b: number): Standing {
 }
 // A civ's appetite for a war on another: how much stronger it is (by rank), against
 // what its policy asks (want: 1 and over, it would go), moved by what its
-// faith makes of it, a truce still running, and how they compare in techs
+// faith would make of the fighting, a truce still running, and how they compare in techs
 // and production; `near`: within reach; `score`: for choosing among
 // several (nearer, and already at war with another, the better).
 // (`react`: counting what o's own attitude toward it adds, a first strike
@@ -525,8 +525,12 @@ function appetite(g: Game, p: Player, o: Player, react = true): { want: number; 
   const own = g.cities.filter((c) => c.owner === p.id);
   // (Their cities it has seen: one it has not found is out of its reach.)
   const d = g.cities.reduce((m, c) => (c.owner === o.id && g.known[p.id]![c.tile] ? Math.min(m, own.reduce((x, h) => Math.min(x, g.approxDist(c.tile, h.tile)), 99)) : m), 99);
-  const mineF = g.faithOf(p.id), theirF = g.faithOf(o.id);
-  const faith = !mineF || !theirF ? 1 : mineF === theirF ? 1 - P.faithBond : 1 + P.faithRival;
+  // (What faith would make of the fighting: its units' religions against
+  // theirs, as its cities and theirs now follow them: the game's own figure, game.ts faithEdge.)
+  const mineC = g.cities.filter((c) => c.owner === p.id), theirs = g.cities.filter((c) => c.owner === o.id && g.known[p.id]![c.tile]);
+  let faith = 0;
+  for (const a of mineC) for (const b of theirs) faith += g.faithEdge({ faith: a.religion }, { faith: b.religion });
+  faith = mineC.length && theirs.length ? faith / (mineC.length * theirs.length) : 1;
   const truce = 1 - P.truceRespect * Math.min(1, g.truceLeft(p.id, o.id) / 10);
   const lead = (1 / RANK_WORTH[st.tech]) ** P.warTech * (1 / RANK_WORTH[st.prod]) ** P.warProd;
   const ratio = 1 / RANK_WORTH[st.army];

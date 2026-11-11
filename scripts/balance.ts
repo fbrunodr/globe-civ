@@ -10,7 +10,7 @@ import { UNITS, unitDef, domainOf, type UnitKey } from '../src/rules.ts';
 import { TECH_KEYS, techDef } from '../src/techs.ts';
 import { POLITICS_KEYS, politicsDef } from '../src/politics.ts';
 import { UNIT_CLASS, canShoot, canAssault, isShooter } from '../src/unitClasses.ts';
-import { combatStrength, matchup, fightRounds, SIEGE_VS_UNITS, SIEGE_VS_CITY } from '../src/game.ts';
+import { combatStrength, matchup, fightRounds, SIEGE_VS_UNITS, SIEGE_VS_CITY, VOLLEY_ROUNDS, MELEE_ROUNDS } from '../src/game.ts';
 import { mulberry32 } from '../src/rng.ts';
 import { ERAS } from '../src/cities.ts';
 
@@ -55,7 +55,7 @@ export function clash(x: UnitKey, y: UnitKey, n = 2000, seed = 7): number {
 // as strong as its attack says (game.ts SIEGE_VS_CITY over SIEGE_VS_UNITS).
 export function wallDamage(k: UnitKey, city: number): number {
   const T = unitDef(k), s = (isShooter(k) ? T.rangedAtk ?? 0 : T.melee) * (T.siege ? SIEGE_VS_UNITS * SIEGE_VS_CITY : 1);
-  return 3 * 24.5 * (s / (s + city));
+  return (isShooter(k) ? VOLLEY_ROUNDS : MELEE_ROUNDS) * 24.5 * (s / (s + city));
 }
 // A garrison's strength in an era: the era's foot, fortified behind walls (three times its strength).
 const FOOT = [1.5, 2.5, 4, 7, 10.5, 16, 23.5] as const;

@@ -329,9 +329,10 @@ export class GlobeRenderer {
   private readonly cityLabels = new Billboards(512, 112, 4, [0.152, 0.03325], 10);
   private readonly resourceBadges = new Billboards(96, 96, 21, [0.032, 0.032], 4);
   // The yields lens (setYields): each tile's yields near where the camera looks.
-  private readonly yieldBadges = new Billboards(192, 64, 10, [0.084, 0.028], 3, false);
+  private readonly yieldBadges = new Billboards(192, 64, 10, [0.084, 0.028], 3);
   private yieldBoards: Billboard[] = [];
   private yieldsKey = '';
+  private yieldsReach = 0;
   private readonly yieldsAt = new THREE.Vector3();
   // (Bumped once the banner's typeface has loaded: banners drawn before are drawn again.)
   private fontEpoch = 0;
@@ -642,6 +643,10 @@ export class GlobeRenderer {
     this.unitsGroup.add(this.unitView.group, this.unitFlags.mesh);
     this.citiesGroup.add(this.cityLabels.mesh);
     this.resourcesGroup.add(this.resourceBadges.mesh);
+    // (Yields and resources: their size on screen up close; from further off they keep to their tile, shrinking with it, and the land hides them as it does a city's banner.)
+    const tile = game.globe.avgEdgeAngle;
+    this.yieldBadges.setWorldSize(1.5 * tile, 0.5 * tile);
+    this.resourceBadges.setWorldSize(0.62 * tile, 0.62 * tile);
     this.yieldBadges.mesh.userData['stat'] = 'yield icons';
     this.scene.add(this.yieldBadges.mesh);
     void document.fonts?.load('600 38px Cinzel').then(() => { this.fontEpoch++; this.updateCities(); });
@@ -1514,8 +1519,8 @@ export class GlobeRenderer {
     // Small props vanish when they would be under a pixel or so.
     const altitude = (dist - 1) / this.scale;
     const lensView = this.view === 'normal' || this.view === 'strategic';
-    this.resourcesGroup.visible = this.resourcesOn && altitude < RESOURCE_BADGES_BELOW * (this.view === 'strategic' ? 1.6 : 1) && lensView;
-    this.yieldBadges.mesh.visible = this.yieldsOn && altitude < YIELDS_BELOW && lensView;
+    this.resourcesGroup.visible = this.resourcesOn && lensView;
+    this.yieldBadges.mesh.visible = this.yieldsOn && lensView;
     if (this.yieldBadges.mesh.visible) this.updateYields();
     // Beyond farDist a tree is under FAR_PX tall on screen.
     const pxPerUnit = this.renderer.domElement.height / (2 * Math.tan((this.camera.fov * Math.PI) / 360));
@@ -2397,7 +2402,7 @@ export class GlobeRenderer {
       // (Off the center, toward a corner: units and cities stand in the middle.)
       const tile = g.tiles[t];
       const dir = tile.center.clone().lerp(g.globe.triCenters[tile.corners[2 % tile.corners.length]!]!, 0.45).normalize();
-      badge.position.copy(dir).multiplyScalar(this.terrain.centerRadius[t] + 0.006 * this.scale);
+      badge.position.copy(dir).multiplyScalar(this.terrain.centerRadius[t] + 0.012 * this.scale);
       this.resourceBoards.push(badge);
     }
   }
@@ -2409,13 +2414,16 @@ export class GlobeRenderer {
   private updateYields(): void {
     const g = this.game, at = this.cam.target;
     const key = `${g.turn}|${g.useVersion}|${this.resourcesShown}`;
-    if (key === this.yieldsKey && at.distanceTo(this.yieldsAt) < 3 * g.globe.avgEdgeAngle) return;
+    // (As far round where the camera looks as it sees: more tiles from higher up.)
+    const reach = Math.round(Math.min(34, Math.max(YIELDS_REACH, (this.cam.distance * 0.75) / g.globe.avgEdgeAngle)));
+    if (key === this.yieldsKey && reach === this.yieldsReach && at.distanceTo(this.yieldsAt) < 0.3 * reach * g.globe.avgEdgeAngle) return;
+    this.yieldsReach = reach;
     this.yieldsKey = key;
     this.yieldsAt.copy(at);
     for (const b of this.yieldBoards) b.dispose();
     this.yieldBoards = [];
     const from = this.nearestTile(at.clone().normalize(), this.hoverTile >= 0 ? this.hoverTile : 0);
-    for (const t of g.tilesWithin(from, YIELDS_REACH)) {
+    for (const t of g.tilesWithin(from, reach)) {
       if (!g.explored[t]) continue;
       let food: number, prod: number, gold: number;
       if (g.use[t] !== USE.wild) ({ food, prod, gold } = g.tileOutput(t));
@@ -2427,7 +2435,7 @@ export class GlobeRenderer {
       const board = this.yieldBadges.add(`y|${food}|${prod}|${gold}`, (ctx) => drawTileYields(ctx, [['food', food], ['prod', prod], ['gold', gold]]));
       const tile = g.tiles[t]!, k = tile.corners.length;
       const dir = tile.center.clone().lerp(g.globe.triCenters[tile.corners[(2 + (k >> 1)) % k]!]!, 0.4).normalize();
-      board.position.copy(dir).multiplyScalar(this.terrain.centerRadius[t]! + 0.004 * this.scale);
+      board.position.copy(dir).multiplyScalar(this.terrain.centerRadius[t]! + 0.011 * this.scale);
       this.yieldBoards.push(board);
     }
   }
@@ -2716,10 +2724,8 @@ function fmtTris(n: number): string {
 
 // A resource's medallion (mapIcons.ts): its rim, by kind.
 const RESOURCE_COLORS = { bonus: '#8fd47f', luxury: '#c79be8', strategic: '#e8a94f' } as const;
-// Badges show while the camera is lower than this (globe radii at the reference tile size).
-const RESOURCE_BADGES_BELOW = 0.45;
-// The yields lens shows below this altitude (as the medallions), for the tiles this many steps round where the camera looks.
-const YIELDS_BELOW = 0.45, YIELDS_REACH = 9;
+// The yields lens covers the tiles this many steps round where the camera looks, at the least.
+const YIELDS_REACH = 9;
 const buildCost = (k: BuildKey): number => buildDef(k).cost;
 
 // Per terrain vertex: the ground's slope (height per radian, the steepest

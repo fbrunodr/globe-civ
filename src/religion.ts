@@ -35,23 +35,18 @@ export type ReligionKey = keyof typeof RELIGIONS;
 export const RELIGION_KEYS = Object.keys(RELIGIONS) as ReligionKey[];
 export const religionDef = (k: ReligionKey): ReligionDef => RELIGIONS[k];
 
-// Faith binds and divides (game.ts faiths, cityYields). A civ's faith is
-// the religion it founded, or else the one more than half of its cities
-// follow; a civ with neither is outside all of this.
-//   pilgrims  while a civ is at peace with every other civ of its faith
-//             (and knows one at least), each of its cities following it
-//             earns PILGRIM_GOLD: a war among the faithful ends it for both
-//   strife    while it is at war with a civ of its own faith, its cities
-//             of that faith make FAITH_STRIFE less cohesion
-//   creeds    a city that follows another religion than its civ's faith
-//             makes FAITH_STRIFE less cohesion: a rival's holy city
-//             pressing on its border costs it, and its own Shrines and
-//             Temples, or taking that holy city, are the cure
-// So peace within a faith pays, rival faiths have a standing quarrel, and
-// the faithless are left alone: by what each gains and loses, not by any
-// liking written into the computer's civs.
-export const PILGRIM_GOLD = 1;
-export const FAITH_STRIFE = 0.25;
+// Faith in war (game.ts faithEdge). A unit carries a religion: the one
+// its city followed when it was raised (none, if the city followed none),
+// and keeps it for good. When it attacks another unit:
+//   the defender carries the same religion   FAITH_SAME weaker (a bad conscience)
+//   the defender carries another             FAITH_RIVAL stronger (zeal)
+//   either carries none                      nothing
+// So a faith spread to one's neighbours is a shield against the armies
+// they raise, an army of another creed fights the harder, and the
+// faithless are left out of it: one figure in the fight's odds, shown
+// before the attack is made.
+export const FAITH_SAME = 0.3;
+export const FAITH_RIVAL = 0.2;
 
 // Spreading.
 export const PRESSURE_REACH = 6;        // tiles

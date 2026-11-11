@@ -34,7 +34,7 @@
 
 import { unitDef, domainOf } from './rules.ts';
 import { canAttackType, canShoot, canAssault, isShooter } from './unitClasses.ts';
-import type { Game, Player, Unit, City } from './game.ts';
+import { VOLLEY_ROUNDS, type Game, type Player, type Unit, type City } from './game.ts';
 import type { AiPolicy } from './aiPolicy.ts';
 
 // An army on its way to take a city.
@@ -231,7 +231,7 @@ export function militaryPhase(g: Game, p: Player, P: AiPolicy, cities: readonly 
       const pv = g.combatPreview(u, t, 'ranged'), c = g.cityByTile.get(t);
       let s: number;
       if (pv) {
-        const dmg = 3 * HIT * pv.atk / (pv.atk + pv.def);
+        const dmg = VOLLEY_ROUNDS * HIT * pv.atk / (pv.atk + pv.def);
         s = dmg / 100 + (dmg >= pv.defender.hp ? 1.5 : 0) + 0.02 * strength(pv.defender) + (pv.defender.hp < 50 ? 0.3 : 0);
         // (An engine at a garrison: what it is for.)
         if (c && unitDef(u.type).siege) s += 1;

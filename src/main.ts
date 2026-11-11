@@ -11,6 +11,7 @@ import { GlobeRenderer, RESOLUTIONS, type DebugView, type Selection, type TileMa
 import { UI, assertNever, attackInput, modeOf, wonderPicked, tip, type Action, type Placing, type NextStep } from './ui.ts';
 import { Sheets } from './sheets.ts';
 import { gameLogId } from './gameLog.ts';
+import { USE } from './cities.ts';
 import { MAP_SCRIPTS, MAP_SIZES, isMapScript, tileCount, unitDef, domainOf, isWonder, type MapScriptKey, type MapSizeKey } from './rules.ts';
 import { canShoot } from './unitClasses.ts';
 
@@ -207,6 +208,8 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey, leve
   const placingCity = (): City | null =>
     (sel?.kind === 'city' && sel.city.owner === HUMAN && (sel.city.growth > 0 || wonderPicked(placing) || placing === 'buy') ? sel.city : null);
   const PLACE_COLOR: Record<'rural' | 'wonder' | 'buy', number> = { rural: 0x8ce99a, wonder: 0xf5d76e, buy: 0xd4a72c };
+  // (The tiles the selected city's citizens work: a click on one takes its citizen off, to be placed again.)
+  const WORKED_COLOR = 0xffc94d;
   const REACH_COLOR = 0xe8604a;
   const defaultPlacing = (c: City): Placing =>
     c.owner !== HUMAN ? null : c.growth > 0 ? game.governorPick(c)?.kind ?? null : null;
@@ -226,6 +229,7 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey, leve
     if (sel?.kind === 'unit' && sel.unit.owner === HUMAN && sel.unit.moves > 0 && canShoot(sel.unit.type) && domainOf(unitDef(sel.unit.type)) !== 'air') {
       for (const t of game.fireReach(sel.unit)) out.push({ tile: t, color: REACH_COLOR, opacity: game.isEnemyOccupied(t, HUMAN) ? 0.7 : 0.22 });
     }
+    if (sel?.kind === 'city' && sel.city.owner === HUMAN && placing !== 'buy' && !wonderPicked(placing)) for (const t of game.cityTiles(sel.city, USE.rural)) out.push({ tile: t, color: WORKED_COLOR, opacity: 0.95 });
     const c = placingCity();
     if (!c || !placing) return out;
     // The tiles it could buy (dimmer when it cannot pay).
@@ -272,12 +276,17 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey, leve
 
   function endTurn(): void {
     ui.newTurn();
+    const before = game.events.length;
     game.endTurn();
     flushLog();
     sel = null;
+    // (An attack on the player's units or cities while the others moved: the camera goes there, to see it fought.)
+    const struck = game.events.slice(before).find((e) => (e.kind === 'attack' && e.data['defenderOwner'] === HUMAN) || (e.kind === 'cityCaptured' && e.data['from'] === HUMAN));
+    const battle = struck ? Number(struck.data['tile']) : -1;
     // A city that grew asks for its citizen first.
     const grown = game.cities.find((c) => c.owner === HUMAN && c.growth > 0);
     if (grown) { selectCity(grown); view.focusOn(grown.tile); } else selectNextUnit();
+    if (battle >= 0) view.focusOn(battle);
   }
 
   function previewPath(): number[] | null {
@@ -383,6 +392,9 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey, leve
         if (c) placing = defaultPlacing(c);
         break;
       }
+      case 'unspecialist':
+        if (sel?.kind === 'city' && sel.city.owner === HUMAN && game.unplace(sel.city, { specialist: a.specialist })) placing = defaultPlacing(sel.city);
+        break;
       case 'governorPlace': {
         const c = placingCity();
         if (c) game.autoPlace(c);
@@ -443,6 +455,8 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey, leve
           return;
         }
       }
+      // A tile the selected city's citizen works: the citizen comes off it, to be placed again.
+      if (sel?.kind === 'city' && sel.city.owner === HUMAN && !w && placing !== 'buy' && game.unplace(sel.city, { tile: t })) { placing = 'rural'; refresh(); return; }
       // Clicking cycles through own units on the tile, then the city.
       const options: Selection[] = game.unitsAt(t).filter((u) => u.owner === HUMAN).map((unit) => ({ kind: 'unit', unit }));
       const city = game.cityByTile.get(t);

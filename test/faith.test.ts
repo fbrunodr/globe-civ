@@ -1,10 +1,10 @@
-// Faith binds and divides (religion.ts, game.ts faiths): pilgrims' gold
-// among the faithful at peace, less cohesion at war with them or under a
-// foreign creed; a civ without a faith is left alone. And the victories.
+// Faith in war (religion.ts, game.ts faithEdge): a unit carries its city's
+// religion; attacking the same faith it is weaker, another stronger; one
+// with none is left out of it. And the victories.
 
 import { describe, it, expect } from 'vitest';
 import { Game, HUMAN, VICTORIES } from '../src/game.ts';
-import { PILGRIM_GOLD } from '../src/religion.ts';
+import { FAITH_SAME, FAITH_RIVAL } from '../src/religion.ts';
 import { FINAL_TECH } from '../src/techs.ts';
 import { TRUCE_TURNS } from '../src/game.ts';
 
@@ -17,35 +17,23 @@ const two = () => {
   return { g, a, b };
 };
 
-describe('F1: faith binds and divides', () => {
-  it('no faith: nothing', () => {
-    const { g } = two();
-    expect(g.faithOf(0)).toBeNull();
-    expect(g.faiths().bond[0]).toBe(false);
-  });
-  it('one faith at peace: pilgrims; at war: none, and less cohesion', () => {
-    const { g, a, b } = two();
-    g.religions.set('hinduism', { founder: 0, holyCity: a.id, turn: 1 });
-    a.religion = b.religion = 'hinduism';
-    expect(g.faithOf(0)).toBe('hinduism');
-    expect(g.faithOf(1)).toBe('hinduism'); // (most of its cities)
-    // (useVersion: the faiths are worked out anew, as after a turn.)
-    const alone = (() => { b.religion = null; g.useVersion++; const y = g.cityYields(a); b.religion = 'hinduism'; g.useVersion++; return y; })();
-    const peace = g.cityYields(a);
-    expect(peace.gold).toBe(alone.gold + PILGRIM_GOLD);
-    g.declareWar(0, 1);
-    const war = g.cityYields(a);
-    expect(war.gold).toBe(alone.gold);
-    expect(war.cohesion).toBeLessThanOrEqual(peace.cohesion);
-    expect(g.faiths().strife[0]).toBe(true);
-  });
-  it('a city under another creed than its civ\'s faith: the creeds quarrel', () => {
-    const { g, a, b } = two();
-    g.religions.set('hinduism', { founder: 0, holyCity: a.id, turn: 1 });
-    g.religions.set('judaism', { founder: 1, holyCity: b.id, turn: 1 });
+describe('F1: faith in war', () => {
+  it('a unit carries the religion its city followed when it was raised, and keeps it', () => {
+    const { g, a } = two();
+    expect(g.createUnit('warrior', 0, a.tile).faith).toBeNull();
+    a.religion = 'hinduism';
+    const w = g.createUnit('warrior', 0, a.tile);
+    expect(w.faith).toBe('hinduism');
     a.religion = 'judaism';
-    expect(g.faithOf(0)).toBe('hinduism');
-    expect(g.faiths().bond[0]).toBe(false);
+    expect(w.faith).toBe('hinduism');
+  });
+  it('attacking the same faith: weaker; another: stronger; either with none: nothing', () => {
+    const { g } = two();
+    const of = (faith: 'hinduism' | 'judaism' | null) => ({ faith });
+    expect(g.faithEdge(of('hinduism'), of('hinduism'))).toBeCloseTo(1 - FAITH_SAME);
+    expect(g.faithEdge(of('hinduism'), of('judaism'))).toBeCloseTo(1 + FAITH_RIVAL);
+    expect(g.faithEdge(of(null), of('judaism'))).toBe(1);
+    expect(g.faithEdge(of('hinduism'), of(null))).toBe(1);
   });
 });
 

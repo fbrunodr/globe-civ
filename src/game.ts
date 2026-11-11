@@ -27,7 +27,7 @@ import { IMPROVEMENTS, IMPROVEMENT_KEYS, IMPROVE_TURNS, drained, out, OUTPUT_KEY
 import { techDef, techPath, improvementStage, STAGE_TECHS, TECHS, type TechKey, FINAL_TECH } from './techs.ts';
 import { politicsDef, politicsPath, GOVERNMENTS, governmentDef, policyDef, fits, SLOT_KINDS, type PoliticsKey, type GovernmentKey, type PolicyKey, type PolicySlot } from './politics.ts';
 import { traitDef, traitBlock, traitCost, type TraitKey } from './identity.ts';
-import { PILGRIM_GOLD, FAITH_STRIFE, religionDef, PRESSURE_REACH, HOLY_PRESSURE, CITY_PRESSURE, BUILDING_PRESSURE, CONVERT_AT, TITHE, type ReligionKey } from './religion.ts';
+import { FAITH_SAME, FAITH_RIVAL, religionDef, PRESSURE_REACH, HOLY_PRESSURE, CITY_PRESSURE, BUILDING_PRESSURE, CONVERT_AT, TITHE, type ReligionKey } from './religion.ts';
 import { placeResources, resourceDef, empireBonus, RESOURCE_IMPROVEMENT, type ResourceKey } from './resources.ts';
 import { total, yieldBonus, prodBonus, flat, tileBonus, specialistBonus, movesBonus, type Effect, type ProdTarget } from './effects.ts';
 import { cityUpkeep, unitUpkeep, buildingUpkeep, inflation, arrearsOf, WEALTH_RATE } from './economy.ts';
@@ -178,9 +178,15 @@ export function matchup(self: UnitKey, other: UnitKey, role: 'atk' | 'def'): num
 // is three exchanges, each side hurting the other.
 // The HP each side is left with (at or below 0: destroyed).
 export type Fight = 'melee' | 'ranged' | 'dogfight';
+// A clash at close quarters is this many exchanges, not a fight to the
+// death: a battle between equals takes a few attacks, over a turn or
+// three, and either side may break off, be relieved or be reinforced.
+export const MELEE_ROUNDS = 4;
+// A volley of fire is this many (the target never answering): lighter than a clash, as it costs the shooter nothing.
+export const VOLLEY_ROUNDS = 2;
 export function fightRounds(hpA: number, hpD: number, A: number, D: number, kind: Fight, rng: () => number): { attacker: number; defender: number } {
   const back = kind === 'melee' ? 1 : kind === 'dogfight' ? 0.5 : 0;
-  for (let round = 0; hpA > 0 && hpD > 0 && (kind === 'melee' || round < 3); round++) {
+  for (let round = 0; hpA > 0 && hpD > 0 && round < (kind === 'melee' ? MELEE_ROUNDS : kind === 'ranged' ? VOLLEY_ROUNDS : 3); round++) {
     const dmg = 18 + Math.floor(rng() * 14);
     if (rng() < A / (A + D)) hpD -= dmg; else hpA -= Math.round(dmg * back);
   }
@@ -227,6 +233,7 @@ export interface Unit {
   work: number | null;                  // a worker's: the tile it is working on (it stays there, or by it for boats)
   job: WorkerJob | null;                // and what it does there
   charges: number;                      // a worker's: the improvements it can still build (roads and repairs cost none)
+  faith: ReligionKey | null;            // the religion its city followed when it was raised (it keeps it: religion.ts)
 }
 // What a worker does on a tile: builds its improvement (a charge, of
 // WORKER_CHARGES), repairs it when pillaged, or lays a road (both free, as
@@ -688,11 +695,13 @@ export class Game {
 
   // A new unit on `tile`, or (one unit per tile) the nearest free tile.
   createUnit(type: UnitKey, owner: number, tile: number): Unit {
+    // (Its faith: its city's as it is raised, wherever it then finds room to stand.)
+    const faith = this.cityByTile.get(tile)?.religion ?? null;
     tile = this.freeTileNear(type, owner, tile) ?? tile;
     this.record('unitCreated', owner, { unit: type, tile });
     const u: Unit = { id: this.nextId++, type, owner, tile, packedIn: null, moves: this.maxMoves(type, owner), hp: 100,
       fortified: false, skipped: false, goal: null, goalMode: null, dead: false, aiTarget: null, work: null, job: null,
-      charges: unitDef(type).improves ? WORKER_CHARGES : 0 };
+      charges: unitDef(type).improves ? WORKER_CHARGES : 0, faith };
     this.units.push(u);
     return u;
   }
@@ -959,7 +968,7 @@ export class Game {
   combatPreview(u: Unit, tile: number, mode: AttackMode = this.attackModeFor(u, tile)): CombatPreview | null {
     const d = this.bestDefender(tile, u.owner, mode);
     if (!d) return null;
-    return { atk: this.unitStrength(u, mode, 'atk', tile) * matchup(u.type, d.type, 'atk') * this.siegeEdge(u, tile), def: this.unitStrength(d, mode, 'def', tile) * matchup(d.type, u.type, 'def'), defender: d, mode };
+    return { atk: this.unitStrength(u, mode, 'atk', tile) * matchup(u.type, d.type, 'atk') * this.siegeEdge(u, tile) * this.faithEdge(u, d), def: this.unitStrength(d, mode, 'def', tile) * matchup(d.type, u.type, 'def'), defender: d, mode };
   }
 
   // (`mode`: by fire, or closing in: unless told, attackModeFor.)
@@ -979,7 +988,7 @@ export class Game {
     if (!d) this.onBattle?.(u, tile, style);
     if (d) {
       // (The counters: pikes against horse, a charge against archers...)
-      const A = this.unitStrength(u, mode, 'atk', tile) * matchup(u.type, d.type, 'atk') * this.siegeEdge(u, tile);
+      const A = this.unitStrength(u, mode, 'atk', tile) * matchup(u.type, d.type, 'atk') * this.siegeEdge(u, tile) * this.faithEdge(u, d);
       const D = this.unitStrength(d, mode, 'def', tile) * matchup(d.type, u.type, 'def');
       const before = { a: u.hp, d: d.hp };
       const after = fightRounds(u.hp, d.hp, A, D, mode, this.rng);
@@ -1031,6 +1040,13 @@ export class Game {
   cityStrength(c: City): number {
     const d = this.bestDefender(c.tile, -1, 'melee');
     return d ? this.unitStrength(d, 'melee', 'def', c.tile) : 0;
+  }
+  // What faith makes of an attack (religion.ts): by the religion the
+  // attacker carries (its city's when it was raised) against the
+  // defender's: the same, it fights with a bad conscience (FAITH_SAME);
+  // another, with zeal (FAITH_RIVAL). Either with none: nothing.
+  faithEdge(u: { faith: ReligionKey | null }, d: { faith: ReligionKey | null }): number {
+    return !u.faith || !d.faith ? 1 : u.faith === d.faith ? 1 - FAITH_SAME : 1 + FAITH_RIVAL;
   }
   // An engine against a garrison: built for it (SIEGE_VS_CITY over what
   // engines lose against units, so twice as strong as its attack says).
@@ -1628,17 +1644,7 @@ export class Game {
     if (p.capital === city.id) sum = addOut(addOut(sum, out(PALACE)), flat(fx, 'capital'));
     else if (this.roadLinked(city)) sum = addOut(sum, connectionBonus(city.pop));
     if (city.religion) sum = addOut(sum, flat(religionDef(city.religion).follower, 'follower'));
-    // Faith binds and divides (religion.ts): pilgrims' gold in a city of
-    // its civ's faith while the faithful are at peace; less cohesion in a
-    // city of that faith while they are at war with each other, and in one
-    // that follows another creed than its civ's.
-    const f = this.faiths();
-    const mine = f.of[p.id] ?? null;
     let strife = 0;
-    if (mine && city.religion === mine) {
-      if (f.bond[p.id]) sum = addOut(sum, out({ gold: PILGRIM_GOLD }));
-      if (f.strife[p.id]) strife += FAITH_STRIFE;
-    } else if (mine && city.religion) strife += FAITH_STRIFE;
     if (p.dishonor > 0) strife += TRUCE_BREAK;
     if (strife) sum = { ...sum, cohesion: sum.cohesion * (1 - Math.min(0.9, strife)) };
     // (In arrears: what it could not pay of its upkeep, its cities make less by, in production, science and culture.)
@@ -1654,7 +1660,8 @@ export class Game {
   growthOptions(city: City): GrowthOption[] {
     const out: GrowthOption[] = [];
     for (const t of this.tilesWithin(city.tile, CITY_REACH)) {
-      if (this.tileCity[t] !== city.id || this.blockedFor(city, t) || this.use[t] !== USE.wild || this.wondersAt(t).length || !this.improvementAt(t, city.owner)) continue;
+      // (Any tile of its civ within its reach that no citizen works, its own or a sister city's: worked, it becomes this city's.)
+      if (this.ownerOf(t) !== city.owner || this.blockedFor(city, t) || this.use[t] !== USE.wild || this.wondersAt(t).length || !this.improvementAt(t, city.owner)) continue;
       const y = this.workedYield(t, city.owner);
       if (y.food + y.prod + y.gold > 0) out.push({ kind: 'rural', tile: t, improvement: this.builtAt(t) });
     }
@@ -1689,9 +1696,24 @@ export class Game {
     const legal = this.growthOptions(city).some((x) => sameOption(x, o));
     if (!legal) return false;
     if (o.kind === 'specialist') city.specialists[o.specialist]++;
-    else this.setUse(o.tile, USE.rural);
+    else { this.tileCity[o.tile] = city.id; this.setUse(o.tile, USE.rural); }
     city.growth--;
     city.pop++;
+    return true;
+  }
+  // A citizen taken off its work (a tile it works, or a specialist's place),
+  // to be placed again: it waits, as one newly grown does.
+  unplace(city: City, from: { tile: number } | { specialist: SpecialistKind }): boolean {
+    if ('tile' in from) {
+      if (this.tileCity[from.tile] !== city.id || this.use[from.tile] !== USE.rural) return false;
+      this.setUse(from.tile, USE.wild);
+    } else {
+      if (city.specialists[from.specialist] <= 0) return false;
+      city.specialists[from.specialist]--;
+      this.useVersion++;
+    }
+    city.pop--;
+    city.growth++;
     return true;
   }
 
@@ -1706,6 +1728,7 @@ export class Game {
       const worst = worked.reduce((a, b) => (value(b) < value(a) ? b : a)), best = free.reduce((a, b) => (value(b) > value(a) ? b : a));
       if (value(best) <= value(worst) + 0.5) return;
       this.setUse(worst, USE.wild);
+      this.tileCity[best] = city.id;
       this.setUse(best, USE.rural);
     }
   }
@@ -2500,13 +2523,10 @@ export class Game {
     return pop + 2 * cities + 4 * p.techs.size + 2 * p.politics.size + p.identity.size + 5 * wonders;
   }
   // Each civ's faith: the religion it founded, or else the one more than
-  // half of its cities follow (none: it has no faith, and faith neither
-  // binds nor divides it). `bond`: it has brothers in faith (another civ
-  // of its faith it has met) and is at peace with them all; `strife`: it
-  // is at war with one of them.
-  private faithCache: { key: string; of: (ReligionKey | null)[]; bond: boolean[]; strife: boolean[] } = { key: '', of: [], bond: [], strife: [] };
-  faiths(): { of: (ReligionKey | null)[]; bond: boolean[]; strife: boolean[] } {
-    const key = `${this.turn}|${this.cities.length}|${this.useVersion}|${this.diploVersion}|${this.religions.size}`;
+  // half of its cities follow (none: it has no faith).
+  private faithCache: { key: string; of: (ReligionKey | null)[] } = { key: '', of: [] };
+  faiths(): { of: (ReligionKey | null)[] } {
+    const key = `${this.turn}|${this.cities.length}|${this.useVersion}|${this.religions.size}`;
     if (this.faithCache.key === key) return this.faithCache;
     const of = this.players.map((p): ReligionKey | null => {
       for (const [r, f] of this.religions) if (f.founder === p.id) return r;
@@ -2515,10 +2535,7 @@ export class Game {
       for (const [r, n] of count) if (n * 2 > mine.length) return r;
       return null;
     });
-    const brothers = (id: number) => this.players.filter((o) => o.alive && o.id !== id && of[id] !== null && of[o.id] === of[id] && this.met[id]![o.id]);
-    const strife = this.players.map((p) => p.alive && brothers(p.id).some((o) => this.atWar(p.id, o.id)));
-    const bond = this.players.map((p) => p.alive && brothers(p.id).length > 0 && !strife[p.id]);
-    this.faithCache = { key, of, bond, strife };
+    this.faithCache = { key, of };
     return this.faithCache;
   }
   faithOf(id: number): ReligionKey | null { return this.faiths().of[id] ?? null; }

@@ -8,7 +8,7 @@ import {
   PATHS, FAITH_KEYS, PAIR_SLOTS, MAX_TRAITS, openSlots, traitDef, pathTraits, traitBlock, pathLevels, epithet, traitOfReligion, BLOCK_TEXT, isTraitKey,
   type PathKey, type TraitKey,
 } from './identity.ts';
-import { RELIGION_KEYS, religionDef, PILGRIM_GOLD, FAITH_STRIFE } from './religion.ts';
+import { RELIGION_KEYS, religionDef, FAITH_SAME, FAITH_RIVAL } from './religion.ts';
 import { RESOURCE_KEYS, resourceDef, empireBonus, type ResourceKey } from './resources.ts';
 import { describe as describeEffect, describeAll, flat } from './effects.ts';
 import { ERAS, BUILDINGS, WONDERS, type EraIndex } from './cities.ts';
@@ -425,7 +425,7 @@ export class Sheets {
     const mine = g.cities.filter((c) => c.owner === p.id);
     const cities = mine.length ? mine.map((c) => `<tr><td>${esc(c.name)}</td><td>${c.religion ? religionDef(c.religion).name : '<small>none</small>'}</td></tr>`).join('') : '';
     return `<p class="note">A religion is founded by the first civilization to adopt its faith, a trait of the Devotion path of identity (Meditation founds Hinduism); a civilization adopts one faith at most. It spreads from its holy city to the cities around it, whoever owns them; Shrines and Temples press it harder. Each city following a religion gets its bonus; the founder takes 1 gold a turn from every city following it.</p>
-      <p class="note"><b>Faith binds and divides.</b> Your faith is the religion you founded, or else the one most of your cities follow${(() => { const f = g.faithOf(p.id); return f ? ` (yours: ${religionDef(f).name})` : ' (you have none: none of this touches you)'; })()}. While you are at peace with every other civilization of your faith, each of your cities following it earns ${PILGRIM_GOLD} gold from pilgrims; at war with one of them, those cities make ${Math.round(100 * FAITH_STRIFE)}% less cohesion. A city of yours that follows another religion than your faith makes ${Math.round(100 * FAITH_STRIFE)}% less cohesion: build Shrines and Temples, or take the holy city that presses on it.</p>
+      <p class="note"><b>Faith in war.</b> A unit carries the religion its city followed when it was raised, for good. Attacking a unit of the same religion it is ${Math.round(100 * FAITH_SAME)}% weaker; attacking one of another religion, ${Math.round(100 * FAITH_RIVAL)}% stronger; a unit with no religion is outside all this. A faith spread to your neighbours shields you from the armies they raise.</p>
       <table class="grid"><tr><th>Religion</th><th>Faith (identity)</th><th>Founder</th><th>Holy city</th><th>Cities</th><th>Bonus per city</th></tr>${rows}</table>
       ${cities ? `<h3>Your cities</h3><table class="grid"><tr><th>City</th><th>Follows</th></tr>${cities}</table>` : ''}`;
   }

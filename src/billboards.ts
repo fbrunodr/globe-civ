@@ -1,5 +1,6 @@
 // Billboards drawn all at once: labels a fixed size on screen (as
-// THREE.Sprite with sizeAttenuation off), each a picture from an atlas, all
+// THREE.Sprite with sizeAttenuation off; or that size up close and a fixed
+// size in the world from further off: setWorldSize), each a picture from an atlas, all
 // of one kind in a single draw. A Sprite each was a draw (and a material)
 // each: 2,000 units' flags were 2,000 draws.
 //
@@ -24,14 +25,17 @@ const VERTEX = /* glsl */ `
   attribute vec3 aCenter;
   attribute vec2 aCell;
   uniform vec2 uScale;
+  uniform vec2 uWorld;
   uniform vec2 uCellUv;
   varying vec2 vUv;
   #include <fog_pars_vertex>
   void main() {
     vUv = (aCell + uv) * uCellUv;
     vec4 mvPosition = viewMatrix * vec4(aCenter, 1.0);
-    // (A fixed size on screen: as large at any distance.)
-    mvPosition.xy += position.xy * uScale * -mvPosition.z;
+    // (A fixed size on screen, as large at any distance; but never larger
+    // in the world than uWorld: from far off it shrinks with the land it
+    // stands on, so a crowd of them does not pile up.)
+    mvPosition.xy += position.xy * min(uScale * -mvPosition.z, uWorld);
     gl_Position = projectionMatrix * mvPosition;
     #include <fog_vertex>
   }
@@ -75,7 +79,7 @@ export class Billboards {
     this.texture.anisotropy = 4;
     this.texture.flipY = false;
     this.material = new THREE.ShaderMaterial({
-      uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { uMap: { value: null }, uScale: { value: new THREE.Vector2() }, uCellUv: { value: new THREE.Vector2() } }]),
+      uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { uMap: { value: null }, uScale: { value: new THREE.Vector2() }, uWorld: { value: new THREE.Vector2(1e9, 1e9) }, uCellUv: { value: new THREE.Vector2() } }]),
       vertexShader: VERTEX, fragmentShader: FRAGMENT, transparent: true, fog: true, depthTest,
     });
     this.material.uniforms['uMap']!.value = this.texture;
@@ -89,6 +93,9 @@ export class Billboards {
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = renderOrder;
   }
+
+  // The largest its billboards may be in the world (globe radii): past the distance where their fixed size on screen is that large, they shrink.
+  setWorldSize(w: number, h: number): void { (this.material.uniforms['uWorld']!.value as THREE.Vector2).set(w, h); }
 
   // A billboard showing `key`'s picture (drawn by `draw` the first time).
   add(key: string, draw: (ctx: CanvasRenderingContext2D) => void): Billboard {

@@ -228,7 +228,7 @@ interface Figure {
 // (`enemy`: the figures of the unit it is at grips with, in a melee.)
 // (`reach`: how far it goes in, times its play's charge: further at a tile no one defends, into a city's streets.)
 // (`counter`: the unit it will charge once an advancing gun line has halted (a defender that can't fire back).)
-interface Fight { at: THREE.Vector3; home: THREE.Vector3; t0: number; play: Play; fired: number; attack: Play; side: 'attacker' | 'defender'; won: boolean; enemy: Figure[]; reach: number; counter: Shown | null }
+interface Fight { at: THREE.Vector3; home: THREE.Vector3; t0: number; play: Play; fired: number; attack: Play; side: 'attacker' | 'defender'; won: boolean; enemy: Figure[]; reach: number; counter: Shown | null; advance?: boolean }
 // A figure struck down, lying where it fell (then sinking away).
 // (A machine's: a wreck burning, on land or at sea.)
 interface Corpse { slots: Slots; wreck: Wreck | null; smoke: number; key: string; hair: number; hairColor: THREE.Color; skin: THREE.Color; phase: number; color: THREE.Color; pos: THREE.Vector3; up: THREE.Vector3; face: THREE.Vector3; fall: number; beat: number; horse: boolean; lift: readonly [number, number] }
@@ -553,7 +553,8 @@ export class UnitView {
         // (Along the tiles it stepped through, if they lead here; else straight.)
         if (s.route[s.route.length - 1] !== u.tile) s.route = [u.tile];
         // (Already marching: it goes on along the route as it gets there.)
-        if (s.fight) this.marchOn(s, s.fight.home.clone(), s.fight.t0 + durOf(s.fight.attack));
+        // (It won its fight and takes the ground: it goes on from where it fought, not back to where it stood first.)
+        if (s.fight) { s.fight.advance = true; this.marchOn(s, s.fight.at.clone(), s.fight.t0 + durOf(s.fight.attack)); }
         else if (!s.march) this.marchOn(s, s.dir.clone(), now);
       } else {
         const hurt = s.unit.hp !== u.hp, dug = (s.unit.fortified ?? false) !== (u.fortified ?? false);
@@ -872,7 +873,7 @@ export class UnitView {
       }
       for (const g of s.figures) Object.assign(g, unfought());
       if (s.gone) { this.drop(s); return; }
-      s.dir.copy(f.home);
+      s.dir.copy(f.advance ? f.at : f.home);
       s.laid = null; // (each walks back to its place from wherever the fight left it)
       if (!s.march) this.settle(s, s.k);
       return;
@@ -931,7 +932,9 @@ export class UnitView {
         const len = d.length(), step = SHUFFLE * this.size * dt;
         if (len > step) reach.addScaledVector(d, step / len); else reach.copy(f.goal);
       }
-      const { out, back } = figureOut(p, Math.min(t, (f.fall - s.fight!.t0) / durOf(s.fight!.attack)), f.delay);
+      const fo = figureOut(p, Math.min(t, (f.fall - s.fight!.t0) / durOf(s.fight!.attack)), f.delay);
+      // (Taking the ground: no walk back; it holds where it struck.)
+      const hold = fo.back && s.fight!.advance === true, out = hold ? 1 : fo.out, back = hold ? false : fo.back;
       side.crossVectors(f.goal.clone().sub(f.home), f.home).normalize();
       this.place(s, f, d.copy(f.home).lerp(reach, out).addScaledVector(side, bow(f.curve, out) * this.size).normalize(), afloat);
       f.off.copy(f.up).sub(f.at); // (from here it walks to its place once the fight is over)

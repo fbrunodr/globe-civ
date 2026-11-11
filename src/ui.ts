@@ -6,7 +6,7 @@ import type { Selection } from './render.ts';
 import { canAssault, canShoot, type AttackMode } from './unitClasses.ts';
 import { techDef } from './techs.ts';
 import { politicsDef } from './politics.ts';
-import { RELIGIONS } from './religion.ts';
+import { RELIGIONS, FAITH_SAME, FAITH_RIVAL } from './religion.ts';
 import { resourceDef, empireBonus } from './resources.ts';
 import { BORDER_AT, BORDER_MAX, OUTPUT_KEYS } from './cities.ts';
 import { icon, unitIcon, resourceIcon, YIELD_ICON, type IconKey } from './icons.ts';
@@ -35,6 +35,7 @@ export type Action =
   | { type: 'build'; key: BuildKey | null }
   | { type: 'placeKind'; kind: GrowthKind }
   | { type: 'specialist'; specialist: SpecialistKind }
+  | { type: 'unspecialist'; specialist: SpecialistKind }
   | { type: 'governorPlace' }
   | { type: 'focus'; focus: FocusKey }
   | { type: 'buyMode' }
@@ -68,7 +69,7 @@ function parseAction(el: HTMLElement): Action | null {
       const kind = el.dataset['kind'];
       return kind === 'rural' || kind === 'specialist' ? { type, kind } : null;
     }
-    case 'specialist': {
+    case 'specialist': case 'unspecialist': {
       const k = el.dataset['specialist'] ?? '';
       return (SPECIALIST_KINDS as readonly string[]).includes(k) ? { type, specialist: k as SpecialistKind } : null;
     }
@@ -344,6 +345,7 @@ export class UI {
       T.civilian ? '' : stat('sword', String(T.melee), 'Melee strength', 'Closing in, and defending against it'),
       T.rangedAtk ? stat('arrow', `${T.rangedAtk}${(T.reach ?? 1) > 1 ? ` <small>reach ${T.reach}</small>` : ''}`, 'Ranged strength', 'Firing from a distance, unanswered') : '',
       T.civilian ? '' : stat('shield', String(T.rangedDef), 'Defence under fire', 'Against arrows, shot and shell'),
+      u.faith && !T.civilian ? stat('faith', RELIGIONS[u.faith].name, 'Its faith', `Its city's when it was raised. Attacking a unit of the same faith it is ${Math.round(100 * FAITH_SAME)}% weaker; one of another faith, ${Math.round(100 * FAITH_RIVAL)}% stronger`) : '',
     ].join('');
     return `<div class="unitcard" style="--civ:${owner.color};--on:${inkOn(owner.color)}">
       <div class="portrait ${T.civilian ? 'civilian' : ''}">${icon(unitIcon(u.type))}</div>
@@ -396,7 +398,7 @@ export class UI {
     const meter = (ic: IconKey, cls: string, name: string, text: string, f: number) =>
       `<div class="mrow">${icon(ic, cls)}<div class="txt"><b>${name}</b><span>${text}</span></div><div class="meter ${cls}"><i style="width:${(100 * Math.min(1, Math.max(0, f))).toFixed(1)}%"></i></div></div>`;
     const facts = `<div class="facts">
-      <span>Citizens</span><b>${rural} on the land${specialists ? ` · ${plural(specialists, 'specialist')}` : ''}</b>
+      <span>Citizens</span><b>${rural} on the land${specialists ? ` · ${plural(specialists, 'specialist')}` : ''}${mine && rural ? '<br><small>the gold tiles: click one to move its citizen</small>' : ''}</b>
       <span>Upkeep</span><b>${capital ? 'none (capital)' : `${g.upkeepOf(c).toFixed(1)} gold a turn${c.buildings.has('courthouse') ? ' · courthouse' : ''}`}</b>
       <span>Religion</span><b>${c.religion ? esc(RELIGIONS[c.religion].name) : 'none'}</b>
       <span>Borders</span><b>${c.ring} tiles out${c.ring < BORDER_MAX ? ` · next at ${BORDER_AT[c.ring + 1]} culture (${Math.floor(c.culture)})` : ''}</b></div>`;
@@ -461,7 +463,10 @@ export class UI {
     const tags: string[] = [];
     for (const w of g.cityWonders(c)) tags.push(`<span class="tag wonder" ${tip(esc(WONDERS[w].name), esc(WONDERS[w].desc))}>${icon('star')}${esc(WONDERS[w].name)}</span>`);
     for (const b of c.buildings) tags.push(`<span class="tag" ${tip(esc(BUILDINGS[b].name), esc(BUILDINGS[b].desc))}>${esc(BUILDINGS[b].name)}</span>`);
-    for (const k of SPECIALIST_KINDS) if (c.specialists[k] > 0) tags.push(`<span class="tag">${icon('person')}${c.specialists[k]} ${specialistName(k).toLowerCase()}${c.specialists[k] > 1 ? 's' : ''}</span>`);
+    // (A specialist: a click takes one off its work, to be placed again.)
+    for (const k of SPECIALIST_KINDS) if (c.specialists[k] > 0) tags.push(c.owner === HUMAN
+      ? `<button class="tag" data-act="unspecialist" data-specialist="${k}" ${tip(`Take a ${specialistName(k).toLowerCase()} off its work`, 'To place the citizen elsewhere')}>${icon('person')}${c.specialists[k]} ${specialistName(k).toLowerCase()}${c.specialists[k] > 1 ? 's' : ''} ${icon('close')}</button>`
+      : `<span class="tag">${icon('person')}${c.specialists[k]} ${specialistName(k).toLowerCase()}${c.specialists[k] > 1 ? 's' : ''}</span>`);
     return tags.length ? `<div class="sect"><span class="label">In the city</span><div class="tags">${tags.join('')}</div></div>` : '';
   }
 
