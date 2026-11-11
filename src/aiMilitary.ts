@@ -17,6 +17,14 @@
 //               it hurts most; then the blades close in where the fight is
 //               worth it (the chance of winning it to the end, and what
 //               each side would lose); a unit badly hurt falls back to heal
+//   formation   under all of it, where each unit stands (the Community
+//               Patch's first and second line): the blades between the
+//               enemy and the shooters, the shooters and engines behind
+//               them, out of the reach of enemy blades where they can be,
+//               still within their own reach of the target. On the march
+//               the blades lead and the shooters follow a ring behind; a
+//               shooter an enemy blade could reach, with no blade of its
+//               own beside it, steps back before it would fire
 //   homeland    the rest (CvHomelandAI): a garrison in every city, units
 //               hurt rest until fit, the others stand by the cities nearest
 //               a rival (or one under threat), fortified, not wandering
@@ -85,14 +93,38 @@ export function militaryPhase(g: Game, p: Player, P: AiPolicy, cities: readonly 
     if (!foes.includes(c.owner) || c.hp <= 0 || !g.walled(c)) continue;
     for (const t of g.tilesWithin(c.tile, 2)) danger.set(t, (danger.get(t) ?? 0) + 0.4 * g.cityStrength(c));
   }
+  // (And what enemy blades alone could reach: where a shooter must not stand uncovered.)
+  const charge = new Map<number, number>();
+  for (const e of foeUnits) {
+    if (shoots(e) || !canAssault(e.type)) continue;
+    for (const t of g.tilesWithin(e.tile, unitDef(e.type).mv)) charge.set(t, (charge.get(t) ?? 0) + strength(e));
+  }
+  const blade = (u: Unit): boolean => !u.dead && canAssault(u.type) && !shoots(u);
+  // The nearest enemy to a tile (a unit, else a city it is out to take): what a formation faces.
+  const facing = (t: number): number | null => {
+    let best: number | null = null, bestD = 7;
+    for (const e of foeUnits) { const d = dist(e.tile, t); if (d < bestD) { best = e.tile; bestD = d; } }
+    const c = S.op ? g.cityById.get(S.op.target) : undefined;
+    if (best === null && c && dist(c.tile, t) < 9) best = c.tile;
+    return best;
+  };
+  // Whether a tile is covered: one of its own blades stands by it, nearer the enemy than it is.
+  const covered = (t: number, but: Unit | null = null): boolean => {
+    const f = facing(t);
+    if (f === null) return true;
+    return mine.some((b) => b !== but && blade(b) && dist(b.tile, t) <= 1.5 && dist(b.tile, f) < dist(t, f));
+  };
   const near = (list: readonly Unit[], t: number, r: number) => list.reduce((s, u) => s + (dist(u.tile, t) <= r ? strength(u) : 0), 0);
 
   // A free tile for u by `at` (within r), the nearest to it; `at` itself if it can stand there.
   const stand = (u: Unit, at: number, r: number, keep: (t: number) => boolean = () => true): number | null => {
     let best: number | null = null, bestS = Infinity;
+    const front = blade(u) ? facing(u.tile) : null;
     for (const [t, d] of g.tilesWithinMap(at, r)) {
       if (g.isWater(t) || !keep(t) || (t !== u.tile && !g.canStand(u, t)) || g.isForeignBlocked(t, u.owner)) continue;
-      const s = d * 3 + dist(u.tile, t) + 0.05 * (danger.get(t) ?? 0);
+      // (A shooter keeps out of enemy blades' reach, and behind its own.)
+      // (A blade stands toward the enemy.)
+      const s = d * 3 + dist(u.tile, t) + 0.05 * (danger.get(t) ?? 0) + (front !== null ? 0.6 * dist(t, front) : 0) + (shoots(u) ? 1.5 * Math.min(4, charge.get(t) ?? 0) + (covered(t, u) ? 0 : 1.5) : 0);
       if (s < bestS) { best = t; bestS = s; }
     }
     return best;
@@ -182,6 +214,20 @@ export function militaryPhase(g: Game, p: Player, P: AiPolicy, cities: readonly 
   // 2. Every shooter fires: at what it can kill, else where it hurts most; an engine at the walls.
   for (const u of live()) {
     if (!canShoot(u.type) || u.dead) continue;
+    // (A shooter enemy blades could reach, no blade of its own before it,
+    // not a garrison: it steps back to a tile that is safe or covered, if
+    // there is one; with moves left after, it still fires.)
+    if (shoots(u) && (charge.get(u.tile) ?? 0) > 0 && !covered(u.tile, u) && !g.cityByTile.has(u.tile)) {
+      let to: number | null = null, toS = Infinity;
+      for (const t of g.tiles[u.tile]!.neighbors) {
+        if (g.isWater(t) || !g.canStand(u, t) || g.isForeignBlocked(t, u.owner) || g.isEnemyOccupied(t, p.id)) continue;
+        const c = charge.get(t) ?? 0;
+        if (c > 0 && !covered(t, u)) continue;
+        const sc = c + 0.1 * (danger.get(t) ?? 0) + (g.cityByTile.get(t)?.owner === p.id ? -5 : 0);
+        if (sc < toS) { to = t; toS = sc; }
+      }
+      if (to !== null) { g.goTo(u, to); if (u.dead || u.moves <= 0) { done.add(u.id); continue; } }
+    }
     let best: number | null = null, bestS = 0;
     for (const t of g.fireReach(u)) {
       if (!g.isEnemyOccupied(t, p.id) || g.attackBlockAt(u, t, 'ranged') !== null) continue;
@@ -231,17 +277,45 @@ export function militaryPhase(g: Game, p: Player, P: AiPolicy, cities: readonly 
   // ---- the operation's units: gather, march, take their places ----
   if (op) {
     const city = g.cityById.get(op.target)!;
-    for (const u of live()) {
-      if (done.has(u.id) || !op.units.has(u.id)) continue;
+    // (The blades move first and take the nearer ground; the shooters form up behind them.)
+    const army = live().filter((u) => !done.has(u.id) && op!.units.has(u.id)).sort((a, b) => Number(shoots(a)) - Number(shoots(b)));
+    const hasBlades = mine.some((u) => op!.units.has(u.id) && blade(u));
+    for (const u of army) {
       done.add(u.id);
       if (u.hp < 50 && !(danger.get(u.tile) ?? 0) && op.state !== 'assault') { u.fortified = true; continue; }
       if (op.state === 'gather') { if (dist(u.tile, op.muster) > 2) go(u, stand(u, op.muster, 2, (t) => t !== op!.muster)); else u.fortified = true; continue; }
       const d = dist(u.tile, city.tile);
-      if (op.state === 'march') { if (d > 3) go(u, stand(u, city.tile, 4, (t) => dist(t, city.tile) >= 3)); continue; }
-      // The assault: shooters and engines to where they reach the city; the blades wait out of its reach until it is time (3.).
-      if (canShoot(u.type) && shoots(u)) { if (!g.fireReach(u).has(city.tile)) g.goTo(u, city.tile); }
-      else if (city.hp <= P.cityAssaultHp * g.cityMaxHp(city) || !g.walled(city)) { if (d > 1) go(u, stand(u, city.tile, 1, (t) => t !== city.tile)); }
-      else if (d > 3 || d < 3) go(u, stand(u, city.tile, 3, (t) => dist(t, city.tile) === 3));
+      if (op.state === 'march') {
+        // On the march: the blades to three tiles from the city, the shooters a ring further back.
+        const ring = shoots(u) && hasBlades ? 4 : 3;
+        if (d > ring + 0.5) go(u, stand(u, city.tile, ring + 1, (t) => dist(t, city.tile) >= ring));
+        continue;
+      }
+      if (shoots(u)) {
+        // The assault: a shooter or an engine to where it reaches the city,
+        // by the least dangerous such tile, a blade before it if it can.
+        if (g.fireReach(u).has(city.tile)) continue;
+        const reach = unitDef(u.type).reach ?? 1;
+        const spot = stand(u, city.tile, reach, (t) => t !== city.tile);
+        if (spot !== null) go(u, spot); else g.goTo(u, city.tile);
+      } else if (city.hp <= P.cityAssaultHp * g.cityMaxHp(city) || !g.walled(city)) { if (d > 1) go(u, stand(u, city.tile, 1, (t) => t !== city.tile)); }
+      else {
+        // The blades, until it is time to go at the walls: between the
+        // city and their shooters (the tile by most of them, on the city's
+        // side); with no shooter to cover, out of the walls' reach.
+        let spot: number | null = null, spotS = 0;
+        for (const sh of mine) {
+          if (!op.units.has(sh.id) || !shoots(sh) || dist(sh.tile, city.tile) > 4) continue;
+          for (const t of g.tiles[sh.tile]!.neighbors) {
+            if (g.isWater(t) || (t !== u.tile && !g.canStand(u, t)) || dist(t, city.tile) >= dist(sh.tile, city.tile) || t === city.tile) continue;
+            const by = mine.filter((x) => shoots(x) && dist(x.tile, t) <= 1.5).length;
+            const sc = by - 0.3 * dist(u.tile, t) - (mine.some((x) => x !== u && blade(x) && dist(x.tile, t) <= 1.5) ? 0.5 : 0);
+            if (sc > spotS) { spot = t; spotS = sc; }
+          }
+        }
+        if (spot !== null) go(u, spot);
+        else if (d > 3.5 || d < 2.5) go(u, stand(u, city.tile, 3, (t) => Math.abs(dist(t, city.tile) - 3) < 0.6));
+      }
     }
   }
 
