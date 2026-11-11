@@ -40,7 +40,8 @@ export const GENES = {
   wBuild: [0, 2, 0.8],             // buildings
   wWonder: [0, 1.5, 0.4],          // a wonder, in a grown city at peace
   wWalls: [0, 1.5, 0.4],           // walls
-  scoutRate: [0, 0.6, 0.2],        // scouts in the first turns
+  scoutRate: [0, 0.6, 0.2],        // a scout's pull, while it has none out and land near the city is unknown:
+  scoutUnknown: [0.05, 0.8, 0.25], // more than this share of the land within ten tiles
   attackOdds: [0.4, 0.9, 0.6],     // the chance of winning a fight to the end it wants before closing in
   assaultOdds: [-0.25, 0.15, -0.05], // added to it for an army assaulting its city
   retreatHp: [10, 60, 35],         // a unit hurt below this falls back

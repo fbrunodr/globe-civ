@@ -189,8 +189,8 @@ function chooseBuild(g: Game, city: City, P: AiPolicy, n: BuildNeeds): BuildKey 
     [city.pop >= 2 ? P.wBuild * 0.6 : P.wBuild * 0.15, () => bestBuilding(g, city)],
     [city.pop >= 5 && !n.atWar ? P.wWonder * 0.5 : 0, wonder],
     [!city.buildings.has('walls') && g.turn > 40 && g.canBuild(city, 'walls') ? P.wWalls * (n.threatened || n.atWar ? 0.8 : 0.3) : 0, () => 'walls'],
-    // (A scout while the land round it is still mostly unknown and it has none out.)
-    [g.turn < 120 && g.canBuild(city, 'scout') && !g.units.some((u) => u.owner === city.owner && (u.type === 'scout' || u.type === 'explorer')) && unknownNear(g, city) > 0.25 ? P.scoutRate * 1.5 : 0, () => 'scout'],
+    // (A scout while enough of the land round it is still unknown and it has none out: how much is enough is its policy's.)
+    [g.canBuild(city, 'scout') && !g.units.some((u) => u.owner === city.owner && (u.type === 'scout' || u.type === 'explorer')) && unknownNear(g, city) > P.scoutUnknown ? P.scoutRate * 1.5 : 0, () => 'scout'],
   ];
   const order = pulls.filter(([w]) => w > 0).map(([w, make]) => ({ w: w + 0.15 * g.rng(), make })).sort((a, b) => b.w - a.w);
   for (const o of order) { const k = o.make(); if (k) return k; }
