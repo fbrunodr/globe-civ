@@ -483,8 +483,10 @@ export class Game {
   // one more from hills) paid out over the tiles its shot crosses, each
   // costing as fireCost says, the target itself 1. (Aircraft: their range,
   // whatever the ground.)
-  fireReach(u: Unit): Set<number> {
-    const T = unitDef(u.type);
+  fireReach(u: Unit): Set<number> { return this.fireReachFrom(u.type, u.tile); }
+  // (The same from any tile: where a unit of a type would reach from there.)
+  fireReachFrom(type: UnitKey, from: number): Set<number> {
+    const T = unitDef(type), u = { tile: from };
     if (domainOf(T) === 'air') return new Set(this.tilesWithinMap(u.tile, T.range ?? 1).keys());
     const reach = (T.reach ?? 1) + (this.relief[u.tile] === 'hills' && !this.isWater(u.tile) ? 1 : 0);
     // (The cheapest way out to each tile the shot may cross, then one step on.)
