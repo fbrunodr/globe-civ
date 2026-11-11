@@ -18,7 +18,7 @@ describe('E1: debt always costs', () => {
     const c = g.foundCity(g.units.find((u) => u.owner === HUMAN && u.type === 'settler')!)!;
     const before = g.cityYields(c);
     // (An army far past what it can keep, and nothing in the treasury.)
-    for (let i = 0; i < 12; i++) g.createUnit('warrior', HUMAN, c.tile);
+    for (let i = 0; i < 12; i++) g.createUnit('musketman', HUMAN, c.tile);
     const army = g.units.filter((u) => u.owner === HUMAN).length;
     p.gold = 0;
     g.endTurn(); g.over = null;
@@ -30,7 +30,7 @@ describe('E1: debt always costs', () => {
     expect(after.food).toBe(before.food);
     expect(after.gold).toBe(before.gold);
     // (Paid again: nothing lost.)
-    for (const u of g.units.filter((x) => x.owner === HUMAN && x.type === 'warrior')) g.removeUnit(u);
+    for (const u of g.units.filter((x) => x.owner === HUMAN && x.type === 'musketman')) g.removeUnit(u);
     p.gold = 500;
     g.endTurn(); g.over = null;
     expect(p.arrears).toBe(0);

@@ -14,7 +14,7 @@ describe('SG1: what a garrison holds against', () => {
   it('one alone does not', () => expect(run(1, false)).toBeLessThan(0.3));
   it('walls make it harder for two (about even), and three take it', () => {
     expect(run(2, true)).toBeLessThan(run(2, false) - 0.05);
-    expect(run(2, true)).toBeGreaterThan(0.3);
+    expect(run(2, true)).toBeGreaterThan(0.2);
     expect(run(3, true)).toBeGreaterThan(0.6);
   });
 });

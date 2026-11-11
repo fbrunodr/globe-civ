@@ -24,7 +24,7 @@ export const INFLATION_TURNS = 2.5;
 export const inflation = (turn: number): number => 1 + turn / (100 * INFLATION_TURNS);
 export const COURTHOUSE_CUT = 0.5;
 export const FREE_UNITS = 2;           // and one per city
-export const UNIT_UPKEEP = 1;          // gold per unit beyond the free ones
+export const UNIT_UPKEEP_PER = 100;    // a unit's upkeep: a gold a turn per this much of its cost (as a building's)
 export const ARREARS_MAX = 0.8;
 // The share of its upkeep a civ could not pay: `short` gold of `bills`.
 export const arrearsOf = (short: number, bills: number): number => Math.min(ARREARS_MAX, short / Math.max(1, bills));
@@ -44,6 +44,10 @@ export function cityUpkeep(dist: number, others: number, courthouse: boolean, pc
 export const BUILDING_UPKEEP_PER = 100;
 export const buildingUpkeep = (cost: number): number => Math.floor(cost / BUILDING_UPKEEP_PER);
 
-// Upkeep for fighting units: those beyond FREE_UNITS + one per city (+ free from effects).
-export const unitUpkeep = (units: number, cities: number, extraFree: number): number =>
-  Math.max(0, units - (FREE_UNITS + cities + extraFree)) * UNIT_UPKEEP;
+// Upkeep for fighting units: each by its cost (a tank is dearer to keep
+// than a warrior), less the share of them that is free: FREE_UNITS + one
+// per city (+ free from effects) of however many there are.
+export const unitUpkeep = (costs: readonly number[], cities: number, extraFree: number): number => {
+  const n = costs.length, free = FREE_UNITS + cities + extraFree;
+  return n <= free ? 0 : (costs.reduce((a, b) => a + b, 0) / UNIT_UPKEEP_PER) * ((n - free) / n);
+};

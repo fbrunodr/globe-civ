@@ -140,11 +140,12 @@ const STARTING: readonly BuildKey[] = ['warrior', 'slinger', 'scout', 'settler',
 
 // ---- combat (shared with the Units page's battle sandbox) ----
 // Fortified, a unit defends this much better.
-export const FORTIFY_BONUS = 0.5;
+export const FORTIFY_BONUS = 0.25;
 // What a unit that did not move or attack heals a turn, attacked or not:
 // in a city of its own, and elsewhere on its civ's land or waters; outside
 // its civ's territory it does not heal at all (ships the same).
-export const GARRISON_HEAL = 15, FIELD_HEAL = 10;
+// (Small against a unit's 100, as an exchange's damage is: a siege is a matter of four turns or so, and healing must not undo it.)
+export const GARRISON_HEAL = 8, FIELD_HEAL = 5;
 // What a city adds to its garrison's strength, open and walled, and a
 // fort to the unit in it. By simulation (scripts/siege.ts): two of a kind
 // take an open city from one of the same more often than not; behind
@@ -194,13 +195,17 @@ export type Fight = 'melee' | 'ranged' | 'dogfight';
 // A clash at close quarters is this many exchanges, not a fight to the
 // death: a battle between equals takes a few attacks, over a turn or
 // three, and either side may break off, be relieved or be reinforced.
+// What an exchange costs the side that loses it, of a unit's 100: a clash
+// between equals takes about 17 from each (Civ V's is 30 from each), so
+// two that go at each other every turn fight for about three turns.
+export const HIT_MIN = 6, HIT_MAX = 11;
 export const MELEE_ROUNDS = 4;
 // A volley of fire is this many (the target never answering): lighter than a clash, as it costs the shooter nothing.
 export const VOLLEY_ROUNDS = 2;
 export function fightRounds(hpA: number, hpD: number, A: number, D: number, kind: Fight, rng: () => number): { attacker: number; defender: number } {
   const back = kind === 'melee' ? 1 : kind === 'dogfight' ? 0.5 : 0;
   for (let round = 0; hpA > 0 && hpD > 0 && round < (kind === 'melee' ? MELEE_ROUNDS : kind === 'ranged' ? VOLLEY_ROUNDS : 3); round++) {
-    const dmg = 18 + Math.floor(rng() * 14);
+    const dmg = HIT_MIN + Math.floor(rng() * (HIT_MAX - HIT_MIN + 1));
     if (rng() < A / (A + D)) hpD -= dmg; else hpA -= Math.round(dmg * back);
   }
   return { attacker: hpA, defender: hpD };
@@ -2367,7 +2372,7 @@ export class Game {
   // fighting units' beyond the free ones.
   upkeep(p: Player): { cities: number; units: number } {
     const cities = this.cities.filter((c) => c.owner === p.id);
-    const fighting = this.units.filter((u) => u.owner === p.id && !unitDef(u.type).civilian).length;
+    const fighting = this.units.filter((u) => u.owner === p.id && !unitDef(u.type).civilian).map((u) => unitDef(u.type).cost);
     return { cities: cities.reduce((s, c) => s + this.upkeepOf(c) + this.buildingUpkeepOf(c), 0), units: unitUpkeep(fighting, cities.length, total(this.effectsOf(p), 'freeUnits')) * inflation(this.turn) };
   }
 

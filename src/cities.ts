@@ -215,7 +215,7 @@ export const BUILDINGS: Record<BuildingKey, BuildingDef> = {
   aqueduct:      { name: 'Aqueduct',       cost: 70, yields: ZERO, desc: 'Keeps 40% of the food when the city grows.' },
   barracks:      { name: 'Barracks',       cost: 40, yields: ZERO, lostOnCapture: true, desc: '+25% defense for units in the city.' },
   stable:        { name: 'Stable',         cost: 55, yields: ZERO, requires: 'barracks', lostOnCapture: true, desc: '+25% defense for units in the city. Needs Barracks.' },
-  walls:         { name: 'Walls',          cost: 30, yields: ZERO, desc: '+100% defense for units in the city.' },
+  walls:         { name: 'Walls',          cost: 30, yields: ZERO, desc: 'A unit in the city defends 50% stronger (in place of the 20% its streets give).' },
   courthouse:    { name: 'Courthouse',     cost: 60, yields: out({ cohesion: 1 }), desc: '+1 cohesion. Halves the city\'s upkeep.' },
   university:    { name: 'University',     cost: 140, yields: out({ science: 2 }), percent: { science: 25 }, specialists: { kind: 'scientist', slots: 1 }, requires: 'academy', desc: '+2 science, +25% science. 1 scientist slot. Needs an Academy.' },
   bank:          { name: 'Bank',           cost: 140, yields: out({ gold: 2 }), percent: { gold: 15 }, specialists: { kind: 'merchant', slots: 1 }, requires: 'countingHouse', desc: '+2 gold, +15% gold. 1 merchant slot. Needs a Counting house.' },

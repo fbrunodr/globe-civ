@@ -34,7 +34,7 @@
 
 import { unitDef, domainOf } from './rules.ts';
 import { canAttackType, canShoot, canAssault, isShooter } from './unitClasses.ts';
-import { VOLLEY_ROUNDS, MELEE_ROUNDS, type Game, type Player, type Unit, type City } from './game.ts';
+import { VOLLEY_ROUNDS, MELEE_ROUNDS, HIT_MIN, HIT_MAX, type Game, type Player, type Unit, type City } from './game.ts';
 import type { AiPolicy } from './aiPolicy.ts';
 
 // An army on its way to take a city.
@@ -66,7 +66,7 @@ const landFighter = (u: Unit): boolean => !u.dead && u.packedIn === null && !uni
 export const strength = (u: Unit): number => { const T = unitDef(u.type); return Math.max(T.melee, T.rangedAtk ?? 0) * (0.5 + u.hp / 200); };
 const shoots = (u: Unit): boolean => canShoot(u.type) && isShooter(u.type);
 
-const HIT = 24.5; // an exchange's damage, on average (game.ts fightRounds)
+const hit = (): number => (HIT_MIN + HIT_MAX) / 2; // an exchange's damage, on average (game.ts fightRounds)
 
 // The army's part of a civ's turn (ai.ts aiTurn).
 export function militaryPhase(g: Game, p: Player, P: AiPolicy, cities: readonly City[]): void {
@@ -272,9 +272,9 @@ export function militaryPhase(g: Game, p: Player, P: AiPolicy, cities: readonly 
         const c = cands[k]!;
         // (The target weaker as it is hurt: its strength falls with its health.)
         const odds = c.atk / (c.atk + c.def * ((0.5 + hp / 200) / full)), n = c.mode === 'ranged' ? VOLLEY_ROUNDS : MELEE_ROUNDS;
-        hp -= Math.min(hp, n * HIT * odds);
+        hp -= Math.min(hp, n * hit() * odds);
         if (c.mode === 'melee') {
-          taken += (Math.min(c.u.hp, n * HIT * (1 - odds)) / 100) * worth(c.u);
+          taken += (Math.min(c.u.hp, n * hit() * (1 - odds)) / 100) * worth(c.u);
           open += (foesBy / Math.max(1, strength(c.u))) * worth(c.u) * 0.1;
         }
         const kill = hp <= 0 ? 0.85 : hp < 30 ? 0.4 * (1 - hp / 30) : 0;
