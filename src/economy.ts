@@ -9,8 +9,11 @@
 // (inflation: Civ IV's), so gold stays scarce in later eras. Buildings cost gold to keep too
 // (the bigger, the more), in every city, the capital's included. Fighting units cost gold too
 // beyond the free ones (a few, plus one per city). A treasury that would go
-// below zero stays at zero, and the shortfall is taken out of the turn's
-// science (SHORTFALL_SCIENCE per gold).
+// below zero stays at zero, and what could not be paid is lost in
+// proportion (arrearsOf): the share of the turn's upkeep left unpaid is the
+// share of production, science and culture every city loses the next turn
+// (up to ARREARS_MAX), and a unit deserts. So a city more than the civ can
+// pay for always costs it something: there is no floor to expand under.
 // Costs are fractional; the treasury keeps the fractions.
 
 export const UPKEEP_PER_TILE = 0.25;
@@ -22,7 +25,9 @@ export const inflation = (turn: number): number => 1 + turn / (100 * INFLATION_T
 export const COURTHOUSE_CUT = 0.5;
 export const FREE_UNITS = 2;           // and one per city
 export const UNIT_UPKEEP = 1;          // gold per unit beyond the free ones
-export const SHORTFALL_SCIENCE = 2;
+export const ARREARS_MAX = 0.8;
+// The share of its upkeep a civ could not pay: `short` gold of `bills`.
+export const arrearsOf = (short: number, bills: number): number => Math.min(ARREARS_MAX, short / Math.max(1, bills));
 // Production with nothing to build becomes gold at this rate.
 export const WEALTH_RATE = 1 / 3;
 

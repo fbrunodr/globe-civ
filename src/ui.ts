@@ -237,7 +237,7 @@ export class UI {
     const strategic = RESOURCE_KEYS.filter((k) => resourceDef(k).kind === 'strategic' && (owned.has(k) || g.resourceSources(HUMAN, k) > 0));
     const lux = g.luxuriesOf(HUMAN);
     return [
-      stat('gold', 'gold', String(p.gold), `${signed(net)}`, 'Gold', `In the treasury; ${signed(net)} a turn. ${lines}`, net < 0),
+      stat('gold', 'gold', String(p.gold), `${signed(net)}`, 'Gold', `In the treasury; ${signed(net)} a turn. ${lines}${p.arrears > 0 ? `<br><span class="bad">In arrears: your cities make ${Math.round(100 * p.arrears)}% less production, science and culture</span>` : '. What you cannot pay, your cities lose in proportion'}`, net < 0 || p.arrears > 0),
       stat('sci', 'science', signed(l.income.science), '', 'Science', 'A turn, toward what you research'),
       stat('coh', 'cohesion', signed(l.income.cohesion), '', 'Cohesion', 'A turn, toward your politics'),
       stat('cul', 'culture', signed(l.income.culture), '', 'Culture', 'A turn, toward your identity\'s next trait'),

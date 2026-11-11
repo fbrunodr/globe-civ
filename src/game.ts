@@ -30,7 +30,7 @@ import { traitDef, traitBlock, traitCost, type TraitKey } from './identity.ts';
 import { religionDef, PRESSURE_REACH, HOLY_PRESSURE, CITY_PRESSURE, BUILDING_PRESSURE, CONVERT_AT, TITHE, type ReligionKey } from './religion.ts';
 import { placeResources, resourceDef, empireBonus, RESOURCE_IMPROVEMENT, type ResourceKey } from './resources.ts';
 import { total, yieldBonus, prodBonus, flat, tileBonus, specialistBonus, movesBonus, type Effect, type ProdTarget } from './effects.ts';
-import { cityUpkeep, unitUpkeep, buildingUpkeep, inflation, SHORTFALL_SCIENCE, WEALTH_RATE } from './economy.ts';
+import { cityUpkeep, unitUpkeep, buildingUpkeep, inflation, arrearsOf, WEALTH_RATE } from './economy.ts';
 import type { GameEvent, GameEventKind } from './gameLog.ts';
 
 
@@ -74,6 +74,9 @@ export interface Player {
   // (culture) it has to spend.
   identity: Set<TraitKey>;
   identityPoints: number;
+  // The share of last turn's upkeep it could not pay (0: all paid): its
+  // cities make that much less production, science and culture (economy.ts).
+  arrears: number;
   government: GovernmentKey;
   policies: Record<PolicySlot, (PolicyKey | null)[]>;
   capital: number | null;    // the city with its palace (the first it founded, or the oldest left)
@@ -377,7 +380,7 @@ export class Game {
       isHuman: id === HUMAN, alive: true, gold: 0, science: 0, culture: 0, cohesion: 0, faith: 0, era: 0, citiesFounded: 0, offensive: false,
       techs: new Set(), research: null, researchQueue: [], techProgress: {}, scienceBank: 0,
       politics: new Set(), studying: null, politicsQueue: [], politicsProgress: {}, cohesionBank: 0,
-      identity: new Set(), identityPoints: 0,
+      identity: new Set(), identityPoints: 0, arrears: 0,
       government: 'chiefdom', policies: emptySlots('chiefdom'), capital: null, goldFrac: 0, ledger: EMPTY_LEDGER,
     }));
     const n = this.players.length;
@@ -1622,7 +1625,9 @@ export class Game {
     if (p.capital === city.id) sum = addOut(addOut(sum, out(PALACE)), flat(fx, 'capital'));
     else if (this.roadLinked(city)) sum = addOut(sum, connectionBonus(city.pop));
     if (city.religion) sum = addOut(sum, flat(religionDef(city.religion).follower, 'follower'));
-    sum = out(Object.fromEntries(OUTPUT_KEYS.map((y) => [y, Math.max(0, Math.floor(sum[y] * (100 + yieldBonus(fx, y)) / 100))])));
+    // (In arrears: what it could not pay of its upkeep, its cities make less by, in production, science and culture.)
+    const paid = (y: keyof Output) => (y === 'prod' || y === 'science' || y === 'culture' ? 1 - p.arrears : 1);
+    sum = out(Object.fromEntries(OUTPUT_KEYS.map((y) => [y, Math.max(0, Math.floor(sum[y] * paid(y) * (100 + yieldBonus(fx, y)) / 100))])));
     return { ...sum, surplus: sum.food - FOOD_PER_CITIZEN * city.pop };
   }
 
@@ -2261,8 +2266,11 @@ export class Game {
     u.moves = 0;
     return true;
   }
-  // The turn's accounts: upkeep paid, tithes received; a shortfall is taken
-  // out of the turn's science.
+  // The turn's accounts: upkeep paid, tithes received. What it cannot pay
+  // it loses in proportion (economy.ts arrearsOf): next turn its cities
+  // make that share less production, science and culture, and a unit it
+  // cannot keep deserts. No floor: every city more that cannot be paid for
+  // costs the whole civ.
   private settleAccounts(p: Player): void {
     const up = this.upkeep(p);
     let tithes = 0;
@@ -2272,13 +2280,26 @@ export class Game {
     const whole = Math.trunc(p.goldFrac);
     p.gold += whole;
     p.goldFrac -= whole;
+    const was = p.arrears;
+    p.arrears = 0;
     if (p.gold < 0) {
       const short = -p.gold;
       p.gold = 0;
-      if (p.research) p.techProgress[p.research] = Math.max(0, (p.techProgress[p.research] ?? 0) - short * SHORTFALL_SCIENCE);
-      this.record('shortfall', p.id, { gold: short });
-      if (p.isHuman) this.log(`The treasury is empty: ${short} gold short, taken from research.`);
-    }
+      p.arrears = arrearsOf(short, up.cities + up.units);
+      this.record('shortfall', p.id, { gold: short, arrears: +p.arrears.toFixed(2) });
+      // (A unit it cannot pay leaves: the cheapest out of its cities first.)
+      let gone: Unit | null = null;
+      if (up.units > 0) {
+        for (const u of this.units) {
+          if (u.owner !== p.id || unitDef(u.type).civilian || u.packedIn !== null) continue;
+          const better = !gone || Number(this.cityByTile.has(u.tile)) - Number(this.cityByTile.has(gone.tile)) < 0
+            || (this.cityByTile.has(u.tile) === this.cityByTile.has(gone.tile) && unitDef(u.type).cost < unitDef(gone.type).cost);
+          if (better) gone = u;
+        }
+        if (gone) this.removeUnit(gone);
+      }
+      if (p.isHuman) this.log(`The treasury is empty: ${short} gold short. Your cities make ${Math.round(100 * p.arrears)}% less production, science and culture${gone ? `, and a ${unitDef(gone.type).name} deserted` : ''}.`);
+    } else if (was > 0 && p.isHuman) this.log('The treasury pays its way again.');
     p.ledger = { income: this.turnIncome[p.id] ?? ZERO, cityUpkeep: up.cities, unitUpkeep: up.units, tithes, luxuries: this.turnLuxuries[p.id] ?? ZERO, trade: this.dealGold(p.id) };
   }
 
