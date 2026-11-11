@@ -10,13 +10,12 @@
 //               then assault. A war the civ starts is planned the same
 //               way: the army gathers first, war is declared when it is
 //               ready (the sneak attack)
-//   tactics     each turn, where enemies are close (CvTacticalAI), in the
-//               order that wins fights: a fallen city is entered first;
-//               then every shooter fires (free, and what it leaves hurt
-//               the blades can finish), at what it can kill, else at what
-//               it hurts most; then the blades close in where the fight is
-//               worth it (the chance of winning it to the end, and what
-//               each side would lose); a unit badly hurt falls back to heal
+//   tactics     each turn, where enemies are close (CvTacticalAI): a
+//               fallen city is entered first; then each front is fought
+//               as the Community Patch fights it (aiTactics.ts): a
+//               posture by how the two sides compare there, and the whole
+//               turn of the units at it searched together, tiles and
+//               attacks at once; a unit badly hurt falls back to heal
 //   formation   under all of it, where each unit stands (the Community
 //               Patch's first and second line): the blades between the
 //               enemy and the shooters, the shooters and engines behind
@@ -34,7 +33,8 @@
 
 import { unitDef, domainOf } from './rules.ts';
 import { canAttackType, canShoot, canAssault, isShooter } from './unitClasses.ts';
-import { VOLLEY_ROUNDS, MELEE_ROUNDS, HIT_MIN, HIT_MAX, type Game, type Player, type Unit, type City } from './game.ts';
+import type { Game, Player, Unit, City } from './game.ts';
+import { fightFronts } from './aiTactics.ts';
 import type { AiPolicy } from './aiPolicy.ts';
 
 // An army on its way to take a city.
@@ -66,7 +66,9 @@ const landFighter = (u: Unit): boolean => !u.dead && u.packedIn === null && !uni
 export const strength = (u: Unit): number => { const T = unitDef(u.type); return Math.max(T.melee, T.rangedAtk ?? 0) * (0.5 + u.hp / 200); };
 const shoots = (u: Unit): boolean => canShoot(u.type) && isShooter(u.type);
 
-const hit = (): number => (HIT_MIN + HIT_MAX) / 2; // an exchange's damage, on average (game.ts fightRounds)
+// (For looking at what the fronts decide: scripts and tests.)
+let tracer: ((line: string) => void) | null = null;
+export const setTrace = (f: ((line: string) => void) | null): void => { tracer = f; };
 
 // The army's part of a civ's turn (ai.ts aiTurn).
 export function militaryPhase(g: Game, p: Player, P: AiPolicy, cities: readonly City[]): void {
@@ -157,7 +159,7 @@ export function militaryPhase(g: Game, p: Player, P: AiPolicy, cities: readonly 
     // The army: every fighter not a garrison nor by a city under threat.
     const threatened = cities.filter((c) => near(foeUnits, c.tile, 3) > 0);
     const army = [...free].filter((u) => canAttackType(u.type) && !threatened.some((c) => dist(u.tile, c.tile) <= 3));
-    if (army.length >= P.offensiveSpare) {
+    if (army.length >= P.offensiveSpare && army.reduce((s, u) => s + u.hp, 0) / army.length >= 75) {
       // The city to take: near, weak, worth having.
       let best: City | null = null, bestS = -Infinity, from = cities[0]!;
       for (const c of g.cities) {
@@ -204,99 +206,21 @@ export function militaryPhase(g: Game, p: Player, P: AiPolicy, cities: readonly 
     }
   };
   enter();
-  // 2. A shooter left open steps back first.
-  for (const u of live()) {
-    if (!canShoot(u.type) || u.dead) continue;
-    // (A shooter enemy blades could reach, no blade of its own before it,
-    // not a garrison: it steps back to a tile that is safe or covered, if
-    // there is one; with moves left after, it still fires.)
-    if (shoots(u) && (charge.get(u.tile) ?? 0) > 0 && !covered(u.tile, u) && !g.cityByTile.has(u.tile)) {
-      let to: number | null = null, toS = Infinity;
-      for (const t of g.tiles[u.tile]!.neighbors) {
-        if (g.isWater(t) || !g.canStand(u, t) || g.isForeignBlocked(t, u.owner) || g.isEnemyOccupied(t, p.id)) continue;
-        const c = charge.get(t) ?? 0;
-        if (c > 0 && !covered(t, u)) continue;
-        const sc = c + 0.1 * (danger.get(t) ?? 0) + (g.cityByTile.get(t)?.owner === p.id ? -5 : 0);
-        if (sc < toS) { to = t; toS = sc; }
-      }
-      if (to !== null) { g.goTo(u, to); if (u.dead || u.moves <= 0) done.add(u.id); }
-    }
-  }
+  // 2. The fronts: where enemies are close, a posture is taken and the
+  // turn of the units there is searched together (aiTactics.ts).
+  const home = (u: Unit): City | null => (cities.length ? cities.reduce((a, b) => (dist(b.tile, u.tile) < dist(a.tile, u.tile) ? b : a)) : null);
+  fightFronts({ g, p, P, mine, foes, foeUnits, garrison: new Set(garrison.values()), done, target: op && op.state === 'assault' ? g.cityById.get(op.target) ?? null : null,
+    held: new Set(op && op.state !== 'assault' ? mine.filter((u) => op!.units.has(u.id)) : []),
+    retreat: (u) => { const h = home(u); if (h) go(u, stand(u, h.tile, 2)); done.add(u.id); },
+    // (Given up: no new campaign for a while, and then only with an army fit again.)
+    abandon: () => { S.op = op = null; S.plan = null; S.lastOp = g.turn + 6; }, ...(tracer ? { trace: tracer } : {}) });
   enter();
-  // 3. Attacks, weighed together (as Battle for Wesnoth's AI weighs them:
-  // its attack analysis). For each enemy unit in reach, every unit of its
-  // own that could strike it this turn, in the order that makes most of
-  // them: the shooters first (their fire costs nothing and softens the
-  // target), then the blades, best odds first. The attack is played out
-  // in expectation, one attacker after another, and each length of it is
-  // rated: what the target is worth times the chance it dies, and half of
-  // it for the hurt done, less what its own blades would lose (the less
-  // the more aggressive its policy) and what they would be left open to
-  // (the more the more cautious). The best-rated attack on the map is
-  // made, then all is weighed again, until none is worth making.
-  const worth = (u: Unit) => unitDef(u.type).cost;
-  const reach = new Map<number, Set<number>>();
-  const how = (u: Unit, t: number): 'ranged' | 'melee' | null => {
-    if (u.dead || u.moves <= 0 || done.has(u.id)) return null;
-    if (shoots(u)) {
-      let r = reach.get(u.id);
-      if (!r) reach.set(u.id, r = g.fireReach(u));
-      return r.has(t) && g.attackBlockAt(u, t, 'ranged') === null ? 'ranged' : null;
-    }
-    if (!canAssault(u.type) || u.hp < P.retreatHp) return null;
-    const d = dist(u.tile, t);
-    if (d > Math.min(2, Math.ceil(u.moves)) + 0.5 || g.isWater(t) || g.attackBlockAt(u, t, 'melee') !== null) return null;
-    if (d > 1.5) { const path = g.findPath(u, t); if (!path || g.pathTurns(u, path) > 1) return null; }
-    return 'melee';
-  };
-  for (let round = 0; round < 40; round++) {
-    let plan: { t: number; seq: { u: Unit; mode: 'ranged' | 'melee' }[] } | null = null, planR = 0;
-    const targets = new Set(foeUnits.filter((e) => !e.dead).map((e) => e.tile));
-    for (const t of targets) {
-      const def = g.bestDefender(t, p.id);
-      if (!def) continue;
-      const cands: { u: Unit; mode: 'ranged' | 'melee'; atk: number; def: number }[] = [];
-      for (const u of mine) {
-        const mode = how(u, t);
-        if (!mode) continue;
-        const pv = g.combatPreview(u, t, mode);
-        if (pv) cands.push({ u, mode, atk: pv.atk, def: pv.def });
-      }
-      if (!cands.length) continue;
-      cands.sort((a, b) => Number(b.mode === 'ranged') - Number(a.mode === 'ranged') || b.atk / (b.atk + b.def) - a.atk / (a.atk + a.def));
-      const city = g.cityByTile.get(t), value = worth(def) * (city ? 1.5 : 1) + (city ? 40 + 10 * city.pop : 0) * (cands.some((c) => c.mode === 'melee') ? 1 : 0.3);
-      const foesBy = foeUnits.filter((e) => !e.dead && e !== def && dist(e.tile, t) <= 2.5).reduce((x, e) => x + strength(e), 0);
-      let hp = def.hp, taken = 0, open = 0;
-      const full = 0.5 + def.hp / 200;
-      for (let k = 0; k < cands.length && hp > 0; k++) {
-        const c = cands[k]!;
-        // (The target weaker as it is hurt: its strength falls with its health.)
-        const odds = c.atk / (c.atk + c.def * ((0.5 + hp / 200) / full)), n = c.mode === 'ranged' ? VOLLEY_ROUNDS : MELEE_ROUNDS;
-        hp -= Math.min(hp, n * hit() * odds);
-        if (c.mode === 'melee') {
-          taken += (Math.min(c.u.hp, n * hit() * (1 - odds)) / 100) * worth(c.u);
-          open += (foesBy / Math.max(1, strength(c.u))) * worth(c.u) * 0.1;
-        }
-        const kill = hp <= 0 ? 0.85 : hp < 30 ? 0.4 * (1 - hp / 30) : 0;
-        const r = kill * value + 0.5 * ((def.hp - hp) / 100) * worth(def) - (1 - P.aggression) * taken - P.caution * open * (1 - kill);
-        if (r > planR) { planR = r; plan = { t, seq: cands.slice(0, k + 1).map((x) => ({ u: x.u, mode: x.mode })) }; }
-      }
-    }
-    if (!plan) break;
-    for (const a of plan.seq) {
-      if (a.u.dead || !g.bestDefender(plan.t, p.id)) break;
-      if (a.mode === 'ranged') g.attack(a.u, plan.t, 'ranged'); else g.goTo(a.u, plan.t, 'melee');
-      done.add(a.u.id);
-      reach.delete(a.u.id);
-    }
-    enter();
-  }
   // 4. A unit badly hurt and in danger falls back toward its nearest city.
   for (const u of live()) {
     // (Or hurt and off its civ's land, where nothing heals.)
     if (done.has(u.id) || u.hp >= P.retreatHp || (!(danger.get(u.tile) ?? 0) && g.ownerOf(u.tile) === p.id) || [...garrison.values()].includes(u)) continue;
-    const home = cities.length ? cities.reduce((a, b) => (dist(b.tile, u.tile) < dist(a.tile, u.tile) ? b : a)) : null;
-    if (home) { go(u, stand(u, home.tile, 2)); done.add(u.id); }
+    const h = home(u);
+    if (h) { go(u, stand(u, h.tile, 2)); done.add(u.id); }
   }
 
   // ---- the operation's units: gather, march, take their places ----

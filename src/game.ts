@@ -140,12 +140,11 @@ const STARTING: readonly BuildKey[] = ['warrior', 'slinger', 'scout', 'settler',
 
 // ---- combat (shared with the Units page's battle sandbox) ----
 // Fortified, a unit defends this much better.
-export const FORTIFY_BONUS = 0.25;
+export const FORTIFY_BONUS = 0.4;
 // What a unit that did not move or attack heals a turn, attacked or not:
 // in a city of its own, and elsewhere on its civ's land or waters; outside
 // its civ's territory it does not heal at all (ships the same).
-// (Small against a unit's 100, as an exchange's damage is: a siege is a matter of four turns or so, and healing must not undo it.)
-export const GARRISON_HEAL = 8, FIELD_HEAL = 5;
+export const GARRISON_HEAL = 15, FIELD_HEAL = 10;
 // What a city adds to its garrison's strength, open and walled, and a
 // fort to the unit in it. By simulation (scripts/siege.ts): two of a kind
 // take an open city from one of the same more often than not; behind
@@ -196,9 +195,10 @@ export type Fight = 'melee' | 'ranged' | 'dogfight';
 // death: a battle between equals takes a few attacks, over a turn or
 // three, and either side may break off, be relieved or be reinforced.
 // What an exchange costs the side that loses it, of a unit's 100: a clash
-// between equals takes about 17 from each (Civ V's is 30 from each), so
-// two that go at each other every turn fight for about three turns.
-export const HIT_MIN = 6, HIT_MAX = 11;
+// between equals takes about 36 from each (Civ V's is 30 from each; more
+// here, since a unit that is losing pulls back to heal and a fight drags
+// on by that alone), so two that go at each other every turn fight for two turns.
+export const HIT_MIN = 14, HIT_MAX = 22;
 export const MELEE_ROUNDS = 4;
 // A volley of fire is this many (the target never answering): lighter than a clash, as it costs the shooter nothing.
 export const VOLLEY_ROUNDS = 2;
@@ -483,8 +483,10 @@ export class Game {
   // one more from hills) paid out over the tiles its shot crosses, each
   // costing as fireCost says, the target itself 1. (Aircraft: their range,
   // whatever the ground.)
-  fireReach(u: Unit): Set<number> {
-    const T = unitDef(u.type);
+  fireReach(u: Unit): Set<number> { return this.fireReachFrom(u.type, u.tile); }
+  // (The same from any tile: where a unit of a type would reach from there.)
+  fireReachFrom(type: UnitKey, from: number): Set<number> {
+    const T = unitDef(type), u = { tile: from };
     if (domainOf(T) === 'air') return new Set(this.tilesWithinMap(u.tile, T.range ?? 1).keys());
     const reach = (T.reach ?? 1) + (this.relief[u.tile] === 'hills' && !this.isWater(u.tile) ? 1 : 0);
     // (The cheapest way out to each tile the shot may cross, then one step on.)
