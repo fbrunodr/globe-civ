@@ -502,7 +502,8 @@ export class Game {
   canEnter(u: { type: UnitKey; owner: number }, t: number): boolean {
     const city = this.cityByTile.get(t);
     switch (domainOf(unitDef(u.type))) {
-      case 'land': return !this.isWater(t) || this.canEmbark(u.owner);
+      // (No one walks the mountains: they are walls on the map, to go round or to hold a pass between.)
+      case 'land': return this.relief[t] !== 'mountains' && (!this.isWater(t) || this.canEmbark(u.owner));
       case 'sea': return this.isWater(t) || (city !== undefined && city.owner === u.owner && this.cityCoast(city));
       case 'air': return (city !== undefined && city.owner === u.owner) || this.carrierRoom(t, u.owner) > 0;
     }

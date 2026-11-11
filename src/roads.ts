@@ -1,7 +1,7 @@
 // Roads between cities (design doc "Cities: Feel & Play", city look v1).
 // Each city is joined to its nearest neighbor of the same civ, and to any
 // city within NEAR tiles, by the cheapest land route: flat open ground is
-// cheap, forests and hills cost more, mountains much more, water is never
+// cheap, forests and hills cost more, mountains and water are never
 // crossed except by a short bridge over a river (rivers run on tile edges, so
 // they never block a route). Pure: the same cities always give the same roads.
 
@@ -23,7 +23,7 @@ export interface Road {
 function stepCost(g: Game, t: number): number | undefined {
   if (g.isWater(t)) return undefined;
   const r = g.relief[t];
-  if (r === 'mountains') return 8;
+  if (r === 'mountains') return undefined; // (no one walks them, and no road is laid there)
   return g.moveCost(t) + (r === 'hills' ? 1 : 0);
 }
 
