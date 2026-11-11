@@ -204,7 +204,7 @@ export function militaryPhase(g: Game, p: Player, P: AiPolicy, cities: readonly 
     }
   };
   enter();
-  // 2. Every shooter fires: at what it can kill, else where it hurts most; an engine at the walls.
+  // 2. A shooter left open steps back first.
   for (const u of live()) {
     if (!canShoot(u.type) || u.dead) continue;
     // (A shooter enemy blades could reach, no blade of its own before it,
@@ -219,51 +219,77 @@ export function militaryPhase(g: Game, p: Player, P: AiPolicy, cities: readonly 
         const sc = c + 0.1 * (danger.get(t) ?? 0) + (g.cityByTile.get(t)?.owner === p.id ? -5 : 0);
         if (sc < toS) { to = t; toS = sc; }
       }
-      if (to !== null) { g.goTo(u, to); if (u.dead || u.moves <= 0) { done.add(u.id); continue; } }
+      if (to !== null) { g.goTo(u, to); if (u.dead || u.moves <= 0) done.add(u.id); }
     }
-    let best: number | null = null, bestS = 0;
-    for (const t of g.fireReach(u)) {
-      if (!g.isEnemyOccupied(t, p.id) || g.attackBlockAt(u, t, 'ranged') !== null) continue;
-      const pv = g.combatPreview(u, t, 'ranged'), c = g.cityByTile.get(t);
-      let s: number;
-      if (pv) {
-        const dmg = VOLLEY_ROUNDS * HIT * pv.atk / (pv.atk + pv.def);
-        s = dmg / 100 + (dmg >= pv.defender.hp ? 1.5 : 0) + 0.02 * strength(pv.defender) + (pv.defender.hp < 50 ? 0.3 : 0);
-        // (An engine at a garrison: what it is for.)
-        if (c && unitDef(u.type).siege) s += 1;
-        if (c && op && c.id === op.target) s += 0.3;
-      } else continue;
-      if (s > bestS) { best = t; bestS = s; }
-    }
-    if (best !== null && (shoots(u) || bestS > 0.9)) { g.attack(u, best, 'ranged'); done.add(u.id); }
   }
   enter();
-  // 3. The blades close in where the fight is worth it.
-  for (const u of live()) {
-    if (done.has(u.id) || !canAssault(u.type) || shoots(u) || u.hp < P.retreatHp) continue;
-    const mv = Math.min(2, Math.ceil(u.moves));
-    const assault = op !== null && op.units.has(u.id) && op.state === 'assault';
-    let best: number | null = null, bestS = 0;
-    for (const [t, d] of g.tilesWithinMap(u.tile, mv)) {
-      if (d === 0 || !g.isEnemyOccupied(t, p.id) || g.isWater(t) || g.attackBlockAt(u, t, 'melee') !== null) continue;
-      if (d > 1) { const path = g.findPath(u, t); if (!path || g.pathTurns(u, path) > 1) continue; }
-      const pv = g.combatPreview(u, t, 'melee'), c = g.cityByTile.get(t);
-      let s = 0;
-      if (pv) {
-        // (A clash is a few exchanges now, not a fight to the end: what
-        // counts is the odds of an exchange, and how many of its own can
-        // strike the same target this turn: together they wear down what
-        // none would go at alone, a garrison above all.)
-        const odds = pv.atk / (pv.atk + pv.def);
-        const others = mine.filter((x) => x !== u && !x.dead && x.moves > 0 && (shoots(x) ? g.fireReach(x).has(t) : canAssault(x.type) && dist(x.tile, t) <= 1.5)).length;
-        const need = P.attackOdds + (assault ? P.assaultOdds : 0) - P.gangUp * Math.min(4, others);
-        // (Or the kill: a target that one more clash would likely finish.)
-        const finish = pv.defender.hp <= MELEE_ROUNDS * HIT * odds;
-        if (u.hp >= 45 && (odds >= need || finish)) s = odds + (finish ? 1 : 0) + (c ? 0.3 : 0);
-      } else if (c) s = 5; // (a city with no one in it: taken)
-      if (s > bestS) { best = t; bestS = s; }
+  // 3. Attacks, weighed together (as Battle for Wesnoth's AI weighs them:
+  // its attack analysis). For each enemy unit in reach, every unit of its
+  // own that could strike it this turn, in the order that makes most of
+  // them: the shooters first (their fire costs nothing and softens the
+  // target), then the blades, best odds first. The attack is played out
+  // in expectation, one attacker after another, and each length of it is
+  // rated: what the target is worth times the chance it dies, and half of
+  // it for the hurt done, less what its own blades would lose (the less
+  // the more aggressive its policy) and what they would be left open to
+  // (the more the more cautious). The best-rated attack on the map is
+  // made, then all is weighed again, until none is worth making.
+  const worth = (u: Unit) => unitDef(u.type).cost;
+  const reach = new Map<number, Set<number>>();
+  const how = (u: Unit, t: number): 'ranged' | 'melee' | null => {
+    if (u.dead || u.moves <= 0 || done.has(u.id)) return null;
+    if (shoots(u)) {
+      let r = reach.get(u.id);
+      if (!r) reach.set(u.id, r = g.fireReach(u));
+      return r.has(t) && g.attackBlockAt(u, t, 'ranged') === null ? 'ranged' : null;
     }
-    if (best !== null) { g.goTo(u, best, 'melee'); done.add(u.id); }
+    if (!canAssault(u.type) || u.hp < P.retreatHp) return null;
+    const d = dist(u.tile, t);
+    if (d > Math.min(2, Math.ceil(u.moves)) + 0.5 || g.isWater(t) || g.attackBlockAt(u, t, 'melee') !== null) return null;
+    if (d > 1.5) { const path = g.findPath(u, t); if (!path || g.pathTurns(u, path) > 1) return null; }
+    return 'melee';
+  };
+  for (let round = 0; round < 40; round++) {
+    let plan: { t: number; seq: { u: Unit; mode: 'ranged' | 'melee' }[] } | null = null, planR = 0;
+    const targets = new Set(foeUnits.filter((e) => !e.dead).map((e) => e.tile));
+    for (const t of targets) {
+      const def = g.bestDefender(t, p.id);
+      if (!def) continue;
+      const cands: { u: Unit; mode: 'ranged' | 'melee'; atk: number; def: number }[] = [];
+      for (const u of mine) {
+        const mode = how(u, t);
+        if (!mode) continue;
+        const pv = g.combatPreview(u, t, mode);
+        if (pv) cands.push({ u, mode, atk: pv.atk, def: pv.def });
+      }
+      if (!cands.length) continue;
+      cands.sort((a, b) => Number(b.mode === 'ranged') - Number(a.mode === 'ranged') || b.atk / (b.atk + b.def) - a.atk / (a.atk + a.def));
+      const city = g.cityByTile.get(t), value = worth(def) * (city ? 1.5 : 1) + (city ? 40 + 10 * city.pop : 0) * (cands.some((c) => c.mode === 'melee') ? 1 : 0.3);
+      const foesBy = foeUnits.filter((e) => !e.dead && e !== def && dist(e.tile, t) <= 2.5).reduce((x, e) => x + strength(e), 0);
+      let hp = def.hp, taken = 0, open = 0;
+      const full = 0.5 + def.hp / 200;
+      for (let k = 0; k < cands.length && hp > 0; k++) {
+        const c = cands[k]!;
+        // (The target weaker as it is hurt: its strength falls with its health.)
+        const odds = c.atk / (c.atk + c.def * ((0.5 + hp / 200) / full)), n = c.mode === 'ranged' ? VOLLEY_ROUNDS : MELEE_ROUNDS;
+        hp -= Math.min(hp, n * HIT * odds);
+        if (c.mode === 'melee') {
+          taken += (Math.min(c.u.hp, n * HIT * (1 - odds)) / 100) * worth(c.u);
+          open += (foesBy / Math.max(1, strength(c.u))) * worth(c.u) * 0.1;
+        }
+        const kill = hp <= 0 ? 0.85 : hp < 30 ? 0.4 * (1 - hp / 30) : 0;
+        const r = kill * value + 0.5 * ((def.hp - hp) / 100) * worth(def) - (1 - P.aggression) * taken - P.caution * open * (1 - kill);
+        if (r > planR) { planR = r; plan = { t, seq: cands.slice(0, k + 1).map((x) => ({ u: x.u, mode: x.mode })) }; }
+      }
+    }
+    if (!plan) break;
+    for (const a of plan.seq) {
+      if (a.u.dead || !g.bestDefender(plan.t, p.id)) break;
+      if (a.mode === 'ranged') g.attack(a.u, plan.t, 'ranged'); else g.goTo(a.u, plan.t, 'melee');
+      done.add(a.u.id);
+      reach.delete(a.u.id);
+    }
+    enter();
   }
   // 4. A unit badly hurt and in danger falls back toward its nearest city.
   for (const u of live()) {
