@@ -388,10 +388,13 @@ export class UI {
       ? `<div class="sect"><span class="label">Governor's focus</span><div class="focus">${(Object.keys(FOCUSES) as FocusKey[]).map((k) =>
           `<button data-act="focus" data-focus="${k}" class="${c.focus === k ? 'active' : ''}">${FOCUS_ICON[k] ? icon(FOCUS_ICON[k]) : ''}${FOCUSES[k].name}</button>`).join('')}</div></div>`
       : '';
-    const maxHp = g.cityMaxHp(c);
+    // What holds it: its garrison (a city does not defend itself).
+    const holder = g.bestDefender(c.tile, -1, 'melee');
+    const garrison = `<div class="mrow">${icon('shield', holder ? '' : 'bad')}<div class="txt"><b>Garrison</b><span>${holder
+      ? `${esc(unitDef(holder.type).name)} · strength ${g.cityStrength(c).toFixed(1)}${g.walled(c) ? ' behind walls' : ''}`
+      : '<span class="bad">none: any enemy can walk in</span>'}</span></div><div class="meter ${holder && holder.hp > 60 ? '' : holder && holder.hp > 30 ? 'mid' : 'low'}"><i style="width:${holder ? holder.hp : 0}%"></i></div></div>`;
     const meter = (ic: IconKey, cls: string, name: string, text: string, f: number) =>
       `<div class="mrow">${icon(ic, cls)}<div class="txt"><b>${name}</b><span>${text}</span></div><div class="meter ${cls}"><i style="width:${(100 * Math.min(1, Math.max(0, f))).toFixed(1)}%"></i></div></div>`;
-    const hpCls = c.hp > 0.6 * maxHp ? '' : c.hp > 0.3 * maxHp ? 'mid' : 'low';
     const facts = `<div class="facts">
       <span>Citizens</span><b>${rural} on the land${specialists ? ` · ${plural(specialists, 'specialist')}` : ''}</b>
       <span>Upkeep</span><b>${capital ? 'none (capital)' : `${g.upkeepOf(c).toFixed(1)} gold a turn${c.buildings.has('courthouse') ? ' · courthouse' : ''}`}</b>
@@ -404,7 +407,7 @@ export class UI {
         <div class="who"><h3>${capital ? icon('star') : ''}${esc(c.name)}</h3><small>${esc(p.name)}${capital ? ' · capital' : ''}${c.razing ? ' · <span class="bad">being razed</span>' : ''}</small></div></div>
       <div class="ybar">${OUTPUT_KEYS.map((k) => yieldChip(k, String(y[k]))).join('')}</div>
       ${meter('food', 'food', 'Growth', `${c.food}/${cost} · ${signed(y.surplus)} · ${grow}`, c.food / Math.max(1, cost))}
-      ${meter('shield', hpCls, 'Defence', `strength ${g.cityStrength(c).toFixed(1)} · ${c.hp}/${maxHp}`, c.hp / maxHp)}
+      ${garrison}
       ${place}
       ${focus}
       <div class="sect">${facts}</div>
@@ -541,9 +544,7 @@ export class UI {
         const other = canShoot(u.type) && canAssault(u.type) ? ` <small>(Shift: ${mode === 'ranged' ? 'close in' : 'shoot'})</small>` : '';
         lines.push(pv
           ? `<span class="warn">${icon(mode === 'ranged' ? 'arrow' : 'sword')} ${how}: ${pv.atk.toFixed(1)} against ${pv.def.toFixed(1)} (${unitDef(pv.defender.type).name})${mode === 'ranged' ? (g.fireReach(u).has(t) ? ', unanswered' : ' — out of reach: it moves closer first') : ''}</span>${other}`
-          : city && city.hp > 0
-            ? `<span class="warn">${how} on the walls: ${g.unitStrength(u, mode, 'atk', t).toFixed(1)} against the city's ${g.cityStrength(city).toFixed(1)} · HP ${city.hp}/${g.cityMaxHp(city)}</span>${other}`
-            : '<span class="warn">Undefended — capture!</span>');
+          : city ? '<span class="warn">No garrison: walk in and it is yours</span>' : '<span class="warn">Undefended — capture!</span>');
       } else if (path) lines.push(`${icon('moves')} ${plural(g.pathTurns(u, path), 'turn')} away`);
     }
     this.set(box, lines.map((l) => `<div>${l}</div>`).join(''));

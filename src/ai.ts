@@ -166,8 +166,8 @@ function armyRole(g: Game, city: City, P: AiPolicy): UnitKey | null {
 // answered wins (with a little chance, so cities differ).
 interface BuildNeeds { expansion: number; garrisoned: boolean; military: number; armyTarget: number; workersShort: number; atWar: boolean; threatened: boolean }
 function chooseBuild(g: Game, city: City, P: AiPolicy, n: BuildNeeds): BuildKey | null {
-  // (A garrison first: a shooter on the walls if it can build one.)
-  if (!n.garrisoned) return bestUnit(g, city, 'ranged') ?? bestUnit(g, city, 'front') ?? 'warrior';
+  // (A garrison first: a city with none is anyone's who walks in; the unit that holds best at close quarters.)
+  if (!n.garrisoned) return bestUnit(g, city, 'front') ?? bestUnit(g, city, 'ranged') ?? 'warrior';
   const wonder = (): BuildKey | null => {
     const options = WONDER_KEYS.filter((w) => g.canBuild(city, w) && !g.cities.some((c) => c.owner === city.owner && c.building === w));
     const w = options[Math.floor(g.rng() * options.length)];
@@ -190,7 +190,7 @@ function chooseBuild(g: Game, city: City, P: AiPolicy, n: BuildNeeds): BuildKey 
     [city.pop >= 5 && !n.atWar ? P.wWonder * 0.5 : 0, wonder],
     [!city.buildings.has('walls') && g.turn > 40 && g.canBuild(city, 'walls') ? P.wWalls * (n.threatened || n.atWar ? 0.8 : 0.3) : 0, () => 'walls'],
     // (A scout while the land round it is still mostly unknown and it has none out.)
-    [g.turn < 80 && g.canBuild(city, 'scout') && !g.units.some((u) => u.owner === city.owner && (u.type === 'scout' || u.type === 'explorer')) && unknownNear(g, city) > 0.25 ? P.scoutRate * 1.5 : 0, () => 'scout'],
+    [g.turn < 120 && g.canBuild(city, 'scout') && !g.units.some((u) => u.owner === city.owner && (u.type === 'scout' || u.type === 'explorer')) && unknownNear(g, city) > 0.25 ? P.scoutRate * 1.5 : 0, () => 'scout'],
   ];
   const order = pulls.filter(([w]) => w > 0).map(([w, make]) => ({ w: w + 0.15 * g.rng(), make })).sort((a, b) => b.w - a.w);
   for (const o of order) { const k = o.make(); if (k) return k; }

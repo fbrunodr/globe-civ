@@ -154,6 +154,8 @@ export function combatStrength(type: UnitKey, stat: Stat, hp: number, bonus: num
 // Siege engines are this much weaker against units than their attack
 // (they are built for walls: twice as strong against a city).
 export const SIEGE_VS_UNITS = 0.5;
+// And this much stronger again against a unit garrisoned in a city (on top of the above: twice their attack in all).
+export const SIEGE_VS_CITY = 4;
 // The counters between two units (rules.ts): what `self`'s strength is
 // multiplied by against `other`, `self` attacking or defending. Spears and
 // pikes hold off horse (not armour: only anti-tank guns stop that), a charge
@@ -269,13 +271,10 @@ export interface City {
 // points and strikes nearby enemies; it falls when its hit points are gone
 // and a melee unit enters.
 export const CITY_HP = 100;
-export const WALLS_HP = 50;
-// A city's own defences: little without walls (its garrison is its
-// defence, as in Civ IV: an army can take a young city, so war pays from
-// the first era); walls make it a fortress that strikes back. Hit points
-// back per turn: slowly, faster behind walls.
-export const CITY_BASE = 1, CITY_PER_POP = 0.2;
-export const CITY_REGEN = 5, WALLS_REGEN = 10;
+// A city does not defend itself: its garrison does (stronger in its streets,
+// twice as strong again behind walls), and one with no garrison is taken
+// by the first enemy to walk in. So every city wants a unit in it, unless
+// it lies where no enemy can come.
 // What a city's fall hands its taker: gold, more for a larger city (out of its old owner's treasury as far as that goes).
 export const plunder = (pop: number): number => 20 + 8 * pop;
 export const PILLAGE_REPAIR = 3;     // turns to repair a pillaged tile once no enemy stands on it
@@ -547,7 +546,8 @@ export class Game {
   attackModeFor(u: Unit, tile: number): AttackMode {
     if (!canShoot(u.type)) return 'melee';
     const city = this.cityByTile.get(tile);
-    const target = this.bestDefender(tile, u.owner, 'ranged') !== null || (city !== undefined && city.owner !== u.owner && city.hp > 0);
+    void city;
+    const target = this.bestDefender(tile, u.owner, 'ranged') !== null;
     return target || !canAssault(u.type) ? 'ranged' : 'melee';
   }
   // Why `u` can't attack `tile` now, so (`mode`: its class against the
@@ -933,7 +933,8 @@ export class Game {
     if (role === 'atk') return combatStrength(u.type, stat, u.hp, 0) * (combat + (this.cityByTile.has(tile) ? total(fx, 'vsCities') / 100 : 0));
     let bonus = this.defenseBonus(tile) + (this.ownerOf(tile) === u.owner ? total(fx, 'homeDefense') / 100 : 0);
     const city = this.cityByTile.get(tile);
-    if (city) bonus += 0.5 + (this.walled(city) ? 1 : 0) + 0.25 * (Number(city.buildings.has('barracks')) + Number(city.buildings.has('stable')));
+    // (In a city: its streets, its walls, its barracks; and what its civ's policies add to a city's defence.)
+    if (city) bonus += (0.5 + (this.walled(city) ? 1 : 0) + 0.25 * (Number(city.buildings.has('barracks')) + Number(city.buildings.has('stable')))) * (1 + total(fx, 'cityStrength') / 100);
     if (u.fortified) bonus += FORTIFY_BONUS;
     if (this.isEmbarked(u)) return combatStrength(u.type, stat, u.hp, 0) * combat * EMBARKED_DEF;
     return combatStrength(u.type, stat, u.hp, bonus) * combat;
@@ -958,7 +959,7 @@ export class Game {
   combatPreview(u: Unit, tile: number, mode: AttackMode = this.attackModeFor(u, tile)): CombatPreview | null {
     const d = this.bestDefender(tile, u.owner, mode);
     if (!d) return null;
-    return { atk: this.unitStrength(u, mode, 'atk', tile) * matchup(u.type, d.type, 'atk'), def: this.unitStrength(d, mode, 'def', tile) * matchup(d.type, u.type, 'def'), defender: d, mode };
+    return { atk: this.unitStrength(u, mode, 'atk', tile) * matchup(u.type, d.type, 'atk') * this.siegeEdge(u, tile), def: this.unitStrength(d, mode, 'def', tile) * matchup(d.type, u.type, 'def'), defender: d, mode };
   }
 
   // (`mode`: by fire, or closing in: unless told, attackModeFor.)
@@ -978,7 +979,7 @@ export class Game {
     if (!d) this.onBattle?.(u, tile, style);
     if (d) {
       // (The counters: pikes against horse, a charge against archers...)
-      const A = this.unitStrength(u, mode, 'atk', tile) * matchup(u.type, d.type, 'atk');
+      const A = this.unitStrength(u, mode, 'atk', tile) * matchup(u.type, d.type, 'atk') * this.siegeEdge(u, tile);
       const D = this.unitStrength(d, mode, 'def', tile) * matchup(d.type, u.type, 'def');
       const before = { a: u.hp, d: d.hp };
       const after = fightRounds(u.hp, d.hp, A, D, mode, this.rng);
@@ -1000,13 +1001,10 @@ export class Game {
       if (involved) this.log(`${an} ${unitDef(u.type).name} defeated ${dn} ${unitDef(d.type).name}.`);
       if (this.bestDefender(tile, u.owner, mode)) return;
     }
-    // No defenders left: a city still stands while it has hit points.
+    // No defenders left: nothing holds the tile. A city does not defend
+    // itself: its garrison does, behind its walls; an empty city is taken
+    // by whoever walks in.
     const city = this.cityByTile.get(tile);
-    if (city && city.owner !== u.owner && city.hp > 0) {
-      // That attack went into the defender, or into the walls; entering takes another.
-      if (!d) this.siege(u, city, mode);
-      return;
-    }
     if (ranged) return; // fire never moves in
     // Civilians are captured and the attacker moves in (its army with it).
     for (const v of this.unitsAt(tile)) {
@@ -1025,52 +1023,20 @@ export class Game {
   // Whether a city defends as walled: its walls, or its owner's defense in depth.
   walled(c: City): boolean { return c.buildings.has('walls') || this.wallsObsolete(c.owner); }
 
-  cityMaxHp(c: City): number { return CITY_HP + (this.walled(c) ? WALLS_HP : 0); }
+  // (A city has no hit points of its own any more; kept for the dev pages.)
+  cityMaxHp(_c: City): number { return CITY_HP; }
 
-  // The center's strength, attacking and defending: its size, walls and garrison.
-  // (Stronger in later eras: its owner's era adds half again for each, so
-  // walls don't turn to paper before rifles and tanks.)
+  // What holds a city: its garrison's strength at close quarters, behind
+  // its walls and all (0: no one, it is anyone's who walks in).
   cityStrength(c: City): number {
-    const garrison = Number(c.buildings.has('barracks')) + Number(c.buildings.has('stable'));
-    const p = this.players[c.owner]!;
-    return (CITY_BASE + CITY_PER_POP * c.pop + (this.walled(c) ? 3 : 0) + garrison) * (1 + 0.5 * p.era) * (1 + total(this.effectsOf(p), 'cityStrength') / 100);
+    const d = this.bestDefender(c.tile, -1, 'melee');
+    return d ? this.unitStrength(d, 'melee', 'def', c.tile) : 0;
   }
-
-  // A unit attacks a city with no defenders: a few exchanges with its walls.
-  // (By fire, the walls don't answer: the city's own bombardment is its answer.)
-  private siege(u: Unit, city: City, mode: AttackMode): void {
-    const A = this.unitStrength(u, mode, 'atk', city.tile) * (unitDef(u.type).siege ? 2 : 1), D = this.cityStrength(city);
-    for (let round = 0; round < 3 && u.hp > 0 && city.hp > 0; round++) {
-      const dmg = 18 + Math.floor(this.rng() * 14);
-      if (this.rng() < A / (A + D)) city.hp = Math.max(0, city.hp - dmg);
-      else if (mode === 'melee') u.hp -= dmg;
-    }
-    const involved = u.owner === HUMAN || city.owner === HUMAN;
-    if (u.hp <= 0) {
-      this.removeUnit(u);
-      if (involved) this.log(`${city.name} drove off the ${this.players[u.owner].name} ${unitDef(u.type).name}.`);
-    } else if (involved) {
-      this.log(city.hp > 0 ? `${city.name} under siege: ${city.hp}/${this.cityMaxHp(city)} HP.` : `${city.name}'s defenses have fallen!`);
-    }
-  }
-
-  // A walled city strikes the weakest enemy unit within 2 tiles of it (one without walls has nothing to strike with).
-  private cityStrike(city: City): void {
-    if (city.hp <= 0 || !this.walled(city)) return;
-    const near = new Set(this.tilesWithin(city.tile, this.walled(city) ? 2 : 1));
-    let target: Unit | null = null;
-    for (const u of this.units) {
-      if (u.owner === city.owner || unitDef(u.type).civilian || domainOf(unitDef(u.type)) === 'air' || !near.has(u.tile) || u.packedIn !== null || !this.atWar(city.owner, u.owner)) continue;
-      if (!target || u.hp < target.hp) target = u;
-    }
-    if (!target) return;
-    const dmg = Math.min(35, Math.round(10 + (6 * this.cityStrength(city)) / Math.max(1, unitDef(target.type).rangedDef)));
-    target.hp -= dmg;
-    const involved = target.owner === HUMAN || city.owner === HUMAN;
-    if (target.hp <= 0) {
-      this.removeUnit(target);
-      if (involved) this.log(`${city.name} destroyed the ${this.players[target.owner].name} ${unitDef(target.type).name}.`);
-    } else if (involved) this.log(`${city.name} struck the ${this.players[target.owner].name} ${unitDef(target.type).name} (−${dmg} HP).`);
+  // An engine against a garrison: built for it (SIEGE_VS_CITY over what
+  // engines lose against units, so twice as strong as its attack says).
+  private siegeEdge(u: Unit, tile: number): number {
+    const c = this.cityByTile.get(tile);
+    return unitDef(u.type).siege && c !== undefined && c.owner !== u.owner ? SIEGE_VS_CITY : 1;
   }
 
   // ---------- pillage and raze ----------
@@ -1248,7 +1214,6 @@ export class Game {
     if (old && old.capital === city.id) old.capital = this.cities.filter((c) => c.owner === old.id && c !== city).sort((a, b) => a.founded - b.founded)[0]?.id ?? null;
     if (p && p.capital === null) p.capital = city.id;
     city.owner = newOwner;
-    city.hp = Math.round(this.cityMaxHp(city) * 0.4);
     city.razing = false;
     if (city.pop > 1) this.removeCitizen(city);
     city.growth = 0;
@@ -1302,7 +1267,6 @@ export class Game {
 
   addBuilding(city: City, k: BuildingKey): void {
     // (New walls come with their HP: a city just walled is whole, not hurt.)
-    if (k === 'walls' && !this.walled(city)) city.hp += WALLS_HP;
     city.buildings.add(k);
     this.useVersion++;
   }
@@ -2126,10 +2090,7 @@ export class Game {
     if (!p.research) { p.scienceBank += amount; return; }
     const k = p.research, got = (p.techProgress[k] ?? 0) + amount;
     if (got < techDef(k).cost) { p.techProgress[k] = got; return; }
-    const walled = this.cities.filter((c) => c.owner === p.id && this.walled(c));
     p.techs.add(k);
-    // (Defense in depth: every city walled now, its walls' HP with it.)
-    for (const c of this.cities) if (c.owner === p.id && this.walled(c) && !walled.includes(c)) c.hp += WALLS_HP;
     delete p.techProgress[k];
     // (A tech that improves the land restyles it: rural/stages.)
     if ((techDef(k).effects ?? []).some((e) => e.k === 'improvement')) this.useVersion++;
@@ -2485,12 +2446,7 @@ export class Game {
     for (const p of this.players) if (p.alive) this.settleAccounts(p);
     this.contestBorders();
     this.spreadReligions();
-    // Cities strike nearby enemies and mend their walls; pillaged tiles wait
-    // for a worker to repair them (advanceWork).
-    for (const city of this.cities) {
-      this.cityStrike(city);
-      city.hp = Math.min(this.cityMaxHp(city), city.hp + (this.walled(city) ? WALLS_REGEN : CITY_REGEN));
-    }
+    // (Pillaged tiles wait for a worker to repair them: advanceWork.)
     for (let t = 0; t < this.N; t++) {
       if (!this.pillaged[t]) continue;
       const o = this.ownerOf(t);

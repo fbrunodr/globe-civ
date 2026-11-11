@@ -43,7 +43,6 @@ export const GENES = {
   scoutRate: [0, 0.6, 0.2],        // scouts in the first turns
   attackOdds: [0.4, 0.9, 0.6],     // the chance of winning a fight to the end it wants before closing in
   assaultOdds: [-0.25, 0.15, -0.05], // added to it for an army assaulting its city
-  cityAssaultHp: [0.1, 0.9, 0.4],  // the share of a city's hit points below which the blades go at its walls
   retreatHp: [10, 60, 35],         // a unit hurt below this falls back
   musterShare: [0.4, 1, 0.7],      // the share of an army that must have gathered before it moves on
   offensiveSpare: [1, 10, 3],      // units out of garrison before it marches on a city

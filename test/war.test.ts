@@ -25,37 +25,48 @@ function turn(g: Game): void {
   g.endTurn();
 }
 
-describe('WR1: a city falls only when its walls are down and a melee unit enters', () => {
-  it('archers wear it down by fire, unanswered, but fire never takes it: closing in does', () => {
+describe('WR1: a city is its garrison\'s to hold', () => {
+  it('with no one in it, the first enemy to walk in takes it; fire alone never does', () => {
     const { g, city, nb } = setup();
-    for (let i = 0; i < 20; i++) {
-      const a = g.createUnit('archer', 1, nb);
-      g.attack(a, city.tile, 'ranged');
-      expect(a.hp).toBe(100);
-      if (!a.dead) g.removeUnit(a);
-    }
-    expect(city.owner).toBe(0);
-    expect(city.hp).toBe(0);
+    g.declareWar(1, 0);
     const a = g.createUnit('archer', 1, nb);
-    g.attack(a, city.tile);
+    g.attack(a, city.tile, 'ranged');
+    expect(city.owner).toBe(0); // (nothing to shoot at, and fire never moves in)
+    const h = g.createUnit('warrior', 1, nb);
+    g.attack(h, city.tile);
+    expect(city.owner).toBe(1);
+    expect(h.tile).toBe(city.tile);
+  });
+
+  it('a garrison must be beaten first; walls make it twice as strong again', () => {
+    const { g, city, nb } = setup();
+    g.declareWar(1, 0);
+    const guard = g.createUnit('spearman', 0, city.tile);
+    expect(g.cityStrength(city)).toBeGreaterThan(0);
+    const open = g.unitStrength(guard, 'melee', 'def', city.tile);
+    city.buildings.add('walls');
+    expect(g.unitStrength(guard, 'melee', 'def', city.tile)).toBeGreaterThan(1.5 * open);
+    // (An attacker that does not kill it does not get in.)
+    const w = g.createUnit('warrior', 1, nb);
+    g.attack(w, city.tile);
+    if (!guard.dead) expect(city.owner).toBe(0);
+    // (The garrison gone, the next one in takes it.)
+    if (!guard.dead) g.removeUnit(guard);
+    const h = g.createUnit('horseman', 1, nb);
+    g.attack(h, city.tile);
     expect(city.owner).toBe(1);
   });
 
-  it('a melee unit takes it at 0 HP, not before', () => {
+  it('an engine is twice as strong as its attack says against a garrison, half against a unit in the field', () => {
     const { g, city, nb } = setup();
-    let captured = false;
-    for (let i = 0; i < 30 && !captured; i++) {
-      const hpBefore = city.hp;
-      const h = g.createUnit('horseman', 1, nb);
-      g.attack(h, city.tile);
-      captured = city.owner === 1;
-      // Taking it needs the walls down before the attack, and the attacker moves in.
-      if (captured) {
-        expect(hpBefore).toBe(0);
-        expect(h.tile).toBe(city.tile);
-      } else if (!h.dead) { expect(h.tile).toBe(nb); g.removeUnit(h); }
-    }
-    expect(captured).toBe(true);
+    g.declareWar(1, 0);
+    g.createUnit('spearman', 0, city.tile);
+    const far = g.tiles[nb]!.neighbors.find((n) => n !== city.tile && !g.isWater(n))!;
+    const field = g.createUnit('spearman', 0, far);
+    void field;
+    const c = g.createUnit('catapult', 1, nb);
+    const atCity = g.combatPreview(c, city.tile, 'ranged')!, inField = g.combatPreview(c, far, 'ranged')!;
+    expect(atCity.atk).toBeCloseTo(4 * inField.atk);
   });
 });
 

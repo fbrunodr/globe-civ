@@ -89,10 +89,6 @@ export function militaryPhase(g: Game, p: Player, P: AiPolicy, cities: readonly 
     const T = unitDef(e.type), reach = T.mv + (shoots(e) ? T.reach ?? 1 : 0);
     for (const t of g.tilesWithin(e.tile, reach)) danger.set(t, (danger.get(t) ?? 0) + strength(e));
   }
-  for (const c of g.cities) {
-    if (!foes.includes(c.owner) || c.hp <= 0 || !g.walled(c)) continue;
-    for (const t of g.tilesWithin(c.tile, 2)) danger.set(t, (danger.get(t) ?? 0) + 0.4 * g.cityStrength(c));
-  }
   // (And what enemy blades alone could reach: where a shooter must not stand uncovered.)
   const charge = new Map<number, number>();
   for (const e of foeUnits) {
@@ -137,12 +133,13 @@ export function militaryPhase(g: Game, p: Player, P: AiPolicy, cities: readonly 
   const garrison = new Map<number, Unit>();
   const free = new Set(mine);
   for (const c of cities) {
-    const here = mine.filter((u) => u.tile === c.tile && free.has(u)).sort((a, b) => Number(shoots(b)) - Number(shoots(a)) || b.hp - a.hp)[0];
+    // (The one that holds it best at close quarters: a city is its garrison's to keep.)
+    const here = mine.filter((u) => u.tile === c.tile && free.has(u)).sort((a, b) => g.unitStrength(b, 'melee', 'def', c.tile) - g.unitStrength(a, 'melee', 'def', c.tile))[0];
     if (here) { garrison.set(c.id, here); free.delete(here); }
   }
   for (const c of cities) {
     if (garrison.has(c.id)) continue;
-    const u = [...free].filter((x) => canAttackType(x.type)).sort((a, b) => dist(a.tile, c.tile) - dist(b.tile, c.tile))[0];
+    const u = [...free].filter((x) => canAttackType(x.type)).sort((a, b) => dist(a.tile, c.tile) - Number(blade(a)) - dist(b.tile, c.tile) + Number(blade(b)))[0];
     if (!u || dist(u.tile, c.tile) > 10) continue;
     garrison.set(c.id, u);
     free.delete(u);
@@ -175,7 +172,7 @@ export function militaryPhase(g: Game, p: Player, P: AiPolicy, cities: readonly 
         const home = cities.reduce((a, b) => (dist(b.tile, c.tile) < dist(a.tile, c.tile) ? b : a));
         const d = dist(home.tile, c.tile);
         if (d > 16) continue;
-        const s = -d - 1.5 * g.cityStrength(c) / (1 + 0.5 * g.players[c.owner]!.era) - 0.02 * near(g.units.filter((u) => u.owner === c.owner && landFighter(u)), c.tile, 3) + 0.3 * c.pop;
+        const s = -d - 1.5 * g.cityStrength(c) / (1 + 0.5 * g.players[c.owner]!.era) + (g.cityStrength(c) === 0 ? 4 : 0) - 0.02 * near(g.units.filter((u) => u.owner === c.owner && landFighter(u)), c.tile, 3) + 0.3 * c.pop;
         if (s > bestS) { best = c; bestS = s; from = home; }
       }
       if (best) {
@@ -206,7 +203,7 @@ export function militaryPhase(g: Game, p: Player, P: AiPolicy, cities: readonly 
       if (!canAssault(u.type) || shoots(u)) continue;
       for (const t of g.tiles[u.tile]!.neighbors) {
         const c = g.cityByTile.get(t);
-        if (c && foes.includes(c.owner) && c.hp <= 0 && !g.bestDefender(t, p.id) && g.attackBlockAt(u, t, 'melee') === null) { g.attack(u, t, 'melee'); done.add(u.id); break; }
+        if (c && foes.includes(c.owner) && !g.bestDefender(t, p.id) && g.attackBlockAt(u, t, 'melee') === null) { g.attack(u, t, 'melee'); done.add(u.id); break; }
       }
     }
   };
@@ -236,8 +233,10 @@ export function militaryPhase(g: Game, p: Player, P: AiPolicy, cities: readonly 
       if (pv) {
         const dmg = 3 * HIT * pv.atk / (pv.atk + pv.def);
         s = dmg / 100 + (dmg >= pv.defender.hp ? 1.5 : 0) + 0.02 * strength(pv.defender) + (pv.defender.hp < 50 ? 0.3 : 0);
-      } else if (c && c.hp > 0) s = (unitDef(u.type).siege ? 1.2 : 0.35) + (op && c.id === op.target ? 0.3 : 0);
-      else continue;
+        // (An engine at a garrison: what it is for.)
+        if (c && unitDef(u.type).siege) s += 1;
+        if (c && op && c.id === op.target) s += 0.3;
+      } else continue;
       if (s > bestS) { best = t; bestS = s; }
     }
     if (best !== null && (shoots(u) || bestS > 0.9)) { g.attack(u, best, 'ranged'); done.add(u.id); }
@@ -258,11 +257,7 @@ export function militaryPhase(g: Game, p: Player, P: AiPolicy, cities: readonly 
         const w = winChance(pv.atk / (pv.atk + pv.def), Math.ceil(pv.defender.hp / HIT), Math.ceil(u.hp / HIT));
         const gain = w * unitDef(pv.defender.type).cost * (c ? 1.5 : 1) - (1 - w) * unitDef(u.type).cost;
         if (w >= P.attackOdds + (assault ? P.assaultOdds : 0) && gain > 0) s = w + gain / 200;
-      } else if (c && c.hp > 0) {
-        // (The walls: three exchanges; worth it once they are low, or the odds good.)
-        const A = g.unitStrength(u, 'melee', 'atk', t), odds = A / (A + g.cityStrength(c));
-        if (u.hp > 60 && (c.hp <= P.cityAssaultHp * g.cityMaxHp(c) || odds > 0.6)) s = 0.5 + odds;
-      } else if (c) s = 5; // (fallen and empty: taken)
+      } else if (c) s = 5; // (a city with no one in it: taken)
       if (s > bestS) { best = t; bestS = s; }
     }
     if (best !== null) { g.goTo(u, best, 'melee'); done.add(u.id); }
@@ -298,11 +293,10 @@ export function militaryPhase(g: Game, p: Player, P: AiPolicy, cities: readonly 
         const reach = unitDef(u.type).reach ?? 1;
         const spot = stand(u, city.tile, reach, (t) => t !== city.tile);
         if (spot !== null) go(u, spot); else g.goTo(u, city.tile);
-      } else if (city.hp <= P.cityAssaultHp * g.cityMaxHp(city) || !g.walled(city)) { if (d > 1) go(u, stand(u, city.tile, 1, (t) => t !== city.tile)); }
-      else {
-        // The blades, until it is time to go at the walls: between the
-        // city and their shooters (the tile by most of them, on the city's
-        // side); with no shooter to cover, out of the walls' reach.
+      } else {
+        // The blades, until the garrison is worth going at (3.): between
+        // the city and their shooters (the tile by most of them, on the
+        // city's side); with no shooter to cover, up against the city.
         let spot: number | null = null, spotS = 0;
         for (const sh of mine) {
           if (!op.units.has(sh.id) || !shoots(sh) || dist(sh.tile, city.tile) > 4) continue;
@@ -314,7 +308,7 @@ export function militaryPhase(g: Game, p: Player, P: AiPolicy, cities: readonly 
           }
         }
         if (spot !== null) go(u, spot);
-        else if (d > 3.5 || d < 2.5) go(u, stand(u, city.tile, 3, (t) => Math.abs(dist(t, city.tile) - 3) < 0.6));
+        else if (d > 1.5) go(u, stand(u, city.tile, 1, (t) => t !== city.tile));
       }
     }
   }
@@ -353,15 +347,23 @@ export function militaryPhase(g: Game, p: Player, P: AiPolicy, cities: readonly 
 function scout(g: Game, u: Unit, cities: readonly City[]): void {
   const known = g.known[u.owner]!;
   let best: number | null = null, bestS = -Infinity;
-  for (const [t, d] of g.tilesWithinMap(u.tile, 9)) {
+  for (const [t, d] of g.tilesWithinMap(u.tile, 14)) {
     if (d === 0 || g.isWater(t) || !known[t] || g.isForeignBlocked(t, u.owner) || !g.canStand(u, t)) continue;
     let dark = 0;
     for (const x of g.tilesWithin(t, 2)) if (!known[x]) dark++;
     if (!dark) continue;
-    const s = dark - 2.5 * d;
+    const s = dark - 1.2 * d;
     if (s > bestS) { best = t; bestS = s; }
   }
-  if (best !== null) g.goTo(u, best); else wander(g, u, cities);
+  if (best !== null) { g.goTo(u, best); return; }
+  // (Nothing near: the nearest edge of what it knows, wherever that is.)
+  let far: number | null = null, farD = Infinity;
+  for (let t = 0; t < g.N; t++) {
+    if (!known[t] || g.isWater(t)) continue;
+    const d = g.approxDist(u.tile, t);
+    if (d < farD && d > 2 && g.tiles[t]!.neighbors.some((x) => !known[x] && !g.isWater(x))) { far = t; farD = d; }
+  }
+  if (far !== null && g.findPath(u, far)) g.goTo(u, far); else wander(g, u, cities);
 }
 
 // A unit with nothing to do roams round the empire.
