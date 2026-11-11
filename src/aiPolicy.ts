@@ -50,6 +50,8 @@ export const GENES = {
   warChance: [0, 0.3, 0.05],       // the chance a turn it declares one, with a target
   warRatio: [0.8, 3, 1.25],        // how much stronger than its target it must be
   peaceRatio: [0.3, 1.2, 0.8],     // it sues for peace once weaker than this of its enemy
+  faithBond: [-1, 1, 0],           // how much a shared faith holds it back from a war (1: never; below 0: it prefers one)
+  faithRival: [-1, 2, 0],          // how much a rival faith draws it to one
   techUnits: [0, 3, 1.2],          // what a tech's (or politics') units are worth to it,
   techBuildings: [0, 3, 1.15],     // its buildings,
   techWonders: [0, 3, 0.75],       // its wonders,

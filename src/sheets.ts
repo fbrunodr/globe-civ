@@ -1,4 +1,4 @@
-import { HUMAN, DEAL_TURNS, type Game, type Player, type DealSide, type Deal } from './game.ts';
+import { HUMAN, DEAL_TURNS, PEACE_TURNS, VICTORIES, type Victory, type Game, type Player, type DealSide, type Deal } from './game.ts';
 import { TECH_KEYS, techDef, techPath, type TechKey, type TechDef } from './techs.ts';
 import {
   POLITICS_KEYS, politicsDef, politicsPath, GOVERNMENT_KEYS, governmentDef, policyDef, fits, SLOT_KINDS, POLICY_KINDS, POLICY_KEYS,
@@ -8,7 +8,7 @@ import {
   PATHS, FAITH_KEYS, PAIR_SLOTS, MAX_TRAITS, openSlots, traitDef, pathTraits, traitBlock, pathLevels, epithet, traitOfReligion, BLOCK_TEXT, isTraitKey,
   type PathKey, type TraitKey,
 } from './identity.ts';
-import { RELIGION_KEYS, religionDef } from './religion.ts';
+import { RELIGION_KEYS, religionDef, PILGRIM_GOLD, FAITH_STRIFE } from './religion.ts';
 import { RESOURCE_KEYS, resourceDef, empireBonus, type ResourceKey } from './resources.ts';
 import { describe as describeEffect, describeAll, flat } from './effects.ts';
 import { ERAS, BUILDINGS, WONDERS, type EraIndex } from './cities.ts';
@@ -425,6 +425,7 @@ export class Sheets {
     const mine = g.cities.filter((c) => c.owner === p.id);
     const cities = mine.length ? mine.map((c) => `<tr><td>${esc(c.name)}</td><td>${c.religion ? religionDef(c.religion).name : '<small>none</small>'}</td></tr>`).join('') : '';
     return `<p class="note">A religion is founded by the first civilization to adopt its faith, a trait of the Devotion path of identity (Meditation founds Hinduism); a civilization adopts one faith at most. It spreads from its holy city to the cities around it, whoever owns them; Shrines and Temples press it harder. Each city following a religion gets its bonus; the founder takes 1 gold a turn from every city following it.</p>
+      <p class="note"><b>Faith binds and divides.</b> Your faith is the religion you founded, or else the one most of your cities follow${(() => { const f = g.faithOf(p.id); return f ? ` (yours: ${religionDef(f).name})` : ' (you have none: none of this touches you)'; })()}. While you are at peace with every other civilization of your faith, each of your cities following it earns ${PILGRIM_GOLD} gold from pilgrims; at war with one of them, those cities make ${Math.round(100 * FAITH_STRIFE)}% less cohesion. A city of yours that follows another religion than your faith makes ${Math.round(100 * FAITH_STRIFE)}% less cohesion: build Shrines and Temples, or take the holy city that presses on it.</p>
       <table class="grid"><tr><th>Religion</th><th>Faith (identity)</th><th>Founder</th><th>Holy city</th><th>Cities</th><th>Bonus per city</th></tr>${rows}</table>
       ${cities ? `<h3>Your cities</h3><table class="grid"><tr><th>City</th><th>Follows</th></tr>${cities}</table>` : ''}`;
   }
@@ -432,14 +433,14 @@ export class Sheets {
   private diplomacyHtml(): string {
     const g = this.game, mine = power(g, HUMAN);
     const others = g.players.filter((o) => o.id !== HUMAN && o.alive && g.met[HUMAN]![o.id]);
-    if (!others.length) return '<p class="note">You have not met another civilization yet. Civilizations meet when their units or cities come within sight of each other.</p>';
+    if (!others.length) return this.standingsHtml() + '<p class="note">You have not met another civilization yet. Civilizations meet when their units or cities come within sight of each other.</p>';
     const rows = others.map((o) => {
       const r = g.relations[HUMAN]![o.id]!, war = r.war;
       const theirs = power(g, o.id), ratio = mine > 0 ? theirs / mine : Infinity;
       const strength = ratio > 1.4 ? 'Much stronger' : ratio > 1.1 ? 'Stronger' : ratio > 0.9 ? 'Even' : ratio > 0.6 ? 'Weaker' : 'Much weaker';
       const offered = g.peaceOffers.has(`${o.id}>${HUMAN}`);
       const wait = war ? Math.max(0, r.since + 8 - g.turn) : 0;
-      const action = !war ? `<button class="danger" data-do="war" data-civ="${o.id}">Declare war</button>`
+      const action = !war ? (g.canDeclareWar(HUMAN, o.id) ? `<button class="danger" data-do="war" data-civ="${o.id}">Declare war</button>` : `<small>Peace treaty: ${r.since + PEACE_TURNS - g.turn} more turns</small>`)
         : offered ? `<button class="primary" data-do="accept" data-civ="${o.id}">Accept peace</button>`
         : g.canMakePeace(HUMAN, o.id) ? `<button data-do="peace" data-civ="${o.id}">Offer peace</button>` : `<small>Peace possible in ${wait} turns</small>`;
       const cities = g.cities.filter((c) => c.owner === o.id).length;
@@ -448,9 +449,19 @@ export class Sheets {
       return `<tr><td><span class="swatch" style="background:${o.color}"></span> ${esc(o.name)}${known ? ` <small>${esc(known)}</small>` : ''}</td><td><span class="pill ${war ? 'war' : 'peace'}">${war ? `War since turn ${r.since}` : 'Peace'}</span></td>
         <td>${esc(governmentDef(o.government).name)}</td><td class="num">${cities}</td><td>${strength}</td><td>${trade}</td><td>${action}</td></tr>`;
     }).join('');
-    return `<p class="note">Everyone starts at peace. At peace, units cannot enter each other's tiles; attacking a civilization declares war. A war lasts at least 8 turns before peace can be made. An AI accepts peace when the war is going badly for it, or has lasted long.</p>
+    return `${this.standingsHtml()}<p class="note">Everyone starts at peace. At peace, units cannot enter each other's tiles; attacking a civilization declares war. A war lasts at least 8 turns before peace can be made. An AI accepts peace when the war is going badly for it, or has lasted long.</p>
       <table class="grid"><tr><th>Civilization</th><th>Relation</th><th>Government</th><th>Cities</th><th>Military vs yours</th><th></th><th></th></tr>${rows}</table>
       ${this.tradeHtml()}`;
+  }
+
+  // How the game is won, and where the civs you have met stand toward each way of winning it.
+  private standingsHtml(): string {
+    const g = this.game;
+    const civs = g.players.filter((o) => o.alive && (o.id === HUMAN || g.met[HUMAN]![o.id])).sort((a, b) => g.score(b.id) - g.score(a.id));
+    const rows = civs.map((o) => `<tr><td><span class="swatch" style="background:${o.color}"></span> ${esc(o.name)}</td><td class="num">${g.score(o.id)}</td>
+      <td class="num">${o.techs.size} / ${TECH_KEYS.length}</td><td class="num">${Math.round(100 * g.faithShare(o.id))}%</td><td class="num">${g.cities.filter((c) => c.owner === o.id).length}</td></tr>`).join('');
+    return `<h3>How the game is won</h3><p class="note">${(Object.keys(VICTORIES) as Victory[]).map((k) => `<b>${VICTORIES[k].name}:</b> ${VICTORIES[k].rule}`).join(' ')} The last turn is ${g.turnLimit}.</p>
+      <table class="grid"><tr><th>Civilization</th><th>Score</th><th>Technologies</th><th>World following its faith</th><th>Cities</th></tr>${rows}</table><h3>Relations</h3>`;
   }
 
   // ---- trade ----

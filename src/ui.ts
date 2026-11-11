@@ -1,7 +1,7 @@
 import { floraLabel } from './flora.ts';
 import { unitDef, buildDef, isUnitKey, isWonder, BUILDINGS, WONDERS, type BuildKey } from './rules.ts';
 import { terrainName } from './terrain.ts';
-import { HUMAN, BUILDABLE, PILLAGE_GOLD, COMMANDER_CAPACITY, UNITS_PER_SOURCE, type Game, type City, type Unit } from './game.ts';
+import { HUMAN, BUILDABLE, PILLAGE_GOLD, COMMANDER_CAPACITY, UNITS_PER_SOURCE, VICTORIES, type Game, type City, type Unit } from './game.ts';
 import type { Selection } from './render.ts';
 import { canAssault, canShoot, type AttackMode } from './unitClasses.ts';
 import { techDef } from './techs.ts';
@@ -192,7 +192,7 @@ export class UI {
     const g = this.game;
     const me = g.players[HUMAN];
     this.set(this.el.civ, `<span class="swatch" style="background:${me.color}"></span>${esc(me.name)}`);
-    this.set(this.el.turn, `<b>Turn ${g.turn}</b><small>${ERAS[me.era].name} era</small>`);
+    this.set(this.el.turn, `<b>Turn ${g.turn}<small> / ${g.turnLimit}</small></b><small>${ERAS[me.era].name} era · ${g.score(HUMAN)} points</small>`);
     this.set(this.el.yields, this.empireHtml());
     this.set(this.el.trackers, this.trackersHtml());
     this.el.next.className = next.ready ? 'ready' : '';
@@ -203,8 +203,14 @@ export class UI {
 
     if (g.over) {
       this.el.overlay.classList.remove('hidden');
+      const w = g.winner, who = w ? g.players[w.player]!.name : '';
+      const told = !w ? 'Your civilization has fallen.'
+        : w.how === 'conquest' ? (g.over === 'victory' ? 'You are the last civilization standing.' : `The ${esc(who)} are the last civilization standing.`)
+        : w.how === 'science' ? (g.over === 'victory' ? 'Your people know all there is to know.' : `The ${esc(who)} were the first to know every technology.`)
+        : w.how === 'religion' ? (g.over === 'victory' ? 'Most of the world follows your faith.' : `Most of the world follows the faith of the ${esc(who)}.`)
+        : g.over === 'victory' ? `Time is up, and yours is the greatest civilization: ${g.score(HUMAN)} points.` : `Time is up. The ${esc(who)} stand first with ${g.score(w.player)} points; you have ${g.score(HUMAN)}.`;
       this.set(this.el.overlay, `<div class="card"><h1>${g.over === 'victory' ? 'Victory' : 'Defeat'}</h1>
-        <p>${g.over === 'victory' ? 'You have conquered the world.' : 'Your civilization has fallen.'} (Turn ${g.turn})</p>
+        <p>${w ? `<b>${VICTORIES[w.how].name}.</b> ` : ''}${told} (Turn ${g.turn})</p>
         <button id="go" class="primary" onclick="location.reload()">New game</button></div>`);
     }
   }

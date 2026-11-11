@@ -14,30 +14,22 @@ import { LEVELS, type AiPolicy } from '../src/aiPolicy.ts';
 
 export interface Match { readonly seed: number; readonly size: MapSizeKey; readonly turns: number; readonly policies: readonly AiPolicy[] }
 export interface Result { readonly scores: number[]; readonly stats: Stats[] }
-export interface Stats { cities: number; pop: number; techs: number; army: number; alive: boolean; wars: number }
+export interface Stats { cities: number; pop: number; techs: number; army: number; alive: boolean; wars: number; won: string | null; turns: number }
 
-// What a civ has made of its game: its people and cities, what it knows,
-// its wonders, and a little for its army (a civ wiped out: nothing).
-export function score(g: Game, id: number): number {
-  const p = g.players[id]!;
-  if (!p.alive) return 0;
-  const cities = g.cities.filter((c) => c.owner === id);
-  const army = g.units.reduce((s, u) => s + (u.owner === id && !unitDef(u.type).civilian ? unitDef(u.type).cost : 0), 0);
-  const wonders = [...g.wondersBuilt.values()].filter((t) => t >= 0 && g.ownerOf(t) === id).length;
-  return cities.reduce((s, c) => s + c.pop, 0) + 3 * cities.length + 4 * p.techs.size + 2 * p.politics.size + p.identity.size + 5 * wonders + army / 40;
-}
-
-// A game played out: every seat a computer civ with its policy.
+// A game played out: every seat a computer civ with its policy, to the
+// game's end (someone wins: game.ts checkVictory) or `turns`. Each civ's
+// score is the game's own (game.ts score); the winner's, if the game was
+// won, is doubled: a policy is bred to win, the score only says how well
+// the others did.
 export function playMatch(m: Match): Result {
-  const g = new Game({ size: m.size, seed: m.seed, policies: m.policies });
+  const g = new Game({ size: m.size, seed: m.seed, policies: m.policies, turnLimit: m.turns });
   for (const p of g.players) p.isHuman = false;
-  let wars = 0;
-  for (let t = 0; t < m.turns; t++) { g.endTurn(); g.over = null; }
-  for (const e of g.events) if (e.kind === 'war') wars++;
+  for (let t = 0; t <= m.turns && !g.winner; t++) g.endTurn();
+  const wars = g.events.filter((e) => e.kind === 'war').length;
   return {
-    scores: g.players.map((p) => score(g, p.id)),
+    scores: g.players.map((p) => g.score(p.id) * (g.winner?.player === p.id ? 2 : 1)),
     stats: g.players.map((p) => ({ cities: g.cities.filter((c) => c.owner === p.id).length, pop: g.cities.reduce((s, c) => s + (c.owner === p.id ? c.pop : 0), 0), techs: p.techs.size,
-      army: g.units.filter((u) => u.owner === p.id && !unitDef(u.type).civilian).length, alive: p.alive, wars })),
+      army: g.units.filter((u) => u.owner === p.id && !unitDef(u.type).civilian).length, alive: p.alive, wars, won: g.winner?.player === p.id ? g.winner.how : null, turns: g.turn })),
   };
 }
 // How many civs a map of a size seats.
@@ -93,5 +85,8 @@ if (!isMainThread) {
   LEVELS.forEach((l, i) => console.log(`${l.name.padEnd(12)} generation ${String(l.generation).padStart(3)}   standing ${st[i]!.mean.toFixed(3)}   (${st[i]!.games} seats)`));
   const all = results.flatMap((r) => r.stats);
   const avg = (f: (s: Stats) => number) => (all.reduce((a, s) => a + f(s), 0) / all.length).toFixed(1);
+  const how = new Map<string, number>();
+  for (const r of results) { const w = r.stats.find((x) => x.won)?.won ?? 'none'; how.set(w, (how.get(w) ?? 0) + 1); }
+  console.log(`games won by: ${[...how].map(([k, n]) => `${k} ${n}`).join(', ')}; a game lasts ${avg((x) => x.turns)} turns`);
   console.log(`a civ at the end: ${avg((s) => s.cities)} cities, ${avg((s) => s.pop)} citizens, ${avg((s) => s.techs)} techs, ${avg((s) => s.army)} units; ${avg((s) => (s.alive ? 0 : 100))}% wiped out; ${avg((s) => s.wars)} wars a game`);
 }

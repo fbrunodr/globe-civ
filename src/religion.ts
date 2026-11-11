@@ -35,6 +35,24 @@ export type ReligionKey = keyof typeof RELIGIONS;
 export const RELIGION_KEYS = Object.keys(RELIGIONS) as ReligionKey[];
 export const religionDef = (k: ReligionKey): ReligionDef => RELIGIONS[k];
 
+// Faith binds and divides (game.ts faiths, cityYields). A civ's faith is
+// the religion it founded, or else the one more than half of its cities
+// follow; a civ with neither is outside all of this.
+//   pilgrims  while a civ is at peace with every other civ of its faith
+//             (and knows one at least), each of its cities following it
+//             earns PILGRIM_GOLD: a war among the faithful ends it for both
+//   strife    while it is at war with a civ of its own faith, its cities
+//             of that faith make FAITH_STRIFE less cohesion
+//   creeds    a city that follows another religion than its civ's faith
+//             makes FAITH_STRIFE less cohesion: a rival's holy city
+//             pressing on its border costs it, and its own Shrines and
+//             Temples, or taking that holy city, are the cure
+// So peace within a faith pays, rival faiths have a standing quarrel, and
+// the faithless are left alone: by what each gains and loses, not by any
+// liking written into the computer's civs.
+export const PILGRIM_GOLD = 1;
+export const FAITH_STRIFE = 0.25;
+
 // Spreading.
 export const PRESSURE_REACH = 6;        // tiles
 export const HOLY_PRESSURE = 6;         // from the holy city

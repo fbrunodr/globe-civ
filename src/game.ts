@@ -24,10 +24,10 @@ import {
   type FocusKey, type GrowthOption, type TileUse, type Output, type SpecialistKind, type WonderKey, type WonderSite, type EraIndex, type ImprovementKey,
 } from './cities.ts';
 import { IMPROVEMENTS, IMPROVEMENT_KEYS, IMPROVE_TURNS, drained, out, OUTPUT_KEYS } from './cities.ts';
-import { techDef, techPath, improvementStage, STAGE_TECHS, TECHS, type TechKey } from './techs.ts';
+import { techDef, techPath, improvementStage, STAGE_TECHS, TECHS, type TechKey, TECH_KEYS } from './techs.ts';
 import { politicsDef, politicsPath, GOVERNMENTS, governmentDef, policyDef, fits, SLOT_KINDS, type PoliticsKey, type GovernmentKey, type PolicyKey, type PolicySlot } from './politics.ts';
 import { traitDef, traitBlock, traitCost, type TraitKey } from './identity.ts';
-import { religionDef, PRESSURE_REACH, HOLY_PRESSURE, CITY_PRESSURE, BUILDING_PRESSURE, CONVERT_AT, TITHE, type ReligionKey } from './religion.ts';
+import { PILGRIM_GOLD, FAITH_STRIFE, religionDef, PRESSURE_REACH, HOLY_PRESSURE, CITY_PRESSURE, BUILDING_PRESSURE, CONVERT_AT, TITHE, type ReligionKey } from './religion.ts';
 import { placeResources, resourceDef, empireBonus, RESOURCE_IMPROVEMENT, type ResourceKey } from './resources.ts';
 import { total, yieldBonus, prodBonus, flat, tileBonus, specialistBonus, movesBonus, type Effect, type ProdTarget } from './effects.ts';
 import { cityUpkeep, unitUpkeep, buildingUpkeep, inflation, arrearsOf, WEALTH_RATE } from './economy.ts';
@@ -98,7 +98,19 @@ const EMPTY_LEDGER: Ledger = { income: ZERO, cityUpkeep: 0, unitUpkeep: 0, tithe
 // Relations between two civs: at peace (the start), or at war since a turn.
 export interface Relation { war: boolean; since: number }
 // War, peace: a war lasts at least MIN_WAR turns before peace can be made.
+// How the game is won (game.ts checkVictory).
+export type Victory = 'conquest' | 'science' | 'religion' | 'time';
+export const VICTORIES: Record<Victory, { name: string; rule: string }> = {
+  conquest: { name: 'Conquest', rule: 'Be the last civilization standing.' },
+  science: { name: 'Science', rule: 'Be the first to know every technology.' },
+  religion: { name: 'Religion', rule: 'Found a religion that more than half of the world\'s cities follow.' },
+  time: { name: 'Time', rule: 'Have the best score when the last turn ends, if no one has won before.' },
+};
+export const FAITH_VICTORY = 0.5;
+export const TURN_LIMIT = 300;
 export const MIN_WAR = 8;
+// A peace holds at least this many turns: neither side may declare war on the other again before.
+export const PEACE_TURNS = 10;
 
 // A trade between two civs at peace, for DEAL_TURNS: what each side gives,
 // a resource (a spare copy: it keeps one for itself) and gold a turn, or
@@ -255,7 +267,14 @@ export interface City {
 // and a melee unit enters.
 export const CITY_HP = 100;
 export const WALLS_HP = 50;
-export const CITY_REGEN = 15;        // hit points back per turn
+// A city's own defences: little without walls (its garrison is its
+// defence, as in Civ IV: an army can take a young city, so war pays from
+// the first era); walls make it a fortress that strikes back. Hit points
+// back per turn: slowly, faster behind walls.
+export const CITY_BASE = 1, CITY_PER_POP = 0.2;
+export const CITY_REGEN = 5, WALLS_REGEN = 10;
+// What a city's fall hands its taker: gold, more for a larger city (out of its old owner's treasury as far as that goes).
+export const plunder = (pop: number): number => 20 + 8 * pop;
 export const PILLAGE_REPAIR = 3;     // turns to repair a pillaged tile once no enemy stands on it
 export const PILLAGE_GOLD = 15;
 // Where a fallen wonder was (its city razed): never to be rebuilt.
@@ -289,6 +308,8 @@ export interface GameOptions {
   // otherwise).
   policies?: readonly AiPolicy[];
   level?: number;
+  // The last turn (the time victory then): TURN_LIMIT unless given.
+  turnLimit?: number;
   // Roads laid by themselves between cities (roads.ts routeRoads), as the
   // dev pages show them; in the game workers lay them (the default).
   autoRoads?: boolean;
@@ -332,6 +353,7 @@ export class Game {
   readonly road: Uint8Array;        // 1 where workers have laid a road (a city's center counts as one: hasRoad)
   readonly roadLeft: Uint8Array;    // turns left of road work begun on a tile
   roadVersion = 0;                  // bumped whenever a road is laid
+  diploVersion = 0;                 // bumped whenever a war begins or ends
   readonly autoRoads: boolean;
   aiPolicies: AiPolicy[];           // how each computer civ decides (aiPolicy.ts), by player id
   policyVersion = 0;                // bumped when they are changed mid-game
@@ -340,6 +362,8 @@ export class Game {
   readonly messages: Message[] = [];
   readonly players: Player[];
   over: 'victory' | 'defeat' | null = null;
+  winner: { player: number; how: Victory } | null = null; // who won the game, and how (checkVictory)
+  readonly turnLimit: number;
   readonly resources: (ResourceKey | null)[];  // the resource on each tile (resources.ts)
   readonly religions = new Map<ReligionKey, { founder: number; holyCity: number | null; turn: number }>();
   readonly relations: Relation[][];             // [a][b], symmetric
@@ -349,8 +373,9 @@ export class Game {
   readonly dealOffers: Deal[] = [];             // trades the computer offered the human, for this turn (sides[0]: the offerer)
   readonly events: GameEvent[] = [];            // everything every player did (gameLog.ts)
 
-  constructor({ size, seed, script = 'continents', everyCiv = false, autoRoads = false, policies, level = DEFAULT_LEVEL }: GameOptions) {
+  constructor({ size, seed, script = 'continents', everyCiv = false, autoRoads = false, policies, level = DEFAULT_LEVEL, turnLimit = TURN_LIMIT }: GameOptions) {
     this.seed = seed;
+    this.turnLimit = turnLimit;
     this.autoRoads = autoRoads;
     this.world = generateWorld(size, seed, script);
     this.globe = this.world.globe;
@@ -935,7 +960,10 @@ export class Game {
     const ranged = mode === 'ranged';
     // (Attacking a civ at peace is a declaration of war.)
     const target = this.cityByTile.get(tile)?.owner ?? this.units.find((v) => v.tile === tile && v.owner !== u.owner)?.owner;
-    if (target !== undefined && target !== u.owner && !this.atWar(u.owner, target)) this.declareWar(u.owner, target);
+    if (target !== undefined && target !== u.owner && !this.atWar(u.owner, target)) {
+      this.declareWar(u.owner, target);
+      if (!this.atWar(u.owner, target)) return; // (a treaty holds)
+    }
     const d = this.bestDefender(tile, u.owner, mode);
     const style = (d ? attackStyle(u.type, d.type, mode) : siegeStyle(u.type, mode)) ?? 'melee';
     if (!d) this.onBattle?.(u, tile, style);
@@ -996,7 +1024,7 @@ export class Game {
   cityStrength(c: City): number {
     const garrison = Number(c.buildings.has('barracks')) + Number(c.buildings.has('stable'));
     const p = this.players[c.owner]!;
-    return (2.5 + 0.3 * c.pop + (this.walled(c) ? 3 : 0) + garrison) * (1 + 0.5 * p.era) * (1 + total(this.effectsOf(p), 'cityStrength') / 100);
+    return (CITY_BASE + CITY_PER_POP * c.pop + (this.walled(c) ? 3 : 0) + garrison) * (1 + 0.5 * p.era) * (1 + total(this.effectsOf(p), 'cityStrength') / 100);
   }
 
   // A unit attacks a city with no defenders: a few exchanges with its walls.
@@ -1017,9 +1045,9 @@ export class Game {
     }
   }
 
-  // Each city strikes the weakest enemy unit near it (2 tiles with walls).
+  // A walled city strikes the weakest enemy unit within 2 tiles of it (one without walls has nothing to strike with).
   private cityStrike(city: City): void {
-    if (city.hp <= 0) return;
+    if (city.hp <= 0 || !this.walled(city)) return;
     const near = new Set(this.tilesWithin(city.tile, this.walled(city) ? 2 : 1));
     let target: Unit | null = null;
     for (const u of this.units) {
@@ -1205,6 +1233,8 @@ export class Game {
     const old = this.players[city.owner];
     const p = this.players[newOwner];
     this.record('cityCaptured', newOwner, { city: city.name, from: city.owner, tile: city.tile });
+    // (Its plunder.)
+    if (old && p) { const loot = plunder(city.pop); old.gold = Math.max(0, old.gold - loot); p.gold += loot; }
     city.ring = Math.min(city.ring, borderRing(city.culture));
     if (old && old.capital === city.id) old.capital = this.cities.filter((c) => c.owner === old.id && c !== city).sort((a, b) => a.founded - b.founded)[0]?.id ?? null;
     if (p && p.capital === null) p.capital = city.id;
@@ -1625,6 +1655,18 @@ export class Game {
     if (p.capital === city.id) sum = addOut(addOut(sum, out(PALACE)), flat(fx, 'capital'));
     else if (this.roadLinked(city)) sum = addOut(sum, connectionBonus(city.pop));
     if (city.religion) sum = addOut(sum, flat(religionDef(city.religion).follower, 'follower'));
+    // Faith binds and divides (religion.ts): pilgrims' gold in a city of
+    // its civ's faith while the faithful are at peace; less cohesion in a
+    // city of that faith while they are at war with each other, and in one
+    // that follows another creed than its civ's.
+    const f = this.faiths();
+    const mine = f.of[p.id] ?? null;
+    let strife = 0;
+    if (mine && city.religion === mine) {
+      if (f.bond[p.id]) sum = addOut(sum, out({ gold: PILGRIM_GOLD }));
+      if (f.strife[p.id]) strife += FAITH_STRIFE;
+    } else if (mine && city.religion) strife += FAITH_STRIFE;
+    if (strife) sum = { ...sum, cohesion: sum.cohesion * (1 - strife) };
     // (In arrears: what it could not pay of its upkeep, its cities make less by, in production, science and culture.)
     const paid = (y: keyof Output) => (y === 'prod' || y === 'science' || y === 'culture' ? 1 - p.arrears : 1);
     sum = out(Object.fromEntries(OUTPUT_KEYS.map((y) => [y, Math.max(0, Math.floor(sum[y] * paid(y) * (100 + yieldBonus(fx, y)) / 100))])));
@@ -2339,15 +2381,23 @@ export class Game {
   // ---------- diplomacy ----------
 
   atWar(a: number, b: number): boolean { return a !== b && this.relations[a]![b]!.war; }
+  // Whether a may declare war on b: not while their last peace is younger than PEACE_TURNS (a treaty holds that long).
+  canDeclareWar(a: number, b: number): boolean {
+    const r = this.relations[a]![b]!;
+    return a !== b && !r.war && (r.since === 0 || this.turn - r.since >= PEACE_TURNS);
+  }
   declareWar(a: number, b: number): void {
-    if (a === b || this.atWar(a, b)) return;
+    if (!this.canDeclareWar(a, b)) return;
     this.relations[a]![b] = this.relations[b]![a] = { war: true, since: this.turn };
+    this.diploVersion++;
     this.met[a]![b] = this.met[b]![a] = 1;
     this.peaceOffers.delete(`${a}>${b}`);
     this.peaceOffers.delete(`${b}>${a}`);
     for (const d of this.deals.filter((x) => x.sides.some((s) => s.civ === a) && x.sides.some((s) => s.civ === b))) this.endDeal(d, 'war');
     for (let i = this.dealOffers.length - 1; i >= 0; i--) if (this.dealBlock(this.dealOffers[i]!.sides) !== null) this.dealOffers.splice(i, 1);
-    this.record('war', a, { on: b });
+    // (For the record: what their faiths make of it.)
+    const fa = this.faithOf(a), fb = this.faithOf(b);
+    this.record('war', a, { on: b, faiths: !fa || !fb ? 'none' : fa === fb ? 'same' : 'rival' });
     if (a === HUMAN || b === HUMAN) this.log(`${this.players[a]!.name} declared war on ${this.players[b]!.name}!`);
   }
   // Whether peace can be made yet (after MIN_WAR turns of war).
@@ -2355,6 +2405,7 @@ export class Game {
   makePeace(a: number, b: number): boolean {
     if (!this.canMakePeace(a, b)) return false;
     this.relations[a]![b] = this.relations[b]![a] = { war: false, since: this.turn };
+    this.diploVersion++;
     this.peaceOffers.delete(`${a}>${b}`);
     this.peaceOffers.delete(`${b}>${a}`);
     this.record('peace', a, { with: b });
@@ -2418,7 +2469,7 @@ export class Game {
     // for a worker to repair them (advanceWork).
     for (const city of this.cities) {
       this.cityStrike(city);
-      city.hp = Math.min(this.cityMaxHp(city), city.hp + CITY_REGEN);
+      city.hp = Math.min(this.cityMaxHp(city), city.hp + (this.walled(city) ? WALLS_REGEN : CITY_REGEN));
     }
     for (let t = 0; t < this.N; t++) {
       if (!this.pillaged[t]) continue;
@@ -2456,8 +2507,66 @@ export class Game {
         this.log(`${p.name} has been destroyed!`);
       }
     }
-    if (!this.players[HUMAN].alive) this.over = 'defeat';
-    else if (this.players.every((p) => p.isHuman || !p.alive)) this.over = 'victory';
+    this.checkVictory();
+  }
+
+  // What a civ has made of its game (the time victory's measure, and the
+  // scoreboard's): its citizens and cities, what it knows and has decided,
+  // its wonders. A civ wiped out: nothing.
+  score(id: number): number {
+    const p = this.players[id]!;
+    if (!p.alive) return 0;
+    let pop = 0, cities = 0;
+    for (const c of this.cities) if (c.owner === id) { pop += c.pop; cities++; }
+    let wonders = 0;
+    for (const t of this.wondersBuilt.values()) if (t >= 0 && this.ownerOf(t) === id) wonders++;
+    return pop + 2 * cities + 4 * p.techs.size + 2 * p.politics.size + p.identity.size + 5 * wonders;
+  }
+  // Each civ's faith: the religion it founded, or else the one more than
+  // half of its cities follow (none: it has no faith, and faith neither
+  // binds nor divides it). `bond`: it has brothers in faith (another civ
+  // of its faith it has met) and is at peace with them all; `strife`: it
+  // is at war with one of them.
+  private faithCache: { key: string; of: (ReligionKey | null)[]; bond: boolean[]; strife: boolean[] } = { key: '', of: [], bond: [], strife: [] };
+  faiths(): { of: (ReligionKey | null)[]; bond: boolean[]; strife: boolean[] } {
+    const key = `${this.turn}|${this.cities.length}|${this.useVersion}|${this.diploVersion}|${this.religions.size}`;
+    if (this.faithCache.key === key) return this.faithCache;
+    const of = this.players.map((p): ReligionKey | null => {
+      for (const [r, f] of this.religions) if (f.founder === p.id) return r;
+      const mine = this.cities.filter((c) => c.owner === p.id), count = new Map<ReligionKey, number>();
+      for (const c of mine) if (c.religion) count.set(c.religion, (count.get(c.religion) ?? 0) + 1);
+      for (const [r, n] of count) if (n * 2 > mine.length) return r;
+      return null;
+    });
+    const brothers = (id: number) => this.players.filter((o) => o.alive && o.id !== id && of[id] !== null && of[o.id] === of[id] && this.met[id]![o.id]);
+    const strife = this.players.map((p) => p.alive && brothers(p.id).some((o) => this.atWar(p.id, o.id)));
+    const bond = this.players.map((p) => p.alive && brothers(p.id).length > 0 && !strife[p.id]);
+    this.faithCache = { key, of, bond, strife };
+    return this.faithCache;
+  }
+  faithOf(id: number): ReligionKey | null { return this.faiths().of[id] ?? null; }
+  // The share of the world's cities following the religion a civ founded (0: it founded none).
+  faithShare(id: number): number {
+    for (const [r, f] of this.religions) if (f.founder === id) return this.cities.filter((c) => c.religion === r).length / Math.max(1, this.cities.length);
+    return 0;
+  }
+  // The game is won (VICTORIES): by conquest, the last civ standing; by
+  // science, the first to know every tech; by religion, the founder of a
+  // faith most of the world's cities follow; and, if no one has won by the
+  // turn limit, on time by the best score. Checked as each turn ends.
+  private checkVictory(): void {
+    if (this.winner) return;
+    const alive = this.players.filter((p) => p.alive);
+    const best = (f: (p: Player) => number) => alive.reduce((a, b) => (f(b) > f(a) ? b : a));
+    if (alive.length === 1 && this.players.length > 1) this.winner = { player: alive[0]!.id, how: 'conquest' };
+    else if (alive.some((p) => p.techs.size >= TECH_KEYS.length)) this.winner = { player: best((p) => p.techs.size * 1e6 + this.score(p.id)).id, how: 'science' };
+    else if (alive.some((p) => this.faithShare(p.id) > FAITH_VICTORY)) this.winner = { player: best((p) => this.faithShare(p.id)).id, how: 'religion' };
+    else if (this.turn > this.turnLimit && alive.length) this.winner = { player: best((p) => this.score(p.id)).id, how: 'time' };
+    if (this.winner) this.record('victory', this.winner.player, { how: this.winner.how });
+    const human = this.players[HUMAN]!;
+    if (!human.isHuman) return;
+    if (!human.alive || (this.winner && this.winner.player !== HUMAN)) this.over = 'defeat';
+    else if (this.winner) this.over = 'victory';
   }
 
   // How high a tile stands in the way of a view: open ground and water 0,

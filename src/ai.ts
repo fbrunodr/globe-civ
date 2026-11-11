@@ -10,7 +10,7 @@ import { mulberry32 } from './rng.ts';
 import { routeRoads } from './roads.ts';
 import { RESOURCE_KEYS } from './resources.ts';
 import type { AiPolicy } from './aiPolicy.ts';
-import { militaryPhase, planWar, planning, onCampaign } from './aiMilitary.ts';
+import { militaryPhase, planWar, planning, onCampaign, operationOf } from './aiMilitary.ts';
 import { isShooter, canAssault } from './unitClasses.ts';
 import { canAttackType } from './unitClasses.ts';
 import { MIN_WAR, type Game, type Player, type Unit, type City, type DealSide } from './game.ts';
@@ -476,11 +476,16 @@ function aiDiplomacy(g: Game, p: Player): void {
   // first (aiMilitary.ts), and declares it when ready.
   let pick: Player | null = null, bestS = 0;
   for (const o of g.players) {
-    if (!o.alive || o.id === p.id || !g.met[p.id]![o.id]) continue;
+    if (!o.alive || o.id === p.id || !g.met[p.id]![o.id] || !g.canDeclareWar(p.id, o.id)) continue;
     const d = g.cities.reduce((m, c) => (c.owner === o.id ? Math.min(m, own.reduce((x, h) => Math.min(x, g.approxDist(c.tile, h.tile)), 99)) : m), 99);
     const ratio = mine / (power(g, o.id) + 2);
     if (d > 14 || ratio < P.warRatio) continue;
-    const s = ratio * (1 + 6 / d) * (g.players.some((x) => x.id !== p.id && g.atWar(o.id, x.id)) ? 1.3 : 1);
+    // (What its faith makes of the war: the pilgrims and the peace at home a
+    // war among the faithful would cost it, the quarrel with a rival creed;
+    // how much either weighs is its policy's, and bred.)
+    const mineF = g.faithOf(p.id), theirF = g.faithOf(o.id);
+    const faith = !mineF || !theirF ? 1 : mineF === theirF ? 1 - P.faithBond : 1 + P.faithRival;
+    const s = ratio * (1 + 6 / d) * (g.players.some((x) => x.id !== p.id && g.atWar(o.id, x.id)) ? 1.3 : 1) * faith;
     if (s > bestS) { pick = o; bestS = s; }
   }
   if (pick) planWar(g, p, pick.id);
@@ -488,8 +493,12 @@ function aiDiplomacy(g: Game, p: Player): void {
 
 // Whether it accepts peace offered by `from`: losing, even, or weary.
 export function aiAcceptsPeace(g: Game, p: Player, from: number): boolean {
-  if (g.turn - g.relations[p.id]![from]!.since < MIN_WAR) return false;
-  return power(g, p.id) < 1.25 * power(g, from) || g.turn - g.relations[p.id]![from]!.since > 25;
+  const long = g.turn - g.relations[p.id]![from]!.since;
+  if (long < MIN_WAR) return false;
+  // (Not while its army is out to take one of their cities and the war is young: it means to finish.)
+  const op = operationOf(g, p.id), target = op ? g.cityById.get(op.target) : undefined;
+  if (target && target.owner === from && long < 40 && power(g, p.id) >= power(g, from)) return false;
+  return power(g, p.id) < 1.25 * power(g, from) || long > 25;
 }
 
 // ---- trade ----

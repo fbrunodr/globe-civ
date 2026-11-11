@@ -82,8 +82,8 @@ export function militaryPhase(g: Game, p: Player, P: AiPolicy, cities: readonly 
     for (const t of g.tilesWithin(e.tile, reach)) danger.set(t, (danger.get(t) ?? 0) + strength(e));
   }
   for (const c of g.cities) {
-    if (!foes.includes(c.owner) || c.hp <= 0) continue;
-    for (const t of g.tilesWithin(c.tile, g.walled(c) ? 2 : 1)) danger.set(t, (danger.get(t) ?? 0) + 0.4 * g.cityStrength(c));
+    if (!foes.includes(c.owner) || c.hp <= 0 || !g.walled(c)) continue;
+    for (const t of g.tilesWithin(c.tile, 2)) danger.set(t, (danger.get(t) ?? 0) + 0.4 * g.cityStrength(c));
   }
   const near = (list: readonly Unit[], t: number, r: number) => list.reduce((s, u) => s + (dist(u.tile, t) <= r ? strength(u) : 0), 0);
 
@@ -161,8 +161,9 @@ export function militaryPhase(g: Game, p: Player, P: AiPolicy, cities: readonly 
       // (Gathered: now the war, if it is not on yet.)
       if (!g.atWar(p.id, op.vs)) g.declareWar(p.id, op.vs);
       S.plan = null;
-      op.state = 'march'; op.stateSince = g.turn;
-    } else if (op.state === 'march' && (within(city.tile, 4) >= P.musterShare || g.turn - op.stateSince > 14)) { op.state = 'assault'; op.stateSince = g.turn; }
+      // (A treaty still holding: the army waits.)
+      if (g.atWar(p.id, op.vs)) { op.state = 'march'; op.stateSince = g.turn; }
+    } else if (op.state === 'march' && (within(city.tile, 5) >= P.musterShare || g.turn - op.stateSince > 9)) { op.state = 'assault'; op.stateSince = g.turn; }
     for (const u of army) free.delete(u);
   }
 
