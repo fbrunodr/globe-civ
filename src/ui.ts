@@ -318,7 +318,7 @@ export class UI {
         const mend = k !== null && g.builtAt(t) === k && g.pillaged[t]! > 0;
         orders.push(order('improve', 'hammer', k ? `${mend ? 'Repair the' : 'Build a'} ${IMPROVEMENTS[k].name.toLowerCase()}` : 'Improve the land',
           k ? `${plural(g.improveTurns(t, u.owner), 'turn')}${mend ? ' · free' : ` · one of the ${plural(u.charges, 'improvement')} it can still build`}` : '', 'I', why));
-        orders.push(order('fort', 'fort', 'Build a fort', `${plural(FORT_TURNS, 'turn')} · one of the ${plural(u.charges, 'improvement')} it can still build. A unit in it defends ${Math.round(100 * FORT_DEFENSE)}% stronger, as behind a city's walls. It stands in the tile's improvement's place: the tile has one or the other`, 'O', g.fortBlock(u)));
+        orders.push(order('fort', 'fort', 'Build a fort', `${plural(FORT_TURNS, 'turn')} · one of the ${plural(u.charges, 'improvement')} it can still build. A unit in it defends ${Math.round(100 * FORT_DEFENSE)}% stronger, (a city's walls give more). It stands in the tile's improvement's place: the tile has one or the other`, 'O', g.fortBlock(u)));
         orders.push(order('road', 'road', 'Lay a road', `${plural(g.roadTurns(u.tile), 'turn')} · free. Units move twice as far along roads; a city joined to the capital by road trades with it`, 'L', g.roadBlock(u)));
       }
       if (u.type === 'commander') {

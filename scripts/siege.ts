@@ -7,7 +7,7 @@
 //   npx tsx scripts/siege.ts
 // The game's own rule is held to this in test/siege.test.ts.
 
-import { combatStrength, matchup, fightRounds, FORTIFY_BONUS, GARRISON_HEAL, WALLS_DEFENSE } from '../src/game.ts';
+import { combatStrength, matchup, fightRounds, FORTIFY_BONUS, GARRISON_HEAL, WALLS_DEFENSE, CITY_DEFENSE } from '../src/game.ts';
 import { unitDef, type UnitKey } from '../src/rules.ts';
 import { mulberry32 } from '../src/rng.ts';
 
@@ -15,7 +15,7 @@ export interface Siege { attacker: UnitKey; n: number; garrison: UnitKey; walls:
 export function siege(s: Siege, games = 4000, seed = 3): { won: number; turns: number } {
   const rng = mulberry32(seed);
   let won = 0, turns = 0;
-  const bonus = (s.city ?? 0) + (s.walls ? s.wallsAdd ?? WALLS_DEFENSE : 0) + FORTIFY_BONUS;
+  const bonus = (s.walls ? s.wallsAdd ?? WALLS_DEFENSE : s.city ?? CITY_DEFENSE) + FORTIFY_BONUS;
   for (let g = 0; g < games; g++) {
     const hp = Array.from({ length: s.n }, () => 100);
     let d = 100, t = 0;
@@ -36,7 +36,7 @@ export function siege(s: Siege, games = 4000, seed = 3): { won: number; turns: n
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const foot: UnitKey[] = ['warrior', 'spearman', 'swordsman', 'manAtArms', 'musketman', 'rifleman', 'infantry'];
-  const rules: [string, number, number, number][] = [['an open city +50%, walls +100% more (as it was)', 0.5, 1, 25], [`the game's rule: an open city nothing, walls +${100 * WALLS_DEFENSE}%`, 0, WALLS_DEFENSE, GARRISON_HEAL]];
+  const rules: [string, number, number, number][] = [['an open city +50%, walled +150%, healing 25 (as it once was)', 0.5, 1.5, 25], [`the game's rule: an open city +${100 * CITY_DEFENSE}%, walled +${100 * WALLS_DEFENSE}%`, CITY_DEFENSE, WALLS_DEFENSE, GARRISON_HEAL]];
   for (const [name, city, wallsAdd, heal] of rules) {
     console.log(`\n${name}; the garrison heals ${heal} a turn: attackers' share of sieges won (and turns), same kind against same kind`);
     console.log('                 2 vs open city   3 vs open city   2 vs walls   3 vs walls   4 vs walls');

@@ -144,11 +144,11 @@ export const FORTIFY_BONUS = 0.5;
 // in a city of its own, and elsewhere on its civ's land or waters; outside
 // its civ's territory it does not heal at all (ships the same).
 export const GARRISON_HEAL = 15, FIELD_HEAL = 10;
-// What walls add to a garrison's strength, and a fort to the unit in it
-// (an open city, like open ground, adds nothing). By simulation
-// (scripts/siege.ts): two of a kind take an open city from one of the same
-// two times in three; behind walls it is even, and takes three.
-export const WALLS_DEFENSE = 0.5, FORT_DEFENSE = 0.5;
+// What a city adds to its garrison's strength, open and walled, and a
+// fort to the unit in it. By simulation (scripts/siege.ts): two of a kind
+// take an open city from one of the same more often than not; behind
+// walls two seldom do, and it takes three.
+export const CITY_DEFENSE = 0.2, FORT_DEFENSE = 0.3, WALLS_DEFENSE = 0.5;
 // A fort: the turns a worker takes to build one (one of its improvements:
 // a charge). It stands in an improvement's place: the tile has one or the other.
 export const FORT_TURNS = 4;
@@ -292,8 +292,8 @@ export interface City {
 // points and strikes nearby enemies; it falls when its hit points are gone
 // and a melee unit enters.
 export const CITY_HP = 100;
-// A city does not defend itself: its garrison does (twice as strong behind
-// walls: WALLS_DEFENSE), and one with no garrison is taken
+// A city does not defend itself: its garrison does (a little stronger in
+// its streets, more behind walls: CITY_DEFENSE, WALLS_DEFENSE), and one with no garrison is taken
 // by the first enemy to walk in. So every city wants a unit in it, unless
 // it lies where no enemy can come.
 // What a city's fall hands its taker: gold, more for a larger city (out of its old owner's treasury as far as that goes).
@@ -963,8 +963,8 @@ export class Game {
     if (role === 'atk') return combatStrength(u.type, stat, u.hp, 0) * (combat + (this.cityByTile.has(tile) ? total(fx, 'vsCities') / 100 : 0));
     let bonus = this.defenseBonus(tile) + (this.ownerOf(tile) === u.owner ? total(fx, 'homeDefense') / 100 : 0);
     const city = this.cityByTile.get(tile);
-    // (In a city: its walls, its barracks, and what its civ's policies add to them; an open city gives its garrison nothing.)
-    if (city) bonus += ((this.walled(city) ? WALLS_DEFENSE : 0) + 0.25 * (Number(city.buildings.has('barracks')) + Number(city.buildings.has('stable')))) * (1 + total(fx, 'cityStrength') / 100);
+    // (In a city: its streets, or its walls if it has them; its barracks; and what its civ's policies add to them.)
+    if (city) bonus += ((this.walled(city) ? WALLS_DEFENSE : CITY_DEFENSE) + 0.25 * (Number(city.buildings.has('barracks')) + Number(city.buildings.has('stable')))) * (1 + total(fx, 'cityStrength') / 100);
     if (u.fortified) bonus += FORTIFY_BONUS;
     if (this.isEmbarked(u)) return combatStrength(u.type, stat, u.hp, 0) * combat * EMBARKED_DEF;
     return combatStrength(u.type, stat, u.hp, bonus) * combat;
