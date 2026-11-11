@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { unitSheet, SHEET, UNIT_SHEET, FACE, FACE_VARIANTS, FACES_END } from './unitSheet.ts';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { Billboard } from './billboards.ts';
 import type { ArchCiv } from './architecture.ts';
@@ -417,11 +418,28 @@ const UNIT_VERTEX = /* glsl */ `
 // skin, and the limbs swinging on the march (`time`: seconds).
 // (`texture`: a painted texture (public/ path): sampled where a corner has
 // texture coordinates, not where it has none (-1).)
+// A figure's skin tone carrying which of its faces it has (0..FACE_VARIANTS-1):
+// in the fine part of its blue, a thousandth of the tone at most (every
+// per-figure attribute is in use: the GPU takes sixteen).
+const FACE_CODE = 1024;
+export function faceTone(skin: THREE.Color, face: number): THREE.Color {
+  skin.b = (Math.floor(skin.b * FACE_CODE) + (Math.floor(face) % FACE_VARIANTS + 0.5) / FACE_VARIANTS) / FACE_CODE;
+  return skin;
+}
+// How much smaller than a man a woman on foot is drawn.
+export const WOMAN_SCALE = 0.93;
 const textures = new Map<string, THREE.Texture>();
 const textureOf = (path: string): THREE.Texture => {
   let map = textures.get(path);
   if (!map) {
-    map = new THREE.TextureLoader().load(`${import.meta.env.BASE_URL}${path}`);
+    if (path === UNIT_SHEET) {
+      // (The units' pixel sheet, drawn in code: its pixels kept hard close up, blended far off.)
+      map = new THREE.DataTexture(unitSheet(), SHEET, SHEET, THREE.RGBAFormat);
+      map.magFilter = THREE.NearestFilter;
+      map.minFilter = THREE.LinearMipmapLinearFilter;
+      map.generateMipmaps = true;
+      map.needsUpdate = true;
+    } else map = new THREE.TextureLoader().load(`${import.meta.env.BASE_URL}${path}`);
     map.colorSpace = THREE.SRGBColorSpace;
     map.anisotropy = 4;
     textures.set(path, map);
@@ -438,9 +456,13 @@ export function makeUnitMaterial(time: { value: number }, texture?: string): THR
       .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>\n${UNIT_NORMAL}`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>\n${UNIT_VERTEX}`)
       .replace('#include <color_vertex>', `#include <color_vertex>
+        ${texture ? 'vTint = vec3(1.0);' : ''}
         #ifdef USE_INSTANCING_COLOR
           vec2 isTeamV = vec2(mod(aLimb.w, 2.0), mod(floor(aLimb.w / 2.0), 2.0)); // (team, skin: the flags)
-          vColor.rgb = mix(mix(color.rgb, aSkinTone.rgb, isTeamV.y), color.rgb * instanceColor.rgb, isTeamV.x);
+          ${texture ? `// (Textured: the tint (the owner's colour, the skin's tone) apart, laid on where the texture's alpha says: the fragment shader.)
+          vTint = mix(mix(vec3(1.0), aSkinTone.rgb, isTeamV.y), instanceColor.rgb, isTeamV.x);
+          vColor.rgb = mix(color.rgb, vec3(1.0), isTeamV.y * (1.0 - isTeamV.x));`
+    : 'vColor.rgb = mix(mix(color.rgb, aSkinTone.rgb, isTeamV.y), color.rgb * instanceColor.rgb, isTeamV.x);'}
           vColor.rgb *= 1.0 - 0.78 * aMore.z; // (burnt: a wreck)
         #endif`);
     // (A flat face's corners: no offset along the normal where the shadow map is looked up (the figures are not in it: no acne to keep off).)
@@ -456,10 +478,20 @@ export function makeUnitMaterial(time: { value: number }, texture?: string): THR
         vec3 faceNormal = normalize(cross(dFdx(vViewPosition), dFdy(vViewPosition)));
         vec3 normal = vFlatN > 0.5 ? faceNormal : normalize(vNormal) * faceDirection;
         vec3 nonPerturbedNormal = normal;`);
-    if (texture) shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', `
-      #ifdef USE_MAP
-        if (vMapUv.x >= 0.0) diffuseColor *= texture2D(map, vMapUv);
-      #endif`);
+    // (A pixel's alpha: how much of the tint it takes; 0 its own colour (an eye's white, undyed cloth, a device's paint).)
+    if (texture) {
+      // (Each figure its own face of its civ's and sex's: so many along the sheet from the model's (FACE_VARIANTS), as its skin tone carries: faceTone.)
+      shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vTint;').replace('#include <uv_vertex>', `#include <uv_vertex>
+        #if defined( USE_MAP ) && defined( USE_INSTANCING_COLOR )
+          if (uv.x >= 0.0 && uv.y < ${(FACES_END / SHEET).toFixed(6)}) vMapUv.x += floor(fract(aSkinTone.b * ${FACE_CODE.toFixed(1)}) * ${FACE_VARIANTS.toFixed(1)}) * ${(FACE / SHEET).toFixed(6)};
+        #endif`);
+      shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vTint;').replace('#include <map_fragment>', `
+        vec3 tint = vTint;
+        #ifdef USE_MAP
+          if (vMapUv.x >= 0.0) { vec4 texel = texture2D(map, vMapUv); diffuseColor.rgb *= texel.rgb; tint = mix(vec3(1.0), vTint, texel.a); }
+        #endif
+        diffuseColor.rgb *= tint;`);
+    }
   };
   mat.customProgramCacheKey = () => (texture ? 'unit-figure-textured' : 'unit-figure');
   return mat;
@@ -794,8 +826,10 @@ export class UnitView {
         arm = flingOf(now - f.shot); // (an engine's throwing arm, if it has one)
         if (now > f.fall) f.smoke = this.volleys.burn(at, now, f.smoke, wreck === 'sea', f.phase);
       }
-      this.put(f.slots.body, at, w.color, f.gait, f.skin, legs, arm, bends, char);
-      if (hairKey) this.put(f.slots.hair, head.copy(at).add(lift3.set(0, lift * this.size, back * this.size).applyQuaternion(turned)), f.hairColor, f.gait, f.skin, legs, 0, bends, 0);
+      // (A woman on foot a little smaller, her hair with her.)
+      const tall = f.female && !horse && lift === 0 && back === 0 ? WOMAN_SCALE : 1;
+      this.put(f.slots.body, at, w.color, f.gait, f.skin, legs, arm, bends, char, tall);
+      if (hairKey) this.put(f.slots.hair, head.copy(at).add(lift3.set(0, lift * this.size, back * this.size).applyQuaternion(turned)), f.hairColor, f.gait, f.skin, legs, 0, bends, 0, tall);
       // Its shadow: a soft disc on the ground under it (longer under a horse).
       // (On the ground under it, however high it flies: smaller the higher.)
       const high = 1 / (1 + 0.5 * s.alt);
@@ -848,9 +882,9 @@ export class UnitView {
   }
   // An instance written: where it stands and how it is turned (`turned`,
   // the scratch quaternion), its colour, its legs' beat, skin and pose.
-  private put(slot: Slot, pos: THREE.Vector3, c: THREE.Color, gait: number, skin: THREE.Color, walk: number, strike: number, body: Bends, char: number): void {
+  private put(slot: Slot, pos: THREE.Vector3, c: THREE.Color, gait: number, skin: THREE.Color, walk: number, strike: number, body: Bends, char: number, tall = 1): void {
     const w = this.scratch;
-    slot.b!.write(slot.i, w.m.compose(pos, w.turned, w.scale.setScalar(this.size)), c, gait, skin, walk, strike, body, char);
+    slot.b!.write(slot.i, w.m.compose(pos, w.turned, w.scale.setScalar(this.size * tall)), c, gait, skin, walk, strike, body, char);
   }
 
   // A fight going on, as its play says: out, striking, back home; its
@@ -1457,7 +1491,7 @@ export function figureLooks(type: UnitKey, civ: ArchCiv, women: number, rand: ()
   // (Machines: no one shows.)
   const none = isMachine(type) || (style === 'bald' && helmet);
   // (An imported body has its own hair.)
-  return { female: female && !isMachine(type), skin: new THREE.Color(pick(g.skin)), hair: none ? -1 : HAIR_STYLES.indexOf(style), hairColor: new THREE.Color(pick(g.hair)) };
+  return { female: female && !isMachine(type), skin: faceTone(new THREE.Color(pick(g.skin)), rand() * FACE_VARIANTS), hair: none ? -1 : HAIR_STYLES.indexOf(style), hairColor: new THREE.Color(pick(g.hair)) };
 }
 
 // Arrows in flight: each volley a dozen, from the archers to around the

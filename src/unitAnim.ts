@@ -115,10 +115,12 @@ const STANCE = 0.45;
 const ready = (now: number, phase: number, arms: Arms = 'other'): Pose => arms !== 'other'
   ? add(arms === 'cut' ? CUT_GUARD : arms === 'thrust' ? SPEAR_GUARD : BAYONET_GUARD, { bend: 0.02 * Math.sin(now * 2.3 + phase), twist: 0.07 * Math.sin(now * 1.7 + phase), arm: 0.04 * Math.sin(now * 2.9 + phase + 1), aim: 0.08 * Math.sin(now * 2.3 + phase + 1) })
   : guarded(P(0, 0, 0, 0.18 + 0.02 * Math.sin(now * 2.3 + phase), -0.12 + 0.07 * Math.sin(now * 1.7 + phase), 0.32 + 0.04 * Math.sin(now * 2.9 + phase + 1), 0, STANCE, 0.34, 0.7, 0.75 + 0.06 * Math.sin(now * 2.3 + phase + 1)), 0.3 + 0.05 * Math.sin(now * 1.9 + phase));
-// Fortified: down on bent knees behind its shield, the weapon levelled
-// over it, watchful (a slow look about, a breath).
+// Fortified: standing its ground, square to the front: feet set a little
+// apart, knees eased, the shield held up before the body (upright, not
+// tilted back), the weapon as it is carried; all but still (a breath, a
+// slow look about), so the rank reads as one line.
 const dugIn = (now: number, phase: number): Pose => guarded(
-  P(0, 0, 0, 0.2 + 0.02 * Math.sin(now * 1.3 + phase), 0.2 * Math.sin(now * 0.4 + phase * 2), 0.3, 0, 0.3, 0.42, 0.75, 1.3), 0.7);
+  P(0, 0, 0, 0.05 + 0.012 * Math.sin(now * 1.3 + phase), 0.05 * Math.sin(now * 0.4 + phase * 2), 0.1, 0, 0.2, 0.14, 0.3), 0.22);
 // Pulled up at the end of a run: settling into its stance, the body checked back.
 const pullUp = guarded(P(0, 0, 0, -0.12, 0, 0.4, 0, STANCE + 0.05, 0.42, 0.8, 1.1), 0.45);
 // Cowering under arrows or shells: down low, weapon or shield up.

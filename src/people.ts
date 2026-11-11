@@ -18,6 +18,8 @@
 import * as THREE from 'three';
 import { hull, limb, spike, gem, plate, R, type Ring, type V3 } from './lowpoly.ts';
 import type { Paint } from './creatures.ts';
+import { mapFace, mapRound, TORSO_TOP, TORSO_BOTTOM, ARMOR_STEEL, LINEN, type Armor } from './unitSheet.ts';
+import type { ArchCiv } from './architecture.ts';
 
 export const HIP = 0.5, SHOULDER = 0.8, HEAD_Y = 0.93;
 export const SKIN_PAINT = 0xffffff, CLOTH_PAINT = 0xa4a4a4;
@@ -45,6 +47,10 @@ export interface Dress {
   readonly fine?: boolean; // the units' figure: about three times the faces (finePerson)
   readonly heroic?: boolean; // the units' heroic proportions (HEROIC): a bigger head, bigger hands
   readonly broad?: boolean;  // and, a soldier's, a broader chest and shoulders
+  readonly undyed?: number;  // the units' dress: the skirt and sleeves in undyed cloth of this colour, the owner's colour kept to the tunic's body (and the skirt's hem, painted)
+  readonly painted?: boolean; // the finer figure painted from the units' sheet (unitSheet.ts): its face, its tunic's body and skirt
+  readonly civ?: ArchCiv;     // whose faces it is painted with
+  readonly armor?: Armor;     // a mail shirt or a cuirass over the tunic: steel, the owner's colour on the skirt below it
 }
 // Heroic proportions, as tabletop miniatures are made (heroic scale):
 // the head, the hands and what they hold larger than life, a soldier's
@@ -106,12 +112,15 @@ export const FINE_HEAD: readonly Ring[] = [[0.874, 0.047, 0.05, 0.019], [0.889, 
 // underside a plane down to the neck.)
 // (And narrowing to the chin in front, the jaw's angles wide behind.)
 const JAW_TILT = [0.013, 0.006], JAW_TAPER = [0.3, 0.12];
-const jawline = (i: number, v: THREE.Vector3, c: THREE.Vector3) => {
+// (`taper`: how much it narrows: a woman's to a small pointed chin, a man's jaw square.)
+const jawline = (taper: number) => (i: number, v: THREE.Vector3, c: THREE.Vector3) => {
   const t = JAW_TILT[i];
   if (!t) return;
   const front = (v.z - c.z) / FINE_HEAD[i]!.b;
   v.y -= t * front;
-  v.x *= 1 - JAW_TAPER[i]! * Math.max(0, front);
+  v.x *= 1 - Math.min(0.75, JAW_TAPER[i]! * taper) * Math.max(0, front);
+  // (And a woman's jaw narrower at its angles too.)
+  if (taper > 1) v.x *= 1 - 0.07 * (taper - 1);
 };
 // A shell over the head (helmets, hats, turbans: unitModels.ts): its
 // rings the head's own, scaled out, so that it holds the head at every
@@ -189,13 +198,14 @@ export function person(d: Dress, armL: ArmPose = HANG, armR: ArmPose = HANG, swi
   const T = d.broad ? T0.map(([a, b], i) => (i === 2 ? [a!, b! * 1.06] : [a!, b!])) : T0;
   // (Under a skirt, from the waist: the hips hidden.)
   const from = skirt === 'none' ? 0 : 1;
-  add(hull([0.46, 0.6, 0.76, 0.855].slice(from).map((y, i) => R([0, y, 0], T[i + from]![0]!, T[i + from]![1]!)), 6, CLOTH_PAINT, { caps: [false, true] }), 'team');
+  add(hull([0.46, 0.6, 0.76, 0.855].slice(from).map((y, i) => R([0, y, 0], T[i + from]![0]!, T[i + from]![1]!)), 6, d.armor ? ARMOR_STEEL[d.armor] : CLOTH_PAINT, { caps: [false, true] }), d.armor ? 'plain' : 'team');
   const [wa, wb] = T[1]!;
   if (skirt !== 'none') {
     // (An A-line, out past the tops of the thighs at the hips; its sides swing with the legs.)
     const hem = skirt === 'ankle' ? 0.07 : f ? 0.27 : 0.3, flare = skirt === 'ankle' ? 1.5 : 1.5;
     const rings = [R([0, 0.63, 0], wa! + 0.02, wb! + 0.016), ...(skirt === 'ankle' ? [R([0, 0.36, 0.004], (wa! + 0.03) * 1.2, (wb! + 0.03) * 1.2)] : []), R([0, hem, 0.006], (wa! + 0.03) * flare, (wb! + 0.034) * flare)];
-    add(hull(rings, 6, (p) => (p.y < hem + 0.01 ? TRIM : CLOTH_PAINT), { caps: [false, false] }), 'team', swing?.legs(1), undefined, hem);
+    if (d.undyed !== undefined && !d.armor) add(hull(rings, 6, d.undyed, { caps: [false, false] }), 'plain', swing?.legs(1), undefined, hem);
+    else add(hull(rings, 6, (p) => (p.y < hem + 0.01 ? TRIM : CLOTH_PAINT), { caps: [false, false] }), 'team', swing?.legs(1), undefined, hem);
   }
   if (d.belt !== undefined) add(hull([R([0, 0.64, 0], wa! + 0.018, wb! + 0.018), R([0, 0.61, 0], wa! + 0.018, wb! + 0.018)], 6, d.belt, { caps: [false, false] }), 'plain');
   // The head: chin, cheekbones, crown; its front edge the nose.
@@ -208,9 +218,10 @@ export function person(d: Dress, armL: ArmPose = HANG, armR: ArmPose = HANG, swi
     u.x *= side; fo.x *= side;
     const el = sh.clone().addScaledVector(u, UPPER), wr = el.clone().addScaledVector(fo, FORE);
     const long = d.sleeves === 'long', X: V3 = [1, 0, 0];
-    add(limb([v3(sh.clone().addScaledVector(u, -0.02)), v3(el.clone().addScaledVector(u, 0.012))], [0.036 * (d.broad ? HEROIC.deltoid : 1), 0.028], CLOTH_PAINT, 4, { caps: [false, false], side: X }), 'team', lm);
+    const sleeve = d.armor ? ARMOR_STEEL[d.armor] : d.undyed ?? CLOTH_PAINT, sleeveTag: PartTag = d.armor || d.undyed !== undefined ? 'plain' : 'team';
+    add(limb([v3(sh.clone().addScaledVector(u, -0.02)), v3(el.clone().addScaledVector(u, 0.012))], [0.036 * (d.broad ? HEROIC.deltoid : 1), 0.028], sleeve, 4, { caps: [false, false], side: X }), sleeveTag, lm);
     const elbow = [el.y, el.z] as const;
-    add(limb([v3(el), v3(wr)], [0.027, 0.02], long ? CLOTH_PAINT : SKIN_PAINT, 4, { caps: [false, false], side: X }), long ? 'team' : 'skin', lm, elbow);
+    add(limb([v3(el), v3(wr)], [0.027, 0.02], long ? sleeve : SKIN_PAINT, 4, { caps: [false, false], side: X }), long ? sleeveTag : 'skin', lm, elbow);
     const hk = d.heroic ? HEROIC.hand : 1;
     add(hull([R(v3(wr), 0.021 * hk, 0.015 * hk), R(v3(wr.clone().addScaledVector(fo, 0.065 * hk)), 0, 0)], 4, SKIN_PAINT, { side: X, caps: [false, false] }), 'skin', lm, elbow);
   }
@@ -293,7 +304,8 @@ function finePerson(d: Dress, armL: ArmPose, armR: ArmPose, swing: Swing): Part[
     add(fineShoe(x * 0.95, 0, d.shoes ?? SHOE), 'plain', lm, KNEE);
   }
   // The torso: hips, waist, chest, shoulders, the base of the neck.
-  const T = f ? [[0.104, 0.07, 0], [0.076, 0.056, 0], [0.103, 0.074, 0.007], [0.108, 0.058, 0], [0.05, 0.042, 0]]
+  // (A woman's: wide hips, a narrow waist, the bust forward, narrow sloping shoulders, a slim neck.)
+  const T = f ? [[0.11, 0.074, 0], [0.068, 0.051, 0], [0.098, 0.08, 0.016], [0.098, 0.055, 0], [0.043, 0.037, 0]]
     : [[0.094, 0.064, 0], [0.084, 0.06, 0], [0.114, 0.072, 0.007], [0.126, 0.062, 0], [0.055, 0.045, 0]];
   // (A soldier's broader: the shoulders out (the deltoids cover their
   // joints, which stay where they were), the chest deeper; not wider
@@ -302,25 +314,34 @@ function finePerson(d: Dress, armL: ArmPose, armR: ArmPose, swing: Swing): Part[
   const TY = [0.46, 0.58, 0.72, 0.815, 0.857];
   // (Under a skirt too, from the hips: so no gap opens between them as the skirt swings.)
   const from = 0;
-  add(hull(TY.slice(from).map((y, i) => R([0, y, T[i + from]![2]!], T[i + from]![0]! * FLAT8, T[i + from]![1]! * FLAT8)), 8, CLOTH_PAINT, { ...EIGHT, caps: [false, true] }), 'team');
+  // (Painted: all of it from the sheet (the cloth's shade too): a tunic's neckline, lacing and belt, a uniform's buttons, mail, a cuirass.)
+  const body = hull(TY.slice(from).map((y, i) => R([0, y, T[i + from]![2]!], T[i + from]![0]! * FLAT8, T[i + from]![1]! * FLAT8)), 8, d.painted ? 0xffffff : d.armor ? ARMOR_STEEL[d.armor] : CLOTH_PAINT, { ...EIGHT, caps: [false, true] });
+  if (d.painted) add(mapRound(body, d.armor ?? (d.undyed === undefined ? 'uniform' : 'torso'), (y) => (TORSO_TOP - y) / (TORSO_TOP - TORSO_BOTTOM)), 'team');
+  else add(body, d.armor ? 'plain' : 'team');
   const [wa, wb] = T[1]!;
   if (skirt !== 'none') {
     // (An A-line, out past the tops of the thighs at the hips; its sides swing with the legs.)
     const hem = skirt === 'ankle' ? 0.07 : f ? 0.27 : 0.3;
     const rings = [R([0, 0.63, 0], (wa! + 0.02) * FLAT8, (wb! + 0.016) * FLAT8), R([0, (0.63 + hem) / 2, 0.003], (wa! + 0.03) * 1.25 * FLAT8, (wb! + 0.032) * 1.25 * FLAT8),
       R([0, hem, 0.006], (wa! + 0.031) * 1.52 * FLAT8, (wb! + 0.035) * 1.52 * FLAT8)];
-    add(hull(rings, 8, (p) => (p.y < hem + 0.01 ? TRIM : CLOTH_PAINT), { ...EIGHT, caps: [false, false] }), 'team', swing?.legs(1), undefined, hem);
+    // (Painted: the sheet's undyed cloth and its hem in the owner's colour, waist to hem; else undyed all through, or the owner's colour.)
+    if (d.painted) add(mapRound(hull(rings, 8, 0xffffff, { ...EIGHT, caps: [false, false] }), d.armor === 'mail' ? 'mailSkirt' : d.armor === 'plate' ? 'plateSkirt' : 'skirt', (y) => (0.63 - y) / (0.63 - hem)), 'team', swing?.legs(1), undefined, hem);
+    else if (d.undyed !== undefined && !d.armor) add(hull(rings, 8, d.undyed, { ...EIGHT, caps: [false, false] }), 'plain', swing?.legs(1), undefined, hem);
+    else add(hull(rings, 8, (p) => (p.y < hem + 0.01 ? TRIM : CLOTH_PAINT), { ...EIGHT, caps: [false, false] }), 'team', swing?.legs(1), undefined, hem);
   }
   if (d.belt !== undefined) add(hull([R([0, 0.645, 0], (wa! + 0.019) * FLAT8, (wb! + 0.019) * FLAT8), R([0, 0.612, 0], (wa! + 0.019) * FLAT8, (wb! + 0.019) * FLAT8)], 8, d.belt, { ...EIGHT, caps: [false, false] }), 'plain');
   // The neck and head: under the jaw, the chin, the cheekbones, the brow,
   // the forehead, the crown; a nose; the eyes.
   // (Heroic: all of it larger about the neck, as what it wears is: unitModels.ts.)
   const hero = d.heroic === true;
-  add(heroicHead(hull([R([0, 0.85, -0.004], 0.034, 0.036), R([0, 0.9, 0.002], 0.032, 0.034)], 6, SKIN_PAINT, { caps: [false, false] }), hero), 'skin');
+  const nk = f ? 0.84 : 1.06; // (a woman's neck slim, a man's thick)
+  add(heroicHead(hull([R([0, 0.85, -0.004], 0.034 * nk, 0.036 * nk), R([0, 0.9, 0.002], 0.032 * nk, 0.034 * nk)], 6, SKIN_PAINT, { caps: [false, false] }), hero), 'skin');
   // (Its corners where helmets' and hair's are, inside them: headShell.)
-  add(heroicHead(hull(FINE_HEAD, 8, SKIN_PAINT, { ...EIGHT, caps: [true, true], push: jawline }), hero), 'skin');
+  const head = hull(FINE_HEAD, 8, SKIN_PAINT, { ...EIGHT, caps: [true, true], push: jawline(f ? 1.9 : 0.8) });
+  add(heroicHead(d.painted ? mapFace(head, d.civ ?? 'Romans', f) : head, hero), 'skin');
   add(heroicHead(spike([[0, 0.928, 0.064], [0, 0.912, 0.074], [0, 0.904, 0.082]], 0.013, SKIN_PAINT, 3), hero), 'skin');
-  for (const s of [1, -1]) add(heroicHead(plate([[-0.009, 0], [0.009, 0], [0.007, 0.006], [-0.007, 0.006]], EYE).translate(s * 0.024, 0.927, 0.07), hero), 'plain');
+  // (The eyes: painted on with the face, or two dark plates.)
+  if (!d.painted) for (const s of [1, -1]) add(heroicHead(plate([[-0.009, 0], [0.009, 0], [0.007, 0.006], [-0.007, 0.006]], EYE).translate(s * 0.024, 0.927, 0.07), hero), 'plain');
   // (The ears: on the side planes, behind the middle, from the brow's line
   // down to the nose's base; a little out from the head, their tops leaning back.)
   // (A small flattened solid, half in the head: lit as the skin is.)
@@ -335,14 +356,19 @@ function finePerson(d: Dress, armL: ArmPose, armR: ArmPose, swing: Swing): Part[
     u.x *= side; fo.x *= side;
     const el = sh.clone().addScaledVector(u, UPPER), wr = el.clone().addScaledVector(fo, FORE);
     const at = (p: THREE.Vector3): V3 => [p.x, p.y, p.z];
-    const dk = d.broad ? HEROIC.deltoid : 1, hk = hero ? HEROIC.hand : 1, big = about(wr, hk);
+    const dk = (d.broad ? HEROIC.deltoid : 1) * (f ? 0.86 : 1), hk = (hero ? HEROIC.hand : 1) * (f ? 0.88 : 1), big = about(wr, hk), ak = f ? 0.82 : 1; // (a woman's arms slim, her hands small)
     const arm = hull([R(at(sh.clone().addScaledVector(u, -0.025)), 0.04 * dk, 0.042 * dk), R(at(sh.clone().addScaledVector(u, 0.07)), 0.039 * (1 + (dk - 1) * 0.6), 0.041 * (1 + (dk - 1) * 0.6)),
-      R(at(el), 0.028, 0.029), R(at(el.clone().addScaledVector(fo, 0.055)), 0.029, 0.031), R(at(wr), 0.02, 0.022)], 6, CLOTH_PAINT, { caps: [false, false], side: [1, 0, 0] });
+      R(at(el), 0.028 * ak, 0.029 * ak), R(at(el.clone().addScaledVector(fo, 0.055)), 0.029 * ak, 0.031 * ak), R(at(wr), 0.02 * ak, 0.022 * ak)], 6, CLOTH_PAINT, { caps: [false, false], side: [1, 0, 0] });
     blendAt(arm, el, u.clone().negate(), fo, 0.018);
     // (The sleeve: the upper arm in cloth; the forearm in cloth too if long, else bare.)
     const long = d.sleeves === 'long', cut = split(arm, (m) => (long || m.clone().sub(el).dot(fo) < 0.004 ? 'sleeve' : 'bare'));
     const elbow = [el.y, el.z] as const;
-    for (const [k, g] of cut) add(k === 'sleeve' ? g : painted(g, SKIN_PAINT), k === 'sleeve' ? 'team' : 'skin', lm, elbow);
+    // (The sleeve: steel under armour (a cuirass's arms to the wrist; mail to the elbow, cloth below), undyed cloth, or the owner's colour.)
+    const sleeveOf = (m: THREE.Vector3) => (d.armor === 'plate' || (d.armor === 'mail' && m.clone().sub(el).dot(fo) < 0.004) ? ARMOR_STEEL[d.armor] : d.armor ? LINEN : d.undyed);
+    for (const [k, g] of cut) {
+      if (k !== 'sleeve') { add(painted(g, SKIN_PAINT), 'skin', lm, elbow); continue; }
+      for (const [c, piece] of split(g, (m) => String(sleeveOf(m) ?? 'team'))) add(c === 'team' ? piece : painted(piece, Number(c)), c === 'team' ? 'team' : 'plain', lm, elbow);
+    }
     // (The hand: the palm, flat, the fingers together; the thumb up along the grip.)
     const across = new THREE.Vector3(1, 0, 0).addScaledVector(fo, -fo.x).normalize(), thumb = wr.clone().addScaledVector(fo, 0.02);
     add(hull([R(at(wr), 0.021 * hk, 0.014 * hk), R(big(wr.clone().addScaledVector(fo, 0.045)), 0.023 * hk, 0.012 * hk), R(big(wr.clone().addScaledVector(fo, 0.078)), 0.012 * hk, 0.008 * hk)], 4, SKIN_PAINT, { side: [1, 0, 0], caps: [false, true] }), 'skin', lm, elbow);

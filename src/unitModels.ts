@@ -6,6 +6,7 @@ import { horseParts } from './creatures.ts';
 import { gem, hull, plate, R, type V3 } from './lowpoly.ts';
 import type { ArchCiv } from './architecture.ts';
 import type { UnitKey } from './rules.ts';
+import { mapFlat, LINEN, type Armor } from './unitSheet.ts';
 
 // Unit figurines: painted miniatures, as the props and houses are, one model
 // per unit type and civ. A model is one figure (a soldier, a rider on his
@@ -143,8 +144,8 @@ const hilt = (g: THREE.Vector3, dir: THREE.Vector3, len: number, color: number, 
     lp(gem([g.x - d.x * (len + 0.012), g.y - d.y * (len + 0.012), g.z - d.z * (len + 0.012)], [pom, pom, pom], color, 4), {}, t)];
 };
 
-// Whether the model being built has the finer bodies (unitModel's `fine`).
-let FINE = true;
+// Whether the model being built has the finer bodies (unitModel's `fine`), and whose it is (its faces: unitSheet.ts).
+let FINE = true, CIV: ArchCiv = 'Romans';
 // The march: legs swing from the hip, arms against them from the shoulder.
 export const LEG_AMP = 0.45;
 const LEG = (side: number) => [side, HIP, LEG_AMP] as const;
@@ -234,13 +235,15 @@ const gunAt = (hold: Hold, hR: { x: number; y: number; z: number }, hL: { x: num
   const d = V(0, Math.cos(REST_PITCH[hold]), Math.sin(REST_PITCH[hold])), g = V(hR.x * 0.65 + hL.x * 0.35, hR.y, hR.z);
   return (k: number) => g.clone().addScaledVector(d, k);
 };
-function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { helmet?: boolean; pack?: boolean; quiver?: boolean; female?: boolean; civilian?: boolean; modern?: boolean; still?: boolean; helmetAs?: Helmet; shieldAs?: Shield } = {}): THREE.BufferGeometry[] {
+function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { armor?: Armor; helmet?: boolean; pack?: boolean; quiver?: boolean; female?: boolean; civilian?: boolean; modern?: boolean; still?: boolean; helmetAs?: Helmet; shieldAs?: Shield } = {}): THREE.BufferGeometry[] {
   const gear1: Gear = opts.modern ? { ...gear0, legs: 0x4a4e44, helmet: 'kettle' } : gear0;
   const gear: Gear = { ...gear1, helmet: opts.helmetAs ?? gear1.helmet, shield: opts.shieldAs ?? gear1.shield };
   const f = opts.female === true;
   const dress: Dress = {
     fine: FINE, heroic: true, broad: opts.civilian !== true, female: f, skirt: opts.modern ? 'none' : opts.civilian && f ? 'ankle' : 'knee', legs: gear.legs,
     sleeves: gear.legs === 'bare' && !opts.modern ? 'short' : 'long',
+    // (Painted from the units' sheet; before the modern uniform, the skirt and sleeves undyed.)
+    painted: FINE, civ: CIV, ...(opts.modern ? {} : { undyed: LINEN }), ...(opts.armor ? { armor: opts.armor } : {}),
   };
   // The arms: the right one carries the weapon, the left the shield (or the bow).
   const bow = hold === 'bow' || hold === 'recurve', twoHands = hold === 'crossbow' || hold === 'musket' || hold === 'rifle' || hold === 'mg' || hold === 'longsword';
@@ -351,7 +354,7 @@ function shieldShape(s: Shield, at: Tf, t: Tag): THREE.BufferGeometry[] {
   const boss = (z = 0.008) => lp(gem([at.x ?? 0, at.y ?? 0, (at.z ?? 0) + z], [0.032, 0.032, 0.022], METAL, 6, [Math.PI / 2, 0, 0]), {}, t);
   const dished = (r: number, sy = 1, n = 8) => {
     const o = { turn: Math.PI / n, caps: [false, false] as const }, up = (g: THREE.BufferGeometry) => g.rotateX(Math.PI / 2);
-    return [lp(up(hull([R([0, 0, 0], r, r * sy), R([0, 0.016, 0], r * 0.62, r * 0.62 * sy), R([0, 0.024, 0], 0, 0)], n, PAINT, o)), at, face),
+    return [mapFlat(lp(up(hull([R([0, 0, 0], r, r * sy), R([0, 0.016, 0], r * 0.62, r * 0.62 * sy), R([0, 0.024, 0], 0, 0)], n, PAINT, o)), at, face), 'round'),
       lp(up(hull([R([0, -0.006, 0], r * 1.03, r * sy * 1.03), R([0, 0.004, 0], r * 1.03, r * sy * 1.03)], n, RIM, o)), at, t), boss(0.02)];
   };
   switch (s) {
@@ -359,9 +362,9 @@ function shieldShape(s: Shield, at: Tf, t: Tag): THREE.BufferGeometry[] {
     case 'big round': return dished(0.2);
     case 'small': return dished(0.11);
     case 'oval': return dished(0.12, 1.6);
-    case 'scutum': return [shape(new THREE.CylinderGeometry(0.2, 0.2, 0.42, 3, 1, true, -0.62, 1.24).rotateY(Math.PI), PAINT, { ...at, z: (at.z ?? 0) + 0.18, y: (at.y ?? 0) - 0.02 }, face), boss()];
-    case 'pavise': return [box(0.26, 0.46, 0.025, PAINT, { ...at, y: (at.y ?? 0) - 0.03 }, face)];
-    case 'kite': return [lp(plate([[-0.12, 0.14], [0, 0.155], [0.12, 0.14], [0.11, -0.03], [0.06, -0.17], [0, -0.29], [-0.06, -0.17], [-0.11, -0.03]], PAINT, 0.012), at, face), boss()];
+    case 'scutum': return [mapFlat(shape(new THREE.CylinderGeometry(0.2, 0.2, 0.42, 3, 1, true, -0.62, 1.24).rotateY(Math.PI), PAINT, { ...at, z: (at.z ?? 0) + 0.18, y: (at.y ?? 0) - 0.02 }, face), 'tall'), boss()];
+    case 'pavise': return [mapFlat(box(0.26, 0.46, 0.025, PAINT, { ...at, y: (at.y ?? 0) - 0.03 }, face), 'tall')];
+    case 'kite': return [mapFlat(lp(plate([[-0.12, 0.14], [0, 0.155], [0.12, 0.14], [0.11, -0.03], [0.06, -0.17], [0, -0.29], [-0.06, -0.17], [-0.11, -0.03]], PAINT, 0.012), at, face), 'kite'), boss()];
   }
 }
 
@@ -419,7 +422,7 @@ function mount(coat: number, cloth: boolean): THREE.BufferGeometry[] {
 function rider(gear: Gear, coat: number, female: boolean, style: RiderStyle): THREE.BufferGeometry[] {
   const heavy = style === 'knight';
   const out: THREE.BufferGeometry[] = [...mount(coat, !heavy), box(0.16, 0.05, 0.22, LEATHER, { y: SEAT - 0.03, z: 0.02 })];
-  const dress: Dress = { fine: FINE, heroic: true, broad: true, female, legs: gear.legs, sleeves: 'long' };
+  const dress: Dress = { fine: FINE, heroic: true, broad: true, female, legs: gear.legs, sleeves: 'long', painted: FINE, civ: CIV, undyed: LINEN, ...(heavy || style === 'lancer' ? { armor: 'plate' as const } : {}) };
   const armR: ArmPose = HOLD, armL: ArmPose = HOLD;
   // (The weapon arm strikes with its weapon: the same swing, bent at the same elbow.)
   const amp = style === 'officer' ? 0.6 : REACH, strike = HIT(SEAT + 0.3, amp);
@@ -463,7 +466,7 @@ function horseArcher(gear: Gear, coat: number, female: boolean): THREE.BufferGeo
   const out: THREE.BufferGeometry[] = [...mount(coat, true), box(0.16, 0.05, 0.22, LEATHER, { y: SEAT - 0.03, z: 0.02 })];
   const armR: ArmPose = HOLD, armL: ArmPose = RAISE;
   const raise = HIT(SEAT + 0.3, 0.8), eL = elbowAt(1, armL, female).add(V(0, SEAT - HIP, 0));
-  out.push(...tagged(riderBody({ fine: FINE, heroic: true, broad: true, female, legs: gear.legs, sleeves: 'long' }, SEAT, armL, armR, undefined, raise)));
+  out.push(...tagged(riderBody({ fine: FINE, heroic: true, broad: true, female, legs: gear.legs, sleeves: 'long', painted: FINE, civ: CIV, undyed: LINEN }, SEAT, armL, armR, undefined, raise)));
   arming(true);
   const g = handAt(1, armL, female).add(V(0, SEAT - HIP, 0)), up: Tag = { limb: raise, joint: [eL.y, eL.z] };
   out.push(rod(g, g.clone().add(V(0, 0.26, -0.05)), 0.01, 0.007, 3, 0x5a3a22, up), rod(g, g.clone().add(V(0, -0.26, -0.05)), 0.01, 0.007, 3, 0x5a3a22, up), rod(g.clone().add(V(0, 0.26, -0.05)), g.clone().add(V(0, -0.26, -0.05)), 0.003, 0.003, 3, 0xd8d0c0, up),
@@ -924,7 +927,7 @@ export function formationSlots(type: UnitKey, hp: number, rand?: () => number): 
 // (`fine`: its people in the finer body (people.ts finePerson), for when it
 // is seen close; else the plain one, for far off.)
 export function unitModel(type: UnitKey, civ: ArchCiv, variant = 0, female = false, fine = true): THREE.BufferGeometry {
-  FINE = fine;
+  FINE = fine; CIV = civ;
   const gear = GEAR[civ];
   const parts = (() => {
     switch (type) {
@@ -935,7 +938,7 @@ export function unitModel(type: UnitKey, civ: ArchCiv, variant = 0, female = fal
       case 'chariotArcher': return chariot(gear, HORSE[variant % HORSE.length]!, female);
       case 'compositeBowman': return figure(gear, 'recurve', false, { helmet: true, quiver: true, female });
       case 'catapult': return catapult();
-      case 'longswordsman': return figure(gear, 'longsword', false, { helmet: true, female });
+      case 'longswordsman': return figure(gear, 'longsword', false, { armor: 'plate', helmet: true, female });
       case 'trebuchet': return trebuchet();
       case 'lancer': return rider(gear, HORSE[variant % HORSE.length]!, female, 'lancer');
       case 'gatlingGun': return gatling();
@@ -948,7 +951,7 @@ export function unitModel(type: UnitKey, civ: ArchCiv, variant = 0, female = fal
       case 'antiAircraft': return antiAircraft();
       case 'slinger': return figure(gear, 'sling', false, { helmet: false, female });
       case 'horseArcher': return horseArcher(gear, HORSE[variant % HORSE.length]!, female);
-      case 'manAtArms': return figure(gear, 'sword', true, { helmet: true, helmetAs: HEAVY_HELMET(gear.helmet), shieldAs: 'kite', female });
+      case 'manAtArms': return figure(gear, 'sword', true, { armor: 'mail', helmet: true, helmetAs: HEAVY_HELMET(gear.helmet), shieldAs: 'kite', female });
       case 'explorer': return figure(gear, 'staff', false, { helmet: true, helmetAs: 'hat', pack: true, female, civilian: true });
       case 'fieldCannon': return fieldCannon();
       case 'greatWarInfantry': return figure(gear, 'rifle', false, { helmet: true, female, modern: true });
@@ -965,9 +968,9 @@ export function unitModel(type: UnitKey, civ: ArchCiv, variant = 0, female = fal
       case 'settler': return figure(gear, variant % 2 ? 'staff' : 'none', false, { pack: variant % 2 === 0, female, civilian: true });
       case 'worker': return figure(gear, 'hoe', false, { female, civilian: true });
       // (Its two figures: the commander mounted, and the standard-bearer.)
-      case 'swordsman': return figure(gear, 'sword', true, { helmet: true, female });
-      case 'pikeman': return figure(gear, 'pike', false, { helmet: true, female });
-      case 'crossbowman': return figure(gear, 'crossbow', false, { helmet: true, quiver: true, female });
+      case 'swordsman': return figure(gear, 'sword', true, { armor: 'mail', helmet: true, female });
+      case 'pikeman': return figure(gear, 'pike', false, { armor: 'plate', helmet: true, female });
+      case 'crossbowman': return figure(gear, 'crossbow', false, { armor: 'mail', helmet: true, quiver: true, female });
       case 'knight': return rider(gear, HORSE[variant % HORSE.length]!, female, 'knight');
       case 'musketman': return figure(gear, 'musket', false, { helmet: true, female });
       case 'rifleman': return figure(gear, 'rifle', false, { helmet: true, female });
