@@ -139,7 +139,7 @@ export function militaryPhase(g: Game, p: Player, P: AiPolicy, cities: readonly 
       // The city to take: near, weak, worth having.
       let best: City | null = null, bestS = -Infinity, from = cities[0]!;
       for (const c of g.cities) {
-        if (!wantVs.includes(c.owner)) continue;
+        if (!wantVs.includes(c.owner) || !g.known[p.id]![c.tile]) continue;
         const home = cities.reduce((a, b) => (dist(b.tile, c.tile) < dist(a.tile, c.tile) ? b : a));
         const d = dist(home.tile, c.tile);
         if (d > 16) continue;
@@ -260,7 +260,7 @@ export function militaryPhase(g: Game, p: Player, P: AiPolicy, cities: readonly 
     if (g.canPillage(u) && g.rng() < P.pillageRate) { g.pillage(u); continue; }
     // Hurt and out of danger: it rests.
     if (u.hp < 70 && !(danger.get(u.tile) ?? 0)) { rest(u); continue; }
-    if (!canAttackType(u.type)) { wander(g, u, cities); continue; }
+    if (!canAttackType(u.type)) { scout(g, u, cities); continue; }
     let post: City | null = null, bestS = -Infinity;
     for (const c of cities) {
       const s = exposure.get(c.id)! / (1 + (posted.get(c.id) ?? 0)) - 0.004 * dist(u.tile, c.tile);
@@ -273,7 +273,24 @@ export function militaryPhase(g: Game, p: Player, P: AiPolicy, cities: readonly 
   }
 }
 
-// A unit with nothing to fight for (a scout) roams round the empire.
+// A scout goes for the unknown: the nearest land it could stand on from
+// which something its civ has not explored would be seen; with none left
+// within reach, it roams.
+function scout(g: Game, u: Unit, cities: readonly City[]): void {
+  const known = g.known[u.owner]!;
+  let best: number | null = null, bestS = -Infinity;
+  for (const [t, d] of g.tilesWithinMap(u.tile, 9)) {
+    if (d === 0 || g.isWater(t) || !known[t] || g.isForeignBlocked(t, u.owner) || !g.canStand(u, t)) continue;
+    let dark = 0;
+    for (const x of g.tilesWithin(t, 2)) if (!known[x]) dark++;
+    if (!dark) continue;
+    const s = dark - 2.5 * d;
+    if (s > bestS) { best = t; bestS = s; }
+  }
+  if (best !== null) g.goTo(u, best); else wander(g, u, cities);
+}
+
+// A unit with nothing to do roams round the empire.
 function wander(g: Game, u: Unit, cities: readonly City[]): void {
   const opts = g.tilesWithin(u.tile, 3).filter((t) => !g.isWater(t) && !g.isEnemyOccupied(t, u.owner));
   const home = cities[0];
