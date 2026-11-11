@@ -320,6 +320,11 @@ export class GlobeRenderer {
   private readonly tileChunk: PropChunk[] = [];
   private readonly propCache = new Map<number, PlacedProp[]>();
   private readonly craters = new THREE.Group();
+  // The forts workers build (game.ts fort): a small stone work on its tile.
+  private readonly forts = new THREE.Group();
+  private fortsKey = '';
+  private fortGeo: THREE.BufferGeometry | null = null;
+  private readonly fortMat = new THREE.MeshLambertMaterial({ vertexColors: true });
   private readonly unitsGroup = new THREE.Group();
   private unitView!: UnitView;
   private selUnit: Unit | null = null;
@@ -618,6 +623,8 @@ export class GlobeRenderer {
     this.treeHeight = this.propHeight('beechMaple');
     this.craters.userData['stat'] = 'craters';
     this.scene.add(this.craters);
+    this.forts.userData['stat'] = 'forts';
+    this.scene.add(this.forts);
     for (const kind of BUILDING_KINDS) this.propGeo.set(kind, buildBuildingGeometry(kind).scale(s * 1.5 * PROP_SIZE, s * 1.5 * PROP_SIZE, s * 1.5 * PROP_SIZE));
     this.prevUse = new Uint8Array(N);
     this.prevBuilt = new Int8Array(N).fill(-1);
@@ -745,6 +752,7 @@ export class GlobeRenderer {
     if (changed.length || dirty.size || useChanged || townChanged.length) this.shadowsDirty = true;
     this.updateRoads(changed.length > 0 || townChanged.length > 0);
     this.updateSmoke();
+    this.updateForts();
     this.updateCities();
     this.updateResources();
     this.updateUnits(sel);
@@ -831,6 +839,7 @@ export class GlobeRenderer {
     // strategic view keeps the flags, the banners and the medallions.)
     this.unitsGroup.visible = mode === 'normal' || mode === 'strategic';
     this.unitView.group.visible = mode === 'normal';
+    this.forts.visible = mode === 'normal';
     this.shadowsDirty = true;
   }
 
@@ -1546,6 +1555,67 @@ export class GlobeRenderer {
       }
       if (chunk.farHouses) chunk.farHouses.visible = this.view === 'normal' && seen && away > farDist * HOUSE_FAR;
     }
+  }
+
+  // A fort's model, once: a square of stone curtain walls with a tower at
+  // each corner and a gate, wide enough for its garrison to stand in its yard
+  // (y up, on the ground at 0). A first, plain model: to be drawn properly.
+  private fortGeometry(): THREE.BufferGeometry {
+    if (this.fortGeo) return this.fortGeo;
+    const e = this.game.globe.avgEdgeAngle, L = 0.86 * e, wallH = 0.1 * e, thick = 0.04 * e, tower = 0.13 * e, towerH = 0.17 * e;
+    const parts: THREE.BufferGeometry[] = [];
+    const box = (w: number, h: number, d: number, x: number, y: number, z: number, color: number) => {
+      const geo = new THREE.BoxGeometry(w, h, d).translate(x, y + h / 2, z).toNonIndexed();
+      const c = new THREE.Color(color), n = geo.getAttribute('position').count, col = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) col.set([c.r, c.g, c.b], i * 3);
+      geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      parts.push(geo);
+    };
+    const STONE = 0xc2b9a4, DARK = 0xa59c88, CAP = 0x857f72, WOOD = 0x6b4f35, h = L / 2;
+    // The curtain walls (the front one in two, for the gate), their walks' merlons.
+    for (const z of [-h, h]) {
+      if (z > 0) { box(L * 0.38, wallH, thick, -L * 0.31, 0, z, STONE); box(L * 0.38, wallH, thick, L * 0.31, 0, z, STONE); box(L * 0.24, wallH * 0.75, thick * 0.5, 0, 0, z, WOOD); box(L * 0.3, wallH * 0.3, thick * 1.2, 0, wallH, z, DARK); }
+      else box(L, wallH, thick, 0, 0, z, STONE);
+      for (let k = -3; k <= 3; k++) if (k !== 0 || z < 0) box(L * 0.07, wallH * 0.28, thick, k * L * 0.14, wallH, z, DARK);
+    }
+    for (const x of [-h, h]) {
+      box(thick, wallH, L, x, 0, 0, STONE);
+      for (let k = -3; k <= 3; k++) box(thick, wallH * 0.28, L * 0.07, x, wallH, k * L * 0.14, DARK);
+    }
+    // The corner towers, capped.
+    for (const x of [-h, h]) for (const z of [-h, h]) { box(tower, towerH, tower, x, 0, z, DARK); box(tower * 1.2, towerH * 0.14, tower * 1.2, x, towerH, z, CAP); }
+    // (The yard left open: its garrison stands in it.)
+    const pos: number[] = [], col: number[] = [], nor: number[] = [];
+    for (const g of parts) {
+      pos.push(...(g.getAttribute('position').array as Float32Array)); col.push(...(g.getAttribute('color').array as Float32Array)); nor.push(...(g.getAttribute('normal').array as Float32Array));
+      g.dispose();
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    return (this.fortGeo = geo);
+  }
+  // The forts on explored tiles, each standing on its tile's ground, turned by its tile.
+  private updateForts(): void {
+    const g = this.game;
+    let seen = 0;
+    for (let t = 0; t < g.N; t++) if (g.fort[t] && g.explored[t]) seen += t + 1;
+    const key = `${g.fortVersion}|${seen}`;
+    if (key === this.fortsKey) return;
+    this.fortsKey = key;
+    this.forts.clear();
+    const up = new THREE.Vector3(0, 1, 0);
+    for (let t = 0; t < g.N; t++) {
+      if (!g.fort[t] || !g.explored[t]) continue;
+      const m = new THREE.Mesh(this.fortGeometry(), this.fortMat);
+      m.position.copy(this.surface(t));
+      m.quaternion.setFromUnitVectors(up, g.tiles[t]!.center).multiply(new THREE.Quaternion().setFromAxisAngle(up, (t * 2.399) % (Math.PI / 2)));
+      m.castShadow = true;
+      m.receiveShadow = true;
+      this.forts.add(m);
+    }
+    this.shadowsDirty = true;
   }
 
   // A glowing lava pool in each explored volcano's crater (the crater itself

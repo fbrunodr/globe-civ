@@ -24,6 +24,7 @@ export const GENES = {
   siteResource: [0, 6, 0],         // what each resource within two tiles adds to a site's worth (one it lacks: twice)
   workerPop: [1.5, 6, 3],          // citizens to a worker
   workerResource: [0, 10, 4],      // what a resource adds to a tile's worth to a worker
+  fortRate: [0, 1, 0],             // how readily a worker with nothing to improve builds a fort by a city that faces a rival
   armyBase: [0, 6, 2],             // the army it wants: this many units...
   armyPerCity: [0.5, 5, 2],        // ...and this many more a city
   armyWar: [1, 3, 1],              // times this while at war,

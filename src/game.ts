@@ -140,14 +140,18 @@ const STARTING: readonly BuildKey[] = ['warrior', 'slinger', 'scout', 'settler',
 // ---- combat (shared with the Units page's battle sandbox) ----
 // Fortified, a unit defends this much better.
 export const FORTIFY_BONUS = 0.5;
-// What a unit that did not move or attack heals a turn (as in Civ V:
-// being attacked does not stop it): in a city of its own, and elsewhere.
-export const GARRISON_HEAL = 25, FIELD_HEAL = 10;
-// What walls add to a garrison's strength (an open city adds nothing: it
-// is held by the unit in it, fortified, and no more). By simulation
-// (scripts/siege.ts): two of a kind take an open city from one of the
-// same more often than not; walls hold against two and fall to three.
-export const WALLS_DEFENSE = 1;
+// What a unit that did not move or attack heals a turn, attacked or not:
+// in a city of its own, and elsewhere on its civ's land or waters; outside
+// its civ's territory it does not heal at all (ships the same).
+export const GARRISON_HEAL = 15, FIELD_HEAL = 10;
+// What walls add to a garrison's strength, and a fort to the unit in it
+// (an open city, like open ground, adds nothing). By simulation
+// (scripts/siege.ts): two of a kind take an open city from one of the same
+// two times in three; behind walls it is even, and takes three.
+export const WALLS_DEFENSE = 0.5, FORT_DEFENSE = 0.5;
+// A fort: the turns a worker takes to build one (one of its improvements:
+// a charge). It stands in an improvement's place: the tile has one or the other.
+export const FORT_TURNS = 4;
 // Which of its strengths a unit fights with (rules.ts): at close quarters
 // (attacking or defending), shooting, or under fire.
 export type Stat = 'melee' | 'ranged' | 'guard';
@@ -246,7 +250,7 @@ export interface Unit {
 // What a worker does on a tile: builds its improvement (a charge, of
 // WORKER_CHARGES), repairs it when pillaged, or lays a road (both free, as
 // often as wanted).
-export type WorkerJob = 'improve' | 'repair' | 'road';
+export type WorkerJob = 'improve' | 'repair' | 'road' | 'fort';
 export const WORKER_CHARGES = 3;
 // The units needing a strategic resource that one source of it arms (resourceRoom).
 export const UNITS_PER_SOURCE = 3;
@@ -369,6 +373,9 @@ export class Game {
   readonly drained: Uint8Array;     // 1 where a peat bog was drained to be worked (its feature is gone; its ground stays dry)
   readonly wondersBuilt = new Map<WonderKey, number>(); // wonder -> its tile (its city's center, or a mountain top; FALLEN)
   useVersion = 0;                   // bumped whenever a tile's use changes (for the renderer)
+  readonly fort: Uint8Array;        // 1 where a fort stands (built by workers, in an improvement's place)
+  readonly fortLeft: Uint8Array;    // turns left of fort work begun on a tile
+  fortVersion = 0;                  // bumped whenever a fort is built or goes
   readonly road: Uint8Array;        // 1 where workers have laid a road (a city's center counts as one: hasRoad)
   readonly roadLeft: Uint8Array;    // turns left of road work begun on a tile
   roadVersion = 0;                  // bumped whenever a road is laid
@@ -419,6 +426,8 @@ export class Game {
     this.pillaged = new Uint8Array(this.N);
     this.ruins = new Uint8Array(this.N);
     this.drained = new Uint8Array(this.N);
+    this.fort = new Uint8Array(this.N);
+    this.fortLeft = new Uint8Array(this.N);
     this.road = new Uint8Array(this.N);
     this.roadLeft = new Uint8Array(this.N);
     this.explored = new Uint8Array(this.N);
@@ -486,7 +495,8 @@ export class Game {
     return out;
   }
 
-  defenseBonus(t: number): number { return terrainDefense(this.terrainAt(t)); }
+  // What the ground adds to a defender's strength: its terrain, and a fort standing there.
+  defenseBonus(t: number): number { return terrainDefense(this.terrainAt(t)) + (this.fort[t] ? FORT_DEFENSE : 0); }
 
   ownerOf(t: number): number {
     const c = this.tileCity[t];
@@ -1501,6 +1511,29 @@ export class Game {
     const o = this.ownerOf(t);
     return o >= 0 && o !== u.owner ? 'Not your land.' : null;
   }
+  // Why worker u can't build a fort where it stands (null: it can): on
+  // land of its own or no one's, not a city's center nor a wonder's tile,
+  // with an improvement left to build. A fort takes the place of the
+  // tile's improvement (and of a citizen's work there).
+  fortBlock(u: Unit, started = false): string | null {
+    const t = u.tile;
+    if (!unitDef(u.type).improves) return 'Only workers build forts.';
+    if (u.packedIn !== null || this.isWater(t) || this.relief[t] === 'mountains') return 'No fort can stand here.';
+    if (this.use[t] === USE.center || this.wondersAt(t).length) return 'No fort can stand here.';
+    if (this.fort[t]) return 'A fort stands here already.';
+    const o = this.ownerOf(t);
+    if (o >= 0 && o !== u.owner) return 'Not your land.';
+    if (!started && u.moves <= 0) return 'No moves left.';
+    return !started && u.charges <= 0 ? 'It has built all it could: it still lays roads and repairs.' : null;
+  }
+  buildFort(u: Unit): boolean {
+    if (this.fortBlock(u) !== null) return false;
+    this.fortLeft[u.tile] = this.fortLeft[u.tile] || FORT_TURNS;
+    u.work = u.tile; u.job = 'fort';
+    u.moves = 0; u.goal = null; u.fortified = false;
+    this.record('improve', u.owner, { tile: u.tile, improvement: 'fort' });
+    return true;
+  }
   roadTurns(t: number): number { return this.roadLeft[t] || ROAD_TURNS + (this.moveCost(t) > 1 ? 1 : 0); }
   // Sets worker u to laying a road on its tile.
   buildRoad(u: Unit): boolean {
@@ -1581,6 +1614,25 @@ export class Game {
       const t = u.work;
       if (t === null || u.dead) continue;
       const done = () => { for (const v of this.units) if (v.work === t && v.job === u.job) { v.work = null; v.job = null; } };
+      if (u.job === 'fort') {
+        if (this.fortBlock(u, true) !== null) { u.work = null; u.job = null; continue; }
+        if (this.fortLeft[t]! > 1) { this.fortLeft[t]!--; continue; }
+        // (In the improvement's place: what was built there goes, and the citizen who worked it is to be placed again.)
+        this.fort[t] = 1;
+        this.fortLeft[t] = 0;
+        this.improved[t] = -1;
+        this.underway[t] = -1;
+        this.pillaged[t] = 0;
+        const city = this.cityById.get(this.tileCity[t]!);
+        if (city && this.use[t] === USE.rural) this.unplace(city, { tile: t });
+        if (city && !this.players[city.owner]!.isHuman) this.autoPlace(city);
+        this.fortVersion++;
+        this.useVersion++;
+        u.charges--;
+        done();
+        if (u.owner === HUMAN) this.log('A worker built a fort.');
+        continue;
+      }
       if (u.job === 'road') {
         if (this.roadBlock(u, true) !== null) { u.work = null; u.job = null; continue; }
         if (this.roadLeft[t]! > 1) { this.roadLeft[t]!--; continue; }
@@ -1613,6 +1665,7 @@ export class Game {
   // on, cities.ts drained).
   build(t: number, k: ImprovementKey): void {
     if (this.wondersAt(t).length) return; // (a wonder's tile is the wonder's)
+    if (this.fort[t]) { this.fort[t] = 0; this.fortVersion++; } // (an improvement takes a fort's place)
     if (this.feature[t] === 'bog') {
       this.feature[t] = null;
       this.drained[t] = 1;
@@ -1679,7 +1732,7 @@ export class Game {
     const out: GrowthOption[] = [];
     for (const t of this.tilesWithin(city.tile, CITY_REACH)) {
       // (Any tile of its civ within its reach that no citizen works, its own or a sister city's: worked, it becomes this city's.)
-      if (this.ownerOf(t) !== city.owner || this.blockedFor(city, t) || this.use[t] !== USE.wild || this.wondersAt(t).length || !this.improvementAt(t, city.owner)) continue;
+      if (this.ownerOf(t) !== city.owner || this.blockedFor(city, t) || this.use[t] !== USE.wild || this.fort[t] || this.wondersAt(t).length || !this.improvementAt(t, city.owner)) continue;
       const y = this.workedYield(t, city.owner);
       if (y.food + y.prod + y.gold > 0) out.push({ kind: 'rural', tile: t, improvement: this.builtAt(t) });
     }
@@ -2530,8 +2583,9 @@ export class Game {
     for (const u of this.units) {
       const mv = this.maxMoves(u.type, u.owner);
       if (u.moves >= mv && u.hp < 100) {
+        // (Only on its own civ's land or waters; more in one of its cities.)
         const home = this.cityByTile.get(u.tile)?.owner === u.owner;
-        u.hp = Math.min(100, u.hp + (home ? GARRISON_HEAL : FIELD_HEAL) + total(this.effectsOf(this.players[u.owner]!), 'heal'));
+        if (home || this.ownerOf(u.tile) === u.owner) u.hp = Math.min(100, u.hp + (home ? GARRISON_HEAL : FIELD_HEAL) + total(this.effectsOf(this.players[u.owner]!), 'heal'));
       }
       u.moves = mv;
       u.skipped = false;

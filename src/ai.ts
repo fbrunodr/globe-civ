@@ -298,6 +298,15 @@ function workerTurn(g: Game, u: Unit): void {
     // Nothing to improve or mend: the roads between its civ's cities, the
     // nearest stretch still to lay. A worker with nothing left to build
     // and no road to lay is let go (its upkeep saved).
+    // (Or a fort, now and then: by the city of its civ nearest a rival's, on its side toward that rival, where no citizen works.)
+    if (u.charges > 0 && g.rng() < pol(g, g.players[u.owner]!).fortRate) {
+      const spot = fortSpot(g, u.owner);
+      if (spot !== null && g.approxDist(u.tile, spot) <= 10) {
+        if (u.tile !== spot) g.goTo(u, spot);
+        if (!u.dead && u.tile === spot && u.moves > 0) g.buildFort(u);
+        return;
+      }
+    }
     const road = roadTarget(g, u);
     if (road === null) { if (u.charges <= 0) g.removeUnit(u); else u.fortified = true; return; }
     if (u.tile !== road) g.goTo(u, road);
@@ -306,6 +315,24 @@ function workerTurn(g: Game, u: Unit): void {
   }
   if (u.tile !== u.aiTarget) g.goTo(u, u.aiTarget);
   if (!u.dead && u.tile === u.aiTarget && u.moves > 0 && g.improve(u, u.tile)) u.aiTarget = null;
+}
+
+// Where a civ would build a fort: by its city nearest a rival's, the free tile next to it on that rival's side.
+function fortSpot(g: Game, owner: number): number | null {
+  let best: { c: City; r: City; d: number } | null = null;
+  for (const c of g.cities) {
+    if (c.owner !== owner) continue;
+    for (const r of g.cities) {
+      if (r.owner === owner || !g.known[owner]![r.tile]) continue;
+      const d = g.approxDist(c.tile, r.tile);
+      if (!best || d < best.d) best = { c, r, d };
+    }
+  }
+  if (!best || best.d > 12) return null;
+  const { c, r } = best;
+  if (g.tiles[c.tile]!.neighbors.some((t) => g.fort[t])) return null;
+  const free = g.tiles[c.tile]!.neighbors.filter((t) => !g.isWater(t) && g.relief[t] !== 'mountains' && g.ownerOf(t) === owner && g.use[t] === USE.wild && g.builtAt(t) === null && !g.wondersAt(t).length);
+  return free.length ? free.reduce((a, b) => (g.approxDist(b, r.tile) < g.approxDist(a, r.tile) ? b : a)) : null;
 }
 
 // The tiles each civ's roads should run on (roads.ts routeRoads between

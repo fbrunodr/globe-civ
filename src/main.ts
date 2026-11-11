@@ -154,7 +154,7 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey, leve
     ['Click', 'select (again: the next thing on the tile)'], ['Right-click', 'move or attack (<kbd>Shift</kbd>: the other way of attacking)'],
     ['<kbd>Enter</kbd>', 'what needs doing next, then end the turn'], ['<kbd>Shift</kbd><kbd>Enter</kbd>', 'end the turn now'],
     ['<kbd>N</kbd> <kbd>Tab</kbd>', 'next unit'], ['<kbd>C</kbd>', 'centre on the selection'],
-    ['<kbd>B</kbd>', 'found a city'], ['<kbd>I</kbd> <kbd>L</kbd>', 'a worker: improve the land · lay a road'],
+    ['<kbd>B</kbd>', 'found a city'], ['<kbd>I</kbd> <kbd>L</kbd> <kbd>O</kbd>', 'a worker: improve the land · lay a road · build a fort'],
     ['<kbd>F</kbd>', 'fortify'], ['<kbd>Space</kbd>', 'skip the unit\'s turn'],
     ['<kbd>P</kbd>', 'pillage'], ['<kbd>R</kbd> <kbd>U</kbd>', 'a commander: rally · deploy'],
     ['<kbd>H</kbd> <kbd>Y</kbd> <kbd>M</kbd>', 'hex grid · yields · strategic view'], ['<kbd>V</kbd>', 'walk on the ground'],
@@ -340,6 +340,9 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey, leve
       case 'road':
         if (unit && game.buildRoad(unit)) afterUnitAction(unit);
         break;
+      case 'fort':
+        if (unit && game.buildFort(unit)) afterUnitAction(unit);
+        break;
       case 'fortify':
         if (unit && !unitDef(unit.type).civilian) { unit.fortified = true; unit.goal = null; afterUnitAction(unit); }
         break;
@@ -482,7 +485,7 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey, leve
     if (e.target instanceof HTMLInputElement) return;
     const keyActions: Record<string, Action> = {
       ' ': { type: 'skip' }, f: { type: 'fortify' }, b: { type: 'found' }, i: { type: 'improve' }, p: { type: 'pillage' },
-      r: { type: 'rally' }, u: { type: 'deploy' }, l: { type: 'road' },
+      r: { type: 'rally' }, u: { type: 'deploy' }, l: { type: 'road' }, o: { type: 'fort' },
     };
     if (e.key === 'Enter') { e.preventDefault(); if (!menuBox.classList.contains('hidden')) openMenu(false); else act({ type: e.shiftKey ? 'endTurn' : 'next' }); return; }
     if (!menuBox.classList.contains('hidden')) { if (e.key === 'Escape') openMenu(false); return; }

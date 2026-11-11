@@ -1,7 +1,7 @@
 import { floraLabel } from './flora.ts';
 import { unitDef, buildDef, isUnitKey, isWonder, BUILDINGS, WONDERS, type BuildKey } from './rules.ts';
 import { terrainName } from './terrain.ts';
-import { HUMAN, BUILDABLE, PILLAGE_GOLD, COMMANDER_CAPACITY, UNITS_PER_SOURCE, VICTORIES, type Game, type City, type Unit } from './game.ts';
+import { HUMAN, BUILDABLE, PILLAGE_GOLD, COMMANDER_CAPACITY, UNITS_PER_SOURCE, VICTORIES, FORT_TURNS, FORT_DEFENSE, type Game, type City, type Unit } from './game.ts';
 import type { Selection } from './render.ts';
 import { canAssault, canShoot, type AttackMode } from './unitClasses.ts';
 import { techDef } from './techs.ts';
@@ -23,6 +23,7 @@ export type Action =
   | { type: 'found' }
   | { type: 'improve' }
   | { type: 'road' }
+  | { type: 'fort' }
   | { type: 'fortify' }
   | { type: 'wake' }
   | { type: 'skip' }
@@ -60,7 +61,7 @@ const isBuildKey = (s: string): s is BuildKey => (BUILDABLE as string[]).include
 function parseAction(el: HTMLElement): Action | null {
   const type = el.dataset['act'];
   switch (type) {
-    case 'found': case 'improve': case 'road': case 'fortify': case 'wake': case 'skip': case 'disband': case 'endTurn': case 'next': case 'governorPlace': case 'pillage': case 'raze': case 'buyMode': case 'convert': case 'rally': case 'deploy': case 'upgrade':
+    case 'found': case 'improve': case 'road': case 'fort': case 'fortify': case 'wake': case 'skip': case 'disband': case 'endTurn': case 'next': case 'governorPlace': case 'pillage': case 'raze': case 'buyMode': case 'convert': case 'rally': case 'deploy': case 'upgrade':
       return { type };
     case 'buy': {
       const c = el.dataset['currency'];
@@ -317,6 +318,7 @@ export class UI {
         const mend = k !== null && g.builtAt(t) === k && g.pillaged[t]! > 0;
         orders.push(order('improve', 'hammer', k ? `${mend ? 'Repair the' : 'Build a'} ${IMPROVEMENTS[k].name.toLowerCase()}` : 'Improve the land',
           k ? `${plural(g.improveTurns(t, u.owner), 'turn')}${mend ? ' · free' : ` · one of the ${plural(u.charges, 'improvement')} it can still build`}` : '', 'I', why));
+        orders.push(order('fort', 'fort', 'Build a fort', `${plural(FORT_TURNS, 'turn')} · one of the ${plural(u.charges, 'improvement')} it can still build. A unit in it defends ${Math.round(100 * FORT_DEFENSE)}% stronger, as behind a city's walls. It stands in the tile's improvement's place: the tile has one or the other`, 'O', g.fortBlock(u)));
         orders.push(order('road', 'road', 'Lay a road', `${plural(g.roadTurns(u.tile), 'turn')} · free. Units move twice as far along roads; a city joined to the capital by road trades with it`, 'L', g.roadBlock(u)));
       }
       if (u.type === 'commander') {
@@ -332,7 +334,7 @@ export class UI {
       }
       orders.push(order('skip', 'skip', 'Skip this turn', 'It will ask again next turn', '␣'), order('disband', 'close', 'Disband', 'The unit is gone for good', '', null, 'danger'));
     }
-    const status = u.work !== null ? (u.job === 'road' ? `Laying a road: ${plural(g.roadTurns(u.work), 'turn')} left`
+    const status = u.work !== null ? (u.job === 'road' ? `Laying a road: ${plural(g.roadTurns(u.work), 'turn')} left` : u.job === 'fort' ? `Building a fort: ${plural(g.fortLeft[u.work] || FORT_TURNS, 'turn')} left`
       : `${u.job === 'repair' ? 'Repairing' : 'Building'} ${(() => { const k = g.improvementAt(u.work, u.owner); return k ? `a ${IMPROVEMENTS[k].name.toLowerCase()}` : ''; })()}: ${plural(g.improveTurns(u.work, u.owner), 'turn')} left`)
       : u.fortified ? 'Fortified' : u.goal != null ? 'On its way' : '';
     const armyUnits = u.type === 'commander' ? g.armyOf(u) : [];
@@ -535,6 +537,7 @@ export class UI {
       const def = g.defenseBonus(t);
       lines.push(`Move cost ${g.moveCost(t)}${def ? ` · Defence +${Math.round(def * 100)}%` : ''}`);
     }
+    if (g.fort[t]) lines.push(`${icon('fort')} <b>Fort</b> <small>a unit in it defends ${Math.round(100 * FORT_DEFENSE)}% stronger</small>`);
     if (g.road[t]) lines.push(`${icon('road')} Road`);
     if (owner >= 0) lines.push(`<span class="swatch" style="background:${g.players[owner].color}"></span>Territory of the ${esc(g.players[owner].name)}`);
     if (g.visible[t]) {

@@ -26,7 +26,7 @@
 //               shooter an enemy blade could reach, with no blade of its
 //               own beside it, steps back before it would fire
 //   homeland    the rest (CvHomelandAI): a garrison in every city, units
-//               hurt rest until fit, the others stand by the cities nearest
+//               hurt rest until fit (on their own land: nothing heals off it), the others stand by the cities nearest
 //               a rival (or one under threat), fortified, not wandering
 //
 // The numbers these turn on are the civ's policy (aiPolicy.ts), so they
@@ -267,7 +267,8 @@ export function militaryPhase(g: Game, p: Player, P: AiPolicy, cities: readonly 
   }
   // 4. A unit badly hurt and in danger falls back toward its nearest city.
   for (const u of live()) {
-    if (done.has(u.id) || u.hp >= P.retreatHp || !(danger.get(u.tile) ?? 0) || [...garrison.values()].includes(u)) continue;
+    // (Or hurt and off its civ's land, where nothing heals.)
+    if (done.has(u.id) || u.hp >= P.retreatHp || (!(danger.get(u.tile) ?? 0) && g.ownerOf(u.tile) === p.id) || [...garrison.values()].includes(u)) continue;
     const home = cities.length ? cities.reduce((a, b) => (dist(b.tile, u.tile) < dist(a.tile, u.tile) ? b : a)) : null;
     if (home) { go(u, stand(u, home.tile, 2)); done.add(u.id); }
   }
@@ -280,7 +281,7 @@ export function militaryPhase(g: Game, p: Player, P: AiPolicy, cities: readonly 
     const hasBlades = mine.some((u) => op!.units.has(u.id) && blade(u));
     for (const u of army) {
       done.add(u.id);
-      if (u.hp < 50 && !(danger.get(u.tile) ?? 0) && op.state !== 'assault') { u.fortified = true; continue; }
+      if (u.hp < 50 && !(danger.get(u.tile) ?? 0) && op.state !== 'assault' && g.ownerOf(u.tile) === p.id) { u.fortified = true; continue; }
       if (op.state === 'gather') { if (dist(u.tile, op.muster) > 2) go(u, stand(u, op.muster, 2, (t) => t !== op!.muster)); else u.fortified = true; continue; }
       const d = dist(u.tile, city.tile);
       if (op.state === 'march') {
@@ -316,7 +317,7 @@ export function militaryPhase(g: Game, p: Player, P: AiPolicy, cities: readonly 
     // Burn enemy fields underfoot.
     if (g.canPillage(u) && g.rng() < P.pillageRate) { g.pillage(u); continue; }
     // Hurt and out of danger: it rests.
-    if (u.hp < 70 && !(danger.get(u.tile) ?? 0)) { rest(u); continue; }
+    if (u.hp < 70 && !(danger.get(u.tile) ?? 0) && g.ownerOf(u.tile) === p.id) { rest(u); continue; }
     if (!canAttackType(u.type)) { scout(g, u, cities); continue; }
     let post: City | null = null, bestS = -Infinity;
     for (const c of cities) {

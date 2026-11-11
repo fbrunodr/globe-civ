@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { WORKER_CHARGES, REPAIR_TURNS, ROAD_MOVE, Game, HUMAN } from '../src/game.ts';
+import { WORKER_CHARGES, REPAIR_TURNS, ROAD_MOVE, FORT_TURNS, FORT_DEFENSE, FIELD_HEAL, Game, HUMAN } from '../src/game.ts';
 import { IMPROVEMENTS, IMPROVE_TURNS, USE } from '../src/cities.ts';
 
 // Workers (Civ V's): they improve the land, a few turns on the tile, once
@@ -98,6 +98,30 @@ describe('K1: workers improve the land', () => {
     expect(g.stepCost(w, farm, next)).toBe(ROAD_MOVE);
   });
 
+  it('a fort: a charge, in the improvement\'s place; a unit in it defends stronger; healing only at home', () => {
+    const { g, farm } = fresh();
+    if (farm === undefined) return;
+    g.players[HUMAN]!.techs.add('pottery');
+    g.build(farm, 'farm');
+    const w = g.createUnit('worker', HUMAN, farm);
+    const open = g.defenseBonus(farm);
+    expect(g.buildFort(w)).toBe(true);
+    for (let i = 0; i < FORT_TURNS; i++) turn(g);
+    expect(g.fort[farm]).toBe(1);
+    expect(g.builtAt(farm)).toBeNull();
+    expect(w.charges).toBe(WORKER_CHARGES - 1);
+    expect(g.defenseBonus(farm)).toBeCloseTo(open + FORT_DEFENSE);
+    expect(g.growthOptions(g.cities[0]!).some((o) => o.kind === 'rural' && o.tile === farm)).toBe(false);
+    // (Hurt, a unit mends on its civ's land, not off it.)
+    const s = g.createUnit('warrior', HUMAN, farm);
+    s.hp = 50;
+    turn(g);
+    expect(s.hp).toBe(50 + FIELD_HEAL);
+    const off = g.tiles.findIndex((t) => !g.isWater(t.id) && g.relief[t.id] !== 'mountains' && g.ownerOf(t.id) < 0 && !g.unitsAt(t.id).length);
+    s.tile = off; s.hp = 50;
+    turn(g);
+    expect(s.hp).toBe(50);
+  });
   it('a luxury counts for its civ only once its improvement is built', () => {
     const { g, c, farm } = fresh();
     if (farm === undefined) return;

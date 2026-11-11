@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Game, PILLAGE_GOLD, PILLAGE_REPAIR, REPAIR_TURNS, type City } from '../src/game.ts';
+import { Game, PILLAGE_GOLD, PILLAGE_REPAIR, REPAIR_TURNS, WALLS_DEFENSE, type City } from '../src/game.ts';
 import { USE } from '../src/cities.ts';
 
 // War guarantees (design doc "Cities: Feel & Play", war and life).
@@ -38,14 +38,14 @@ describe('WR1: a city is its garrison\'s to hold', () => {
     expect(h.tile).toBe(city.tile);
   });
 
-  it('a garrison must be beaten first; walls make it twice as strong again', () => {
+  it('a garrison must be beaten first; walls make it half as strong again', () => {
     const { g, city, nb } = setup();
     g.declareWar(1, 0);
     const guard = g.createUnit('spearman', 0, city.tile);
     expect(g.cityStrength(city)).toBeGreaterThan(0);
     const open = g.unitStrength(guard, 'melee', 'def', city.tile);
     city.buildings.add('walls');
-    expect(g.unitStrength(guard, 'melee', 'def', city.tile)).toBeGreaterThan(1.5 * open);
+    expect(g.unitStrength(guard, 'melee', 'def', city.tile)).toBeCloseTo((1 + WALLS_DEFENSE) * open);
     // (An attacker that does not kill it does not get in.)
     const w = g.createUnit('warrior', 1, nb);
     g.attack(w, city.tile);
