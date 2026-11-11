@@ -8,7 +8,7 @@
 import { Worker, isMainThread, parentPort } from 'node:worker_threads';
 import { availableParallelism } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { Game } from '../src/game.ts';
+import { Game, FAITH_VICTORY } from '../src/game.ts';
 import { unitDef, type MapSizeKey } from '../src/rules.ts';
 import { LEVELS, type AiPolicy } from '../src/aiPolicy.ts';
 
@@ -20,17 +20,29 @@ export interface Stats { cities: number; pop: number; techs: number; army: numbe
 // game's end (someone wins: game.ts checkVictory) or `turns`. Each civ's
 // score is the game's own (game.ts score); the winner's, if the game was
 // won, is doubled: a policy is bred to win, the score only says how well
-// the others did.
+// the others did; and more for how near it came to a conquest or to its
+// faith's victory (nearness).
 export function playMatch(m: Match): Result {
   const g = new Game({ size: m.size, seed: m.seed, policies: m.policies, turnLimit: m.turns });
   for (const p of g.players) p.isHuman = false;
   for (let t = 0; t <= m.turns && !g.winner; t++) g.endTurn();
   const wars = g.events.filter((e) => e.kind === 'war').length;
   return {
-    scores: g.players.map((p) => g.score(p.id) * (g.winner?.player === p.id ? 2 : 1)),
+    scores: g.players.map((p) => g.score(p.id) * (g.winner?.player === p.id ? 2 : 1) * nearness(g, p.id)),
     stats: g.players.map((p) => ({ cities: g.cities.filter((c) => c.owner === p.id).length, pop: g.cities.reduce((s, c) => s + (c.owner === p.id ? c.pop : 0), 0), techs: p.techs.size,
       army: g.units.filter((u) => u.owner === p.id && !unitDef(u.type).civilian).length, alive: p.alive, wars, won: g.winner?.player === p.id ? g.winner.how : null, turns: g.turn })),
   };
+}
+// How near a civ came to the victories the score says nothing of: the
+// other civs' first capitals it holds (conquest: all of them) and the
+// world's people in its faith (religion: FAITH_VICTORY of them). Up to
+// twice the score for each, so a policy on the way to either is bred
+// from, not only one that got there: without it nothing leads a
+// population of builders toward a conquest five capitals away.
+function nearness(g: Game, id: number): number {
+  const n = g.players.length, own = g.players[id]!.firstCapital, holdsOwn = own !== null && g.cityById.get(own)?.owner === id;
+  const taken = Math.max(0, g.capitalsHeld(id) - (holdsOwn ? 1 : 0)) / Math.max(1, n - 1);
+  return (1 + taken) * (1 + Math.min(1, g.faithShare(id) / FAITH_VICTORY));
 }
 // How many civs a map of a size seats.
 export const seats = (size: MapSizeKey): number => new Game({ size, seed: 1 }).players.length;
