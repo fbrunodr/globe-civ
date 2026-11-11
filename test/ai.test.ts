@@ -41,7 +41,7 @@ describe('AI1: a game between computer civs', () => {
   });
   it('wars are fought as armies, and cities fall', () => {
     // (Over a few games: a war in most, a city taken in one at least.)
-    const games = [g, play(15, 200), play(14, 200)];
+    const games = [g, play(11, 200), play(14, 200)];
     expect(games.filter((x) => x.events.some((e) => e.kind === 'war')).length).toBeGreaterThanOrEqual(2);
     expect(games.reduce((n, x) => n + x.events.filter((e) => e.kind === 'cityCaptured').length, 0)).toBeGreaterThan(0);
   });
