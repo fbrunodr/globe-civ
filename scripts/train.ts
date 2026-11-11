@@ -12,14 +12,15 @@
 // the generations go). The first population is the policy written by hand
 // (BASE) and wide variations of it.
 //
-// The levels: the worst policy of the first generation, BASE, and the
-// champions a third, two thirds and all the way along; these five then
-// play a ladder of their own (every one at every seat of the same maps),
-// and are named in the order they finish. A level is a way of deciding,
-// measured: nothing is given to it or taken from the player.
+// The levels: the worst policy of the first generation, BASE, and
+// champions from ever further along play a ladder of their own (every one
+// at every seat of the same maps); five of them, spread evenly from the
+// weakest to the strongest by how they finish it, are the game's levels.
+// A level is a way of deciding, measured: nothing is given to it or taken
+// from the player.
 
-import { writeFileSync, mkdirSync, appendFileSync } from 'node:fs';
-import { BASE, GENE_KEYS, mutate, cross, type AiPolicy } from '../src/aiPolicy.ts';
+import { writeFileSync, mkdirSync, appendFileSync, readFileSync } from 'node:fs';
+import { BASE, GENE_KEYS, mutate, cross, policy, type AiPolicy } from '../src/aiPolicy.ts';
 import { mulberry32 } from '../src/rng.ts';
 import type { MapSizeKey } from '../src/rules.ts';
 import { playAll, seats, standings, ladderMatches, type Match } from './arena.ts';
@@ -42,7 +43,14 @@ const champions: { gen: number; policy: AiPolicy; mean: number }[] = [];
 let worstFirst: AiPolicy = BASE;
 const t0 = Date.now();
 
-for (let gen = 0; gen < GENS; gen++) {
+// (--from <a run's record> [--worst <levels file>]: its champions again, no breeding: only the levels are chosen anew.)
+const FROM = arg('from', '');
+if (FROM) {
+  for (const line of readFileSync(FROM, 'utf8').trim().split('\n')) { const r = JSON.parse(line) as { gen: number; champion: Record<string, number>; mean: number }; champions.push({ gen: r.gen, policy: policy(r.champion), mean: r.mean }); }
+  const old = JSON.parse(readFileSync(arg('worst', 'src/aiLevels.json'), 'utf8')) as { genes: Record<string, number> }[];
+  worstFirst = policy(old[0]!.genes);
+}
+for (let gen = 0; gen < (FROM ? 0 : GENS); gen++) {
   // Every policy at `ROUNDS` tables, seated by a shuffle each round.
   const matches: Match[] = [], who: number[][] = [];
   for (let r = 0; r < ROUNDS; r++) {
@@ -71,12 +79,23 @@ for (let gen = 0; gen < GENS; gen++) {
   pop = [...keep, ...Array.from({ length: POP - keep.length }, () => fresh(mutate(rng() < 0.5 ? cross(pick(), pick(), rng) : pick(), rng, 0.3, spread), gen + 1))];
 }
 
-// The levels, from along the road; then their own ladder, to name them in the order they finish.
-const at = (f: number) => champions[Math.min(champions.length - 1, Math.round(f * (champions.length - 1)))]!;
-const cands = [{ generation: 0, policy: worstFirst }, { generation: 0, policy: BASE }, ...[1 / 3, 2 / 3, 1].map((f) => ({ generation: at(f).gen + 1, policy: at(f).policy }))];
-const ladder = ladderMatches(cands.map((c) => c.policy), size, TURNS, 20 * cands.length, SEED * 100000 + 99000);
+// The levels: candidates from along the road (the worst of the first
+// generation, BASE, and champions ever further on); their own ladder; then
+// five of them, spread evenly from the weakest to the strongest by how
+// they finished it, so each level is a real step up from the one before.
+const stops = [...new Set([0, 1, 2, 4, 8, 16, 32, 64, champions.length - 1].filter((g) => g < champions.length))];
+const cands = [{ generation: 0, policy: worstFirst }, { generation: 0, policy: BASE }, ...stops.map((g) => ({ generation: champions[g]!.gen + 1, policy: champions[g]!.policy }))];
+const ladder = ladderMatches(cands.map((c) => c.policy), size, TURNS, 16 * cands.length, SEED * 100000 + 99000);
 const st = standings(await playAll(ladder.matches), ladder.who, cands.length);
-const ranked = cands.map((c, i) => ({ ...c, standing: +st[i]!.mean.toFixed(3) })).sort((a, b) => a.standing - b.standing);
+const all = cands.map((c, i) => ({ ...c, standing: +st[i]!.mean.toFixed(3) })).sort((a, b) => a.standing - b.standing);
+console.log('\nthe candidates\' ladder: ' + all.map((c) => `gen ${c.generation}: ${c.standing.toFixed(3)}`).join(' · '));
+const lo = all[0]!.standing, hi = all[all.length - 1]!.standing, ranked: typeof all = [];
+for (let i = 0; i < LEVEL_NAMES.length; i++) {
+  const want = lo + ((hi - lo) * i) / (LEVEL_NAMES.length - 1);
+  const pick = all.filter((c) => !ranked.includes(c)).reduce((a, b) => (Math.abs(b.standing - want) < Math.abs(a.standing - want) ? b : a));
+  ranked.push(pick);
+}
+ranked.sort((a, b) => a.standing - b.standing);
 const round = (p: AiPolicy) => Object.fromEntries(GENE_KEYS.map((k) => [k, +p[k].toFixed(3)]));
 const levels = ranked.map((c, i) => ({ name: LEVEL_NAMES[i]!, generation: c.generation, standing: c.standing, genes: round(c.policy) }));
 writeFileSync('src/aiLevels.json', '[\n' + levels.map((l) => '  ' + JSON.stringify(l)).join(',\n') + '\n]\n');

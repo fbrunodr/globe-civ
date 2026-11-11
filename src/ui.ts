@@ -153,7 +153,7 @@ export class UI {
     document.body.addEventListener('click', (e) => {
       const from = e.target instanceof Element ? e.target : null;
       const note = from?.closest<HTMLElement>('[data-notice]');
-      if (note) { this.dismissed.add(Number(note.dataset['notice'])); this.renderNotices(); return; }
+      if (note) { for (const i of (note.dataset['notice'] ?? '').split(',')) this.dismissed.add(Number(i)); this.renderNotices(); return; }
       const target = from?.closest<HTMLElement>('[data-act]');
       if (!target || target.classList.contains('off')) return;
       const action = parseAction(target);
@@ -211,10 +211,16 @@ export class UI {
 
   private renderNotices(): void {
     const g = this.game;
-    const items = g.messages.map((m, i) => ({ m, i })).filter(({ i }) => i >= this.noticesFrom && !this.dismissed.has(i)).slice(-7);
-    this.set(this.el.notices, items.map(({ m, i }) => {
-      const [ic, cls] = noticeLook(m.text);
-      return `<div class="notice ${cls}" data-notice="${i}" ${tip('Dismiss')}><span class="chip">${icon(ic)}</span><span>${esc(m.text)}</span></div>`;
+    // (The same news several times over: once, with how often.)
+    const items: { text: string; ids: number[] }[] = [];
+    g.messages.forEach((m, i) => {
+      if (i < this.noticesFrom || this.dismissed.has(i)) return;
+      const same = items.find((x) => x.text === m.text);
+      if (same) same.ids.push(i); else items.push({ text: m.text, ids: [i] });
+    });
+    this.set(this.el.notices, items.slice(-7).map(({ text, ids }) => {
+      const [ic, cls] = noticeLook(text);
+      return `<div class="notice ${cls}" data-notice="${ids.join(',')}" ${tip('Dismiss')}><span class="chip">${icon(ic)}</span><span>${esc(text)}${ids.length > 1 ? ` <small>×${ids.length}</small>` : ''}</span></div>`;
     }).join(''));
   }
 

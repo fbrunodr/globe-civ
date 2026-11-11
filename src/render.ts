@@ -48,6 +48,8 @@ import { loadGroundTextures, groundUniform, GROUND_LAYER } from './groundTexture
 const FOG = new THREE.Color(0x0b0e15);
 // How far into an unexplored tile the known land's edge slopes away and fades (of a tile's edge).
 const FOG_REACH = 0.5;
+// Clouds are the far view's: none over the map as it is played (they hid the land), gathering as the camera pulls back toward orbit (altitudes, of the air's height).
+const CLOUDS_FROM = 1.3, CLOUDS_FULL = 2.6;
 
 // Pixels per CSS pixel the renderer may use (setResolution).
 export const RESOLUTIONS = [2, 1.5, 1] as const;
@@ -2601,11 +2603,11 @@ export class GlobeRenderer {
     this.smoke.update(now / 1000, this.renderer.domElement.height / (2 * Math.tan((this.camera.fov * Math.PI) / 360)));
     this.smoke.points.visible = this.view === 'normal';
     this.waterMat.setTime(now / 1000);
-    // Clouds show from orbit and overhead when walking, never over the board.
+    // Clouds show from orbit and overhead when walking, never over the board (CLOUDS_FROM).
     const fog = this.scene.fog as THREE.FogExp2;
     const alt = this.viewAltitude();
     this.weather.update(now / 1000, this.sunDir, this.walk.active ? [0, 0] : [0.15, 0.6],
-      this.walk.active ? 1 : smoothstep(0.2, 0.55, alt / AIR.height), { color: fog.color, density: fog.density });
+      this.walk.active ? 1 : smoothstep(CLOUDS_FROM, CLOUDS_FULL, alt / AIR.height), { color: fog.color, density: fog.density });
     for (const k of this.statTris.keys()) this.statTris.set(k, 0);
     const t0 = performance.now();
     this.gpuTimer.frame(t0);
