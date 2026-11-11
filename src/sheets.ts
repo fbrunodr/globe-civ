@@ -1,4 +1,4 @@
-import { HUMAN, DEAL_TURNS, PEACE_TURNS, VICTORIES, type Victory, type Game, type Player, type DealSide, type Deal } from './game.ts';
+import { HUMAN, DEAL_TURNS, TRUCE_TURNS, TRUCE_BREAK, VICTORIES, type Victory, type Game, type Player, type DealSide, type Deal } from './game.ts';
 import { TECH_KEYS, techDef, techPath, type TechKey, type TechDef } from './techs.ts';
 import {
   POLITICS_KEYS, politicsDef, politicsPath, GOVERNMENT_KEYS, governmentDef, policyDef, fits, SLOT_KINDS, POLICY_KINDS, POLICY_KEYS,
@@ -13,7 +13,7 @@ import { RESOURCE_KEYS, resourceDef, empireBonus, type ResourceKey } from './res
 import { describe as describeEffect, describeAll, flat } from './effects.ts';
 import { ERAS, BUILDINGS, WONDERS, type EraIndex } from './cities.ts';
 import { UNITS, unitDef } from './rules.ts';
-import { power, aiAcceptsDeal, resourceWorth } from './ai.ts';
+import { aiAcceptsDeal, resourceWorth, standing, attitude, ATTITUDES } from './ai.ts';
 import { outStr, bonusStr, tip } from './ui.ts';
 import { icon, unitIcon, resourceIcon, type IconKey } from './icons.ts';
 
@@ -431,26 +431,26 @@ export class Sheets {
   }
 
   private diplomacyHtml(): string {
-    const g = this.game, mine = power(g, HUMAN);
+    const g = this.game;
     const others = g.players.filter((o) => o.id !== HUMAN && o.alive && g.met[HUMAN]![o.id]);
     if (!others.length) return this.standingsHtml() + '<p class="note">You have not met another civilization yet. Civilizations meet when their units or cities come within sight of each other.</p>';
+    // (How each compares with you: what anyone who has met them can see; the computer civs weigh the same.)
+    const cmp = (x: number) => { const [w, c] = x > 1.4 ? ['Far ahead', 'bad'] : x > 1.1 ? ['Ahead', 'warn'] : x > 0.9 ? ['Even', ''] : x > 0.7 ? ['Behind', 'good'] : ['Far behind', 'good']; return `<span class="${c}">${w}</span> <small>×${x.toFixed(1)}</small>`; };
     const rows = others.map((o) => {
-      const r = g.relations[HUMAN]![o.id]!, war = r.war;
-      const theirs = power(g, o.id), ratio = mine > 0 ? theirs / mine : Infinity;
-      const strength = ratio > 1.4 ? 'Much stronger' : ratio > 1.1 ? 'Stronger' : ratio > 0.9 ? 'Even' : ratio > 0.6 ? 'Weaker' : 'Much weaker';
+      const r = g.relations[HUMAN]![o.id]!, war = r.war, st = standing(g, HUMAN, o.id), mood = attitude(g, o, HUMAN);
       const offered = g.peaceOffers.has(`${o.id}>${HUMAN}`);
-      const wait = war ? Math.max(0, r.since + 8 - g.turn) : 0;
-      const action = !war ? (g.canDeclareWar(HUMAN, o.id) ? `<button class="danger" data-do="war" data-civ="${o.id}">Declare war</button>` : `<small>Peace treaty: ${r.since + PEACE_TURNS - g.turn} more turns</small>`)
+      const wait = war ? Math.max(0, r.since + 8 - g.turn) : 0, truce = g.truceLeft(HUMAN, o.id);
+      const action = !war ? `<button class="danger" data-do="war" data-civ="${o.id}" ${truce ? tip('Break the truce', `It has ${truce} turns to run: break it and your people make ${Math.round(100 * TRUCE_BREAK)}% less cohesion for as long`) : ''}>Declare war${truce ? ` <small>truce: ${truce}</small>` : ''}</button>`
         : offered ? `<button class="primary" data-do="accept" data-civ="${o.id}">Accept peace</button>`
         : g.canMakePeace(HUMAN, o.id) ? `<button data-do="peace" data-civ="${o.id}">Offer peace</button>` : `<small>Peace possible in ${wait} turns</small>`;
-      const cities = g.cities.filter((c) => c.owner === o.id).length;
-      const known = epithet(o.identity);
+      const known = epithet(o.identity), faith = g.faithOf(o.id);
       const trade = g.canTrade(HUMAN, o.id) ? `<button data-do="tradeWith" data-civ="${o.id}" class="${this.draft?.civ === o.id ? 'active' : ''}">Trade</button>` : '';
-      return `<tr><td><span class="swatch" style="background:${o.color}"></span> ${esc(o.name)}${known ? ` <small>${esc(known)}</small>` : ''}</td><td><span class="pill ${war ? 'war' : 'peace'}">${war ? `War since turn ${r.since}` : 'Peace'}</span></td>
-        <td>${esc(governmentDef(o.government).name)}</td><td class="num">${cities}</td><td>${strength}</td><td>${trade}</td><td>${action}</td></tr>`;
+      return `<tr><td><span class="swatch" style="background:${o.color}"></span> ${esc(o.name)}${known ? ` <small>${esc(known)}</small>` : ''}<br><small>${esc(governmentDef(o.government).name)}${faith ? ` · ${religionDef(faith).name}` : ''}</small></td>
+        <td><span class="pill ${mood === 'war' || mood === 'hostile' ? 'war' : mood === 'friendly' ? 'peace' : ''}" ${tip(ATTITUDES[mood].name, ATTITUDES[mood].tells)}>${ATTITUDES[mood].name}</span>${war ? ` <small>since turn ${r.since}</small>` : ''}</td>
+        <td>${cmp(st.army)}</td><td>${cmp(st.tech)}</td><td>${cmp(st.prod)}</td><td>${cmp(st.gold)}</td><td class="num">${g.cities.filter((c) => c.owner === o.id).length}</td><td>${trade}</td><td>${action}</td></tr>`;
     }).join('');
-    return `${this.standingsHtml()}<p class="note">Everyone starts at peace. At peace, units cannot enter each other's tiles; attacking a civilization declares war. A war lasts at least 8 turns before peace can be made. An AI accepts peace when the war is going badly for it, or has lasted long.</p>
-      <table class="grid"><tr><th>Civilization</th><th>Relation</th><th>Government</th><th>Cities</th><th>Military vs yours</th><th></th><th></th></tr>${rows}</table>
+    return `${this.standingsHtml()}<p class="note">How each civilization stands toward you is its own weighing of you, in broad: its plans stay its own. The columns compare it with you (×: theirs over yours), and the computer's civilizations weigh the same figures. Everyone starts at peace; at peace, units cannot enter each other's tiles, and attacking a civilization declares war. A war lasts at least 8 turns before peace can be made; a peace is a truce for ${TRUCE_TURNS} turns, which can be broken at a price.</p>
+      <table class="grid"><tr><th>Civilization</th><th>Toward you</th><th>Army</th><th>Technology</th><th>Production</th><th>Gold income</th><th>Cities</th><th></th><th></th></tr>${rows}</table>
       ${this.tradeHtml()}`;
   }
 

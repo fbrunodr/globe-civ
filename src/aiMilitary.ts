@@ -161,8 +161,7 @@ export function militaryPhase(g: Game, p: Player, P: AiPolicy, cities: readonly 
       // (Gathered: now the war, if it is not on yet.)
       if (!g.atWar(p.id, op.vs)) g.declareWar(p.id, op.vs);
       S.plan = null;
-      // (A treaty still holding: the army waits.)
-      if (g.atWar(p.id, op.vs)) { op.state = 'march'; op.stateSince = g.turn; }
+      op.state = 'march'; op.stateSince = g.turn;
     } else if (op.state === 'march' && (within(city.tile, 5) >= P.musterShare || g.turn - op.stateSince > 9)) { op.state = 'assault'; op.stateSince = g.turn; }
     for (const u of army) free.delete(u);
   }

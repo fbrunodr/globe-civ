@@ -24,7 +24,7 @@ import {
   type FocusKey, type GrowthOption, type TileUse, type Output, type SpecialistKind, type WonderKey, type WonderSite, type EraIndex, type ImprovementKey,
 } from './cities.ts';
 import { IMPROVEMENTS, IMPROVEMENT_KEYS, IMPROVE_TURNS, drained, out, OUTPUT_KEYS } from './cities.ts';
-import { techDef, techPath, improvementStage, STAGE_TECHS, TECHS, type TechKey, TECH_KEYS } from './techs.ts';
+import { techDef, techPath, improvementStage, STAGE_TECHS, TECHS, type TechKey, FINAL_TECH } from './techs.ts';
 import { politicsDef, politicsPath, GOVERNMENTS, governmentDef, policyDef, fits, SLOT_KINDS, type PoliticsKey, type GovernmentKey, type PolicyKey, type PolicySlot } from './politics.ts';
 import { traitDef, traitBlock, traitCost, type TraitKey } from './identity.ts';
 import { PILGRIM_GOLD, FAITH_STRIFE, religionDef, PRESSURE_REACH, HOLY_PRESSURE, CITY_PRESSURE, BUILDING_PRESSURE, CONVERT_AT, TITHE, type ReligionKey } from './religion.ts';
@@ -77,6 +77,8 @@ export interface Player {
   // The share of last turn's upkeep it could not pay (0: all paid): its
   // cities make that much less production, science and culture (economy.ts).
   arrears: number;
+  // Turns left of the dishonour of a broken truce (declareWar): its cities make less cohesion.
+  dishonor: number;
   government: GovernmentKey;
   policies: Record<PolicySlot, (PolicyKey | null)[]>;
   capital: number | null;    // the city with its palace (the first it founded, or the oldest left)
@@ -102,15 +104,16 @@ export interface Relation { war: boolean; since: number }
 export type Victory = 'conquest' | 'science' | 'religion' | 'time';
 export const VICTORIES: Record<Victory, { name: string; rule: string }> = {
   conquest: { name: 'Conquest', rule: 'Be the last civilization standing.' },
-  science: { name: 'Science', rule: 'Be the first to know every technology.' },
-  religion: { name: 'Religion', rule: 'Found a religion that more than half of the world\'s cities follow.' },
+  science: { name: 'Science', rule: 'Be the first to discover Artificial Superintelligence, the last technology.' },
+  religion: { name: 'Religion', rule: 'Found a religion that more than two thirds of the world\'s cities follow.' },
   time: { name: 'Time', rule: 'Have the best score when the last turn ends, if no one has won before.' },
 };
-export const FAITH_VICTORY = 0.5;
+export const FAITH_VICTORY = 2 / 3;
 export const TURN_LIMIT = 300;
 export const MIN_WAR = 8;
-// A peace holds at least this many turns: neither side may declare war on the other again before.
-export const PEACE_TURNS = 10;
+// A peace is a truce for this many turns: war may be declared again before, at a price (declareWar).
+export const TRUCE_TURNS = 20;
+export const TRUCE_BREAK = 0.5;
 
 // A trade between two civs at peace, for DEAL_TURNS: what each side gives,
 // a resource (a spare copy: it keeps one for itself) and gold a turn, or
@@ -405,7 +408,7 @@ export class Game {
       isHuman: id === HUMAN, alive: true, gold: 0, science: 0, culture: 0, cohesion: 0, faith: 0, era: 0, citiesFounded: 0, offensive: false,
       techs: new Set(), research: null, researchQueue: [], techProgress: {}, scienceBank: 0,
       politics: new Set(), studying: null, politicsQueue: [], politicsProgress: {}, cohesionBank: 0,
-      identity: new Set(), identityPoints: 0, arrears: 0,
+      identity: new Set(), identityPoints: 0, arrears: 0, dishonor: 0,
       government: 'chiefdom', policies: emptySlots('chiefdom'), capital: null, goldFrac: 0, ledger: EMPTY_LEDGER,
     }));
     const n = this.players.length;
@@ -962,7 +965,6 @@ export class Game {
     const target = this.cityByTile.get(tile)?.owner ?? this.units.find((v) => v.tile === tile && v.owner !== u.owner)?.owner;
     if (target !== undefined && target !== u.owner && !this.atWar(u.owner, target)) {
       this.declareWar(u.owner, target);
-      if (!this.atWar(u.owner, target)) return; // (a treaty holds)
     }
     const d = this.bestDefender(tile, u.owner, mode);
     const style = (d ? attackStyle(u.type, d.type, mode) : siegeStyle(u.type, mode)) ?? 'melee';
@@ -1666,7 +1668,8 @@ export class Game {
       if (f.bond[p.id]) sum = addOut(sum, out({ gold: PILGRIM_GOLD }));
       if (f.strife[p.id]) strife += FAITH_STRIFE;
     } else if (mine && city.religion) strife += FAITH_STRIFE;
-    if (strife) sum = { ...sum, cohesion: sum.cohesion * (1 - strife) };
+    if (p.dishonor > 0) strife += TRUCE_BREAK;
+    if (strife) sum = { ...sum, cohesion: sum.cohesion * (1 - Math.min(0.9, strife)) };
     // (In arrears: what it could not pay of its upkeep, its cities make less by, in production, science and culture.)
     const paid = (y: keyof Output) => (y === 'prod' || y === 'science' || y === 'culture' ? 1 - p.arrears : 1);
     sum = out(Object.fromEntries(OUTPUT_KEYS.map((y) => [y, Math.max(0, Math.floor(sum[y] * paid(y) * (100 + yieldBonus(fx, y)) / 100))])));
@@ -2381,13 +2384,23 @@ export class Game {
   // ---------- diplomacy ----------
 
   atWar(a: number, b: number): boolean { return a !== b && this.relations[a]![b]!.war; }
-  // Whether a may declare war on b: not while their last peace is younger than PEACE_TURNS (a treaty holds that long).
-  canDeclareWar(a: number, b: number): boolean {
+  // How many turns of a truce are left between a and b (0: none): a peace
+  // is a truce for TRUCE_TURNS. Nothing forbids breaking it; it costs.
+  truceLeft(a: number, b: number): number {
     const r = this.relations[a]![b]!;
-    return a !== b && !r.war && (r.since === 0 || this.turn - r.since >= PEACE_TURNS);
+    return a === b || r.war || r.since === 0 ? 0 : Math.max(0, r.since + TRUCE_TURNS - this.turn);
   }
+  // War declared. Breaking a truce dishonours the civ that does: for as
+  // many turns as the truce had left, its people make TRUCE_BREAK less
+  // cohesion (cityYields). So a war ended is not started again at once
+  // for nothing; but it can be, at that price.
   declareWar(a: number, b: number): void {
-    if (!this.canDeclareWar(a, b)) return;
+    if (a === b || this.atWar(a, b)) return;
+    const broken = this.truceLeft(a, b);
+    if (broken > 0) {
+      this.players[a]!.dishonor = Math.max(this.players[a]!.dishonor, broken);
+      if (a === HUMAN) this.log(`You broke the peace with the ${this.players[b]!.name}: your people make ${Math.round(100 * TRUCE_BREAK)}% less cohesion for ${broken} turns.`);
+    }
     this.relations[a]![b] = this.relations[b]![a] = { war: true, since: this.turn };
     this.diploVersion++;
     this.met[a]![b] = this.met[b]![a] = 1;
@@ -2487,6 +2500,7 @@ export class Game {
       u.moves = mv;
       u.skipped = false;
     }
+    for (const p of this.players) if (p.dishonor > 0) p.dishonor--;
     for (const p of this.players) if (p.alive) this.record('summary', p.id, this.summary(p));
     this.turn++;
     for (const u of this.units.filter((x) => x.owner === HUMAN && x.goal != null)) this.continueGoto(u);
@@ -2559,7 +2573,7 @@ export class Game {
     const alive = this.players.filter((p) => p.alive);
     const best = (f: (p: Player) => number) => alive.reduce((a, b) => (f(b) > f(a) ? b : a));
     if (alive.length === 1 && this.players.length > 1) this.winner = { player: alive[0]!.id, how: 'conquest' };
-    else if (alive.some((p) => p.techs.size >= TECH_KEYS.length)) this.winner = { player: best((p) => p.techs.size * 1e6 + this.score(p.id)).id, how: 'science' };
+    else if (alive.some((p) => p.techs.has(FINAL_TECH))) this.winner = { player: best((p) => (p.techs.has(FINAL_TECH) ? 1e9 : 0) + this.score(p.id)).id, how: 'science' };
     else if (alive.some((p) => this.faithShare(p.id) > FAITH_VICTORY)) this.winner = { player: best((p) => this.faithShare(p.id)).id, how: 'religion' };
     else if (this.turn > this.turnLimit && alive.length) this.winner = { player: best((p) => this.score(p.id)).id, how: 'time' };
     if (this.winner) this.record('victory', this.winner.player, { how: this.winner.how });

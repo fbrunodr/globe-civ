@@ -52,6 +52,9 @@ export const GENES = {
   peaceRatio: [0.3, 1.2, 0.8],     // it sues for peace once weaker than this of its enemy
   faithBond: [-1, 1, 0],           // how much a shared faith holds it back from a war (1: never; below 0: it prefers one)
   faithRival: [-1, 2, 0],          // how much a rival faith draws it to one
+  truceRespect: [0, 1, 0.5],       // how much a truce still running holds it back (1: it never breaks one)
+  warTech: [-1.5, 1.5, 0],         // how its lead in techs over a civ moves it to war on it (a power of the ratio; below 0: it goes for the more learned),
+  warProd: [-1.5, 1.5, 0],         // and its lead in production
   techUnits: [0, 3, 1.2],          // what a tech's (or politics') units are worth to it,
   techBuildings: [0, 3, 1.15],     // its buildings,
   techWonders: [0, 3, 0.75],       // its wonders,

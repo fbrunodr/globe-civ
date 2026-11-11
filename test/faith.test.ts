@@ -5,7 +5,8 @@
 import { describe, it, expect } from 'vitest';
 import { Game, HUMAN, VICTORIES } from '../src/game.ts';
 import { PILGRIM_GOLD } from '../src/religion.ts';
-import { TECH_KEYS } from '../src/techs.ts';
+import { FINAL_TECH } from '../src/techs.ts';
+import { TRUCE_TURNS } from '../src/game.ts';
 
 const two = () => {
   const g = new Game({ size: 'small', seed: 5 });
@@ -50,9 +51,9 @@ describe('F1: faith binds and divides', () => {
 
 describe('V1: the game is won', () => {
   it('four ways, each said in a line', () => expect(Object.keys(VICTORIES).sort()).toEqual(['conquest', 'religion', 'science', 'time']));
-  it('by science: the first to know every technology', () => {
+  it('by science: the first to discover the last technology', () => {
     const { g } = two();
-    for (const k of TECH_KEYS) g.players[1]!.techs.add(k);
+    g.players[1]!.techs.add(FINAL_TECH);
     g.endTurn();
     expect(g.winner).toEqual({ player: 1, how: 'science' });
     expect(g.over).toBe('defeat');
@@ -63,6 +64,17 @@ describe('V1: the game is won', () => {
     for (let t = 0; t < 5 && !g.winner; t++) g.endTurn();
     expect(g.winner?.how).toBe('time');
     expect(g.score(g.winner!.player)).toBe(Math.max(...g.players.map((p) => g.score(p.id))));
+  });
+  it('a truce can be broken, at a price: less cohesion for as long as it had to run', () => {
+    const { g } = two();
+    g.declareWar(0, 1);
+    for (let t = 0; t < 9; t++) g.endTurn();
+    expect(g.makePeace(0, 1)).toBe(true);
+    expect(g.truceLeft(0, 1)).toBe(TRUCE_TURNS);
+    g.declareWar(0, 1);
+    expect(g.atWar(0, 1)).toBe(true);
+    expect(g.players[0]!.dishonor).toBe(TRUCE_TURNS);
+    expect(g.players[1]!.dishonor).toBe(0);
   });
   it('by religion: a faith most of the world\'s cities follow', () => {
     const { g, a, b } = two();

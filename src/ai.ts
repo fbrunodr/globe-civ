@@ -468,27 +468,65 @@ function aiDiplomacy(g: Game, p: Player): void {
   }
   if (wars.length || g.turn < P.warAfter || g.rng() > P.warChance) return;
   if (planning(g, p)) return;
-  const own = g.cities.filter((c) => c.owner === p.id);
-  if (!own.length) return;
-  // The civ to fall on: one it has met, near, enough weaker than itself;
-  // the nearer and the weaker the better, one already at war with another
-  // better still. The war is planned, not declared: its army gathers
+  if (!g.cities.some((c) => c.owner === p.id)) return;
+  // The civ to fall on: the one it has most appetite for (appetite), if
+  // that is enough. The war is planned, not declared: its army gathers
   // first (aiMilitary.ts), and declares it when ready.
   let pick: Player | null = null, bestS = 0;
   for (const o of g.players) {
-    if (!o.alive || o.id === p.id || !g.met[p.id]![o.id] || !g.canDeclareWar(p.id, o.id)) continue;
-    const d = g.cities.reduce((m, c) => (c.owner === o.id ? Math.min(m, own.reduce((x, h) => Math.min(x, g.approxDist(c.tile, h.tile)), 99)) : m), 99);
-    const ratio = mine / (power(g, o.id) + 2);
-    if (d > 14 || ratio < P.warRatio) continue;
-    // (What its faith makes of the war: the pilgrims and the peace at home a
-    // war among the faithful would cost it, the quarrel with a rival creed;
-    // how much either weighs is its policy's, and bred.)
-    const mineF = g.faithOf(p.id), theirF = g.faithOf(o.id);
-    const faith = !mineF || !theirF ? 1 : mineF === theirF ? 1 - P.faithBond : 1 + P.faithRival;
-    const s = ratio * (1 + 6 / d) * (g.players.some((x) => x.id !== p.id && g.atWar(o.id, x.id)) ? 1.3 : 1) * faith;
-    if (s > bestS) { pick = o; bestS = s; }
+    if (!o.alive || o.id === p.id || !g.met[p.id]![o.id]) continue;
+    const a = appetite(g, p, o);
+    if (a.near && a.want >= 1 && a.score > bestS) { pick = o; bestS = a.score; }
   }
   if (pick) planWar(g, p, pick.id);
+}
+
+// How two civs compare, as anyone who has met them can see (the Diplomacy
+// sheet shows it; the computer weighs it): b's army, techs, production and
+// gold income over a's (1: even).
+export interface Standing { army: number; tech: number; prod: number; gold: number }
+export function standing(g: Game, a: number, b: number): Standing {
+  const A = g.players[a]!, B = g.players[b]!, over = (x: number, y: number) => (x + 1) / (y + 1);
+  return { army: over(power(g, b), power(g, a)), tech: over(B.techs.size, A.techs.size), prod: over(B.ledger.income.prod, A.ledger.income.prod), gold: over(B.ledger.income.gold, A.ledger.income.gold) };
+}
+// A civ's appetite for a war on another: how much stronger it is, against
+// what its policy asks (want: 1 and over, it would go), moved by what its
+// faith makes of it, a truce still running, and how they compare in techs
+// and production; `near`: within reach; `score`: for choosing among
+// several (nearer, and already at war with another, the better).
+function appetite(g: Game, p: Player, o: Player): { want: number; near: boolean; score: number } {
+  const P = pol(g, p), st = standing(g, p.id, o.id);
+  const own = g.cities.filter((c) => c.owner === p.id);
+  const d = g.cities.reduce((m, c) => (c.owner === o.id ? Math.min(m, own.reduce((x, h) => Math.min(x, g.approxDist(c.tile, h.tile)), 99)) : m), 99);
+  const mineF = g.faithOf(p.id), theirF = g.faithOf(o.id);
+  const faith = !mineF || !theirF ? 1 : mineF === theirF ? 1 - P.faithBond : 1 + P.faithRival;
+  const truce = 1 - P.truceRespect * Math.min(1, g.truceLeft(p.id, o.id) / 10);
+  const clamp = (x: number) => Math.min(4, Math.max(0.25, x));
+  const lead = clamp(1 / st.tech) ** P.warTech * clamp(1 / st.prod) ** P.warProd;
+  const ratio = power(g, p.id) / (power(g, o.id) + 2);
+  const want = (ratio * Math.max(0, faith) * Math.max(0, truce) * lead) / P.warRatio;
+  return { want, near: d <= 14, score: want * (1 + 6 / d) * (g.players.some((x) => x.id !== p.id && g.atWar(o.id, x.id)) ? 1.3 : 1) };
+}
+// How a computer civ stands toward another, in broad: what the other may
+// know of it (the Diplomacy sheet). From the same weighing its decisions
+// are made by, so it is never a mask; its plans themselves stay its own.
+export type Attitude = 'war' | 'hostile' | 'wary' | 'neutral' | 'friendly' | 'afraid';
+export const ATTITUDES: Record<Attitude, { name: string; tells: string }> = {
+  war: { name: 'At war', tells: 'You are at war.' },
+  hostile: { name: 'Hostile', tells: 'It thinks itself the stronger, has you within reach and nothing holds it back.' },
+  wary: { name: 'Wary', tells: 'It weighs its strength against yours, and is not far from liking what it sees.' },
+  neutral: { name: 'Neutral', tells: 'It has no quarrel with you, and no bond.' },
+  friendly: { name: 'Friendly', tells: 'A bond holds between you: a shared faith, or trade.' },
+  afraid: { name: 'Afraid', tells: 'You are much the stronger, and it knows it.' },
+};
+export function attitude(g: Game, o: Player, toward: number): Attitude {
+  if (g.atWar(o.id, toward)) return 'war';
+  const P = pol(g, o), a = appetite(g, o, g.players[toward]!), st = standing(g, o.id, toward);
+  if (a.near && a.want >= 1 && P.warChance > 0.005 && g.turn >= P.warAfter) return 'hostile';
+  if (st.army > 1.7) return 'afraid';
+  const f = g.faithOf(o.id), bond = (f !== null && f === g.faithOf(toward)) || g.deals.some((d) => d.sides.some((s) => s.civ === o.id) && d.sides.some((s) => s.civ === toward));
+  if (bond) return 'friendly';
+  return a.near && a.want >= 0.7 ? 'wary' : 'neutral';
 }
 
 // Whether it accepts peace offered by `from`: losing, even, or weary.

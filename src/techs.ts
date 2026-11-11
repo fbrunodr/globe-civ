@@ -32,6 +32,7 @@ export const TECH_KEYS = [
   'refrigeration', 'medicine', 'defenseInDepth', 'atomicTheory', 'telecommunications', 'flight', 'radar', 'jetPropulsion',
   // Information
   'computers', 'rocketry', 'composites', 'mobileTactics', 'nuclearFission', 'guidance', 'stealth', 'robotics', 'globalization', 'advancedBallistics',
+  'superintelligence',
 ] as const;
 export type TechKey = typeof TECH_KEYS[number];
 
@@ -52,6 +53,9 @@ export const TECH_COST_SCALE = 2.5;
 // techs come in a few turns, the last in many).
 const ERA_COST: Record<EraIndex, number> = { 0: 0.45, 1: 0.8, 2: 1.2, 3: 2.1, 4: 3.3, 5: 4.6, 6: 6.0 };
 const t = (name: string, era: EraIndex, cost: number, needs: readonly TechKey[], unlocks: Omit<TechDef, 'name' | 'era' | 'cost' | 'needs'> = {}): TechDef => ({ name, era, cost: Math.round(cost * TECH_COST_SCALE * ERA_COST[era]), needs, ...unlocks });
+
+// The last tech: it rests on every branch's end, and whoever discovers it first wins the game (game.ts checkVictory).
+export const FINAL_TECH: TechKey = 'superintelligence';
 
 export const TECHS: Record<TechKey, TechDef> = {
   // ---- Ancient ----
@@ -156,6 +160,7 @@ export const TECHS: Record<TechKey, TechDef> = {
   advancedBallistics: t('Advanced Ballistics', 6, 340, ['guidance', 'nuclearFission'], { units: ['nuclearMissile'] }),
   robotics:        t('Robotics', 6, 300, ['computers', 'massProduction'], { effects: [prodPct('all', 10)] }),
   globalization:   t('Globalization', 6, 300, ['telecommunications', 'computers'], { effects: [yieldPct('gold', 10), yieldPct('culture', 10), yieldPct('cohesion', 10)], wonders: ['cern'] }),
+  superintelligence: t('Artificial Superintelligence', 6, 600, ['robotics', 'globalization', 'advancedBallistics', 'stealth', 'composites', 'mobileTactics']),
 };
 export const techDef = (k: TechKey): TechDef => TECHS[k];
 
