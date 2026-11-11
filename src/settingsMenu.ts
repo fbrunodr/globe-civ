@@ -6,13 +6,13 @@
 
 import { RESOLUTIONS, type GlobeRenderer, type Resolution } from './render.ts';
 
-interface Settings { shadows: boolean; toneMapping: boolean; resolution: Resolution }
+export interface Settings { shadows: boolean; toneMapping: boolean; resolution: Resolution }
 // The resolution choices as shown.
-const RESOLUTION_NAME: Record<Resolution, string> = { 2: 'Sharp', 1.5: 'Balanced', 1: 'Fast' };
-const isResolution = (x: unknown): x is Resolution => RESOLUTIONS.some((r) => r === x);
+export const RESOLUTION_NAME: Record<Resolution, string> = { 2: 'Sharp', 1.5: 'Balanced', 1: 'Fast' };
+export const isResolution = (x: unknown): x is Resolution => RESOLUTIONS.some((r) => r === x);
 const KEY = 'civ.settings';
 
-function load(view: GlobeRenderer): Settings {
+export function loadSettings(view: GlobeRenderer): Settings {
   const s: Settings = { shadows: view.shadows, toneMapping: view.toneMapped, resolution: view.resolution };
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Record<keyof Settings, unknown>>;
@@ -22,12 +22,12 @@ function load(view: GlobeRenderer): Settings {
   } catch { /* (no storage: the defaults) */ }
   return s;
 }
-function save(s: Settings): void {
+export function saveSettings(s: Settings): void {
   try { localStorage.setItem(KEY, JSON.stringify(s)); } catch { /* (no storage: not remembered) */ }
 }
 
 export function mountSettings(view: GlobeRenderer): void {
-  const s = load(view);
+  const s = loadSettings(view);
   view.setShadows(s.shadows);
   view.setToneMapping(s.toneMapping);
   view.setResolution(s.resolution);
@@ -60,11 +60,11 @@ export function mountSettings(view: GlobeRenderer): void {
   // (A click anywhere else, or Escape, closes it.)
   document.addEventListener('click', (e) => { if (!wrap.contains(e.target as Node)) open(false); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') open(false); });
-  shadows.addEventListener('change', () => { s.shadows = shadows.checked; view.setShadows(s.shadows); save(s); });
-  tone.addEventListener('change', () => { s.toneMapping = tone.checked; view.setToneMapping(s.toneMapping); save(s); });
+  shadows.addEventListener('change', () => { s.shadows = shadows.checked; view.setShadows(s.shadows); saveSettings(s); });
+  tone.addEventListener('change', () => { s.toneMapping = tone.checked; view.setToneMapping(s.toneMapping); saveSettings(s); });
   res.addEventListener('change', () => {
     const r = Number(res.value);
     if (!isResolution(r)) return;
-    s.resolution = r; view.setResolution(r); save(s);
+    s.resolution = r; view.setResolution(r); saveSettings(s);
   });
 }

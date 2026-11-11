@@ -12,9 +12,10 @@ import { RELIGION_KEYS, religionDef } from './religion.ts';
 import { RESOURCE_KEYS, resourceDef, empireBonus, type ResourceKey } from './resources.ts';
 import { describe as describeEffect, describeAll, flat } from './effects.ts';
 import { ERAS, BUILDINGS, WONDERS, type EraIndex } from './cities.ts';
-import { UNITS } from './rules.ts';
+import { UNITS, unitDef } from './rules.ts';
 import { power, aiAcceptsDeal, resourceWorth } from './ai.ts';
-import { outStr, bonusStr } from './ui.ts';
+import { outStr, bonusStr, tip } from './ui.ts';
+import { icon, unitIcon, resourceIcon, type IconKey } from './icons.ts';
 
 // The empire's sheets: full-screen pages over the map, opened from the top
 // bar (data-sheet: the research, politics and identity tracks, and the
@@ -32,14 +33,19 @@ import { outStr, bonusStr } from './ui.ts';
 
 export type SheetKind = 'research' | 'politics' | 'identity' | 'government' | 'religion' | 'diplomacy' | 'log';
 const SHEETS: readonly SheetKind[] = ['research', 'politics', 'identity', 'government', 'religion', 'diplomacy', 'log'];
+const SHEET_NAME: Record<SheetKind, string> = { research: 'Research', politics: 'Politics', identity: 'Identity', government: 'Government', religion: 'Religion', diplomacy: 'Diplomacy', log: 'Log' };
+const SHEET_ICON: Record<SheetKind, IconKey> = { research: 'science', politics: 'politics', identity: 'identity', government: 'government', religion: 'religion', diplomacy: 'diplomacy', log: 'log' };
 const isSheet = (s: string): s is SheetKind => (SHEETS as readonly string[]).includes(s);
 type GovTab = 'mine' | 'policies' | 'governments';
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
 const KIND_NAME: Record<PolicySlot, string> = { military: 'Military', economic: 'Economic', social: 'Social', wildcard: 'Wildcard' };
 const TIER_NAME = ['', 'I', 'II', 'III'] as const;
+// A tree's plates and the room between them (pixels).
+const NODE_W = 240, NODE_H = 88, GAP_X = 56, GAP_Y = 14, TREE_TOP = 46, TREE_PAD = 8;
 
 export class Sheets {
   private open: SheetKind | null = null;
+  private shown: SheetKind | null = null;   // the sheet last drawn (a tree opens scrolled to where the civ has got to)
   private readonly el: HTMLElement;
   private govTab: GovTab = 'mine';
   private filter: PolicyKind | 'all' = 'all';
@@ -53,10 +59,23 @@ export class Sheets {
     document.body.addEventListener('click', (e) => {
       const t = e.target instanceof HTMLElement ? e.target : null;
       const btn = t?.closest<HTMLElement>('[data-sheet]');
-      if (btn) { const k = btn.dataset['sheet'] ?? ''; if (isSheet(k)) this.toggle(k); return; }
+      if (btn) { const k = btn.dataset['sheet'] ?? ''; if (isSheet(k)) { if (this.el.contains(btn)) this.show(k); else this.toggle(k); } return; }
       if (!t || !this.el.contains(t)) return;
       const act = t.closest<HTMLElement>('[data-do]');
       if (act) this.act(act);
+    });
+    // A tree's item under the pointer: the lines of all it rests on light up.
+    this.el.addEventListener('mouseover', (e) => {
+      const node = e.target instanceof Element ? e.target.closest<HTMLElement>('.node') : null;
+      const lit = new Set<string>();
+      const add = (k: string): void => {
+        if (lit.has(k)) return;
+        lit.add(k);
+        const needs: readonly string[] = (TECH_KEYS as readonly string[]).includes(k) ? techDef(k as TechKey).needs : politicsDef(k as PoliticsKey).needs;
+        needs.forEach(add);
+      };
+      if (node?.dataset['node']) add(node.dataset['node']);
+      this.el.querySelectorAll<SVGPathElement>('svg.links path').forEach((p) => p.classList.toggle('lit', lit.has(p.dataset['b'] ?? '') && lit.has(p.dataset['a'] ?? '')));
     });
   }
 
@@ -65,6 +84,8 @@ export class Sheets {
 
   toggle(k: SheetKind): void { this.open = this.open === k ? null : k; this.notice = ''; this.render(); }
   close(): void { this.open = null; this.render(); }
+  // Opens a sheet (if it is not the one open).
+  show(k: SheetKind): void { if (this.open !== k) this.toggle(k); }
 
   render(): void {
     document.querySelectorAll<HTMLElement>('#sheets [data-sheet]').forEach((b) => {
@@ -75,16 +96,21 @@ export class Sheets {
       b.querySelector('.dot')?.remove();
       if (pending) b.insertAdjacentHTML('beforeend', '<span class="dot"></span>');
     });
-    document.querySelectorAll<HTMLElement>('#empire [data-sheet]').forEach((b) => b.classList.toggle('active', b.dataset['sheet'] === this.open));
-    if (!this.open) { this.el.classList.add('hidden'); this.el.innerHTML = ''; return; }
+    document.querySelectorAll<HTMLElement>('#trackers [data-sheet]').forEach((b) => b.classList.toggle('active', b.dataset['sheet'] === this.open));
+    if (!this.open) { this.el.classList.add('hidden'); this.el.innerHTML = ''; this.shown = null; return; }
     this.el.classList.remove('hidden');
-    const scroll = this.el.querySelector('.body')?.scrollLeft ?? 0, top = this.el.scrollTop;
+    const fresh = this.shown !== this.open;
+    this.shown = this.open;
+    const left = this.el.scrollLeft, top = this.el.scrollTop;
     const [title, sub, body] = this.page(this.open);
-    this.el.innerHTML = `<div class="head"><h2>${title}</h2><span class="sub">${sub}</span><button class="close" data-do="close">Close <kbd>Esc</kbd></button></div><div class="body">${body}</div>`;
-    const b = this.el.querySelector('.body');
-    if (b) b.scrollLeft = scroll;
-    this.el.scrollTop = top;
-    if (this.open === 'research' || this.open === 'politics') requestAnimationFrame(() => this.drawLinks());
+    // (Its head: the sheets as tabs, to go from one to another; then this one's title.)
+    const tabs = SHEETS.map((k) => `<button data-sheet="${k}" class="${k === this.open ? 'active' : ''}">${icon(SHEET_ICON[k])}${SHEET_NAME[k]}</button>`).join('');
+    this.el.innerHTML = `<div class="head"><nav class="snav">${tabs}<button class="close" data-do="close">${icon('close')} Close <kbd>Esc</kbd></button></nav>
+      <div class="stitle"><h2>${title}</h2><span class="sub">${sub}</span></div></div><div class="body">${body}</div>`;
+    // (As it was scrolled; a tree just opened: at the first items still to come.)
+    const start = Number(this.el.querySelector<HTMLElement>('.tree')?.dataset['start'] ?? 0);
+    this.el.scrollLeft = fresh ? start : left;
+    this.el.scrollTop = fresh ? 0 : top;
   }
 
   // The empty policy slots the civ could fill.
@@ -174,23 +200,24 @@ export class Sheets {
     return `${on ? `On ${esc(on)}` : 'Nothing chosen'} · ${rate} ${k === 'tech' ? 'science' : 'cohesion'} a turn · click any item to work toward it`;
   }
 
-  // What a tech or politics item unlocks, as short labels.
-  private unlocksOf(kind: 'tech' | 'politics', k: string): string[] {
+  // What a tech or politics item unlocks, as round chips (each named when pointed at).
+  private unlockChips(kind: 'tech' | 'politics', k: string): string[] {
     const d: TechDef | PoliticsDef = kind === 'tech' ? techDef(k as TechKey) : politicsDef(k as PoliticsKey);
+    const chip = (cls: string, ic: string, name: string, sub: string) => `<span class="u ${cls}" ${tip(esc(name), esc(sub))}>${ic}</span>`;
     return [
-      ...(d.units ?? []).map((u) => UNITS[u].name),
-      ...(d.buildings ?? []).map((b) => BUILDINGS[b].name),
-      ...(d.wonders ?? []).map((w) => WONDERS[w].name),
-      ...('governments' in d ? (d.governments ?? []).map((x) => `${governmentDef(x).name} (government)`) : []),
-      ...('policies' in d ? (d.policies ?? []).map((x) => policyDef(x).name) : []),
-      ...(kind === 'tech' ? RESOURCE_KEYS.filter((r) => resourceDef(r).reveal === k).map((r) => `Reveals ${resourceDef(r).name}`) : []),
-      ...('effects' in d ? (d.effects ?? []).map(describeEffect) : []),
+      ...(d.units ?? []).map((u) => chip('', icon(unitIcon(u)), UNITS[u].name, unitDef(u).desc ?? 'Unit')),
+      ...(d.buildings ?? []).map((b) => chip('b', icon('building'), BUILDINGS[b].name, BUILDINGS[b].desc)),
+      ...(d.wonders ?? []).map((w) => chip('w', icon('star'), WONDERS[w].name, `Wonder · ${WONDERS[w].desc}`)),
+      ...('governments' in d ? (d.governments ?? []).map((x) => chip('g', icon('government'), governmentDef(x).name, `Government · ${describeAll(governmentDef(x).effects)}`)) : []),
+      ...('policies' in d ? (d.policies ?? []).map((x) => chip('p', icon('politics'), policyDef(x).name, `${KIND_NAME[policyDef(x).kind]} policy · ${describeAll(policyDef(x).effects)}`)) : []),
+      ...(kind === 'tech' ? RESOURCE_KEYS.filter((r) => resourceDef(r).reveal === k).map((r) => chip('r', icon(resourceIcon(r)), `Reveals ${resourceDef(r).name}`, 'A strategic resource, hidden until now')) : []),
     ];
   }
 
-  // A tree: columns by depth (each item one column after the deepest it
-  // needs), the era named over each column it begins; connectors drawn
-  // after layout (drawLinks).
+  // A tree: an era to a band, in it a column to each depth (each item one
+  // column after the deepest it needs); down a column the items sit near
+  // the ones they rest on, so the lines between them (drawn behind, from
+  // the same layout) stay short and cross little.
   private treeHtml(kind: 'tech' | 'politics'): string {
     const p = this.me;
     const keys: readonly string[] = kind === 'tech' ? TECH_KEYS : POLITICS_KEYS;
@@ -206,70 +233,80 @@ export class Sheets {
     };
     // (Each era begins after the last column of the eras before it.)
     const col = new Map<string, number>();
+    const bands: { era: EraIndex; from: number; to: number }[] = [];
     let start = 0;
-    for (let e = 0; e <= 5; e++) {
+    for (let e = 0; e < ERAS.length; e++) {
       const ks = keys.filter((k) => def(k).era === e);
       if (!ks.length) continue;
       const base = Math.min(...ks.map(depthOf));
       for (const k of ks) col.set(k, Math.max(start, start + depthOf(k) - base));
-      start = Math.max(...ks.map((k) => col.get(k)!)) + 1;
+      const end = Math.max(...ks.map((k) => col.get(k)!)) + 1;
+      bands.push({ era: e as EraIndex, from: start, to: end });
+      start = end;
     }
     const cols: string[][] = [];
     for (const k of keys) (cols[col.get(k)!] ??= []).push(k);
+    // Rows: down each column in the order of what its items rest on, each
+    // as near the middle of those as the ones above it leave room for.
+    const row = new Map<string, number>();
+    for (const ks of cols) {
+      if (!ks) continue;
+      const want = new Map(ks.map((k, i) => {
+        const needs: readonly string[] = def(k).needs;
+        return [k, needs.length ? needs.reduce((a, n) => a + (row.get(n) ?? 0), 0) / needs.length : i];
+      }));
+      const order = [...ks].sort((a, b) => want.get(a)! - want.get(b)!);
+      let last = -1;
+      const at = order.map((k) => (last = Math.max(last + 1, Math.round(want.get(k)!))));
+      // (Pushed down as a block by the crowd: moved back up by as much, not past the top.)
+      const drift = Math.min(at[0]!, Math.max(0, Math.round(order.reduce((a, k, i) => a + at[i]! - want.get(k)!, 0) / order.length)));
+      order.forEach((k, i) => row.set(k, at[i]! - drift));
+    }
+    const x = (c: number) => TREE_PAD + c * (NODE_W + GAP_X), y = (r: number) => TREE_TOP + r * (NODE_H + GAP_Y);
     const known = kind === 'tech' ? p.techs as ReadonlySet<string> : p.politics as ReadonlySet<string>;
     const current = kind === 'tech' ? p.research : p.studying;
     const queue = new Set<string>(kind === 'tech' ? p.researchQueue : p.politicsQueue);
     const progress = (k: string) => (kind === 'tech' ? p.techProgress[k as TechKey] : p.politicsProgress[k as PoliticsKey]) ?? 0;
     const rate = kind === 'tech' ? p.ledger.income.science : p.ledger.income.cohesion;
-    let lastEra = -1;
+    const unit = kind === 'tech' ? 'science' : 'cohesion';
     const node = (k: string): string => {
       const d = def(k), done = known.has(k);
       const ready = (d.needs as readonly string[]).every((n) => known.has(n));
       const cls = done ? 'done' : k === current ? 'current' : queue.has(k) ? 'queued' : ready ? '' : 'locked';
-      const unlocks = this.unlocksOf(kind, k);
+      const chips = this.unlockChips(kind, k);
+      const fx = 'effects' in d ? (d.effects ?? []).map(describeEffect).join(' · ') : '';
       const pathCost = done ? 0 : (kind === 'tech' ? techPath(k as TechKey, p.techs) : politicsPath(k as PoliticsKey, p.politics) as string[])
-        .reduce((s, x) => s + def(x).cost - progress(x), 0);
-      const turns = done ? '' : rate > 0 ? `${Math.max(1, Math.ceil(pathCost / rate))} t` : '—';
+        .reduce((s, n) => s + def(n).cost - progress(n), 0);
+      const turns = done ? '' : rate > 0 ? `${Math.max(1, Math.ceil(pathCost / rate))} turns` : '—';
       const bar = !done && progress(k) > 0 ? `<div class="bar ${kind === 'tech' ? 'sci' : 'coh'}"><i style="width:${(100 * progress(k) / d.cost).toFixed(1)}%"></i></div>` : '';
-      return `<div class="node ${cls}" data-node="${k}" ${done ? '' : `data-do="${kind}" data-key="${k}"`} title="${d.cost} ${kind === 'tech' ? 'science' : 'cohesion'}">
-        <div class="name">${esc(d.name)} <small>${turns}</small></div>
-        ${unlocks.length ? `<div class="unlocks">${unlocks.map((u) => `<span>${esc(u)}</span>`).join('')}</div>` : ''}${bar}</div>`;
+      const state = done ? 'Known' : k === current ? 'Being worked on' : queue.has(k) ? 'Queued' : ready ? 'Click to work on it' : 'Click to work toward it, through what it needs';
+      return `<div class="node ${cls}" style="left:${x(col.get(k)!)}px;top:${y(row.get(k)!)}px;width:${NODE_W}px;height:${NODE_H}px" data-node="${k}" ${done ? '' : `data-do="${kind}" data-key="${k}"`}
+        ${tip(esc(d.name), `${d.cost} ${unit}${fx ? ` · ${esc(fx)}` : ''} · ${state}`)}>
+        <div class="name"><span>${esc(d.name)}</span><small>${turns}</small></div>
+        <div class="unl">${chips.slice(0, 7).join('')}${chips.length > 7 ? `<small>+${chips.length - 7}</small>` : ''}</div>
+        <div class="fxl">${esc(fx)}</div>${bar}</div>`;
     };
-    const html = cols.map((ks) => {
-      const era = Math.min(...ks.map((k) => def(k).era)) as EraIndex;
-      const label = era !== lastEra ? ERAS[era].name : '';
-      lastEra = era;
-      return `<div class="col"><div class="era">${label}</div>${ks.sort((a, b) => def(a).era - def(b).era).map(node).join('')}</div>`;
-    }).join('');
-    return `<div class="tree" data-tree="${kind}"><svg class="links"></svg>${html}</div>`;
-  }
-
-  // Connectors from each item to those it needs, as smooth curves.
-  private drawLinks(): void {
-    const tree = this.el.querySelector<HTMLElement>('.tree');
-    const svg = tree?.querySelector('svg');
-    if (!tree || !svg) return;
-    const kind = tree.dataset['tree'];
-    const box = tree.getBoundingClientRect();
-    const at = (k: string) => tree.querySelector<HTMLElement>(`[data-node="${k}"]`)?.getBoundingClientRect();
-    const known = kind === 'tech' ? this.me.techs as ReadonlySet<string> : this.me.politics as ReadonlySet<string>;
-    const keys: readonly string[] = kind === 'tech' ? TECH_KEYS : POLITICS_KEYS;
-    let paths = '';
+    // The lines: out of an item along its row, down (or up) the gap before
+    // the item that needs it, and in; each item's own lane in that gap, so
+    // lines to different items run side by side, not one over the other.
+    let links = '';
     for (const k of keys) {
-      const to = at(k);
-      if (!to) continue;
-      const needs: readonly string[] = kind === 'tech' ? techDef(k as TechKey).needs : politicsDef(k as PoliticsKey).needs;
-      for (const n of needs) {
-        const from = at(n);
-        if (!from) continue;
-        const x1 = from.right - box.left, y1 = from.top + from.height / 2 - box.top, x2 = to.left - box.left, y2 = to.top + to.height / 2 - box.top;
-        const mx = (x1 + x2) / 2;
-        paths += `<path class="${known.has(n) ? 'done' : ''}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}"/>`;
+      const x2 = x(col.get(k)!), y2 = y(row.get(k)!) + NODE_H / 2, lane = x2 - 10 - (row.get(k)! % 5) * 8;
+      for (const n of def(k).needs as readonly string[]) {
+        const x1 = x(col.get(n)!) + NODE_W, y1 = y(row.get(n)!) + NODE_H / 2;
+        const r = Math.min(7, Math.abs(y2 - y1) / 2), dir = Math.sign(y2 - y1);
+        const d = dir === 0 ? `M${x1},${y1} H${x2}`
+          : `M${x1},${y1} H${lane - r} Q${lane},${y1} ${lane},${y1 + dir * r} V${y2 - dir * r} Q${lane},${y2} ${lane + r},${y2} H${x2}`;
+        links += `<path class="${known.has(n) ? 'done' : ''}" data-a="${n}" data-b="${k}" d="${d}"/>`;
       }
     }
-    svg.setAttribute('width', String(tree.scrollWidth));
-    svg.setAttribute('height', String(tree.scrollHeight));
-    svg.innerHTML = paths;
+    const rows = Math.max(...keys.map((k) => row.get(k)!)) + 1;
+    const width = x(cols.length) - GAP_X + TREE_PAD, height = y(rows) + 10;
+    const bandHtml = bands.map((b) => `<div class="band" style="left:${x(b.from) - GAP_X / 2}px;width:${(b.to - b.from) * (NODE_W + GAP_X)}px"><span>${ERAS[b.era].name}</span></div>`).join('');
+    // (Opened at the first column with something still to learn.)
+    const first = Math.min(...keys.filter((k) => !known.has(k)).map((k) => col.get(k)!), cols.length - 1);
+    return `<div class="tree ${kind}" data-tree="${kind}" data-start="${Math.max(0, x(first) - 80)}" style="width:${width}px;height:${height}px">${bandHtml}
+      <svg class="links" width="${width}" height="${height}">${links}</svg>${keys.map(node).join('')}</div>`;
   }
 
   // ---- identity ----
@@ -292,7 +329,7 @@ export class Sheets {
       const cls = have.has(k) ? 'adopted' : block ? `blocked ${block}` : afford ? 'open' : 'wait';
       const why = block && block !== 'adopted' ? BLOCK_TEXT[block] : !afford && !have.has(k) ? `Needs ${g.nextTraitCost(p)} identity points` : '';
       const rel = d.religion ? `<div class="tag ${founded.has(d.religion) && !have.has(k) ? 'taken' : ''}">Founds ${religionDef(d.religion).name}</div>` : '';
-      return `<div class="trait ${cls}" ${!block && afford ? `data-do="trait" data-key="${k}"` : ''} title="${esc(why)}">
+      return `<div class="trait ${cls}" ${!block && afford ? `data-do="trait" data-key="${k}"` : ''} ${why ? tip(esc(d.name), esc(why)) : ''}>
         <div class="name">${esc(d.name)}<small>${ERAS[d.era].name}</small></div><div class="fx">${esc(describeAll(d.effects))}</div>${rel}</div>`;
     };
     const column = (k: PathKey): string => {
@@ -334,7 +371,7 @@ export class Sheets {
       const n = p.policies[s].length;
       const cells = n ? p.policies[s].map((k, i) => {
         const picked = this.target?.slot === s && this.target.i === i;
-        return k ? `<div class="cell" data-do="slot" data-slot="${s}" data-i="${i}" title="Click to take it out">${this.policyCard(k, 'slotted')}</div>`
+        return k ? `<div class="cell" data-do="slot" data-slot="${s}" data-i="${i}" ${tip('Click to take it out')}>${this.policyCard(k, 'slotted')}</div>`
           : `<div class="cell empty ${picked ? 'picked' : ''}" data-do="slot" data-slot="${s}" data-i="${i}">${picked ? 'Pick a card →' : 'Empty slot'}</div>`;
       }).join('') : `<div class="none">No ${KIND_NAME[s].toLowerCase()} slots in this government</div>`;
       return `<div class="srow ${s} ${compact ? 'compact' : ''}"><div class="slabel"><span class="label">${KIND_NAME[s]}</span><small>${n}</small></div><div class="cells">${cells}</div></div>`;
@@ -342,7 +379,7 @@ export class Sheets {
   }
   private govCard(k: GovernmentKey, current: boolean, open: boolean): string {
     const d = governmentDef(k);
-    const pips = SLOT_KINDS.flatMap((s) => Array.from({ length: d.slots[s] }, () => `<i class="${s}" title="${KIND_NAME[s]}"></i>`)).join('');
+    const pips = SLOT_KINDS.flatMap((s) => Array.from({ length: d.slots[s] }, () => `<i class="${s}" ${tip(`${KIND_NAME[s]} slot`)}></i>`)).join('');
     const from = POLITICS_KEYS.find((c) => (politicsDef(c).governments ?? []).includes(k));
     const action = current ? '<span class="pill">Current</span>' : open ? `<button data-do="gov" data-key="${k}">Adopt</button>` : `<small>Needs ${from ? esc(politicsDef(from).name) : '—'}</small>`;
     return `<div class="govcard ${current ? 'current' : ''} ${open ? '' : 'locked'}"><div class="ghead"><b>${esc(d.name)}</b>${d.tier ? `<small>Tier ${TIER_NAME[d.tier]}</small>` : ''}</div>

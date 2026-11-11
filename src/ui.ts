@@ -8,7 +8,10 @@ import { techDef } from './techs.ts';
 import { politicsDef } from './politics.ts';
 import { RELIGIONS } from './religion.ts';
 import { resourceDef, empireBonus } from './resources.ts';
-import { BORDER_AT, BORDER_MAX } from './cities.ts';
+import { BORDER_AT, BORDER_MAX, OUTPUT_KEYS } from './cities.ts';
+import { icon, unitIcon, resourceIcon, YIELD_ICON, type IconKey } from './icons.ts';
+import { inkOn } from './mapIcons.ts';
+import { RESOURCE_KEYS } from './resources.ts';
 import {
   USE, FOCUSES, IMPROVEMENTS, ERAS, SPECIALISTS, SPECIALIST_KINDS, isFocusKey, specialistYield,
   type FocusKey, type GrowthKind, type GrowthOption, type Output, type BuildingKey, type SpecialistKind, type WonderKey,
@@ -33,7 +36,8 @@ export type Action =
   | { type: 'focus'; focus: FocusKey }
   | { type: 'buyMode' }
   | { type: 'buy'; currency: 'gold' | 'faith' }
-  | { type: 'endTurn' };
+  | { type: 'endTurn' }
+  | { type: 'next' };
 
 // What the map shows for the selected city: where a citizen can go
 // ('rural'; a specialist is placed from the panel), or the tiles it could
@@ -51,7 +55,7 @@ const isBuildKey = (s: string): s is BuildKey => (BUILDABLE as string[]).include
 function parseAction(el: HTMLElement): Action | null {
   const type = el.dataset['act'];
   switch (type) {
-    case 'found': case 'improve': case 'fortify': case 'wake': case 'skip': case 'disband': case 'endTurn': case 'governorPlace': case 'pillage': case 'raze': case 'buyMode': case 'rally': case 'deploy': case 'upgrade':
+    case 'found': case 'improve': case 'fortify': case 'wake': case 'skip': case 'disband': case 'endTurn': case 'next': case 'governorPlace': case 'pillage': case 'raze': case 'buyMode': case 'rally': case 'deploy': case 'upgrade':
       return { type };
     case 'buy': {
       const c = el.dataset['currency'];
@@ -87,243 +91,380 @@ const $ = (id: string): HTMLElement => {
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
 const signed = (n: number) => (n > 0 ? `+${n}` : `${n}`);
-// Each yield: its class (a colour key, style.css) and name.
-const ICONS: Record<keyof Output, [string, string]> = {
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+// A tooltip (data-tip): a title, and what it means under it.
+export const tip = (title: string, sub = ''): string => `data-tip="${esc(`<b>${title}</b>${sub ? `<small>${sub}</small>` : ''}`)}"`;
+// Each yield: its class (a colour key, game.css) and name.
+const YIELDS: Record<keyof Output, [string, string]> = {
   food: ['food', 'Food'], prod: ['prod', 'Production'], gold: ['gold', 'Gold'], science: ['sci', 'Science'], culture: ['cul', 'Culture'], faith: ['fai', 'Faith'], cohesion: ['coh', 'Cohesion'],
 };
+const yieldChip = (k: keyof Output, text: string) => `<span class="y ${YIELDS[k][0]}" ${tip(YIELDS[k][1])}>${icon(YIELD_ICON[k])}${text}</span>`;
 // Food, production and gold always; the rest when nonzero.
-export const outStr = (o: Output, sign = false) => (Object.keys(ICONS) as (keyof Output)[])
+export const outStr = (o: Output, sign = false) => OUTPUT_KEYS
   .filter((k) => k === 'food' || k === 'prod' || k === 'gold' || o[k] !== 0)
-  .map((k) => `<span class="y ${ICONS[k][0]}" title="${ICONS[k][1]}">${sign ? signed(o[k]) : o[k]}</span>`).join('');
+  .map((k) => yieldChip(k, sign ? signed(o[k]) : String(o[k]))).join('');
 // A bonus: only what it adds.
-export const bonusStr = (o: Output) => (Object.keys(ICONS) as (keyof Output)[])
-  .filter((k) => o[k] !== 0).map((k) => `<span class="y ${ICONS[k][0]}" title="${ICONS[k][1]}">${signed(o[k])}</span>`).join('');
-const yieldStr = (food: number, prod: number, gold: number) =>
-  `<span class="y food" title="Food">${food}</span><span class="y prod" title="Production">${prod}</span><span class="y gold" title="Gold">${gold}</span>`;
+export const bonusStr = (o: Output) => OUTPUT_KEYS.filter((k) => o[k] !== 0).map((k) => yieldChip(k, signed(o[k]))).join('');
+const yieldStr = (food: number, prod: number, gold: number) => yieldChip('food', String(food)) + yieldChip('prod', String(prod)) + yieldChip('gold', String(gold));
 
 const KIND_NAME: Record<GrowthKind, string> = { rural: 'Rural', specialist: 'Specialist' };
 export const specialistName = (k: SpecialistKind): string => SPECIALISTS[k].name;
 export const optionName = (o: GrowthOption): string =>
   o.kind === 'rural' ? (o.improvement ? IMPROVEMENTS[o.improvement].name : 'Unimproved land') : specialistName(o.specialist);
 
+// What the big button asks for next (main.ts decides): the turn's end once nothing is left.
+export interface NextStep { readonly label: string; readonly sub: string; readonly ready: boolean }
+
+// A news item's pictogram and tone, from what it says.
+function noticeLook(text: string): [IconKey, string] {
+  if (/war|defeated|captured|destroyed|razed|siege|pillaged|struck|drove off|fallen|starving|nuclear|anti-aircraft|intercepted|empty/i.test(text)) return ['sword', 'war'];
+  if (/^Researched|era\.$/.test(text)) return ['science', 'sci'];
+  if (/known for|dopted|follows|borders|culture|founded [A-Z][a-z]+(ism|ity|am)\b/.test(text)) return ['culture', 'cul'];
+  if (/grew/.test(text)) return ['person', 'good'];
+  if (/[Ff]ounded/.test(text)) return ['flag', 'good'];
+  if (/completed|built|drained/.test(text)) return ['hammer', 'good'];
+  if (/[Tt]rade|peace|Met /.test(text)) return ['diplomacy', ''];
+  return ['bell', ''];
+}
+
+const SHEET_BUTTONS: readonly [string, IconKey, string][] = [['government', 'government', 'Government'], ['religion', 'religion', 'Religion'], ['diplomacy', 'diplomacy', 'Diplomacy'], ['log', 'log', 'Log']];
+
 export class UI {
   private readonly game: Game;
   private readonly el = {
-    civ: $('civ'), turn: $('turn'), empire: $('empire'), hint: $('hint'),
-    log: $('log'), selection: $('selection'), tile: $('tileinfo'), overlay: $('overlay'),
+    hud: $('hud'), civ: $('civ'), turn: $('turn'), yields: $('yields'), trackers: $('trackers'), notices: $('notices'), next: $('next'),
+    selection: $('selection'), cityside: $('cityside'), tile: $('tileinfo'), overlay: $('overlay'), tip: $('tip'),
   };
+  // News: what was said since the player's turn began, less what they dismissed.
+  private noticesFrom = 0;
+  private readonly dismissed = new Set<number>();
+  // The tile's tooltip follows the pointer, a moment after it settles on a tile.
+  private pointer = { x: 0, y: 0, over: false };
+  private tileShown = -1;
+  private tileTimer = 0;
+  // (What was last drawn in each box: redrawn only when it changed, so a button under the pointer is not replaced mid-click.)
+  private readonly drawn = new Map<HTMLElement, string>();
 
   constructor(game: Game, onAction: (a: Action) => void) {
     this.game = game;
+    $('sheets').innerHTML = SHEET_BUTTONS.map(([k, ic, name]) => `<button data-sheet="${k}">${icon(ic)}<span>${name}</span></button>`).join('');
+    $('menuBtn').innerHTML = icon('menu');
     document.body.addEventListener('click', (e) => {
-      const target = e.target instanceof HTMLElement ? e.target.closest<HTMLElement>('[data-act]') : null;
-      const action = target && parseAction(target);
-      if (action) onAction(action);
+      const from = e.target instanceof Element ? e.target : null;
+      const note = from?.closest<HTMLElement>('[data-notice]');
+      if (note) { this.dismissed.add(Number(note.dataset['notice'])); this.renderNotices(); return; }
+      const target = from?.closest<HTMLElement>('[data-act]');
+      if (!target || target.classList.contains('off')) return;
+      const action = parseAction(target);
+      if (action) { this.hideTip(); onAction(action); }
     });
+    // Tooltips: anything with data-tip, shown under it (over it near the screen's foot).
+    document.body.addEventListener('mouseover', (e) => {
+      const el = e.target instanceof Element ? e.target.closest<HTMLElement>('[data-tip]') : null;
+      if (!el) { this.hideTip(); return; }
+      const box = this.el.tip;
+      box.innerHTML = el.dataset['tip'] ?? '';
+      box.classList.remove('hidden');
+      const r = el.getBoundingClientRect(), w = box.offsetWidth, h = box.offsetHeight;
+      const below = r.bottom + 8 + h < innerHeight - 4;
+      box.style.left = `${Math.max(6, Math.min(innerWidth - w - 6, r.left + r.width / 2 - w / 2))}px`;
+      box.style.top = `${below ? r.bottom + 8 : r.top - h - 8}px`;
+    });
+    document.body.addEventListener('mousedown', () => this.hideTip());
+    const canvas = $('c');
+    addEventListener('pointermove', (e) => { this.pointer.x = e.clientX; this.pointer.y = e.clientY; this.pointer.over = e.target === canvas; this.placeTile(); });
+    canvas.addEventListener('pointerleave', () => { this.pointer.over = false; this.placeTile(); });
+    canvas.addEventListener('pointerdown', () => { this.tileShown = -2; this.placeTile(); });
   }
 
-  render(sel: Selection, hover: number, hint: string, placing: Placing = null): void {
+  private hideTip(): void { this.el.tip.classList.add('hidden'); }
+  private set(box: HTMLElement, html: string): void {
+    if (this.drawn.get(box) === html) return;
+    this.drawn.set(box, html);
+    box.innerHTML = html;
+  }
+
+  // The player's turn begins: the news starts afresh.
+  newTurn(): void { this.noticesFrom = this.game.messages.length; this.dismissed.clear(); }
+
+  render(sel: Selection, hover: number, next: NextStep, placing: Placing = null): void {
     const g = this.game;
     const me = g.players[HUMAN];
-    this.el.civ.innerHTML = `<span class="swatch" style="background:${me.color}"></span>${esc(me.name)}`;
-    this.el.turn.textContent = `Turn ${g.turn} · ${ERAS[me.era].name}`;
-    this.el.empire.innerHTML = this.empireHtml();
-    this.el.hint.textContent = hint;
-    this.el.log.innerHTML = g.messages.slice(-7).map((m) => `<div><b>T${m.turn}</b> ${esc(m.text)}</div>`).join('');
+    this.set(this.el.civ, `<span class="swatch" style="background:${me.color}"></span>${esc(me.name)}`);
+    this.set(this.el.turn, `<b>Turn ${g.turn}</b><small>${ERAS[me.era].name} era</small>`);
+    this.set(this.el.yields, this.empireHtml());
+    this.set(this.el.trackers, this.trackersHtml());
+    this.el.next.className = next.ready ? 'ready' : '';
+    this.set(this.el.next, `${esc(next.label)}<small>${next.sub}</small>`);
+    this.renderNotices();
     this.renderSelection(sel, placing);
     this.renderTile(sel, hover, placing);
 
     if (g.over) {
       this.el.overlay.classList.remove('hidden');
-      this.el.overlay.innerHTML = `<div class="card"><h1>${g.over === 'victory' ? 'Victory!' : 'Defeat'}</h1>
+      this.set(this.el.overlay, `<div class="card"><h1>${g.over === 'victory' ? 'Victory' : 'Defeat'}</h1>
         <p>${g.over === 'victory' ? 'You have conquered the world.' : 'Your civilization has fallen.'} (Turn ${g.turn})</p>
-        <button onclick="location.reload()">New game</button></div>`;
+        <button id="go" class="primary" onclick="location.reload()">New game</button></div>`);
     }
   }
 
-  // The civ's accounts (last turn's, net of upkeep) and its three
-  // advances, each opening its sheet: research and politics with their
-  // progress (asking for a choice when none is made), identity with the
-  // points toward its next trait.
+  private renderNotices(): void {
+    const g = this.game;
+    const items = g.messages.map((m, i) => ({ m, i })).filter(({ i }) => i >= this.noticesFrom && !this.dismissed.has(i)).slice(-7);
+    this.set(this.el.notices, items.map(({ m, i }) => {
+      const [ic, cls] = noticeLook(m.text);
+      return `<div class="notice ${cls}" data-notice="${i}" ${tip('Dismiss')}><span class="chip">${icon(ic)}</span><span>${esc(m.text)}</span></div>`;
+    }).join(''));
+  }
+
+  // The civ's accounts (last turn's, net of upkeep), each with what makes it
+  // up; then its strategic resources and its luxuries.
   private empireHtml(): string {
     const g = this.game, p = g.players[HUMAN]!, l = p.ledger;
-    const net = l.income.gold + l.tithes + l.trade - l.cityUpkeep - l.unitUpkeep;
-    const stat = (label: string, cls: string, value: string, delta: string) =>
-      `<div class="stat"><span class="label">${label}</span><b class="y ${cls}">${value}<span class="delta">${delta}</span></b></div>`;
-    const track = (sheet: string, label: string, cls: string, name: string | null, progress: number, cost: number, rate: number, prompt = 'Choose…') => {
-      if (!name) return `<div class="track prompt" data-sheet="${sheet}"><div class="row"><span class="label">${label}</span></div><b>${prompt}</b></div>`;
+    const net = Math.round(l.income.gold + l.tithes + l.trade - l.cityUpkeep - l.unitUpkeep);
+    const stat = (cls: string, ic: IconKey, value: string, delta: string, title: string, sub: string, neg = false) =>
+      `<div class="stat ${cls} ${neg ? 'neg' : ''}" ${tip(title, sub)}>${icon(ic)}<b>${value}</b>${delta ? `<small>${delta}</small>` : ''}</div>`;
+    const lines = [`Cities ${signed(Math.round(l.income.gold))}`, l.tithes ? `Tithes ${signed(Math.round(l.tithes))}` : '', l.trade ? `Trade ${signed(Math.round(l.trade))}` : '',
+      l.cityUpkeep ? `City upkeep −${l.cityUpkeep.toFixed(1)}` : '', l.unitUpkeep ? `Unit upkeep −${l.unitUpkeep.toFixed(1)}` : ''].filter(Boolean).join(' · ');
+    const owned = g.ownedResources(HUMAN);
+    const strategic = RESOURCE_KEYS.filter((k) => resourceDef(k).kind === 'strategic' && owned.has(k));
+    const lux = g.luxuriesOf(HUMAN);
+    return [
+      stat('gold', 'gold', String(p.gold), `${signed(net)}`, 'Gold', `In the treasury; ${signed(net)} a turn. ${lines}`, net < 0),
+      stat('sci', 'science', signed(l.income.science), '', 'Science', 'A turn, toward what you research'),
+      stat('coh', 'cohesion', signed(l.income.cohesion), '', 'Cohesion', 'A turn, toward your politics'),
+      stat('cul', 'culture', signed(l.income.culture), '', 'Culture', 'A turn, toward your identity\'s next trait'),
+      stat('fai', 'faith', String(p.faith), signed(l.income.faith), 'Faith', `In hand; ${signed(l.income.faith)} a turn. Buys what a city builds`),
+      strategic.length || lux.length ? '<span class="sep"></span>' : '',
+      ...strategic.map((k) => `<span class="res" ${tip(resourceDef(k).name, 'A strategic resource you own')}>${icon(resourceIcon(k))}</span>`),
+      lux.length ? `<span class="res" ${tip(plural(lux.length, 'luxury', 'luxuries'), lux.map((k) => resourceDef(k).name).join(', '))}>${icon('gem')}${lux.length}</span>` : '',
+    ].join('');
+  }
+
+  // Its three advances, each opening its sheet: research and politics with
+  // their progress (asking for a choice when none is made), identity with
+  // the points toward its next trait.
+  private trackersHtml(): string {
+    const g = this.game, p = g.players[HUMAN]!, l = p.ledger;
+    const track = (sheet: string, label: string, cls: string, ic: IconKey, name: string | null, progress: number, cost: number, rate: number, prompt: string) => {
+      if (!name) return `<div class="tracker ${cls} prompt" data-sheet="${sheet}"><div class="ring">${icon(ic)}</div><div class="what"><span class="label">${label}</span><b>${prompt}</b></div></div>`;
       const turns = g.turnsTo(cost, progress, rate);
-      return `<div class="track" data-sheet="${sheet}"><div class="row"><span class="label">${label}</span><small>${Number.isFinite(turns) ? `${turns} turns` : '—'}</small></div>
-        <b>${esc(name)}</b><div class="bar ${cls}"><i style="width:${Math.min(100, (100 * progress) / cost).toFixed(1)}%"></i></div></div>`;
+      return `<div class="tracker ${cls}" data-sheet="${sheet}"><div class="ring" style="--p:${Math.min(100, (100 * progress) / cost).toFixed(1)}">${icon(ic)}</div>
+        <div class="what"><span class="label">${label}</span><b>${esc(name)}</b><small>${Number.isFinite(turns) ? plural(turns, 'turn') : 'no progress'} · ${Math.floor(progress)}/${cost}</small></div></div>`;
     };
     const tech = p.research ? techDef(p.research) : null, pol = p.studying ? politicsDef(p.studying) : null;
     const next = g.nextTraitCost(p), ready = p.identityPoints >= next;
     return [
-      stat('Gold', 'gold', String(p.gold), ` ${signed(Math.round(net))}`),
-      stat('Science', 'sci', signed(l.income.science), ''),
-      stat('Cohesion', 'coh', signed(l.income.cohesion), ''),
-      stat('Culture', 'cul', signed(l.income.culture), ''),
-      stat('Faith', 'fai', String(p.faith), ` ${signed(l.income.faith)}`),
-      '<span class="sep"></span>',
-      track('research', 'Research', 'sci', tech?.name ?? null, p.research ? (p.techProgress[p.research] ?? 0) : 0, tech?.cost ?? 1, l.income.science),
-      track('politics', 'Politics', 'coh', pol?.name ?? null, p.studying ? (p.politicsProgress[p.studying] ?? 0) : 0, pol?.cost ?? 1, l.income.cohesion),
-      ready ? track('identity', 'Identity', 'cul', null, 0, 1, 0, 'Adopt a trait…')
-        : track('identity', 'Identity', 'cul', `Next trait · ${Math.floor(p.identityPoints)}/${next}`, p.identityPoints, next, l.income.culture),
+      track('research', 'Research', 'sci', 'science', tech?.name ?? null, p.research ? (p.techProgress[p.research] ?? 0) : 0, tech?.cost ?? 1, l.income.science, 'Choose research'),
+      track('politics', 'Politics', 'coh', 'politics', pol?.name ?? null, p.studying ? (p.politicsProgress[p.studying] ?? 0) : 0, pol?.cost ?? 1, l.income.cohesion, 'Choose politics'),
+      track('identity', 'Identity', 'cul', 'identity', ready ? null : 'Next trait', p.identityPoints, next, l.income.culture, 'Adopt a trait'),
     ].join('');
   }
 
   private renderSelection(sel: Selection, placing: Placing): void {
-    const box = this.el.selection;
+    const box = this.el.selection, side = this.el.cityside;
+    const city = sel?.kind === 'city' ? this.cityHtml(sel.city, placing) : null;
+    side.classList.toggle('hidden', !city?.[1]);
+    this.el.hud.classList.toggle('citymode', !!city?.[1]);
+    if (city?.[1]) {
+      const scroll = side.querySelector('.plist')?.scrollTop ?? 0;
+      this.set(side, city[1]);
+      const list = side.querySelector('.plist');
+      if (list) list.scrollTop = scroll;
+    }
     if (!sel || sel.kind === 'tile') { box.classList.add('hidden'); return; }
     box.classList.remove('hidden');
-    box.innerHTML = sel.kind === 'unit' ? this.unitHtml(sel.unit) : this.cityHtml(sel.city, placing);
+    this.set(box, sel.kind === 'unit' ? this.unitHtml(sel.unit) : city![0]);
   }
 
   private unitHtml(u: Unit): string {
     const g = this.game;
     const T = unitDef(u.type);
-    const mine = u.owner === HUMAN;
-    const buttons: string[] = [];
+    const mine = u.owner === HUMAN, owner = g.players[u.owner]!;
+    // An order: a round button, its pictogram, its key; greyed with the reason when it cannot be given.
+    const order = (act: string, ic: IconKey, title: string, sub: string, key = '', why: string | null = null, cls = '') =>
+      `<button class="abtn ${cls} ${why ? 'off' : ''}" data-act="${act}" ${tip(title, why ?? sub)} ${why ? 'aria-disabled="true"' : ''}>${icon(ic)}${key ? `<kbd>${key}</kbd>` : ''}</button>`;
+    const orders: string[] = [];
     if (mine) {
-      if (u.type === 'settler') {
-        const ok = g.canFoundCity(u.tile, u.owner);
-        buttons.push(`<button data-act="found" ${ok ? '' : 'disabled title="Too close to another city, or invalid terrain"'}>Found city <kbd>B</kbd></button>`);
-      }
+      if (u.type === 'settler') orders.push(order('found', 'flag', 'Found a city', 'Here, on this tile', 'B', g.canFoundCity(u.tile, u.owner) ? null : 'Too close to another city, or no ground for one'));
       if (T.improves) {
         // (On its own tile; fishing boats on the water beside it.)
         const t = g.improveTarget(u) ?? u.tile, k = g.improvementAt(t, u.owner), why = g.improveBlock(u, t);
-        const label = k ? `Build ${esc(IMPROVEMENTS[k].name.toLowerCase())} <small>${g.improveTurns(t, u.owner)} turns</small>` : 'Improve';
-        buttons.push(`<button data-act="improve" ${why ? `disabled title="${esc(why)}"` : ''}>${label} <kbd>I</kbd></button>`);
+        orders.push(order('improve', 'hammer', k ? `Build a ${IMPROVEMENTS[k].name.toLowerCase()}` : 'Improve the land', k ? plural(g.improveTurns(t, u.owner), 'turn') : '', 'I', why));
       }
       if (u.type === 'commander') {
         const can = g.rallyable(u).length, army = g.armyOf(u).length;
-        buttons.push(`<button data-act="rally" ${can ? '' : `disabled title="${army >= COMMANDER_CAPACITY ? 'The army is full' : 'No units of yours on its tile or the tiles next to it'}"`}>Rally ${can ? `${can} ` : ''}<kbd>R</kbd></button>`);
-        if (army) buttons.push(`<button data-act="deploy">Deploy <kbd>U</kbd></button>`);
+        orders.push(order('rally', 'star', `Rally${can ? ` ${plural(can, 'unit')}` : ''}`, 'Take the units on its tile and beside it into its army', 'R', can ? null : army >= COMMANDER_CAPACITY ? 'The army is full' : 'No units of yours on its tile or the tiles next to it'));
+        if (army) orders.push(order('deploy', 'out', 'Deploy', 'Its army steps out onto the tiles around it', 'U'));
       }
       if (!T.civilian) {
-        buttons.push(u.fortified ? `<button data-act="wake">Wake</button>` : `<button data-act="fortify">Fortify <kbd>F</kbd></button>`);
+        orders.push(u.fortified ? order('wake', 'bell', 'Wake', 'Stand ready for orders again') : order('fortify', 'shield', 'Fortify', 'Hold this tile: stronger in defence, until woken', 'F'));
         const to = g.upgradeTarget(u);
-        if (to) buttons.push(`<button data-act="upgrade" ${g.canUpgrade(u) ? '' : `disabled title="In your own territory, with moves left and ${g.upgradeCost(u, to)} gold"`}>Upgrade to ${esc(unitDef(to).name)} <small>${g.upgradeCost(u, to)} gold</small></button>`);
-        if (g.canPillage(u)) buttons.push(`<button data-act="pillage" title="Burn this enemy tile: it yields nothing until repaired; you take ${PILLAGE_GOLD} gold">Pillage <kbd>P</kbd></button>`);
+        if (to) orders.push(order('upgrade', 'up', `Upgrade to ${unitDef(to).name}`, `${g.upgradeCost(u, to)} gold`, '', g.canUpgrade(u) ? null : `In your own territory, with moves left and ${g.upgradeCost(u, to)} gold`));
+        if (g.canPillage(u)) orders.push(order('pillage', 'fire', 'Pillage', `Burn this enemy tile: it yields nothing until repaired; you take ${PILLAGE_GOLD} gold`, 'P'));
       }
-      buttons.push(`<button data-act="skip">Skip <kbd>Space</kbd></button>`, `<button data-act="disband" class="danger">Disband</button>`);
+      orders.push(order('skip', 'skip', 'Skip this turn', 'It will ask again next turn', '␣'), order('disband', 'close', 'Disband', 'The unit is gone for good', '', null, 'danger'));
     }
-    const status = u.work !== null ? `Building ${(() => { const k = g.improvementAt(u.work, u.owner); return k ? `a ${IMPROVEMENTS[k].name.toLowerCase()}` : ''; })()}: ${g.improveTurns(u.work, u.owner)} turns left`
-      : u.fortified ? 'Fortified' : u.goal != null ? 'Moving…' : '';
+    const status = u.work !== null ? `Building ${(() => { const k = g.improvementAt(u.work, u.owner); return k ? `a ${IMPROVEMENTS[k].name.toLowerCase()}` : ''; })()}: ${plural(g.improveTurns(u.work, u.owner), 'turn')} left`
+      : u.fortified ? 'Fortified' : u.goal != null ? 'On its way' : '';
     const armyUnits = u.type === 'commander' ? g.armyOf(u) : [];
     const army = u.type === 'commander'
-      ? `<div class="desc">Army ${armyUnits.length}/${COMMANDER_CAPACITY}${armyUnits.length ? `: ${armyUnits.map((v) => `${esc(unitDef(v.type).name)} <small>${v.hp} HP</small>`).join(', ')}` : ' · rally units from its tile and the tiles next to it'}</div>`
+      ? `<div class="desc"><b>Army ${armyUnits.length}/${COMMANDER_CAPACITY}</b>${armyUnits.length ? ` ${armyUnits.map((v) => `<span class="tag">${icon(unitIcon(v.type))}${esc(unitDef(v.type).name)} <small>${v.hp}</small></span>`).join(' ')}` : ' · rally units from its tile and the tiles next to it'}</div>`
       : '';
-    return `<h3>${esc(T.name)} <small>${esc(g.players[u.owner].name)}</small></h3>
-      <div class="stats">Melee ${T.melee}${T.rangedAtk ? ` · Ranged ${T.rangedAtk}` : ''} · Defence under fire ${T.rangedDef} · Moves ${u.moves}/${g.maxMoves(u.type, u.owner)} · HP ${u.hp}</div>
+    const stat = (ic: IconKey, value: string, title: string, sub = '') => `<span class="chipstat" ${tip(title, sub)}>${icon(ic)}${value}</span>`;
+    const stats = [
+      stat('moves', `${u.moves}/${g.maxMoves(u.type, u.owner)}`, 'Moves', 'Left this turn, of its most'),
+      T.civilian ? '' : stat('sword', String(T.melee), 'Melee strength', 'Closing in, and defending against it'),
+      T.rangedAtk ? stat('arrow', `${T.rangedAtk}${(T.reach ?? 1) > 1 ? ` <small>reach ${T.reach}</small>` : ''}`, 'Ranged strength', 'Firing from a distance, unanswered') : '',
+      T.civilian ? '' : stat('shield', String(T.rangedDef), 'Defence under fire', 'Against arrows, shot and shell'),
+    ].join('');
+    return `<div class="unitcard" style="--civ:${owner.color};--on:${inkOn(owner.color)}">
+      <div class="portrait ${T.civilian ? 'civilian' : ''}">${icon(unitIcon(u.type))}</div>
+      <div class="uhead"><div class="row"><h3>${esc(T.name)}</h3><small>${esc(owner.name)}</small></div>
+        <div class="meter ${u.hp > 60 ? '' : u.hp > 30 ? 'mid' : 'low'}"><i style="width:${Math.max(0, u.hp)}%"></i></div><small>${u.hp} / 100 health</small></div>
+      <div class="ustats">${stats}</div>
+      ${status ? `<div class="status">${status}</div>` : ''}
       ${T.desc ? `<div class="desc">${esc(T.desc)}</div>` : ''}
-      ${status ? `<div class="desc">${status}</div>` : ''}
       ${army}
-      ${mine ? `<div class="desc">Right-click a tile to move or attack${canShoot(u.type) && canAssault(u.type) ? ' (it shoots; Shift + right-click to close in instead)' : ''}.</div>` : ''}
-      <div class="buttons">${buttons.join('')}</div>`;
+      ${mine ? `<div class="desc">Right-click a tile to move or attack${canShoot(u.type) && canAssault(u.type) ? ' (it shoots; Shift + right-click closes in instead)' : ''}.</div>` : ''}
+      ${orders.length ? `<div class="actions">${orders.join('')}</div>` : ''}</div>`;
   }
 
-  private cityHtml(c: City, placing: Placing): string {
+  // A city: its accounts (the selection's panel) and, its owner's, what it
+  // builds (the panel on the right).
+  private cityHtml(c: City, placing: Placing): [string, string] {
     const g = this.game;
     const y = g.cityYields(c);
-    const mine = c.owner === HUMAN;
+    const mine = c.owner === HUMAN, p = g.players[c.owner]!, capital = p.capital === c.id;
     const cost = g.growthCostOf(c, c.pop + c.growth);
     const grow = c.growth > 0 ? 'a citizen waits to be placed'
-      : y.surplus > 0 ? `grows in ${Math.ceil((cost - c.food) / y.surplus)} turns` : y.surplus < 0 ? 'starving!' : 'stagnant';
+      : y.surplus > 0 ? `grows in ${plural(Math.ceil((cost - c.food) / y.surplus), 'turn')}` : y.surplus < 0 ? '<span class="bad">starving</span>' : 'not growing';
     const specialists = g.specialistCount(c);
     const rural = g.cityTiles(c, USE.rural).length;
-    const makeup = `Center · ${rural} rural${specialists ? ` · ${specialists} specialist${specialists > 1 ? 's' : ''}` : ''}`;
     let place = '';
     const pickW = wonderPicked(placing);
     if (mine && placing === 'buy') {
-      place = `<div class="place"><b>Buy a tile</b> <small>${g.tilePrice(c)} gold each (you have ${g.players[c.owner]!.gold}) · click a highlighted tile · <kbd>Esc</kbd> stops</small></div>`;
+      place = `<div class="place"><b>Buy a tile</b> <small>${g.tilePrice(c)} gold each (you have ${p.gold}) · click a highlighted tile · <kbd>Esc</kbd> stops</small></div>`;
     } else if (mine && pickW) {
       place = `<div class="place"><b>Where will the ${esc(WONDERS[pickW].name)} stand?</b> <small>${esc(WONDERS[pickW].desc)} Click a highlighted tile · <kbd>Esc</kbd> cancels</small></div>`;
     } else if (mine && c.growth > 0) {
       const opts = g.growthOptions(c);
-      const rural = opts.filter((o) => o.kind === 'rural').length;
+      const free = opts.filter((o) => o.kind === 'rural').length;
       const specs = opts.flatMap((o) => (o.kind === 'specialist' ? [o.specialist] : []));
-      const buttons = [`<button data-act="placeKind" data-kind="rural" class="${placing === 'rural' ? 'active' : ''}" ${rural ? '' : 'disabled'}>${KIND_NAME.rural} <small>${rural}</small></button>`,
+      const buttons = [`<button data-act="placeKind" data-kind="rural" class="${placing === 'rural' ? 'active' : ''}" ${free ? '' : 'disabled'}>${KIND_NAME.rural} <small>${free}</small></button>`,
         ...specs.map((k) => `<button data-act="specialist" data-specialist="${k}">${specialistName(k)} ${outStr(specialistYield(k), true)}</button>`)].join('');
-      place = `<div class="place"><b>Place a citizen</b> <small>a highlighted tile, or a specialist · <kbd>Esc</kbd> leaves it to the governor</small>
+      place = `<div class="place"><b>Place a citizen</b> <small>on a highlighted tile, or as a specialist · <kbd>Esc</kbd> leaves it to the governor</small>
         <div class="buttons">${buttons}<button data-act="governorPlace">Governor</button></div></div>`;
     }
+    const FOCUS_ICON: Record<FocusKey, IconKey | null> = { balanced: null, food: 'food', production: 'prod', gold: 'gold', science: 'science', culture: 'culture', faith: 'faith' };
     const focus = mine
-      ? `<div class="focus">Governor <span>${(Object.keys(FOCUSES) as FocusKey[]).map((k) =>
-          `<button data-act="focus" data-focus="${k}" class="${c.focus === k ? 'active' : ''}">${FOCUSES[k].name}</button>`).join('')}</span></div>`
+      ? `<div class="sect"><span class="label">Governor's focus</span><div class="focus">${(Object.keys(FOCUSES) as FocusKey[]).map((k) =>
+          `<button data-act="focus" data-focus="${k}" class="${c.focus === k ? 'active' : ''}">${FOCUS_ICON[k] ? icon(FOCUS_ICON[k]) : ''}${FOCUSES[k].name}</button>`).join('')}</div></div>`
       : '';
+    const maxHp = g.cityMaxHp(c);
+    const meter = (ic: IconKey, cls: string, name: string, text: string, f: number) =>
+      `<div class="mrow">${icon(ic, cls)}<div class="txt"><b>${name}</b><span>${text}</span></div><div class="meter ${cls}"><i style="width:${(100 * Math.min(1, Math.max(0, f))).toFixed(1)}%"></i></div></div>`;
+    const hpCls = c.hp > 0.6 * maxHp ? '' : c.hp > 0.3 * maxHp ? 'mid' : 'low';
+    const facts = `<div class="facts">
+      <span>Citizens</span><b>${rural} on the land${specialists ? ` · ${plural(specialists, 'specialist')}` : ''}</b>
+      <span>Upkeep</span><b>${capital ? 'none (capital)' : `${g.upkeepOf(c).toFixed(1)} gold a turn${c.buildings.has('courthouse') ? ' · courthouse' : ''}`}</b>
+      <span>Religion</span><b>${c.religion ? esc(RELIGIONS[c.religion].name) : 'none'}</b>
+      <span>Borders</span><b>${c.ring} tiles out${c.ring < BORDER_MAX ? ` · next at ${BORDER_AT[c.ring + 1]} culture (${Math.floor(c.culture)})` : ''}</b></div>`;
+    const more: string[] = [];
+    if (mine && placing !== 'buy' && g.buyableTiles(c).length) more.push(`<button data-act="buyMode" ${tip('Buy tiles', 'A city grows into the ring beyond its first by buying it')}>${icon('grid')} Buy tiles <small>${g.tilePrice(c)} gold</small></button>`);
+    if (mine && g.canRaze(c)) more.push(`<button data-act="raze" class="danger" ${tip(`Raze ${esc(c.name)}`, 'Burn the city down, a citizen a turn; ruins remain')}>${icon('fire')} Raze</button>`);
+    const left = `<div class="cityhead" style="--civ:${p.color};--on:${inkOn(p.color)}"><div class="pop" ${tip('Citizens')}>${c.pop}</div>
+        <div class="who"><h3>${capital ? icon('star') : ''}${esc(c.name)}</h3><small>${esc(p.name)}${capital ? ' · capital' : ''}${c.razing ? ' · <span class="bad">being razed</span>' : ''}</small></div></div>
+      <div class="ybar">${OUTPUT_KEYS.map((k) => yieldChip(k, String(y[k]))).join('')}</div>
+      ${meter('food', 'food', 'Growth', `${c.food}/${cost} · ${signed(y.surplus)} · ${grow}`, c.food / Math.max(1, cost))}
+      ${meter('shield', hpCls, 'Defence', `strength ${g.cityStrength(c).toFixed(1)} · ${c.hp}/${maxHp}`, c.hp / maxHp)}
+      ${place}
+      ${focus}
+      <div class="sect">${facts}</div>
+      ${this.buildingsHtml(c)}
+      ${more.length ? `<div class="buttons">${more.join('')}</div>` : ''}`;
+    if (!mine) return [left, ''];
+
+    // What it builds, and what it could.
     const turnsFor = (k: BuildKey) => Math.max(1, Math.ceil((buildDef(k).cost - (c.building === k ? c.prod : 0)) / Math.max(1, y.prod)));
-    let current = 'Nothing — production becomes gold';
+    let now = 'Wealth', sub = 'production becomes gold', frac = 0;
     if (c.building) {
       const item = buildDef(c.building);
-      current = `${item.name} ${Math.min(c.prod, item.cost)}/${item.cost} (${turnsFor(c.building)} turns)`;
-      if (c.building === 'settler' && c.pop < 2) current += ' — needs size 2';
-      if (isWonder(c.building) && c.wonderTile !== c.tile) current += ' — on the marked tile';
+      now = item.name;
+      sub = `${plural(turnsFor(c.building), 'turn')} · ${Math.min(c.prod, item.cost)}/${item.cost}`;
+      frac = c.prod / item.cost;
+      if (c.building === 'settler' && c.pop < 2) sub += ' · <span class="warn">needs size 2</span>';
+      if (isWonder(c.building) && c.wonderTile !== c.tile) sub += ' · on the marked tile';
     }
     const units = BUILDABLE.filter((k) => isUnitKey(k) && g.canBuild(c, k));
     const blds = BUILDABLE.filter((k) => !isUnitKey(k) && !isWonder(k) && g.canBuild(c, k));
     const wonders = BUILDABLE.filter((k) => isWonder(k) && g.canBuild(c, k));
-    const button = (k: BuildKey) => {
+    const row = (k: BuildKey) => {
       const d = buildDef(k);
-      const label = isUnitKey(k) ? `${d.name} <small>${unitDef(k).melee}${unitDef(k).rangedAtk ? `·${unitDef(k).rangedAtk}` : ''}/${unitDef(k).rangedDef}</small>` : isWonder(k) ? `${d.name}` : `${d.name}${buildingTag(k)}`;
-      return `<button data-act="build" data-key="${k}" class="${c.building === k ? 'active' : ''}" title="${esc(d.desc ?? '')}">
-        ${label}<span class="turns">${turnsFor(k)}t</span></button>`;
+      let ic: IconKey = 'building', note: string, cls = '';
+      if (isUnitKey(k)) {
+        const U = unitDef(k);
+        ic = unitIcon(k);
+        note = U.civilian ? (U.desc ?? '') : `${icon('sword')} ${U.melee}${U.rangedAtk ? ` · ${icon('arrow')} ${U.rangedAtk}` : ''} · ${icon('shield')} ${U.rangedDef} · ${icon('moves')} ${U.mv}`;
+      } else if (isWonder(k)) { ic = 'star'; cls = 'wonder'; note = bonusStr(WONDERS[k].yields) || esc(d.desc ?? ''); }
+      else note = `${bonusStr(BUILDINGS[k].yields)}${buildingTag(k)}` || esc(d.desc ?? '');
+      return `<button class="prow ${cls} ${c.building === k ? 'active' : ''}" data-act="build" data-key="${k}" ${tip(esc(d.name), `${esc(d.desc ?? '')}${d.desc ? ' · ' : ''}${d.cost} production`)}>
+        <span class="pic">${icon(ic)}</span><span class="pn"><b>${esc(d.name)}</b><small>${note}</small></span><span class="pt">${turnsFor(k)} t</span></button>`;
     };
-    const options = mine
-      ? `<div class="build">${units.map(button).join('')}<button data-act="build" data-key="" class="${c.building ? '' : 'active'}">Wealth<span class="turns">→ gold</span></button></div>
-         ${blds.length ? `<div class="desc">Buildings</div><div class="build">${blds.map(button).join('')}</div>` : ''}
-         ${wonders.length ? `<div class="desc">Wonders <small>(one in the world)</small></div><div class="build">${wonders.map(button).join('')}</div>` : ''}`
-      : '';
-    const maxHp = g.cityMaxHp(c);
-    const defense = `<div class="desc">Defense ${g.cityStrength(c).toFixed(1)} · HP ${c.hp}/${maxHp}${c.hp < maxHp ? ' <span class="warn">(damaged)</span>' : ''}${c.razing ? ' · <span class="bad">being razed</span>' : ''}</div>`;
-    // Its accounts: what it costs in upkeep, its religion; buying what it builds.
-    const p = g.players[c.owner]!, capital = p.capital === c.id;
-    const ledger = `<div class="ledger"><span>Upkeep</span><b>${capital ? 'none (capital)' : `${g.upkeepOf(c).toFixed(1)} gold/turn${c.buildings.has('courthouse') ? ' · courthouse' : ''}`}</b>
-      <span>Religion</span><b>${c.religion ? esc(RELIGIONS[c.religion].name) : 'none'}</b>
-      <span>Borders</span><b>${c.ring} tiles out${c.ring < BORDER_MAX ? ` · ${c.ring + 1} at ${BORDER_AT[c.ring + 1]} culture (${Math.floor(c.culture)})` : ''}</b></div>`;
-    const buyGold = mine ? g.buyCost(c, 'gold') : null, buyFaith = mine ? g.buyCost(c, 'faith') : null;
-    const buy = buyGold !== null || buyFaith !== null ? `<div class="buttons">${buyGold !== null ? `<button data-act="buy" data-currency="gold" ${p.gold >= buyGold ? '' : 'disabled'}>Buy <small>${buyGold} gold</small></button>` : ''}${buyFaith !== null ? `<button data-act="buy" data-currency="faith" ${p.faith >= buyFaith ? '' : 'disabled'}>Buy <small>${buyFaith} faith</small></button>` : ''}</div>` : '';
-    const raze = mine && g.canRaze(c) ? `<div class="buttons"><button data-act="raze" class="danger" title="Burn the city down, a citizen a turn; ruins remain">Raze ${esc(c.name)}</button></div>` : '';
-    return `<h3>${esc(c.name)} <small>size ${c.pop} · ${esc(g.players[c.owner].name)}</small></h3>
-      <div class="stats">${outStr(y)}</div>
-      ${defense}
-      ${ledger}
-      <div class="desc">${makeup}</div>
-      <div class="desc">Food ${c.food}/${cost} (${y.surplus >= 0 ? '+' : ''}${y.surplus}) — ${grow}</div>
-      ${place}
-      ${mine && placing !== 'buy' && g.buyableTiles(c).length ? `<div class="buttons"><button data-act="buyMode" title="A city grows into the ring beyond its first by buying it">Buy tiles <small>${g.tilePrice(c)} gold</small></button></div>` : ''}
-      ${focus}
-      ${this.buildingsHtml(c)}
-      <div class="desc">Producing: <b>${current}</b></div>
-      ${buy}
-      ${options}
-      ${raze}`;
+    const buyGold = g.buyCost(c, 'gold'), buyFaith = g.buyCost(c, 'faith');
+    const buy = buyGold !== null || buyFaith !== null ? `<div class="buttons">${buyGold !== null ? `<button data-act="buy" data-currency="gold" ${p.gold >= buyGold ? '' : 'disabled'}>${icon('gold')} Buy <small>${buyGold} gold</small></button>` : ''}${buyFaith !== null ? `<button data-act="buy" data-currency="faith" ${p.faith >= buyFaith ? '' : 'disabled'}>${icon('faith')} Buy <small>${buyFaith} faith</small></button>` : ''}</div>` : '';
+    const right = `<div class="phead"><h4>${esc(c.name)} is building</h4><div class="now"><b>${esc(now)}</b><small>${sub}</small></div>
+        <div class="meter prod"><i style="width:${(100 * Math.min(1, frac)).toFixed(1)}%"></i></div>${buy}</div>
+      <div class="plist">
+        ${units.length ? `<h5>Units</h5>${units.map(row).join('')}` : ''}
+        ${blds.length ? `<h5>Buildings</h5>${blds.map(row).join('')}` : ''}
+        ${wonders.length ? `<h5>Wonders · one in the world</h5>${wonders.map(row).join('')}` : ''}
+        <h5>Other</h5><button class="prow ${c.building ? '' : 'active'}" data-act="build" data-key="" ${tip('Wealth', 'The city builds nothing: its production becomes gold')}>
+          <span class="pic">${icon('gold')}</span><span class="pn"><b>Wealth</b><small>production becomes gold</small></span><span class="pt"></span></button>
+      </div>`;
+    return [left, right];
   }
 
   // The city's buildings, specialists and wonders.
   private buildingsHtml(c: City): string {
     const g = this.game;
-    const rows: string[] = [];
-    const blds = [...c.buildings].filter((b) => b !== 'walls');
-    if (blds.length) rows.push(`<div class="qrow"><b>Buildings</b> ${blds.map((b) => BUILDINGS[b].name).join(' · ')}</div>`);
-    const specs = SPECIALIST_KINDS.filter((k) => c.specialists[k] > 0);
-    if (specs.length) rows.push(`<div class="qrow"><b>Specialists</b> ${specs.map((k) => `${c.specialists[k]} ${specialistName(k).toLowerCase()}${c.specialists[k] > 1 ? 's' : ''}`).join(' · ')}</div>`);
-    const ws = g.cityWonders(c);
-    if (ws.length) rows.push(`<div class="qrow"><b>Wonders</b> ${ws.map((w) => WONDERS[w].name).join(' · ')}</div>`);
-    if (c.buildings.has('walls')) rows.push('<div class="qrow"><b>Walls</b> around the city</div>');
-    return rows.length ? `<div class="quarters">${rows.join('')}</div>` : '';
+    const tags: string[] = [];
+    for (const w of g.cityWonders(c)) tags.push(`<span class="tag wonder" ${tip(esc(WONDERS[w].name), esc(WONDERS[w].desc))}>${icon('star')}${esc(WONDERS[w].name)}</span>`);
+    for (const b of c.buildings) tags.push(`<span class="tag" ${tip(esc(BUILDINGS[b].name), esc(BUILDINGS[b].desc))}>${esc(BUILDINGS[b].name)}</span>`);
+    for (const k of SPECIALIST_KINDS) if (c.specialists[k] > 0) tags.push(`<span class="tag">${icon('person')}${c.specialists[k]} ${specialistName(k).toLowerCase()}${c.specialists[k] > 1 ? 's' : ''}</span>`);
+    return tags.length ? `<div class="sect"><span class="label">In the city</span><div class="tags">${tags.join('')}</div></div>` : '';
+  }
+
+  // The tile's tooltip, by the pointer: at once while a unit is selected or
+  // something is being placed (the path, the fight, the yields matter
+  // then), otherwise once the pointer has rested on the tile a moment.
+  private placeTile(): void {
+    const box = this.el.tile;
+    const show = this.pointer.over && this.tileShown >= 0 && this.drawn.get(box) !== '';
+    box.classList.toggle('hidden', !show);
+    if (!show) return;
+    const w = box.offsetWidth, h = box.offsetHeight;
+    const x = this.pointer.x + 22 + w > innerWidth - 8 ? this.pointer.x - 16 - w : this.pointer.x + 22;
+    const y = Math.min(innerHeight - h - 8, this.pointer.y + 22);
+    box.style.left = `${Math.max(8, x)}px`;
+    box.style.top = `${Math.max(52, y)}px`;
   }
 
   private renderTile(sel: Selection, t: number, placing: Placing): void {
     const box = this.el.tile;
     const g = this.game;
-    if (t < 0 || !g.explored[t]) { box.classList.add('hidden'); return; }
-    box.classList.remove('hidden');
+    if (t < 0 || !g.explored[t]) { this.set(box, ''); clearTimeout(this.tileTimer); this.tileShown = -1; this.placeTile(); return; }
+    const urgent = (sel?.kind === 'unit' && sel.unit.owner === HUMAN) || placing !== null;
+    if (t !== this.tileShown) {
+      clearTimeout(this.tileTimer);
+      if (urgent) this.tileShown = t;
+      else { this.tileShown = -1; this.tileTimer = window.setTimeout(() => { this.tileShown = t; this.placeTile(); }, 380); }
+    }
     const y = g.tileYield(t);
     const name = terrainName(g.terrainAt(t));
     const owner = g.ownerOf(t);
     const variant = floraLabel(g.map, g.flora, t);
-    const lines = [`<b>${name}</b>${variant ? ` <small>${esc(variant)}</small>` : ''} ${yieldStr(y.food, y.prod, y.gold)}`];
+    const lines = [`<div class="tname"><span>${name}${variant ? ` <small>${esc(variant)}</small>` : ''}</span><span>${yieldStr(y.food, y.prod, y.gold)}</span></div>`];
     const tc = g.cityById.get(g.tileCity[t]);
     if (tc) {
       const u = g.use[t];
@@ -336,9 +477,9 @@ export class UI {
       lines.push(`${what}${u === USE.wild && !g.wondersAt(t).length ? '' : ` ${outStr(o)}`}`);
     }
     const res = g.resourceFor(t, HUMAN);
-    if (res) { const d = resourceDef(res); lines.push(`<b>${esc(d.name)}</b> <small>${d.kind}</small> ${outStr(d.yields, true)}${d.kind === 'luxury' ? ` <small>· its first copy: ${bonusStr(empireBonus(res, g.players[HUMAN]!.era))} to your whole civilization</small>` : d.kind === 'strategic' ? ' <small>· owned: needed for some units and buildings</small>' : ''}`); }
+    if (res) { const d = resourceDef(res); lines.push(`${icon(resourceIcon(res))} <b>${esc(d.name)}</b> <small>${d.kind}</small> ${outStr(d.yields, true)}${d.kind === 'luxury' ? `<br><small>Its first copy: ${bonusStr(empireBonus(res, g.players[HUMAN]!.era))} to your whole civilization</small>` : d.kind === 'strategic' ? '<br><small>Owned: needed for some units and buildings</small>' : ''}`); }
     if (tc && !g.tilesWithin(tc.tile, 2).includes(t)) lines.push('<small>Beyond its citizens\' reach: held for its resources, not worked</small>');
-    for (const w of g.wondersAt(t)) lines.push(`<b>${esc(WONDERS[w].name)}</b> <small>${esc(WONDERS[w].desc)}</small>`);
+    for (const w of g.wondersAt(t)) lines.push(`${icon('star')} <b>${esc(WONDERS[w].name)}</b> <small>${esc(WONDERS[w].desc)}</small>`);
     const site = g.cities.find((c) => c.wonderTile === t);
     if (site && site.building && isWonder(site.building)) lines.push(`<small>${esc(WONDERS[site.building].name)} under construction</small>`);
     const pickW = wonderPicked(placing);
@@ -350,12 +491,12 @@ export class UI {
     }
     if (!g.isWater(t)) {
       const def = g.defenseBonus(t);
-      lines.push(`Move cost ${g.moveCost(t)}${def ? ` · Defense +${Math.round(def * 100)}%` : ''}`);
+      lines.push(`Move cost ${g.moveCost(t)}${def ? ` · Defence +${Math.round(def * 100)}%` : ''}`);
     }
-    if (owner >= 0) lines.push(`Territory of ${esc(g.players[owner].name)}`);
+    if (owner >= 0) lines.push(`<span class="swatch" style="background:${g.players[owner].color}"></span>Territory of the ${esc(g.players[owner].name)}`);
     if (g.visible[t]) {
       const units = g.unitsAt(t);
-      if (units.length) lines.push(units.map((u) => `${esc(g.players[u.owner].name)} ${unitDef(u.type).name} (${u.hp}hp)`).join(', '));
+      if (units.length) lines.push(units.map((u) => `${icon(unitIcon(u.type))} ${esc(g.players[u.owner].name)} ${unitDef(u.type).name} <small>${u.hp} hp</small>`).join('<br>'));
     }
     if (sel?.kind === 'unit' && sel.unit.owner === HUMAN && t !== sel.unit.tile) {
       const u = sel.unit;
@@ -371,13 +512,14 @@ export class UI {
         const city = g.cityByTile.get(t), how = mode === 'ranged' ? 'Fire' : 'Assault';
         const other = canShoot(u.type) && canAssault(u.type) ? ` <small>(Shift: ${mode === 'ranged' ? 'close in' : 'shoot'})</small>` : '';
         lines.push(pv
-          ? `<span class="warn">${how}: ${pv.atk.toFixed(1)} against ${pv.def.toFixed(1)} (${unitDef(pv.defender.type).name})${mode === 'ranged' ? (g.fireReach(u).has(t) ? ', unanswered' : ' — out of reach: it moves closer first') : ''}</span>${other}`
+          ? `<span class="warn">${icon(mode === 'ranged' ? 'arrow' : 'sword')} ${how}: ${pv.atk.toFixed(1)} against ${pv.def.toFixed(1)} (${unitDef(pv.defender.type).name})${mode === 'ranged' ? (g.fireReach(u).has(t) ? ', unanswered' : ' — out of reach: it moves closer first') : ''}</span>${other}`
           : city && city.hp > 0
             ? `<span class="warn">${how} on the walls: ${g.unitStrength(u, mode, 'atk', t).toFixed(1)} against the city's ${g.cityStrength(city).toFixed(1)} · HP ${city.hp}/${g.cityMaxHp(city)}</span>${other}`
             : '<span class="warn">Undefended — capture!</span>');
-      } else if (path) lines.push(`Path: ${g.pathTurns(u, path)} turn(s)`);
+      } else if (path) lines.push(`${icon('moves')} ${plural(g.pathTurns(u, path), 'turn')} away`);
     }
-    box.innerHTML = lines.map((l) => `<div>${l}</div>`).join('');
+    this.set(box, lines.map((l) => `<div>${l}</div>`).join(''));
+    this.placeTile();
   }
 }
 

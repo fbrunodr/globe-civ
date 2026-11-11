@@ -67,6 +67,7 @@ export interface TerrainMesh {
   waterTriToTile: Int32Array;  // water triangle index -> tile id
   triToTile: Int32Array;       // triangle index -> tile id
   vertTiles: Int32Array;       // 3 tile ids per vertex (-1 padded); >1 on shared boundaries
+  vertShared: Int32Array;      // the shared (topo) vertex each vertex is a copy of
   vertDir: Float32Array;       // unit direction per vertex (xyz)
   vertRadius: Float32Array;    // distance from the globe center per vertex
   vertAO: Float32Array;        // baked ambient occlusion per vertex
@@ -449,6 +450,7 @@ export function buildTerrainMesh(globe: Globe, spec: TerrainSpec, coarse: number
     waterTriToTile: Int32Array.from(waterTriToTile),
     triToTile: Int32Array.from(triToTile),
     vertTiles,
+    vertShared: Int32Array.from(origin),
     vertDir,
     vertRadius: vertRadiusOut,
     vertAO: pick(sharedAO, 1),

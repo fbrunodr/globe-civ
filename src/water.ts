@@ -158,7 +158,7 @@ export function makeWaterMaterial(): WaterMaterial {
           // The sky's reflection, strong at grazing angles.
           float fres = pow(1.0 - clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0), 5.0) * (1.0 - foam);
           outgoingLight = grade(mix(outgoingLight, uSky * 0.8, fres * 0.25), 0.85);
-          diffuseColor.a = max(diffuseColor.a, fres * 0.6) * (1.0 - vFog);
+          diffuseColor.a = max(diffuseColor.a, fres * 0.6) * (1.0 - smoothstep(0.0, 0.5, vFog));
         }
         #include <opaque_fragment>`);
   };

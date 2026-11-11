@@ -39,10 +39,15 @@ import { farGeometry, makeFloraDepthMaterial, makePropMaterial, makeRoamDepthMat
 import { GpuTimer } from './gpuTimer.ts';
 import { Billboards, type Billboard } from './billboards.ts';
 import { resourceDef } from './resources.ts';
+import { unitIcon, resourceIcon } from './icons.ts';
+import { drawUnitFlag, drawCityBanner, drawResourceIcon, drawTileYields } from './mapIcons.ts';
+import { isUnitKey, isWonder, buildDef, type BuildKey } from './rules.ts';
 import { UnitView, type FightResult, type ShownUnit } from './unitView.ts';
 import { loadGroundTextures, groundUniform, GROUND_LAYER } from './groundTextures.ts';
 
 const FOG = new THREE.Color(0x0b0e15);
+// How far into an unexplored tile the known land's edge slopes away and fades (of a tile's edge).
+const FOG_REACH = 0.5;
 
 // Pixels per CSS pixel the renderer may use (setResolution).
 export const RESOLUTIONS = [2, 1.5, 1] as const;
@@ -128,7 +133,7 @@ interface PlacedProp {
 // Reference tile spacing (radians) that unit/city sizes were tuned for.
 const REF_EDGE = 0.07;
 
-export type DebugView = 'normal' | 'height' | 'water' | 'paint';
+export type DebugView = 'normal' | 'height' | 'water' | 'paint' | 'strategic';
 
 // A banana tile's trees (canopy and understory): a third of them are bananas (the only place they grow).
 const BANANA_IN: ReadonlySet<Layer> = new Set<Layer>(['Canopy', 'Understory']);
@@ -270,6 +275,11 @@ export class GlobeRenderer {
   private readonly globeMesh: THREE.Group;
   private readonly baseColors: THREE.Color[];
   private readonly prevDrained: Uint8Array;
+  // Fog of war as a smooth field on the surface's shared vertices
+  // (updateFog), and each tile's shared vertices.
+  private readonly fogField: Float32Array;
+  private readonly tileShared: Int32Array[];
+  private readonly fogSample = newSample();
   private readonly playerColors: THREE.Color[];
   private readonly paint: PaintData;
   private readonly frames: FanFrame[];
@@ -313,9 +323,16 @@ export class GlobeRenderer {
   private selUnit: Unit | null = null;
   private readonly citiesGroup = new THREE.Group();
   // Labels drawn a kind at a time (billboards.ts): units' flags, cities' labels, resources' badges.
-  private readonly unitFlags = new Billboards(128, 128, 16, [0.026, 0.026], 5);
-  private readonly cityLabels = new Billboards(512, 96, 4, [0.13, 0.0244], 10);
-  private readonly resourceBadges = new Billboards(96, 48, 21, [0.024, 0.012], 4);
+  private readonly unitFlags = new Billboards(128, 128, 16, [0.031, 0.031], 5);
+  private readonly cityLabels = new Billboards(512, 112, 4, [0.152, 0.03325], 10);
+  private readonly resourceBadges = new Billboards(96, 96, 21, [0.032, 0.032], 4);
+  // The yields lens (setYields): each tile's yields near where the camera looks.
+  private readonly yieldBadges = new Billboards(192, 64, 10, [0.084, 0.028], 3, false);
+  private yieldBoards: Billboard[] = [];
+  private yieldsKey = '';
+  private readonly yieldsAt = new THREE.Vector3();
+  // (Bumped once the banner's typeface has loaded: banners drawn before are drawn again.)
+  private fontEpoch = 0;
   private cityBoards: Billboard[] = [];
   private resourceBoards: Billboard[] = [];
   // Resource badges (resources.ts) on explored tiles, shown from play distance.
@@ -579,6 +596,12 @@ export class GlobeRenderer {
     this.weather.group.userData['stat'] = 'clouds & rain';
     this.scene.add(this.weather.group);
     this.prevExplored = new Uint8Array(N).fill(255);
+    {
+      const owners = this.terrain.topo.owners, lists: number[][] = g.tiles.map(() => []);
+      for (let v = 0; v < this.terrain.topo.V; v++) for (let k = 0; k < 3; k++) { const o = owners[v * 3 + k]!; if (o >= 0) lists[o]!.push(v); }
+      this.tileShared = lists.map((l) => Int32Array.from(l));
+      this.fogField = new Float32Array(this.terrain.topo.V).fill(1);
+    }
     this.prevDrained = new Uint8Array(N);
     this.prevVisible = new Uint8Array(N).fill(255);
     this.prevOwner = new Int32Array(N).fill(-2);
@@ -617,6 +640,9 @@ export class GlobeRenderer {
     this.unitsGroup.add(this.unitView.group, this.unitFlags.mesh);
     this.citiesGroup.add(this.cityLabels.mesh);
     this.resourcesGroup.add(this.resourceBadges.mesh);
+    this.yieldBadges.mesh.userData['stat'] = 'yield icons';
+    this.scene.add(this.yieldBadges.mesh);
+    void document.fonts?.load('600 38px Cinzel').then(() => { this.fontEpoch++; this.updateCities(); });
     g.onBattle = (u, t, style, result) => this.unitView.fight(u.id, t, style, performance.now() / 1000, result);
     g.onStep = (u, from, to) => this.unitView.step(u.id, from, to);
     this.citiesGroup.userData['stat'] = 'city markers';
@@ -757,15 +783,15 @@ export class GlobeRenderer {
     this.overlayGroup.clear();
     for (const m of marks) this.overlayGroup.add(this.ring(m.tile, m.color, m.opacity));
     const selTile = sel?.kind === 'unit' ? sel.unit.tile : sel?.kind === 'city' ? sel.city.tile : sel?.kind === 'tile' ? sel.tile : -1;
-    if (selTile >= 0) this.overlayGroup.add(this.ring(selTile, 0xffffff, 0.9));
-    if (hover >= 0 && hover !== selTile) this.overlayGroup.add(this.ring(hover, 0xffffff, 0.35));
+    if (selTile >= 0) this.overlayGroup.add(this.ring(selTile, 0xffe9ad, 0.95, 0.985, 0.95));
+    if (hover >= 0 && hover !== selTile) this.overlayGroup.add(this.ring(hover, 0xffffff, 0.5, 0.985, 0.96));
     if (path && path.length > 1) {
       const pts: THREE.Vector3[] = [];
       const lift = 0.01 * this.scale;
       for (let k = 0; k + 1 < path.length; k++) {
         const a = path[k], b = path[k + 1];
         const da = this.game.tiles[a].center, db = this.game.tiles[b].center;
-        const ra = this.terrain.centerRadius[a], rb = this.terrain.centerRadius[b];
+        const ra = this.shownCenter(a), rb = this.shownCenter(b);
         for (let s = 0; s < 8; s++) {
           const f = s / 8;
           pts.push(da.clone().lerp(db, f).normalize().multiplyScalar(Math.max(ra, rb) + lift));
@@ -789,14 +815,29 @@ export class GlobeRenderer {
   view: DebugView = 'normal';
   setView(mode: DebugView): void {
     this.view = mode;
-    const m = mode === 'normal' ? 0 : mode === 'height' ? 1 : mode === 'water' ? 2 : 3;
+    const m = mode === 'normal' ? 0 : mode === 'height' ? 1 : mode === 'water' ? 2 : mode === 'paint' ? 3 : 4;
     this.terrainMat.setView(m);
     this.waterMat.setView(m);
     this.waterMesh.visible = mode === 'normal' || mode === 'water';
     this.weather.group.visible = mode === 'normal' && this.clouds;
-    // (Units and their flags too: the views show the land alone.)
-    this.unitsGroup.visible = mode === 'normal';
+    // (Units and their flags too: the debug views show the land alone; the
+    // strategic view keeps the flags, the banners and the medallions.)
+    this.unitsGroup.visible = mode === 'normal' || mode === 'strategic';
+    this.unitView.group.visible = mode === 'normal';
+    this.shadowsDirty = true;
   }
+
+  // The lenses: the hex grid (setGrid), each tile's yields, the resources' medallions.
+  get gridOn(): boolean { return this.grid; }
+  yieldsOn = false;
+  setYields(on: boolean): void { this.yieldsOn = on; this.yieldsKey = ''; }
+  resourcesOn = true;
+  setResourceIcons(on: boolean): void { this.resourcesOn = on; }
+
+  // Fly to look at a point of the globe (a unit vector), keeping the zoom.
+  focusDir(dir: THREE.Vector3): void { this.cam.focus(dir); }
+  // How far the camera stands from the point it looks at (globe radii).
+  get viewDistance(): number { return this.cam.distance; }
 
   // Clouds and rain on or off (the debug views always hide them).
   clouds = true;
@@ -872,8 +913,10 @@ export class GlobeRenderer {
 
   // ---------- globe ----------
 
+  // A tile's center as drawn: under the fog of war, at sea level like its ground.
+  private shownCenter(t: number): number { return this.game.explored[t] ? this.terrain.centerRadius[t]! : 1; }
   private surface(t: number, lift = 0): THREE.Vector3 {
-    return this.game.tiles[t].center.clone().multiplyScalar(this.terrain.centerRadius[t] + lift);
+    return this.game.tiles[t].center.clone().multiplyScalar(this.shownCenter(t) + lift);
   }
 
   private buildBackdrop(): void {
@@ -978,21 +1021,23 @@ export class GlobeRenderer {
       td[o + 24] = c.r; td[o + 25] = c.g; td[o + 26] = c.b; td[o + 27] = g.explored[t] && g.ownerOf(t) >= 0 ? 1 : 0;
     }
     this.tileTex.needsUpdate = true;
+    const touched = this.updateFog(changed);
     const fogAttr = this.terrain.geometry.getAttribute('unexplored') as THREE.BufferAttribute;
     const fogArr = fogAttr.array as Float32Array;
     const dimAttr = this.terrain.geometry.getAttribute('dim') as THREE.BufferAttribute, dimArr = dimAttr.array as Float32Array;
+    const vertShared = this.terrain.vertShared, field = this.fogField;
     const dirty = new Set<number>();
-    for (const t of changed) for (const v of tileVerts[t]) dirty.add(v);
+    for (const t of touched) for (const v of tileVerts[t]!) dirty.add(v);
     for (const v of dirty) {
       let n = 0, hidden = 0, unseen = 0;
       for (let s = 0; s < 3; s++) {
-        const t = vertTiles[v * 3 + s];
+        const t = vertTiles[v * 3 + s]!;
         if (t < 0) continue;
         if (!g.explored[t]) hidden++;
         else if (!g.visible[t]) unseen++;
         n++;
       }
-      fogArr[v] = hidden / n;
+      fogArr[v] = field[vertShared[v]!]!;
       dimArr[v] = unseen / Math.max(1, n - hidden);
     }
     fogAttr.needsUpdate = true;
@@ -1005,17 +1050,72 @@ export class GlobeRenderer {
     this.terrain.waterVerts.forEach((sv, n) => {
       let count = 0, hidden = 0, unseen = 0;
       for (let s = 0; s < 3; s++) {
-        const t = owners[sv * 3 + s];
+        const t = owners[sv * 3 + s]!;
         if (t < 0) continue;
         count++;
         if (!g.explored[t]) hidden++;
         else if (!g.visible[t]) unseen++;
       }
-      wf[n] = hidden / count;
+      wf[n] = field[sv]!;
       wd[n] = unseen / Math.max(1, count - hidden);
     });
     wFog.needsUpdate = true;
     wDim.needsUpdate = true;
+  }
+
+  // The fog of war's field, where it may have changed (the changed tiles
+  // and those next to them; returned): 0 on every vertex of an explored
+  // tile, and on an unexplored one rising with its distance from the
+  // nearest explored tile's edge, to 1 at FOG_REACH (of a tile's edge) and
+  // beyond. The ground sinks to sea level and turns to the unknown's
+  // colour by it (terrainMaterial.ts): the known land whole, no cliff at
+  // its edge, and nothing of the unknown's shape past a short slope.
+  private updateFog(changed: readonly number[]): Set<number> {
+    const g = this.game, topo = this.terrain.topo, owners = topo.owners, dir = topo.dir, field = this.fogField;
+    const reach = FOG_REACH * g.globe.avgEdgeAngle;
+    const tiles = new Set<number>();
+    for (const t of changed) { tiles.add(t); for (const nb of g.tiles[t]!.neighbors) tiles.add(nb); }
+    // (An unexplored tile's vertices on an explored tile's edge: where its slope starts.)
+    const lit = new Map<number, number[]>();
+    const litOf = (t: number): number[] => {
+      let l = lit.get(t);
+      if (!l) {
+        l = [];
+        for (const v of this.tileShared[t]!) for (let k = 0; k < 3; k++) { const o = owners[v * 3 + k]!; if (o >= 0 && g.explored[o]) { l.push(v); break; } }
+        lit.set(t, l);
+      }
+      return l;
+    };
+    for (const t of tiles) {
+      for (const v of this.tileShared[t]!) {
+        let known = false;
+        for (let k = 0; k < 3 && !known; k++) { const o = owners[v * 3 + k]!; known = o >= 0 && g.explored[o] === 1; }
+        if (known) { field[v] = 0; continue; }
+        let d2 = Infinity;
+        const x = dir[v * 3]!, y = dir[v * 3 + 1]!, z = dir[v * 3 + 2]!;
+        for (let k = 0; k < 3; k++) {
+          const o = owners[v * 3 + k]!;
+          if (o < 0) continue;
+          for (const l of litOf(o)) {
+            const dx = dir[l * 3]! - x, dy = dir[l * 3 + 1]! - y, dz = dir[l * 3 + 2]! - z;
+            d2 = Math.min(d2, dx * dx + dy * dy + dz * dz);
+          }
+        }
+        field[v] = smoothstep(0, reach, Math.sqrt(d2));
+      }
+    }
+    return tiles;
+  }
+
+  // The radius the surface is drawn at, at a fan point: the ground (or the
+  // water over it), sunk toward sea level under the fog of war as the
+  // ground itself is.
+  private shownRadius(t: number, i: number, wa: number, wb: number): number {
+    const lv = this.terrain.at(t, i, wa, wb), r = Math.max(lv.ground, lv.water);
+    if (this.game.explored[t]) return r;
+    const s = this.terrain.topo.sample(t, i, wa, wb, this.fogSample);
+    const f = s.w[0] * this.fogField[s.v[0]]! + s.w[1] * this.fogField[s.v[1]]! + s.w[2] * this.fogField[s.v[2]]!;
+    return r + (1 - r) * f;
   }
 
   // Props (trees, shrubs, rocks, reeds...) of one tile, placed once and cached.
@@ -1411,7 +1511,10 @@ export class GlobeRenderer {
     this.frustum.setFromProjectionMatrix(this.projView.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse));
     // Small props vanish when they would be under a pixel or so.
     const altitude = (dist - 1) / this.scale;
-    this.resourcesGroup.visible = altitude < RESOURCE_BADGES_BELOW && this.view === 'normal';
+    const lensView = this.view === 'normal' || this.view === 'strategic';
+    this.resourcesGroup.visible = this.resourcesOn && altitude < RESOURCE_BADGES_BELOW * (this.view === 'strategic' ? 1.6 : 1) && lensView;
+    this.yieldBadges.mesh.visible = this.yieldsOn && altitude < YIELDS_BELOW && lensView;
+    if (this.yieldBadges.mesh.visible) this.updateYields();
     // Beyond farDist a tree is under FAR_PX tall on screen.
     const pxPerUnit = this.renderer.domElement.height / (2 * Math.tan((this.camera.fov * Math.PI) / 360));
     const farDist = (this.treeHeight * pxPerUnit) / FAR_PX;
@@ -1463,8 +1566,7 @@ export class GlobeRenderer {
     const pt = (f: number, r: number) => {
       // On the ground, or on the water where it stands above the ground.
       const wa = (1 - f) * r, wb = f * r;
-      const lv = this.terrain.at(t, i, wa, wb);
-      return this.terrain.samplePoint(t, i, wa, wb).setLength(Math.max(lv.ground, lv.water) + lift);
+      return this.terrain.samplePoint(t, i, wa, wb).setLength(this.shownRadius(t, i, wa, wb) + lift);
     };
     for (let s = 0; s < steps; s++) {
       const f0 = s / steps, f1 = (s + 1) / steps;
@@ -2225,9 +2327,9 @@ export class GlobeRenderer {
     return { dir, ground: lv.ground - 1, water: lv.water - 1, slope, urban, owner: fan.ids[owner]!, own: w[owner]!, bank, coast: coast / this.paint.params.r0 };
   }
 
-  private ring(t: number, color: number, opacity: number): THREE.Mesh {
+  private ring(t: number, color: number, opacity: number, outer = 0.95, inner = 0.85): THREE.Mesh {
     const pos: number[] = [];
-    for (let i = 0; i < this.game.tiles[t].corners.length; i++) this.edgeRibbon(t, i, 0.95, 0.85, 0.002, pos);
+    for (let i = 0; i < this.game.tiles[t].corners.length; i++) this.edgeRibbon(t, i, outer, inner, 0.002, pos);
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
@@ -2263,11 +2365,11 @@ export class GlobeRenderer {
   // on screen.
   private unitFlag(s: ShownUnit): Billboard {
     const g = this.game, u = g.units.find((x) => x.id === s.id);
-    const icon = unitDef(s.type).icon, selected = u !== undefined && u === this.selUnit, fortified = u?.fortified ?? false;
+    const icon = unitIcon(s.type), civilian = unitDef(s.type).civilian === true, selected = u !== undefined && u === this.selUnit, fortified = u?.fortified ?? false;
     // (A commander's flag counts it and its army.)
     const count = u?.type === 'commander' ? 1 + g.armyOf(u).length : 1;
-    const key = `u|${s.color}|${icon}|${count}|${Math.ceil(s.hp / 10)}|${selected}|${fortified}`;
-    return this.unitFlags.add(key, (ctx) => drawUnitIcon(ctx, s.color, icon, count, s.hp, selected, fortified));
+    const key = `u|${s.color}|${icon}|${civilian}|${count}|${Math.ceil(s.hp / 10)}|${selected}|${fortified}`;
+    return this.unitFlags.add(key, (ctx) => drawUnitFlag(ctx, s.color, icon, civilian, count, s.hp, selected, fortified));
   }
 
   // A badge over each explored tile's resource the player knows of (a
@@ -2288,12 +2390,42 @@ export class GlobeRenderer {
       const r = g.explored[t] ? g.resourceFor(t, HUMAN) : null;
       if (!r) continue;
       const d = resourceDef(r);
-      const badge = this.resourceBadges.add(`res|${r}`, (ctx) => drawResourceBadge(ctx, d.abbr, RESOURCE_COLORS[d.kind]));
+      const badge = this.resourceBadges.add(`res|${r}`, (ctx) => drawResourceIcon(ctx, resourceIcon(r), RESOURCE_COLORS[d.kind]));
       // (Off the center, toward a corner: units and cities stand in the middle.)
       const tile = g.tiles[t];
       const dir = tile.center.clone().lerp(g.globe.triCenters[tile.corners[2 % tile.corners.length]!]!, 0.45).normalize();
       badge.position.copy(dir).multiplyScalar(this.terrain.centerRadius[t] + 0.006 * this.scale);
       this.resourceBoards.push(badge);
+    }
+  }
+
+  // The yields lens: what each explored tile near where the camera looks
+  // yields (worked land: what it gives its city; the rest: its terrain's
+  // and its known resource's), over the tile, away from its resource's
+  // medallion. Made again when the camera has moved on, or the land changed.
+  private updateYields(): void {
+    const g = this.game, at = this.cam.target;
+    const key = `${g.turn}|${g.useVersion}|${this.resourcesShown}`;
+    if (key === this.yieldsKey && at.distanceTo(this.yieldsAt) < 3 * g.globe.avgEdgeAngle) return;
+    this.yieldsKey = key;
+    this.yieldsAt.copy(at);
+    for (const b of this.yieldBoards) b.dispose();
+    this.yieldBoards = [];
+    const from = this.nearestTile(at.clone().normalize(), this.hoverTile >= 0 ? this.hoverTile : 0);
+    for (const t of g.tilesWithin(from, YIELDS_REACH)) {
+      if (!g.explored[t]) continue;
+      let food: number, prod: number, gold: number;
+      if (g.use[t] !== USE.wild) ({ food, prod, gold } = g.tileOutput(t));
+      else {
+        const y = g.tileYield(t), r = g.resourceFor(t, HUMAN), ry = r ? resourceDef(r).yields : null;
+        food = y.food + (ry?.food ?? 0); prod = y.prod + (ry?.prod ?? 0); gold = y.gold + (ry?.gold ?? 0);
+      }
+      if (food + prod + gold <= 0) continue;
+      const board = this.yieldBadges.add(`y|${food}|${prod}|${gold}`, (ctx) => drawTileYields(ctx, [['food', food], ['prod', prod], ['gold', gold]]));
+      const tile = g.tiles[t]!, k = tile.corners.length;
+      const dir = tile.center.clone().lerp(g.globe.triCenters[tile.corners[(2 + (k >> 1)) % k]!]!, 0.4).normalize();
+      board.position.copy(dir).multiplyScalar(this.terrain.centerRadius[t]! + 0.004 * this.scale);
+      this.yieldBoards.push(board);
     }
   }
 
@@ -2306,10 +2438,15 @@ export class GlobeRenderer {
       if (!g.explored[city.tile]) continue;
       const tile = g.tiles[city.tile];
       const color = g.players[city.owner].color;
-      const label = `${city.pop}  ${city.name}`;
       const hp = Math.round((10 * city.hp) / g.cityMaxHp(city)) / 10;
-      const key = `c|${color}|${label}|${hp}`;
-      const board = this.cityLabels.add(key, (ctx) => drawCityLabel(ctx, color, label, hp));
+      // (Its growth and what it builds: its owner's to see.)
+      const mine = city.owner === HUMAN, item = city.building;
+      const growth = mine ? Math.round(12 * Math.min(1, city.food / Math.max(1, g.growthCostOf(city, city.pop + city.growth)))) / 12 : null;
+      const production = mine && item ? Math.round(12 * Math.min(1, city.prod / buildCost(item))) / 12 : null;
+      const glyph = !mine || !item ? null : isUnitKey(item) ? unitIcon(item) : isWonder(item) ? 'star' as const : 'building' as const;
+      const capital = g.players[city.owner]!.capital === city.id;
+      const key = `c|${this.fontEpoch}|${color}|${city.pop}|${city.name}|${hp}|${capital}|${growth}|${production}|${glyph}`;
+      const board = this.cityLabels.add(key, (ctx) => drawCityBanner(ctx, { name: city.name, pop: city.pop, color, capital, hp, growth, production, glyph }));
       board.position.copy(tile.center).multiplyScalar(this.terrain.centerRadius[city.tile] + 0.03 * s);
       this.cityBoards.push(board);
     }
@@ -2459,7 +2596,7 @@ export class GlobeRenderer {
     this.terrainMat.setTime(now / 1000);
     this.floraTime.value = now / 1000;
     this.camera.updateMatrixWorld();
-    for (const b of [this.unitFlags, this.cityLabels, this.resourceBadges]) b.update(this.camera);
+    for (const b of [this.unitFlags, this.cityLabels, this.resourceBadges, this.yieldBadges]) if (b.mesh.visible) b.update(this.camera);
     this.smoke.update(now / 1000, this.renderer.domElement.height / (2 * Math.tan((this.camera.fov * Math.PI) / 360)));
     this.smoke.points.visible = this.view === 'normal';
     this.waterMat.setTime(now / 1000);
@@ -2574,88 +2711,13 @@ function fmtTris(n: number): string {
 }
 
 
-function drawUnitIcon(ctx: CanvasRenderingContext2D, color: string, icon: string, stack: number, hp: number, selected: boolean, fortified: boolean): void {
-  const cx = 64, cy = 60;
-  if (selected) {
-    ctx.beginPath();
-    ctx.arc(cx, cy, 52, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255,255,255,0.95)';
-    ctx.fill();
-  }
-  ctx.beginPath();
-  ctx.arc(cx, cy, 44, 0, Math.PI * 2);
-  ctx.fillStyle = color;
-  ctx.fill();
-  ctx.lineWidth = 6;
-  ctx.strokeStyle = fortified ? '#ffd43b' : 'rgba(10,12,20,0.9)';
-  ctx.stroke();
-  ctx.fillStyle = '#fff';
-  ctx.strokeStyle = 'rgba(0,0,0,0.55)';
-  ctx.lineWidth = 5;
-  ctx.font = 'bold 54px system-ui, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.strokeText(icon, cx, cy + 3);
-  ctx.fillText(icon, cx, cy + 3);
-  ctx.fillStyle = 'rgba(0,0,0,0.7)';
-  ctx.fillRect(24, 112, 80, 10);
-  ctx.fillStyle = hp > 60 ? '#51cf66' : hp > 30 ? '#fcc419' : '#ff6b6b';
-  ctx.fillRect(26, 114, 76 * Math.max(0, hp) / 100, 6);
-  if (stack > 1) {
-    ctx.beginPath();
-    ctx.arc(104, 22, 20, 0, Math.PI * 2);
-    ctx.fillStyle = '#111';
-    ctx.fill();
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 26px system-ui, sans-serif';
-    ctx.fillText(String(stack), 104, 23);
-  }
-}
-
-// A resource's badge: its code on a dark chip with its kind's colour bar.
-const RESOURCE_COLORS = { bonus: '#7fb77e', luxury: '#b48ad6', strategic: '#d6a24c' } as const;
+// A resource's medallion (mapIcons.ts): its rim, by kind.
+const RESOURCE_COLORS = { bonus: '#8fd47f', luxury: '#c79be8', strategic: '#e8a94f' } as const;
 // Badges show while the camera is lower than this (globe radii at the reference tile size).
 const RESOURCE_BADGES_BELOW = 0.45;
-function drawResourceBadge(ctx: CanvasRenderingContext2D, abbr: string, color: string): void {
-  ctx.fillStyle = 'rgba(16, 19, 24, 0.88)';
-  ctx.beginPath();
-  ctx.roundRect(4, 6, 88, 36, 6);
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-  ctx.fillStyle = color;
-  ctx.fillRect(10, 12, 6, 24);
-  ctx.fillStyle = '#e4e7ec';
-  ctx.font = '600 24px Inter, system-ui, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(abbr, 54, 25);
-}
-
-// A city's banner: its size and name, with a health bar when damaged.
-function drawCityLabel(ctx: CanvasRenderingContext2D, color: string, label: string, hp = 1): void {
-  ctx.font = 'bold 44px system-ui, sans-serif';
-  const w = Math.min(500, ctx.measureText(label).width + 40);
-  const x = (512 - w) / 2;
-  ctx.fillStyle = 'rgba(12,14,22,0.82)';
-  ctx.beginPath();
-  ctx.roundRect(x, 14, w, 68, 18);
-  ctx.fill();
-  ctx.lineWidth = 6;
-  ctx.strokeStyle = color;
-  ctx.stroke();
-  ctx.fillStyle = '#fff';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(label, 256, 50);
-  if (hp < 1) {
-    ctx.fillStyle = 'rgba(0,0,0,0.7)';
-    ctx.fillRect(x + 18, 70, w - 36, 8);
-    ctx.fillStyle = hp > 0.5 ? '#51cf66' : hp > 0.25 ? '#fcc419' : '#fa5252';
-    ctx.fillRect(x + 18, 70, (w - 36) * Math.max(0, hp), 8);
-  }
-}
+// The yields lens shows below this altitude (as the medallions), for the tiles this many steps round where the camera looks.
+const YIELDS_BELOW = 0.45, YIELDS_REACH = 9;
+const buildCost = (k: BuildKey): number => buildDef(k).cost;
 
 // Per terrain vertex: the ground's slope (height per radian, the steepest
 // edge to a neighbor), the signed distance to the shore, and the unit

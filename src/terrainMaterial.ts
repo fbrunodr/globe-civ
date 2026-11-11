@@ -313,7 +313,7 @@ export interface TerrainMaterial {
   holed: THREE.MeshStandardMaterial; // the same, cut by the holes (TerrainHole): for the chunks round them
   setTime(seconds: number): void;
   setGrid(on: boolean): void; // the hex grid lines (fog of war shows them regardless)
-  setView(mode: number): void; // debug views: 0 normal, 1 height map, 2 water (ground grayed), 3 the painting's tiles
+  setView(mode: number): void; // views: 0 normal, 1 height map, 2 water (ground grayed), 3 the painting's tiles, 4 the strategic view
 }
 
 export interface PaintUniforms {
@@ -355,10 +355,12 @@ function makeNoiseTexture(): THREE.Data3DTexture {
 
 // Fog of war: ground no one has explored lies flat at sea level, so no
 // mountain, valley or coast shows through it (nor casts a shadow out of it:
-// makeTerrainDepthMaterial). Only vertices mostly in unexplored tiles move,
-// so explored tiles keep their edges.
+// makeTerrainDepthMaterial). `unexplored` is a smooth field (render.ts
+// updateFog): 0 on every explored tile, edges included, rising to 1 a
+// little way into the unexplored tiles beside them, so the known land
+// keeps its shape and the unknown slopes away from it with no cliff.
 const FOG_FLATTEN = /* glsl */ `
-  transformed = normalize(transformed) * mix(length(transformed), 1.0, smoothstep(0.5, 1.0, unexplored));`;
+  transformed = normalize(transformed) * mix(length(transformed), 1.0, unexplored);`;
 
 // The ground as drawn into the sun's shadow map: flattened under fog of war
 // like the ground itself (`holed`: and cut where wonders dig: TerrainHoles).
@@ -959,8 +961,20 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
             float edge = 1.0 - smoothstep(0.0, max(fwidth(d), 1e-5) * 1.5, d);
             float sf = soft[best] - 0.6;
             float inner = 1.0 - smoothstep(0.0, max(fwidth(sf), 1e-5) * 1.2, abs(sf));
-            pc = mix(pc, vec3(1.0), 0.35 * inner);
-            diffuseColor.rgb = mix(pc, vec3(0.02), edge);
+            if (uView > 3.5) {
+              // The strategic view: the map's colours alone, calmer, each
+              // tile in its owner's where it has one, a soft line between
+              // tiles; what is out of sight grayed as ever.
+              pc = pow(vec3(floor(code / 65536.0), mod(floor(code / 256.0), 256.0), mod(code, 256.0)) / 255.0, vec3(2.2));
+              pc *= 0.92;
+              vec4 own = tileRow(bt, 6);
+              pc = mix(pc, own.rgb, 0.16 * own.a);
+              pc = mix(pc, vec3(dot(pc, vec3(0.333))), 0.6 * vDim) * (1.0 - 0.45 * vDim);
+              diffuseColor.rgb = mix(pc, pc * 0.4, edge);
+            } else {
+              pc = mix(pc, vec3(1.0), 0.35 * inner);
+              diffuseColor.rgb = mix(pc, vec3(0.02), edge);
+            }
           } else if (uView > 0.5) {
             float alt = length(vObjPos) - 1.0;
             vec3 hc = alt < 0.0 ? mix(vec3(0.05, 0.15, 0.45), vec3(0.45, 0.75, 0.95), clamp(1.0 + alt / 0.008, 0.0, 1.0))
@@ -989,8 +1003,19 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
           normal = normalize(normal + mat3(viewMatrix) * gN * 0.9);
         }`)
       .replace('#include <opaque_fragment>', `{
-          vec3 fogCol = vec3(0.012, 0.016, 0.026) * (1.0 + 0.6 * gridLine);
-          outgoingLight = mix(outgoingLight, fogCol, smoothstep(0.0, 1.0, vFog));
+          // The unknown: an old map's vellum, mottled, its hexes inked
+          // faintly; where it meets the known land its edge is scorched
+          // dark. Unlit: the same at any hour, from any side.
+          if (vFog > 0.001) {
+            vec3 Q = normalize(vObjPos);
+            float blot = tFbm(Q * 9.0, 3), grainF = tFbm(Q * 70.0, 2);
+            vec3 fogCol = mix(vec3(0.30, 0.235, 0.15), vec3(0.47, 0.385, 0.255), blot) * (0.9 + 0.2 * grainF);
+            fogCol *= 1.0 - 0.3 * gridLine;
+            float veil = smoothstep(0.0, 0.55, vFog);
+            float scorch = veil * (1.0 - smoothstep(0.5, 1.0, vFog));
+            fogCol = mix(fogCol, vec3(0.07, 0.05, 0.035), 0.75 * scorch);
+            outgoingLight = mix(outgoingLight, fogCol, veil);
+          }
         }
         #include <opaque_fragment>`);
     if (holed) holeFragment(shader, 'vObjPos', false);

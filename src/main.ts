@@ -1,9 +1,13 @@
-import './style.css';
-import './topbar.ts';
+import './game.css';
 import { Game, HUMAN, type City, type Unit } from './game.ts';
-import { mountSettings } from './settingsMenu.ts';
-import { GlobeRenderer, type DebugView, type Selection, type TileMark } from './render.ts';
-import { UI, assertNever, attackInput, modeOf, wonderPicked, type Action, type Placing } from './ui.ts';
+import { loadSettings, saveSettings, RESOLUTION_NAME, isResolution } from './settingsMenu.ts';
+import { Minimap } from './minimap.ts';
+import { icon, type IconKey } from './icons.ts';
+import { TECH_KEYS } from './techs.ts';
+import { POLITICS_KEYS } from './politics.ts';
+import { TRAIT_KEYS } from './identity.ts';
+import { GlobeRenderer, RESOLUTIONS, type DebugView, type Selection, type TileMark } from './render.ts';
+import { UI, assertNever, attackInput, modeOf, wonderPicked, tip, type Action, type Placing, type NextStep } from './ui.ts';
 import { Sheets } from './sheets.ts';
 import { gameLogId } from './gameLog.ts';
 import { MAP_SCRIPTS, MAP_SIZES, isMapScript, tileCount, unitDef, domainOf, isWonder, type MapScriptKey, type MapSizeKey } from './rules.ts';
@@ -21,15 +25,17 @@ function showStartScreen(): void {
   }).join('');
   const scripts = (Object.keys(MAP_SCRIPTS) as MapScriptKey[])
     .map((k) => `<button data-script="${k}">${MAP_SCRIPTS[k].name}</button>`).join('');
-  menu.innerHTML = `<div class="card">
-    <h1>Globe Civ</h1>
-    <p>A civilization game on a Goldberg polyhedron: 12 pentagons, the rest hexagons.</p>
+  menu.innerHTML = `<div><div class="title"><h1>Globe Civ</h1><p>An empire to stand the test of time, on a world that is round</p></div>
+  <div class="card">
+    <span class="label">World</span>
     <div class="sizes">${sizes}</div>
-    <div class="scripts">Map ${scripts}</div>
-    <label>Seed <input id="seed" value="${params.get('seed') ?? Math.floor(Math.random() * 1e6)}"></label>
-    <button id="go" class="primary">Start game</button>
-    <p class="tools"><small>Tools: <a href="/gallery.html">Gallery</a> · <a href="/buildings.html">Buildings</a> · <a href="/units.html">Units</a> · <a href="/wonders.html">Wonders</a> · <a href="/city_lab.html">City lab</a> · <a href="/city_lab.html?stress">Stress test</a> · <a href="/city_samples.html">City samples</a> · <a href="/world_view.html">World view</a> · <a href="/map_editor.html">Map editor</a></small></p>
-  </div>`;
+    <span class="label">Lands</span>
+    <div class="scripts">${scripts}</div>
+    <span class="label">Seed <small>· the same seed makes the same world</small></span>
+    <div class="seedrow"><input id="seed" type="text" inputmode="numeric" value="${params.get('seed') ?? Math.floor(Math.random() * 1e6)}"><button id="dice">Another</button></div>
+    <button id="go" class="primary">Begin</button>
+    <p class="tools">Workshop: <a href="/gallery.html">Gallery</a> · <a href="/buildings.html">Buildings</a> · <a href="/units.html">Units</a> · <a href="/wonders.html">Wonders</a> · <a href="/city_lab.html">City lab</a> · <a href="/city_lab.html?stress">Stress test</a> · <a href="/city_samples.html">City samples</a> · <a href="/world_view.html">World view</a> · <a href="/map_editor.html">Map editor</a></p>
+  </div></div>`;
   let size: MapSizeKey = 'small', script: MapScriptKey = 'continents';
   const pSize = params.get('size'), pMap = params.get('map');
   if (pSize && isMapSize(pSize)) size = pSize;
@@ -47,10 +53,13 @@ function showStartScreen(): void {
     const s = b.dataset['size'] ?? '';
     if (isMapSize(s)) { size = s; mark(); }
   }));
+  const seedBox = document.getElementById('seed') as HTMLInputElement;
+  document.getElementById('dice')!.addEventListener('click', () => { seedBox.value = String(Math.floor(Math.random() * 1e6)); });
   document.getElementById('go')!.addEventListener('click', () => {
-    const seed = Number((document.getElementById('seed') as HTMLInputElement).value) || 1;
-    menu.remove();
-    startGame(size, seed, script);
+    const seed = Number(seedBox.value) || 1;
+    // (The world takes a moment to make: said so first, then made.)
+    menu.innerHTML = '<div class="loading">Shaping the world…</div>';
+    setTimeout(() => { startGame(size, seed, script); menu.remove(); }, 40);
   });
 }
 
@@ -59,7 +68,7 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
   const view = new GlobeRenderer(document.getElementById('c') as HTMLCanvasElement, game);
   const ui = new UI(game, act);
   // (Dev: the game to look at from the console: select a unit, redraw.)
-  if (import.meta.env.DEV) Object.assign(window, { __game: { game, view, refresh: () => refresh(), select: (u: Unit) => { sel = { kind: 'unit', unit: u }; refresh(); } } });
+  if (import.meta.env.DEV) Object.assign(window, { __game: { game, view, refresh: () => refresh(), select: (u: Unit) => { sel = { kind: 'unit', unit: u }; refresh(); }, selectCity: (c: City) => { selectCity(c); refresh(); } } });
   // The record of the game (gameLog.ts): sent to the dev server each turn
   // (logs/<id>.jsonl), downloadable from the Log sheet.
   const logId = gameLogId(sizeKey, seed);
@@ -81,27 +90,106 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
   const sheets = new Sheets(game, () => refresh(), downloadLog);
   view.onTileHover = onHover;
   view.onTileClick = onClick;
-  // The settings menu (shadows, tone mapping).
-  mountSettings(view);
   // Dev-only handle for profiling from the browser console or test scripts.
   if (import.meta.env.DEV) Object.assign(window, { __globe: { game, view } });
+  const minimap = new Minimap(game, view, document.getElementById('minimap')!);
 
-  // Debug views (render.ts): height map with contours, water by source with steps in red, or the painting's tiles.
-  const viewPanel = document.createElement('div');
-  viewPanel.className = 'panel';
-  viewPanel.id = 'views';
-  viewPanel.innerHTML = `View <button data-view="normal" class="active">Normal</button><button data-view="height">Height</button><button data-view="water">Water</button><button data-view="paint">Paint</button> <kbd>J</kbd>`;
-  const VIEWS: DebugView[] = ['normal', 'height', 'water', 'paint'];
-  const setView = (m: DebugView) => {
-    view.setView(m);
-    viewPanel.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((b) => b.classList.toggle('active', b.dataset['view'] === m));
+  // The lenses (over the minimap): the hex grid, the tiles' yields, the
+  // resources' medallions, the strategic view (the land as a flat map).
+  const lensBox = document.getElementById('lenses')!;
+  const LENSES: readonly { key: string; icon: IconKey; name: string; sub: string; on: () => boolean; toggle: () => void }[] = [
+    { key: 'grid', icon: 'grid', name: 'Hex grid', sub: 'H', on: () => view.gridOn, toggle: () => view.setGrid(!view.gridOn) },
+    { key: 'yields', icon: 'food', name: 'Yields', sub: 'Y · what each tile gives, from close by', on: () => view.yieldsOn, toggle: () => view.setYields(!view.yieldsOn) },
+    { key: 'resources', icon: 'gem', name: 'Resources', sub: 'Their medallions on the map, from close by', on: () => view.resourcesOn, toggle: () => view.setResourceIcons(!view.resourcesOn) },
+    { key: 'strategic', icon: 'map', name: 'Strategic view', sub: 'M · the land as a flat map', on: () => view.view === 'strategic', toggle: () => setView(view.view === 'strategic' ? 'normal' : 'strategic') },
+  ];
+  const drawLenses = () => {
+    const html = LENSES.map((l) => `<button data-lens="${l.key}" class="${l.on() ? 'active' : ''}" ${tip(l.name, l.sub)}>${icon(l.icon)}</button>`).join('');
+    if (lensBox.dataset['html'] !== html) { lensBox.dataset['html'] = html; lensBox.innerHTML = html; }
   };
-  viewPanel.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((b) => b.addEventListener('click', () => { setView(b.dataset['view'] as DebugView); b.blur(); }));
-  addEventListener('keydown', (e) => {
-    if (e.target instanceof HTMLInputElement || e.metaKey || e.ctrlKey || e.altKey || (e.key !== 'j' && e.key !== 'J')) return;
-    setView(VIEWS[(VIEWS.indexOf(view.view) + 1) % VIEWS.length]!);
+  lensBox.addEventListener('click', (e) => {
+    const b = (e.target as Element).closest<HTMLElement>('[data-lens]');
+    LENSES.find((l) => l.key === b?.dataset['lens'])?.toggle();
+    drawLenses();
   });
-  document.getElementById('fps')!.after(viewPanel);
+
+  // Views of the land (render.ts): the game's, the strategic one, and the
+  // debug ones (height map with contours, water by source, the painting's
+  // tiles), from the menu or with J.
+  const VIEWS: DebugView[] = ['normal', 'height', 'water', 'paint'];
+  const VIEW_NAME: Record<DebugView, string> = { normal: 'The world', strategic: 'Strategic', height: 'Debug: heights', water: 'Debug: water', paint: 'Debug: painted tiles' };
+  const setView = (m: DebugView) => { view.setView(m); drawLenses(); };
+  addEventListener('keydown', (e) => {
+    if (e.target instanceof HTMLInputElement || e.metaKey || e.ctrlKey || e.altKey) return;
+    const k = e.key.toLowerCase();
+    if (k === 'j') setView(VIEWS[(VIEWS.indexOf(view.view) + 1) % VIEWS.length]!);
+    else if (k === 'm') setView(view.view === 'strategic' ? 'normal' : 'strategic');
+    else if (k === 'y') view.setYields(!view.yieldsOn);
+    // (H is the renderer's own: the buttons follow.)
+    setTimeout(drawLenses);
+  });
+
+  // The menu (the top bar's button, or Esc with nothing selected): graphics
+  // (remembered in this browser: settingsMenu.ts), the interface, the keys.
+  const settings = loadSettings(view);
+  view.setShadows(settings.shadows);
+  view.setToneMapping(settings.toneMapping);
+  view.setResolution(settings.resolution);
+  const menuBox = document.getElementById('menu')!, fpsBox = document.getElementById('fps')!;
+  const pref = (k: string): boolean => { try { return localStorage.getItem(k) === '1'; } catch { return false; } };
+  const setPref = (k: string, on: boolean) => { try { localStorage.setItem(k, on ? '1' : '0'); } catch { /* (not remembered) */ } };
+  fpsBox.classList.toggle('hidden', !pref('civ.fps'));
+  const KEYS: readonly [string, string][] = [
+    ['Drag', 'move across the globe'], ['Wheel', 'zoom (the view tilts as it nears the ground)'],
+    ['Right-drag', 'turn and tilt'], ['<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>', 'move'],
+    ['<kbd>Q</kbd><kbd>E</kbd>', 'turn'], ['<kbd>T</kbd><kbd>G</kbd> · <kbd>Z</kbd><kbd>X</kbd>', 'tilt · zoom'],
+    ['Click', 'select (again: the next thing on the tile)'], ['Right-click', 'move or attack (<kbd>Shift</kbd>: the other way of attacking)'],
+    ['<kbd>Enter</kbd>', 'what needs doing next, then end the turn'], ['<kbd>Shift</kbd><kbd>Enter</kbd>', 'end the turn now'],
+    ['<kbd>N</kbd> <kbd>Tab</kbd>', 'next unit'], ['<kbd>C</kbd>', 'centre on the selection'],
+    ['<kbd>B</kbd>', 'found a city'], ['<kbd>I</kbd>', 'improve the land'],
+    ['<kbd>F</kbd>', 'fortify'], ['<kbd>Space</kbd>', 'skip the unit\'s turn'],
+    ['<kbd>P</kbd>', 'pillage'], ['<kbd>R</kbd> <kbd>U</kbd>', 'a commander: rally · deploy'],
+    ['<kbd>H</kbd> <kbd>Y</kbd> <kbd>M</kbd>', 'hex grid · yields · strategic view'], ['<kbd>V</kbd>', 'walk on the ground'],
+    ['<kbd>Esc</kbd>', 'close, cancel, deselect; then this menu'], ['<kbd>J</kbd>', 'debug views of the land'],
+  ];
+  const openMenu = (on: boolean) => {
+    menuBox.classList.toggle('hidden', !on);
+    if (!on) return;
+    menuBox.innerHTML = `<div class="card"><h2>Globe Civ</h2>
+      <span class="label">Graphics</span>
+      <div class="opts">
+        <label class="opt">Shadows <input type="checkbox" data-set="shadows" ${settings.shadows ? 'checked' : ''}></label>
+        <label class="opt">Tone mapping <input type="checkbox" data-set="tone" ${settings.toneMapping ? 'checked' : ''}></label>
+        <label class="opt">Resolution <select data-set="res">${RESOLUTIONS.map((r) => `<option value="${r}" ${r === settings.resolution ? 'selected' : ''}>${RESOLUTION_NAME[r]}</option>`).join('')}</select></label>
+        <label class="opt">Clouds <input type="checkbox" data-set="clouds" ${view.clouds ? 'checked' : ''}></label>
+      </div>
+      <span class="label">Interface</span>
+      <div class="opts">
+        <label class="opt">Frame rate counter <input type="checkbox" data-set="fps" ${fpsBox.classList.contains('hidden') ? '' : 'checked'}></label>
+        <label class="opt">View of the land <select data-set="view">${(Object.keys(VIEW_NAME) as DebugView[]).map((v) => `<option value="${v}" ${v === view.view ? 'selected' : ''}>${VIEW_NAME[v]}</option>`).join('')}</select></label>
+      </div>
+      <span class="label">Controls</span>
+      <div class="keys">${KEYS.map(([k, what]) => `<span>${k}</span><span>${what}</span>`).join('')}</div>
+      <div class="foot"><button data-menu="new" class="danger">Leave for a new game</button><button data-menu="close" class="primary">Back to the game</button></div></div>`;
+  };
+  document.getElementById('menuBtn')!.addEventListener('click', () => openMenu(menuBox.classList.contains('hidden')));
+  menuBox.addEventListener('click', (e) => {
+    const t = e.target as HTMLElement;
+    if (t === menuBox || t.dataset['menu'] === 'close') openMenu(false);
+    else if (t.dataset['menu'] === 'new') location.reload();
+  });
+  menuBox.addEventListener('change', (e) => {
+    const t = e.target as HTMLInputElement | HTMLSelectElement, on = t instanceof HTMLInputElement && t.checked;
+    switch (t.dataset['set']) {
+      case 'shadows': settings.shadows = on; view.setShadows(on); break;
+      case 'tone': settings.toneMapping = on; view.setToneMapping(on); break;
+      case 'res': { const r = Number(t.value); if (isResolution(r)) { settings.resolution = r; view.setResolution(r); } break; }
+      case 'clouds': view.setClouds(on); break;
+      case 'fps': fpsBox.classList.toggle('hidden', !on); setPref('civ.fps', on); break;
+      case 'view': setView(t.value as DebugView); break;
+    }
+    saveSettings(settings);
+  });
   document.getElementById('hud')!.classList.remove('hidden');
 
   let sel: Selection = null;
@@ -156,16 +244,33 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
   // (Units packed in an army march with their commander: no orders of their own.)
   const needsOrders = (u: Unit) => u.owner === HUMAN && u.packedIn === null && u.moves > 0 && !u.fortified && !u.skipped && u.goal == null && u.work === null;
 
-  function hint(): string {
-    if (game.over) return '';
-    const waiting = game.units.filter(needsOrders).length;
-    const idle = game.cities.filter((c) => c.owner === HUMAN && !c.building).length;
-    const growing = game.cities.filter((c) => c.owner === HUMAN && c.growth > 0).map((c) => c.name);
-    const parts: string[] = [];
-    if (growing.length) parts.push(`${growing.join(', ')}: place a citizen`);
-    if (waiting) parts.push(`${waiting} unit${waiting > 1 ? 's' : ''} need orders`);
-    if (idle) parts.push(`${idle} cit${idle > 1 ? 'ies' : 'y'} producing gold`);
-    return parts.join(' · ') || 'Press Enter to end turn';
+  // Cities told to make wealth: not asked again what to build.
+  const wealthy = new Set<number>();
+  // What the turn still asks of the player, most pressing first (the big
+  // button says it and goes to it); nothing left: the turn's end.
+  function nextStep(): { step: NextStep; go: () => void } {
+    const p = game.players[HUMAN]!, anyway = '<kbd>Shift</kbd><kbd>Enter</kbd> ends the turn anyway';
+    const ask = (label: string, go: () => void) => ({ step: { label, sub: anyway, ready: false }, go });
+    if (game.over) return { step: { label: 'Game over', sub: '', ready: true }, go: () => { /* (nothing left to do) */ } };
+    if (!p.research && TECH_KEYS.some((k) => !p.techs.has(k))) return ask('Choose research', () => sheets.show('research'));
+    if (!p.studying && POLITICS_KEYS.some((k) => !p.politics.has(k))) return ask('Choose politics', () => sheets.show('politics'));
+    if (TRAIT_KEYS.some((k) => game.canAdopt(p, k))) return ask('Adopt a trait', () => sheets.show('identity'));
+    const grown = game.cities.find((c) => c.owner === HUMAN && c.growth > 0);
+    if (grown) return ask('Place a citizen', () => { selectCity(grown); view.focusOn(grown.tile); });
+    const idle = game.cities.find((c) => c.owner === HUMAN && !c.building && !wealthy.has(c.id));
+    if (idle) return ask('Choose production', () => { selectCity(idle); view.focusOn(idle.tile); });
+    if (game.units.some(needsOrders)) return ask('A unit needs orders', () => selectNextUnit());
+    return { step: { label: 'End turn', sub: 'Enter', ready: true }, go: () => endTurn() };
+  }
+
+  function endTurn(): void {
+    ui.newTurn();
+    game.endTurn();
+    flushLog();
+    sel = null;
+    // A city that grew asks for its citizen first.
+    const grown = game.cities.find((c) => c.owner === HUMAN && c.growth > 0);
+    if (grown) { selectCity(grown); view.focusOn(grown.tile); } else selectNextUnit();
   }
 
   function previewPath(): number[] | null {
@@ -183,8 +288,11 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
     else if (placing === null) placing = defaultPlacing(pc);
     view.syncWorld(sel);
     view.syncOverlay(sel, hover, previewPath(), marks());
-    ui.render(sel, hover, hint(), placing);
+    for (const c of game.cities) if (c.building) wealthy.delete(c.id);
+    ui.render(sel, hover, nextStep().step, placing);
     sheets.render();
+    minimap.redraw();
+    drawLenses();
   }
 
   function selectNextUnit(): void {
@@ -253,6 +361,7 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
         }
         c.building = a.key;
         c.wonderTile = null;
+        if (a.key === null) wealthy.add(c.id);
         break;
       }
       case 'placeKind':
@@ -279,15 +388,12 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
       case 'buy':
         if (sel?.kind === 'city' && sel.city.owner === HUMAN) game.buy(sel.city, a.currency);
         break;
-      case 'endTurn': {
-        game.endTurn();
-        flushLog();
-        sel = null;
-        // A city that grew asks for its citizen first.
-        const grown = game.cities.find((c) => c.owner === HUMAN && c.growth > 0);
-        if (grown) { selectCity(grown); view.focusOn(grown.tile); } else selectNextUnit();
+      case 'endTurn':
+        endTurn();
         break;
-      }
+      case 'next':
+        nextStep().go();
+        break;
       default:
         assertNever(a);
     }
@@ -297,7 +403,7 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
   function onHover(t: number): void {
     hover = t;
     view.syncOverlay(sel, hover, previewPath(), marks());
-    ui.render(sel, hover, hint(), placing);
+    ui.render(sel, hover, nextStep().step, placing);
   }
 
   function onClick(t: number, button: number): void {
@@ -348,9 +454,11 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
   addEventListener('keydown', (e) => {
     if (e.target instanceof HTMLInputElement) return;
     const keyActions: Record<string, Action> = {
-      Enter: { type: 'endTurn' }, ' ': { type: 'skip' }, f: { type: 'fortify' }, b: { type: 'found' }, i: { type: 'improve' }, p: { type: 'pillage' },
+      ' ': { type: 'skip' }, f: { type: 'fortify' }, b: { type: 'found' }, i: { type: 'improve' }, p: { type: 'pillage' },
       r: { type: 'rally' }, u: { type: 'deploy' },
     };
+    if (e.key === 'Enter') { e.preventDefault(); if (!menuBox.classList.contains('hidden')) openMenu(false); else act({ type: e.shiftKey ? 'endTurn' : 'next' }); return; }
+    if (!menuBox.classList.contains('hidden')) { if (e.key === 'Escape') openMenu(false); return; }
     const a = keyActions[e.key];
     if (a) { e.preventDefault(); act(a); return; }
     if (e.key === 'n' || e.key === 'Tab') { e.preventDefault(); selectNextUnit(); refresh(); }
@@ -358,7 +466,8 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
       // Close a sheet first; then cancel picking a wonder's tile (or buying tiles); otherwise deselect.
       if (sheets.isOpen) sheets.close();
       else if ((wonderPicked(placing) || placing === 'buy') && sel?.kind === 'city') placing = defaultPlacing(sel.city);
-      else { sel = null; placing = null; }
+      else if (sel) { sel = null; placing = null; }
+      else openMenu(true);
       refresh();
     }
     else if (e.key === 'c' && sel && sel.kind !== 'tile') { view.focusOn(sel.kind === 'unit' ? sel.unit.tile : sel.city.tile); }
@@ -402,4 +511,6 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
   }
 }
 
+// (A button clicked keeps no focus: Enter and Space are the game's keys, not the last button's.)
+document.addEventListener('click', (e) => { if (e.target instanceof Element) e.target.closest('button')?.blur(); });
 showStartScreen();

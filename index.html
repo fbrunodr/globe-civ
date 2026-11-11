@@ -5,43 +5,35 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Globe Civ</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   </head>
   <body>
     <canvas id="c"></canvas>
     <div id="hud" class="hidden">
-      <div id="topbar">
-        <span id="civ"></span>
-        <span id="turn"></span>
-        <div id="empire"></div>
+      <header id="topbar">
+        <div id="yields"></div>
         <span class="spacer"></span>
-        <nav id="sheets">
-          <button data-sheet="government">Government</button><button data-sheet="religion">Religion</button><button data-sheet="diplomacy">Diplomacy</button><button data-sheet="log">Log</button>
-        </nav>
-        <button data-act="endTurn" class="primary">End turn <kbd>Enter</kbd></button>
-      </div>
+        <div id="turn"></div>
+        <div id="civ"></div>
+        <nav id="sheets"></nav>
+        <button id="menuBtn" data-tip="Menu: settings and controls"></button>
+      </header>
+      <div id="trackers"></div>
+      <div id="notices"></div>
       <div id="sheet" class="hidden"></div>
-      <div id="hint" class="hidden"></div>
-      <div id="log"></div>
       <div id="selection" class="panel hidden"></div>
-      <div id="tileinfo" class="panel hidden"></div>
-      <div id="side">
-      <div id="fps" class="panel">– fps</div>
-      <details id="help" class="panel">
-        <summary>Controls</summary>
-        <div>Drag: move · Wheel: zoom (the view tilts as you get closer)</div>
-        <div>Right-drag or <kbd>Shift</kbd>+drag: rotate and tilt</div>
-        <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Q</kbd>/<kbd>E</kbd> rotate · <kbd>T</kbd>/<kbd>G</kbd> tilt · <kbd>Z</kbd>/<kbd>X</kbd> zoom</div>
-        <div>Left-click: select (click again to cycle)</div>
-        <div>Right-click: move / attack</div>
-        <div>A city that grows asks where its new citizen goes: click a highlighted tile (<kbd>Esc</kbd>: the governor decides at end of turn)</div>
-        <div><kbd>B</kbd> found city · <kbd>F</kbd> fortify · <kbd>P</kbd> pillage · <kbd>Space</kbd> skip · <kbd>R</kbd> rally · <kbd>U</kbd> deploy</div>
-        <div>Research, Politics and Identity: click their tracks in the top bar · Government, Religion, Diplomacy, Log: the buttons (<kbd>Esc</kbd> closes)</div>
-        <div><kbd>N</kbd>/<kbd>Tab</kbd> next unit · <kbd>C</kbd> center · <kbd>Enter</kbd> end turn</div>
-        <div><kbd>H</kbd> hex grid on/off · <kbd>V</kbd> walk on the surface (first person) · <kbd>J</kbd> debug views (height map, water)</div>
-      </details>
+      <div id="cityside" class="panel hidden"></div>
+      <div id="corner">
+        <button id="next" data-act="next"></button>
+        <div id="lenses"></div>
+        <div id="minimap"></div>
       </div>
+      <div id="tileinfo" class="hidden"></div>
+      <div id="fps" class="hidden">– fps</div>
     </div>
+    <div id="tip" class="hidden"></div>
+    <div id="menu" class="hidden"></div>
     <div id="start"></div>
     <div id="overlay" class="hidden"></div>
     <script type="module" src="/src/main.ts"></script>
