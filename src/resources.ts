@@ -29,8 +29,8 @@ import type { TechKey } from './techs.ts';
 // part of the world is favoured but the barren (deserts, tundra, ice have
 // little): bonus resources scattered by land type, luxuries and strategics
 // in small clusters; then every start is given food and a luxury close by,
-// and Horses and Iron within reach of a second city (FAIR). The later
-// strategics are never promised.
+// and Horses or Iron (one of the two) within reach of a second city (FAIR).
+// The later strategics are never promised.
 
 export type ResourceKind = 'bonus' | 'luxury' | 'strategic';
 export interface ResourceDef {
@@ -138,7 +138,10 @@ const CLUSTER = [1, 3] as const; // tiles a cluster has
 // (oil): the shallow seas are wide, and would otherwise take most of it.
 const SEA_FIT = 0.6;
 // What every start gets within reach (tiles): a bonus resource (food, its
-// first city's), a luxury, and Horses and Iron (a second city's).
+// first city's), a luxury, and Horses or Iron (a second city's): one of
+// the two, turn about by start. The other, like every later strategic, is
+// to be found, traded for or taken, as in Civ IV: what a civ can field
+// follows from the land it holds.
 const FAIR = { bonus: { count: 1, reach: 2 }, luxury: { count: 1, reach: 3 }, strategic: { count: 1, reach: 6 } } as const;
 
 export interface ResourceMap {
@@ -223,8 +226,8 @@ export function placeResources(globe: Globe, m: TerrainView, starts: readonly nu
     };
     give(bonus, FAIR.bonus.reach, FAIR.bonus.count);
     give(LUXURY_KEYS, FAIR.luxury.reach, FAIR.luxury.count);
-    give(['horses'], FAIR.strategic.reach, FAIR.strategic.count);
-    give(['iron'], FAIR.strategic.reach, FAIR.strategic.count);
+    // (Horses or Iron, not both: the other is a neighbour's, to trade for or to take.)
+    give([(starts.indexOf(s) + seed) % 2 === 0 ? 'horses' : 'iron'], FAIR.strategic.reach, FAIR.strategic.count);
   }
   return { at };
 }

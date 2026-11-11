@@ -50,7 +50,7 @@ seedEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') rebuild(); })
 // (?stress: the worst case to measure, sandbox.ts stressWorld: the large map
 // with the most land, packed with cities and units, unless a size or seed is given.)
 const stress = params.has('stress');
-const game = new Game({ size: stress && !params.get('size') ? 'large' : size, seed: stress && !params.get('seed') ? STRESS_SEED : seed, script, everyCiv: true });
+const game = new Game({ size: stress && !params.get('size') ? 'large' : size, seed: stress && !params.get('seed') ? STRESS_SEED : seed, script, everyCiv: true, autoRoads: true });
 game.units.length = 0;
 game.explored.fill(1);
 game.visible.fill(1);

@@ -14,7 +14,7 @@ export const ROAD_HALF_WIDTH = 0.03; // half width of a road between cities (til
 const MAX_ROUTE = 14;         // tiles: no road longer than this (as the crow flies)
 
 export interface Road {
-  a: number;      // city ids
+  a: number;      // city ids (-1: a stretch the workers laid)
   b: number;
   tiles: number[]; // from a's center to b's center
 }
@@ -27,7 +27,38 @@ function stepCost(g: Game, t: number): number | undefined {
   return g.moveCost(t) + (r === 'hills' ? 1 : 0);
 }
 
+// The roads as they are: those the workers laid (game.ts road), each
+// stretch from a city or a fork to the next; or, where roads lay
+// themselves (the dev pages: autoRoads), the routes between cities.
 export function planRoads(g: Game): Road[] {
+  if (g.autoRoads) return routeRoads(g);
+  const nbrs = (t: number) => g.tiles[t]!.neighbors.filter((n) => g.hasRoad(n));
+  const stop = (t: number) => g.use[t] === USE.center || nbrs(t).length !== 2;
+  const seen = new Set<number>(), key = (a: number, b: number) => (a < b ? a * g.N + b : b * g.N + a);
+  const roads: Road[] = [];
+  const walk = (a: number, b: number) => {
+    const tiles = [a, b];
+    seen.add(key(a, b));
+    for (let prev = a, cur = b; !stop(cur); ) {
+      const next = nbrs(cur).find((n) => n !== prev)!;
+      if (seen.has(key(cur, next))) break;
+      seen.add(key(cur, next));
+      tiles.push(next);
+      prev = cur; cur = next;
+    }
+    roads.push({ a: -1, b: -1, tiles });
+  };
+  const nodes: number[] = [];
+  for (let t = 0; t < g.N; t++) if (g.road[t] === 1 || (g.use[t] === USE.center && nbrs(t).length)) nodes.push(t);
+  // (From the cities, the ends and the forks first; then what is left: rings.)
+  for (const t of nodes) if (stop(t)) for (const n of nbrs(t)) if (!seen.has(key(t, n))) walk(t, n);
+  for (const t of nodes) for (const n of nbrs(t)) if (!seen.has(key(t, n))) walk(t, n);
+  return roads;
+}
+
+// Where roads would best run: the routes between cities (what the dev
+// pages show, and what the computer's workers lay).
+export function routeRoads(g: Game): Road[] {
   const cities = [...g.cities].sort((a, b) => a.id - b.id);
   const pairs = new Set<string>();
   const want: [number, number][] = [];

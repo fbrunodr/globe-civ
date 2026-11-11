@@ -9,7 +9,7 @@ export type GameEventKind =
   | 'start' | 'turn' | 'summary'
   | 'research' | 'researched' | 'politics' | 'politicsDone' | 'trait' | 'government' | 'policies'
   | 'religionFounded' | 'converted'
-  | 'cityFounded' | 'cityGrew' | 'cityCaptured' | 'cityDestroyed' | 'tileBought' | 'tileFlipped' | 'improve'
+  | 'cityFounded' | 'cityGrew' | 'cityCaptured' | 'cityDestroyed' | 'tileBought' | 'tileFlipped' | 'improve' | 'road'
   | 'build' | 'built' | 'bought'
   | 'unitCreated' | 'move' | 'attack' | 'unitLost' | 'rally' | 'deploy' | 'pillage' | 'raze' | 'upgrade' | 'rebase' | 'intercept' | 'nuke'
   | 'war' | 'peace' | 'peaceOffered' | 'trade' | 'tradeEnded' | 'shortfall';

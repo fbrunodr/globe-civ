@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Game, PILLAGE_GOLD, PILLAGE_REPAIR, type City } from '../src/game.ts';
+import { Game, PILLAGE_GOLD, PILLAGE_REPAIR, REPAIR_TURNS, type City } from '../src/game.ts';
 import { USE } from '../src/cities.ts';
 
 // War guarantees (design doc "Cities: Feel & Play", war and life).
@@ -89,7 +89,12 @@ describe('WR2: pillage and repair', () => {
     turn(g);
     expect(g.pillaged[farm]).toBe(PILLAGE_REPAIR);
     g.removeUnit(raider);
+    // (Nor by itself once it is gone: a worker mends it.)
     for (let i = 0; i < PILLAGE_REPAIR; i++) turn(g);
+    expect(g.pillaged[farm]).toBe(PILLAGE_REPAIR);
+    const w = g.createUnit('worker', 0, farm);
+    expect(g.improve(w, farm)).toBe(true);
+    for (let i = 0; i < REPAIR_TURNS; i++) turn(g);
     expect(g.pillaged[farm]).toBe(0);
   });
 });

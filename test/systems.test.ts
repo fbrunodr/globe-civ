@@ -132,15 +132,15 @@ describe('S2: research, politics and identity', () => {
 });
 
 describe('S3: resources are scarce and fair', () => {
-  it('every start has food and a luxury close by, and Horses and Iron within reach of a second city', () => {
+  it('every start has food and a luxury close by, and Horses or Iron within reach of a second city', () => {
     for (const seed of [1, 2, 3, 4, 5, 6]) {
       const g = new Game({ size: 'small', seed });
       for (const s of g.world.starts) {
         const near = (r: number) => g.tilesWithin(s, r).map((t) => g.resources[t]).filter((x): x is ResourceKey => x !== null);
         expect(near(2).filter((r) => RESOURCES[r].kind === 'bonus').length, `seed ${seed} start ${s}: bonus`).toBeGreaterThanOrEqual(1);
         expect(near(3).some((r) => LUXURY_KEYS.includes(r)), `seed ${seed} start ${s}: luxury`).toBe(true);
-        expect(near(6).includes('horses'), `seed ${seed} start ${s}: horses`).toBe(true);
-        expect(near(6).includes('iron'), `seed ${seed} start ${s}: iron`).toBe(true);
+        // (One of the two: the other is to be found, traded for or taken.)
+        expect(near(6).includes('horses') || near(6).includes('iron'), `seed ${seed} start ${s}: horses or iron`).toBe(true);
       }
     }
   });

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Game, HUMAN } from '../src/game.ts';
+import { WORKER_CHARGES, REPAIR_TURNS, ROAD_MOVE, Game, HUMAN } from '../src/game.ts';
 import { IMPROVEMENTS, IMPROVE_TURNS, USE } from '../src/cities.ts';
 
 // Workers (Civ V's): they improve the land, a few turns on the tile, once
@@ -65,6 +65,37 @@ describe('K1: workers improve the land', () => {
     expect(g.builtAt(farm)).toBe('farm');
     expect(w.work).toBeNull();
     expect(g.use[farm]).toBe(USE.wild); // (improved, not worked: a citizen works it)
+  });
+  it('a worker builds WORKER_CHARGES improvements; repairs and roads cost none', () => {
+    const { g, farm } = fresh();
+    if (farm === undefined) return;
+    g.players[HUMAN]!.techs.add('pottery');
+    const w = g.createUnit('worker', HUMAN, farm);
+    expect(w.charges).toBe(WORKER_CHARGES);
+    expect(g.improve(w)).toBe(true);
+    for (let i = 0; i < IMPROVE_TURNS.farm; i++) turn(g);
+    expect(g.builtAt(farm)).toBe('farm');
+    expect(w.charges).toBe(WORKER_CHARGES - 1);
+    // (Pillaged: it stays so until a worker mends it, at no charge, even with none left.)
+    g.pillaged[farm] = 3;
+    w.charges = 0;
+    for (let i = 0; i < 5; i++) turn(g);
+    expect(g.pillaged[farm]).toBe(3);
+    w.moves = 1;
+    expect(g.improve(w)).toBe(true);
+    expect(w.job).toBe('repair');
+    for (let i = 0; i < REPAIR_TURNS; i++) turn(g);
+    expect(g.pillaged[farm]).toBe(0);
+    expect(w.charges).toBe(0);
+    // (And a road, as often as wanted; a step along roads costs ROAD_MOVE.)
+    w.moves = 1;
+    expect(g.buildRoad(w)).toBe(true);
+    for (let i = g.roadTurns(farm); i > 0; i--) turn(g);
+    expect(g.road[farm]).toBe(1);
+    expect(g.roadBlock(w)).not.toBeNull();
+    const next = g.tiles[farm]!.neighbors.find((n) => !g.isWater(n) && g.relief[n] !== 'mountains')!;
+    g.road[next] = 1;
+    expect(g.stepCost(w, farm, next)).toBe(ROAD_MOVE);
   });
 
   it('a luxury counts for its civ only once its improvement is built', () => {

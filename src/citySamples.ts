@@ -53,7 +53,7 @@ const paint = new FlatPainter();
 // The default world and its terrain, as the game builds them (render.ts:
 // SUBDIV subdivisions per tile fan).
 const SUBDIV = 4;
-const game = new Game({ size: 'medium', seed: 7 });
+const game = new Game({ size: 'medium', seed: 7, autoRoads: true });
 const looks = game.tiles.map((t) => tileLook(game.map, t.id));
 const paintData = buildPaintData(game.globe, game.map, game.seed);
 const relief = buildRelief(game.globe, game.map, looks, game.seed, paintData.params.r0);

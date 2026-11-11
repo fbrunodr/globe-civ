@@ -43,7 +43,7 @@ $('random').addEventListener('click', () => generate(Math.floor(Math.random() * 
 seedEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') generate(Number(seedEl.value) || 1); });
 
 // The world: everything explored and in sight, nothing on it.
-const game = new Game({ size, seed, script });
+const game = new Game({ size, seed, script, autoRoads: true });
 game.units.length = 0;
 game.cities.length = 0;
 game.explored.fill(1);

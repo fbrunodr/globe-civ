@@ -1,7 +1,7 @@
 import { floraLabel } from './flora.ts';
 import { unitDef, buildDef, isUnitKey, isWonder, BUILDINGS, WONDERS, type BuildKey } from './rules.ts';
 import { terrainName } from './terrain.ts';
-import { HUMAN, BUILDABLE, PILLAGE_GOLD, COMMANDER_CAPACITY, type Game, type City, type Unit } from './game.ts';
+import { HUMAN, BUILDABLE, PILLAGE_GOLD, COMMANDER_CAPACITY, UNITS_PER_SOURCE, type Game, type City, type Unit } from './game.ts';
 import type { Selection } from './render.ts';
 import { canAssault, canShoot, type AttackMode } from './unitClasses.ts';
 import { techDef } from './techs.ts';
@@ -20,6 +20,7 @@ import {
 export type Action =
   | { type: 'found' }
   | { type: 'improve' }
+  | { type: 'road' }
   | { type: 'fortify' }
   | { type: 'wake' }
   | { type: 'skip' }
@@ -55,7 +56,7 @@ const isBuildKey = (s: string): s is BuildKey => (BUILDABLE as string[]).include
 function parseAction(el: HTMLElement): Action | null {
   const type = el.dataset['act'];
   switch (type) {
-    case 'found': case 'improve': case 'fortify': case 'wake': case 'skip': case 'disband': case 'endTurn': case 'next': case 'governorPlace': case 'pillage': case 'raze': case 'buyMode': case 'rally': case 'deploy': case 'upgrade':
+    case 'found': case 'improve': case 'road': case 'fortify': case 'wake': case 'skip': case 'disband': case 'endTurn': case 'next': case 'governorPlace': case 'pillage': case 'raze': case 'buyMode': case 'rally': case 'deploy': case 'upgrade':
       return { type };
     case 'buy': {
       const c = el.dataset['currency'];
@@ -227,7 +228,7 @@ export class UI {
     const lines = [`Cities ${signed(Math.round(l.income.gold))}`, l.tithes ? `Tithes ${signed(Math.round(l.tithes))}` : '', l.trade ? `Trade ${signed(Math.round(l.trade))}` : '',
       l.cityUpkeep ? `City upkeep −${l.cityUpkeep.toFixed(1)}` : '', l.unitUpkeep ? `Unit upkeep −${l.unitUpkeep.toFixed(1)}` : ''].filter(Boolean).join(' · ');
     const owned = g.ownedResources(HUMAN);
-    const strategic = RESOURCE_KEYS.filter((k) => resourceDef(k).kind === 'strategic' && owned.has(k));
+    const strategic = RESOURCE_KEYS.filter((k) => resourceDef(k).kind === 'strategic' && (owned.has(k) || g.resourceSources(HUMAN, k) > 0));
     const lux = g.luxuriesOf(HUMAN);
     return [
       stat('gold', 'gold', String(p.gold), `${signed(net)}`, 'Gold', `In the treasury; ${signed(net)} a turn. ${lines}`, net < 0),
@@ -236,7 +237,8 @@ export class UI {
       stat('cul', 'culture', signed(l.income.culture), '', 'Culture', 'A turn, toward your identity\'s next trait'),
       stat('fai', 'faith', String(p.faith), signed(l.income.faith), 'Faith', `In hand; ${signed(l.income.faith)} a turn. Buys what a city builds`),
       strategic.length || lux.length ? '<span class="sep"></span>' : '',
-      ...strategic.map((k) => `<span class="res" ${tip(resourceDef(k).name, 'A strategic resource you own')}>${icon(resourceIcon(k))}</span>`),
+      ...strategic.map((k) => { const cap = UNITS_PER_SOURCE * g.resourceSources(HUMAN, k), used = g.resourceUsed(HUMAN, k);
+        return `<span class="res" ${tip(resourceDef(k).name, `${plural(g.resourceSources(HUMAN, k), 'source')}: each arms ${UNITS_PER_SOURCE} units that need it. ${used} of ${cap} in use`)}>${icon(resourceIcon(k))}${used}/${cap}</span>`; }),
       lux.length ? `<span class="res" ${tip(plural(lux.length, 'luxury', 'luxuries'), lux.map((k) => resourceDef(k).name).join(', '))}>${icon('gem')}${lux.length}</span>` : '',
     ].join('');
   }
@@ -290,7 +292,10 @@ export class UI {
       if (T.improves) {
         // (On its own tile; fishing boats on the water beside it.)
         const t = g.improveTarget(u) ?? u.tile, k = g.improvementAt(t, u.owner), why = g.improveBlock(u, t);
-        orders.push(order('improve', 'hammer', k ? `Build a ${IMPROVEMENTS[k].name.toLowerCase()}` : 'Improve the land', k ? plural(g.improveTurns(t, u.owner), 'turn') : '', 'I', why));
+        const mend = k !== null && g.builtAt(t) === k && g.pillaged[t]! > 0;
+        orders.push(order('improve', 'hammer', k ? `${mend ? 'Repair the' : 'Build a'} ${IMPROVEMENTS[k].name.toLowerCase()}` : 'Improve the land',
+          k ? `${plural(g.improveTurns(t, u.owner), 'turn')}${mend ? ' · free' : ` · one of the ${plural(u.charges, 'improvement')} it can still build`}` : '', 'I', why));
+        orders.push(order('road', 'moves', 'Lay a road', `${plural(g.roadTurns(u.tile), 'turn')} · free. Units move twice as far along roads; a city joined to the capital by road trades with it`, 'L', g.roadBlock(u)));
       }
       if (u.type === 'commander') {
         const can = g.rallyable(u).length, army = g.armyOf(u).length;
@@ -305,7 +310,8 @@ export class UI {
       }
       orders.push(order('skip', 'skip', 'Skip this turn', 'It will ask again next turn', '␣'), order('disband', 'close', 'Disband', 'The unit is gone for good', '', null, 'danger'));
     }
-    const status = u.work !== null ? `Building ${(() => { const k = g.improvementAt(u.work, u.owner); return k ? `a ${IMPROVEMENTS[k].name.toLowerCase()}` : ''; })()}: ${plural(g.improveTurns(u.work, u.owner), 'turn')} left`
+    const status = u.work !== null ? (u.job === 'road' ? `Laying a road: ${plural(g.roadTurns(u.work), 'turn')} left`
+      : `${u.job === 'repair' ? 'Repairing' : 'Building'} ${(() => { const k = g.improvementAt(u.work, u.owner); return k ? `a ${IMPROVEMENTS[k].name.toLowerCase()}` : ''; })()}: ${plural(g.improveTurns(u.work, u.owner), 'turn')} left`)
       : u.fortified ? 'Fortified' : u.goal != null ? 'On its way' : '';
     const armyUnits = u.type === 'commander' ? g.armyOf(u) : [];
     const army = u.type === 'commander'
@@ -314,6 +320,7 @@ export class UI {
     const stat = (ic: IconKey, value: string, title: string, sub = '') => `<span class="chipstat" ${tip(title, sub)}>${icon(ic)}${value}</span>`;
     const stats = [
       stat('moves', `${u.moves}/${g.maxMoves(u.type, u.owner)}`, 'Moves', 'Left this turn, of its most'),
+      T.improves ? stat('hammer', String(u.charges), 'Improvements', 'It can still build this many; roads and repairs are free, as often as wanted') : '',
       T.civilian ? '' : stat('sword', String(T.melee), 'Melee strength', 'Closing in, and defending against it'),
       T.rangedAtk ? stat('arrow', `${T.rangedAtk}${(T.reach ?? 1) > 1 ? ` <small>reach ${T.reach}</small>` : ''}`, 'Ranged strength', 'Firing from a distance, unanswered') : '',
       T.civilian ? '' : stat('shield', String(T.rangedDef), 'Defence under fire', 'Against arrows, shot and shell'),
@@ -493,6 +500,7 @@ export class UI {
       const def = g.defenseBonus(t);
       lines.push(`Move cost ${g.moveCost(t)}${def ? ` · Defence +${Math.round(def * 100)}%` : ''}`);
     }
+    if (g.road[t]) lines.push(`${icon('moves')} Road`);
     if (owner >= 0) lines.push(`<span class="swatch" style="background:${g.players[owner].color}"></span>Territory of the ${esc(g.players[owner].name)}`);
     if (g.visible[t]) {
       const units = g.unitsAt(t);

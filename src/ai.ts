@@ -7,6 +7,9 @@ import { TECH_KEYS, techDef, type TechKey } from './techs.ts';
 import { POLITICS_KEYS, politicsDef, policyDef, SLOT_KINDS, fits, type PoliticsKey, type GovernmentKey, type PolicyKey } from './politics.ts';
 import { TRAIT_KEYS, traitDef, PATH_KEYS, PATHS, type PathKey, type TraitKey } from './identity.ts';
 import { mulberry32 } from './rng.ts';
+import { routeRoads } from './roads.ts';
+import { RESOURCE_KEYS } from './resources.ts';
+import type { AiPolicy } from './aiPolicy.ts';
 import { canAttackType, canShoot } from './unitClasses.ts';
 import { MIN_WAR, type Game, type Player, type Unit, type City, type DealSide } from './game.ts';
 
@@ -18,7 +21,26 @@ import { MIN_WAR, type Game, type Player, type Unit, type City, type DealSide } 
 // politics, government and policies, and how readily it goes to war; and
 // its own taste in identity paths (pathTaste), so no two are alike.
 const warlike = (g: Game, p: Player): boolean => (g.seed + p.id * 7) % 3 === 0;
-const WORKER_POP = 3;
+
+// The numbers its decisions turn on: its policy (aiPolicy.ts; the game
+// gives each civ one), leaned by its bent: the warlike sooner to war and
+// fonder of what arms them, the builders the other way.
+const leaned = new WeakMap<Game, AiPolicy[]>();
+function pol(g: Game, p: Player): AiPolicy {
+  let all = leaned.get(g);
+  if (!all) leaned.set(g, all = []);
+  let mine = all[p.id];
+  if (!mine || g.policyVersion !== versions.get(g)) {
+    if (g.policyVersion !== versions.get(g)) { all.length = 0; versions.set(g, g.policyVersion); }
+    const b = g.aiPolicies[p.id]!, w = warlike(g, p);
+    mine = all[p.id] = { ...b,
+      techUnits: b.techUnits * (w ? 1.33 : 0.67), techBuildings: b.techBuildings * (w ? 0.78 : 1.22), techWonders: b.techWonders * (w ? 0.67 : 1.33),
+      warAfter: b.warAfter * (w ? 0.67 : 1.33), warChance: b.warChance * (w ? 1.6 : 0.6),
+      policyMilitary: b.policyMilitary * (w ? 1.5 : 0.5), policySocial: b.policySocial * (w ? 0.67 : 1.33) };
+  }
+  return mine;
+}
+const versions = new WeakMap<Game, number>();
 
 export function aiTurn(g: Game, p: Player): void {
   if (!p.research) { const t = aiPickTech(g, p); if (t) g.setResearch(p, t); }
@@ -32,24 +54,26 @@ export function aiTurn(g: Game, p: Player): void {
   const isMilitary = (u: Unit) => !unitDef(u.type).civilian;
   // (A garrison is a land unit: ships in port and aircraft don't hold a city.)
   const garrisoned = (c: City) => units.some((u) => u.tile === c.tile && isMilitary(u) && domainOf(unitDef(u.type)) === 'land');
+  const P = pol(g, p);
   const spare = units.filter((u) => isMilitary(u) && canAttackType(u.type) && !g.cityByTile.has(u.tile)).length;
   const military = units.filter(isMilitary).length;
-  p.offensive = spare >= 3 && g.players.some((o) => g.atWar(p.id, o.id));
+  p.offensive = spare >= P.offensiveSpare && g.players.some((o) => g.atWar(p.id, o.id));
 
   // (A worker for every WORKER_POP citizens, one at least once a city has
   // grown; no more than there is work for: a tile each, of those its techs
   // let it improve.)
   const open = g.openWork(p.id, (t) => usefulWork(g, p.id, t));
-  const wantWorkers = Math.min(open, cities.reduce((n, c) => n + (c.pop >= 2 ? Math.max(1, Math.floor(c.pop / WORKER_POP)) : 0), 0));
-  let workers = units.filter((u) => u.type === 'worker').length + cities.filter((c) => c.building === 'worker').length;
+  const wantWorkers = Math.min(open, cities.reduce((n, c) => n + (c.pop >= 2 ? Math.max(1, Math.floor(c.pop / P.workerPop)) : 0), 0));
+  // (Those that can still build: one that has built all it could only lays roads and repairs.)
+  let workers = units.filter((u) => u.type === 'worker' && u.charges > 0).length + cities.filter((c) => c.building === 'worker').length;
   for (const c of cities) {
     g.rework(c);
     if (!c.building && garrisoned(c) && workers < wantWorkers && c.pop >= 2) { c.building = 'worker'; workers++; }
-    if (!c.building) c.building = chooseBuild(g, c, cities.length + settlers, garrisoned(c), military >= 2 + 2 * cities.length);
+    if (!c.building) c.building = chooseBuild(g, c, P, cities.length + settlers, garrisoned(c), military >= P.armyBase + P.armyPerCity * cities.length);
     // A full treasury buys: what a city builds, when it costs under a third
     // of the gold (half, when the treasury overflows).
     const cost = g.buyCost(c, 'gold');
-    if (cost !== null && p.gold > 120 && cost < p.gold / (p.gold > 1000 ? 2 : 3)) g.buy(c, 'gold');
+    if (cost !== null && p.gold > P.goldReserve && cost < p.gold * (p.gold > 1000 ? Math.max(0.5, P.buyShare) : P.buyShare)) g.buy(c, 'gold');
     // Running out of room to grow: buy the best tile of the ring beyond (while the gold lasts).
     while (g.growthOptions(c).filter((o) => o.kind !== 'specialist').length < 2) {
       const t = g.governorTileToBuy(c);
@@ -60,16 +84,16 @@ export function aiTurn(g: Game, p: Player): void {
   // Gold to spare modernizes the army: the weakest units first.
   for (const u of [...units].sort((a, b) => unitDef(a.type).cost - unitDef(b.type).cost)) {
     const to = g.upgradeTarget(u);
-    if (to && p.gold > 2 * g.upgradeCost(u, to) + 60) g.upgrade(u);
+    if (to && p.gold > 2 * g.upgradeCost(u, to) + P.upgradeReserve) g.upgrade(u);
   }
 
   for (const u of units) {
     if (u.dead) continue;
-    if (u.type === 'settler') settlerTurn(g, u);
+    if (u.type === 'settler') settlerTurn(g, u, P);
     else if (u.type === 'worker') workerTurn(g, u);
     else if (domainOf(unitDef(u.type)) === 'air') airTurn(g, u);
     else if (domainOf(unitDef(u.type)) === 'sea') seaTurn(g, u);
-    else militaryTurn(g, u, p, cities, garrisoned);
+    else militaryTurn(g, u, p, P, cities, garrisoned);
   }
 }
 
@@ -93,38 +117,32 @@ function bestUnit(g: Game, city: City, role: 'def' | 'atk' | 'siege' | 'sea' | '
   return best;
 }
 
-function chooseBuild(g: Game, city: City, expansion: number, garrisoned: boolean, armyFull: boolean): BuildKey | null {
-  const r = g.rng();
+function chooseBuild(g: Game, city: City, P: AiPolicy, expansion: number, garrisoned: boolean, armyFull: boolean): BuildKey | null {
   if (!garrisoned) return bestUnit(g, city, 'def');
-  if (expansion < 6 && city.pop >= 2 && r < 0.6) return 'settler';
-  if (!city.buildings.has('walls') && g.turn > 40 && r < 0.15 && g.canBuild(city, 'walls')) return 'walls';
-  // Now and then a grown city starts a wonder, at the governor's site.
-  if (city.pop >= 5 && r > 0.96) {
+  if (expansion < P.cityTarget && city.pop >= 2 && g.rng() < P.settlerRate) return 'settler';
+  if (!city.buildings.has('walls') && g.turn > 40 && g.rng() < P.wallsRate && g.canBuild(city, 'walls')) return 'walls';
+  const wonder = (): BuildKey | null => {
     const options = WONDER_KEYS.filter((w) => g.canBuild(city, w) && !g.cities.some((c) => c.owner === city.owner && c.building === w));
     const w = options[Math.floor(g.rng() * options.length)];
     const t = w ? g.governorWonderSpot(city, w) : null;
-    if (w && t !== null && g.startWonder(city, w, t)) return w;
-  }
-  if (city.pop >= 2 && (r < 0.5 || armyFull)) {
+    return w && t !== null && g.startWonder(city, w, t) ? w : null;
+  };
+  // Now and then a grown city starts a wonder, at the governor's site.
+  if (city.pop >= 5 && g.rng() < P.wonderRate) { const w = wonder(); if (w) return w; }
+  if (city.pop >= 2 && (armyFull || g.rng() < P.buildingRate)) {
     const b = bestBuilding(g, city);
     if (b) return b;
   }
-  if (armyFull) {
-    // A wonder rather than idle production, when there is one to build.
-    const options = WONDER_KEYS.filter((w) => g.canBuild(city, w) && !g.cities.some((c) => c.owner === city.owner && c.building === w));
-    const w = options[Math.floor(g.rng() * options.length)];
-    const t = w ? g.governorWonderSpot(city, w) : null;
-    if (w && t !== null && g.startWonder(city, w, t)) return w;
-    return null; // bank the production as gold
-  }
-  if (g.turn < 15 && r < 0.2) return 'scout';
-  // (Now and then an engine for the walls, once there is one to build.)
+  // (The army full and nothing to build: a wonder rather than idle production; else the production is banked as gold.)
+  if (armyFull) return wonder();
+  if (g.turn < 15 && g.rng() < P.scoutRate) return 'scout';
+  // (Now and then an engine for the walls, a ship from a port, an aircraft, once there are any to build.)
   const siege = bestUnit(g, city, 'siege'), ship = bestUnit(g, city, 'sea'), plane = bestUnit(g, city, 'air');
-  if (r < 0.12 && unitDef(siege).siege) return siege;
-  // (A ship now and then from a port, an aircraft once there are any.)
-  if (r >= 0.12 && r < 0.2 && domainOf(unitDef(ship)) === 'sea') return ship;
-  if (r >= 0.2 && r < 0.27 && domainOf(unitDef(plane)) === 'air') return plane;
-  return bestUnit(g, city, r < 0.65 ? 'atk' : 'def');
+  const r = g.rng();
+  if (r < P.siegeShare && unitDef(siege).siege) return siege;
+  if (r >= P.siegeShare && r < P.siegeShare + P.navyShare && domainOf(unitDef(ship)) === 'sea') return ship;
+  if (r >= P.siegeShare + P.navyShare && r < P.siegeShare + P.navyShare + P.airShare && domainOf(unitDef(plane)) === 'air') return plane;
+  return bestUnit(g, city, g.rng() < P.atkShare ? 'atk' : 'def');
 }
 
 // The building worth most for the city's focus per point of cost (one of
@@ -149,14 +167,14 @@ function bestBuilding(g: Game, city: City): BuildingKey | null {
   return top.length ? top[Math.floor(g.rng() * top.length)]!.k : null;
 }
 
-function settlerTurn(g: Game, u: Unit): void {
+function settlerTurn(g: Game, u: Unit, P: AiPolicy): void {
   if (g.turn <= 2 && g.canFoundCity(u.tile, u.owner)) { g.foundCity(u); return; }
 
   if (u.aiTarget == null || !g.canFoundCity(u.aiTarget, u.owner)) {
-    const dist = g.tilesWithinMap(u.tile, 7);
+    const dist = g.tilesWithinMap(u.tile, Math.round(P.settleReach));
     const cand: { t: number; s: number }[] = [];
     for (const [t, d] of dist) {
-      if (g.canFoundCity(t, u.owner)) cand.push({ t, s: g.siteScore(t) - 1.5 * d });
+      if (g.canFoundCity(t, u.owner)) cand.push({ t, s: g.siteScore(t) - P.settleDist * d });
     }
     cand.sort((a, b) => b.s - a.s);
     u.aiTarget = cand.slice(0, 6).find((c) => g.findPath(u, c.t))?.t ?? null;
@@ -197,9 +215,50 @@ function workerTurn(g: Game, u: Unit): void {
     }
     u.aiTarget = best;
   }
-  if (u.aiTarget === null) { u.fortified = true; return; }
+  if (u.aiTarget === null) {
+    // Nothing to improve or mend: the roads between its civ's cities, the
+    // nearest stretch still to lay. A worker with nothing left to build
+    // and no road to lay is let go (its upkeep saved).
+    const road = roadTarget(g, u);
+    if (road === null) { if (u.charges <= 0) g.removeUnit(u); else u.fortified = true; return; }
+    if (u.tile !== road) g.goTo(u, road);
+    if (!u.dead && u.tile === road && u.moves > 0) g.buildRoad(u);
+    return;
+  }
   if (u.tile !== u.aiTarget) g.goTo(u, u.aiTarget);
   if (!u.dead && u.tile === u.aiTarget && u.moves > 0 && g.improve(u, u.tile)) u.aiTarget = null;
+}
+
+// The tiles each civ's roads should run on (roads.ts routeRoads between
+// its own cities), worked out once a turn.
+const roadPlans = new WeakMap<Game, { key: string; tiles: Map<number, Set<number>> }>();
+function roadPlan(g: Game, owner: number): Set<number> {
+  const key = `${g.turn}|${g.cities.length}`;
+  let plan = roadPlans.get(g);
+  if (!plan || plan.key !== key) {
+    const tiles = new Map<number, Set<number>>();
+    for (const r of routeRoads(g)) {
+      const o = g.cityById.get(r.a)!.owner;
+      if (g.cityById.get(r.b)!.owner !== o) continue;
+      let set = tiles.get(o);
+      if (!set) tiles.set(o, set = new Set());
+      for (const t of r.tiles) set.add(t);
+    }
+    plan = { key, tiles };
+    roadPlans.set(g, plan);
+  }
+  return plan.tiles.get(owner) ?? new Set();
+}
+// The nearest tile of its civ's road plan a worker could lay now (none other at it).
+function roadTarget(g: Game, u: Unit): number | null {
+  let best: number | null = null, bestD = Infinity;
+  for (const t of roadPlan(g, u.owner)) {
+    if (g.hasRoad(t) || g.roadBlock({ ...u, tile: t, moves: 1 }) !== null) continue;
+    if (g.units.some((v) => v !== u && v.owner === u.owner && v.type === 'worker' && (v.work === t || v.goal === t))) continue;
+    const d = g.approxDist(u.tile, t);
+    if (d < bestD && d <= 12) { best = t; bestD = d; }
+  }
+  return best;
 }
 
 // An aircraft strikes the best target in its range it is likely to win
@@ -227,7 +286,7 @@ function seaTurn(g: Game, u: Unit): void {
   u.fortified = true;
 }
 
-function militaryTurn(g: Game, u: Unit, p: Player, cities: City[], garrisoned: (c: City) => boolean): void {
+function militaryTurn(g: Game, u: Unit, p: Player, P: AiPolicy, cities: City[], garrisoned: (c: City) => boolean): void {
 
   // Stay as the garrison if this city has no other defender.
   const here = g.cityByTile.get(u.tile);
@@ -248,7 +307,7 @@ function militaryTurn(g: Game, u: Unit, p: Player, cities: City[], garrisoned: (
       if (!g.isEnemyOccupied(nb, u.owner) || g.isWater(nb) || g.attackBlockAt(u, nb) !== null) continue;
       // (Fire costs nothing: it shoots whatever it can reach; closing in, it wants the odds.)
       const pv = g.combatPreview(u, nb);
-      if (!pv || pv.mode === 'ranged' || pv.atk / (pv.atk + pv.def) > 0.55) { g.attack(u, nb); return; }
+      if (!pv || pv.mode === 'ranged' || pv.atk / (pv.atk + pv.def) > P.attackOdds) { g.attack(u, nb); return; }
     }
 
     if (p.offensive) {
@@ -263,7 +322,7 @@ function militaryTurn(g: Game, u: Unit, p: Player, cities: City[], garrisoned: (
   }
 
   // Burn enemy fields underfoot.
-  if (g.canPillage(u) && g.rng() < 0.6) { g.pillage(u); return; }
+  if (g.canPillage(u) && g.rng() < P.pillageRate) { g.pillage(u); return; }
 
   // Otherwise wander around the empire.
   const opts = g.tilesWithin(u.tile, 3).filter((t) => !g.isWater(t) && !g.isEnemyOccupied(t, u.owner));
@@ -277,9 +336,11 @@ function militaryTurn(g: Game, u: Unit, p: Player, cities: City[], garrisoned: (
 
 // What an unlock is worth to this civ: units more to the warlike, buildings
 // and wonders more to builders.
-function unlockValue(g: Game, p: Player, d: { units?: readonly UnitKey[]; buildings?: readonly BuildingKey[]; wonders?: readonly string[] }): number {
-  const w = warlike(g, p);
-  return (d.units?.length ?? 0) * (w ? 1.6 : 0.8) + (d.buildings?.length ?? 0) * (w ? 0.9 : 1.4) + (d.wonders?.length ?? 0) * (w ? 0.5 : 1.0);
+function unlockValue(g: Game, p: Player, d: { units?: readonly UnitKey[]; buildings?: readonly BuildingKey[]; wonders?: readonly string[]; effects?: readonly unknown[] }, tech: TechKey | null = null): number {
+  const P = pol(g, p);
+  const reveals = tech === null ? 0 : RESOURCE_KEYS.filter((r) => resourceDef(r).reveal === tech).length;
+  return (d.units?.length ?? 0) * P.techUnits + (d.buildings?.length ?? 0) * P.techBuildings + (d.wonders?.length ?? 0) * P.techWonders
+    + reveals * P.techReveal + (d.effects?.length ?? 0) * P.techEffects;
 }
 
 // The tech to research next: one it can start now, by worth per cost, with chance.
@@ -288,7 +349,7 @@ export function aiPickTech(g: Game, p: Player): TechKey | null {
   for (const k of TECH_KEYS) {
     const d = techDef(k);
     if (p.techs.has(k) || !d.needs.every((n) => p.techs.has(n))) continue;
-    const s = (1 + unlockValue(g, p, d)) / d.cost + 0.01 * g.rng();
+    const s = (1 + unlockValue(g, p, d, k)) / d.cost + 0.01 * g.rng();
     if (s > bestS) { best = k; bestS = s; }
   }
   return best;
@@ -350,8 +411,8 @@ const GOV_ORDER: Record<'warlike' | 'builder', readonly GovernmentKey[]> = {
 };
 // (Later policies are stronger: they come later in the list.)
 function policyScore(g: Game, p: Player, k: PolicyKey): number {
-  const kind = policyDef(k).kind, w = warlike(g, p);
-  return (kind === 'military' ? (w ? 3 : 1) : kind === 'economic' ? 2.5 : (w ? 1 : 2)) + (k === 'bureaucracy' ? 1 : 0)
+  const kind = policyDef(k).kind, P = pol(g, p);
+  return (kind === 'military' ? P.policyMilitary : kind === 'economic' ? P.policyEconomic : P.policySocial) + (k === 'bureaucracy' ? 1 : 0)
     + 0.01 * POLITICS_KEYS.findIndex((c) => politicsDef(c).policies?.includes(k)) + 0.1 * ((k.length * 7 + p.id) % 5);
 }
 export function aiGovern(g: Game, p: Player): void {
@@ -377,18 +438,18 @@ export function power(g: Game, owner: number): number {
 // War when much stronger than a civ it has met nearby (warlike civs sooner);
 // peace when the war goes badly or has lasted.
 function aiDiplomacy(g: Game, p: Player): void {
-  const mine = power(g, p.id);
+  const mine = power(g, p.id), P = pol(g, p);
   const wars = g.players.filter((o) => o.alive && g.atWar(p.id, o.id));
   for (const o of wars) {
     const long = g.turn - g.relations[p.id]![o.id]!.since;
-    if (g.canMakePeace(p.id, o.id) && (mine < 0.8 * power(g, o.id) || (long > 30 && g.rng() < 0.15))) g.offerPeace(p.id, o.id);
+    if (g.canMakePeace(p.id, o.id) && (mine < P.peaceRatio * power(g, o.id) || (long > 30 && g.rng() < 0.15))) g.offerPeace(p.id, o.id);
   }
-  if (wars.length || g.turn < (warlike(g, p) ? 30 : 60) || g.rng() > (warlike(g, p) ? 0.08 : 0.03)) return;
+  if (wars.length || g.turn < P.warAfter || g.rng() > P.warChance) return;
   const home = g.cities.find((c) => c.owner === p.id);
   if (!home) return;
   const targets = g.players.filter((o) => o.alive && o.id !== p.id && g.met[p.id]![o.id] && g.cities.some((c) => c.owner === o.id && g.approxDist(c.tile, home.tile) < 14));
   const weakest = targets.sort((a, b) => power(g, a.id) - power(g, b.id))[0];
-  if (weakest && mine > 1.25 * power(g, weakest.id) + 2) g.declareWar(p.id, weakest.id);
+  if (weakest && mine > P.warRatio * power(g, weakest.id) + 2) g.declareWar(p.id, weakest.id);
 }
 
 // Whether it accepts peace offered by `from`: losing, even, or weary.

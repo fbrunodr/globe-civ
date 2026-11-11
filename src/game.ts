@@ -15,6 +15,7 @@ import {
   type BiomeKey, type ReliefKey, type FeatureKey, type TileTerrain, type Yields,
   BIOMES,
 } from './terrain.ts';
+import { LEVELS, DEFAULT_LEVEL, type AiPolicy } from './aiPolicy.ts';
 import { aiTurn, aiPickTech, aiPickPolitics, aiGovern, aiAcceptsPeace, aiAcceptsDeal, aiPickTraits } from './ai.ts';
 import {
   USE, FOOD_PER_CITIZEN, ZERO, CITY_REACH, START_REACH, tileCost, GROWTH_TURNS, SPECIALIST_KINDS, AQUEDUCT_KEEP, BUILDINGS as CITY_BUILDINGS,
@@ -203,8 +204,24 @@ export interface Unit {
   goalMode: AttackMode | null;          // how it attacks at its goal (null: as it does unless told: defaultMode)
   dead: boolean;
   aiTarget: number | null;
-  work: number | null;                  // a worker's: the tile it is improving (it stays there, or by it for boats)
+  work: number | null;                  // a worker's: the tile it is working on (it stays there, or by it for boats)
+  job: WorkerJob | null;                // and what it does there
+  charges: number;                      // a worker's: the improvements it can still build (roads and repairs cost none)
 }
+// What a worker does on a tile: builds its improvement (a charge, of
+// WORKER_CHARGES), repairs it when pillaged, or lays a road (both free, as
+// often as wanted).
+export type WorkerJob = 'improve' | 'repair' | 'road';
+export const WORKER_CHARGES = 3;
+// The units needing a strategic resource that one source of it arms (resourceRoom).
+export const UNITS_PER_SOURCE = 3;
+export const REPAIR_TURNS = 2;
+// A road: the turns to lay one (a turn more through woods, hills and the
+// like), and what a step from road to road costs of a unit's moves.
+export const ROAD_TURNS = 2;
+export const ROAD_MOVE = 0.5;
+// What a city joined to its capital by road gains (the trade along it): gold, more as it grows, and a little production.
+export const connectionBonus = (pop: number): Output => out({ gold: 1 + Math.floor(pop / 4), prod: 1 });
 
 export interface City {
   id: number;
@@ -264,6 +281,14 @@ export interface GameOptions {
   script?: MapScriptKey;
   // Every civ a player (the City Lab): those past the map's starts begin with no units.
   everyCiv?: boolean;
+  // How each computer civ decides (aiPolicy.ts), by player id; or one
+  // level of difficulty for all of them (an index of LEVELS; the default
+  // otherwise).
+  policies?: readonly AiPolicy[];
+  level?: number;
+  // Roads laid by themselves between cities (roads.ts routeRoads), as the
+  // dev pages show them; in the game workers lay them (the default).
+  autoRoads?: boolean;
 }
 
 // Pure game state + rules. Knows nothing about rendering or the DOM.
@@ -301,6 +326,12 @@ export class Game {
   readonly drained: Uint8Array;     // 1 where a peat bog was drained to be worked (its feature is gone; its ground stays dry)
   readonly wondersBuilt = new Map<WonderKey, number>(); // wonder -> its tile (its city's center, or a mountain top; FALLEN)
   useVersion = 0;                   // bumped whenever a tile's use changes (for the renderer)
+  readonly road: Uint8Array;        // 1 where workers have laid a road (a city's center counts as one: hasRoad)
+  readonly roadLeft: Uint8Array;    // turns left of road work begun on a tile
+  roadVersion = 0;                  // bumped whenever a road is laid
+  readonly autoRoads: boolean;
+  aiPolicies: AiPolicy[];           // how each computer civ decides (aiPolicy.ts), by player id
+  policyVersion = 0;                // bumped when they are changed mid-game
   readonly explored: Uint8Array;
   readonly visible: Uint8Array;
   readonly messages: Message[] = [];
@@ -315,8 +346,9 @@ export class Game {
   readonly dealOffers: Deal[] = [];             // trades the computer offered the human, for this turn (sides[0]: the offerer)
   readonly events: GameEvent[] = [];            // everything every player did (gameLog.ts)
 
-  constructor({ size, seed, script = 'continents', everyCiv = false }: GameOptions) {
+  constructor({ size, seed, script = 'continents', everyCiv = false, autoRoads = false, policies, level = DEFAULT_LEVEL }: GameOptions) {
     this.seed = seed;
+    this.autoRoads = autoRoads;
     this.world = generateWorld(size, seed, script);
     this.globe = this.world.globe;
     this.tiles = this.globe.tiles;
@@ -335,6 +367,8 @@ export class Game {
     this.pillaged = new Uint8Array(this.N);
     this.ruins = new Uint8Array(this.N);
     this.drained = new Uint8Array(this.N);
+    this.road = new Uint8Array(this.N);
+    this.roadLeft = new Uint8Array(this.N);
     this.explored = new Uint8Array(this.N);
     this.visible = new Uint8Array(this.N);
 
@@ -347,6 +381,7 @@ export class Game {
       government: 'chiefdom', policies: emptySlots('chiefdom'), capital: null, goldFrac: 0, ledger: EMPTY_LEDGER,
     }));
     const n = this.players.length;
+    this.aiPolicies = this.players.map((_, i) => policies?.[i] ?? LEVELS[Math.min(LEVELS.length - 1, Math.max(0, level))]!.policy);
     this.relations = Array.from({ length: n }, () => Array.from({ length: n }, () => ({ war: false, since: 0 })));
     this.met = Array.from({ length: n }, () => new Uint8Array(n));
     this.resources = placeResources(this.globe, this.map, this.world.starts, seed).at;
@@ -599,9 +634,13 @@ export class Game {
     return turns;
   }
   // The moves a step costs: on the water a move a tile; on land the terrain's.
-  stepCost(u: { type: UnitKey }, _from: number, to: number): number {
-    return this.isWater(to) || domainOf(unitDef(u.type)) === 'sea' ? 1 : this.moveCost(to);
+  // (Along a road, from a tile with one to the next: ROAD_MOVE, whatever the ground.)
+  stepCost(u: { type: UnitKey }, from: number, to: number): number {
+    if (this.isWater(to) || domainOf(unitDef(u.type)) === 'sea') return 1;
+    return this.hasRoad(from) && this.hasRoad(to) ? ROAD_MOVE : this.moveCost(to);
   }
+  // Whether a road runs on a tile: one laid there, or a city's streets.
+  hasRoad(t: number): boolean { return this.road[t] === 1 || this.use[t] === USE.center; }
   // Whether a step embarks or lands a land unit (it takes its turn).
   landing(u: { type: UnitKey }, from: number, to: number): boolean {
     return domainOf(unitDef(u.type)) === 'land' && this.isWater(from) !== this.isWater(to);
@@ -614,7 +653,8 @@ export class Game {
     tile = this.freeTileNear(type, owner, tile) ?? tile;
     this.record('unitCreated', owner, { unit: type, tile });
     const u: Unit = { id: this.nextId++, type, owner, tile, packedIn: null, moves: this.maxMoves(type, owner), hp: 100,
-      fortified: false, skipped: false, goal: null, goalMode: null, dead: false, aiTarget: null, work: null };
+      fortified: false, skipped: false, goal: null, goalMode: null, dead: false, aiTarget: null, work: null, job: null,
+      charges: unitDef(type).improves ? WORKER_CHARGES : 0 };
     this.units.push(u);
     return u;
   }
@@ -799,6 +839,7 @@ export class Game {
     if (unitDef(u.type).carries && !this.cityByTile.has(u.tile)) for (const v of this.units) if (v.tile === u.tile && v.owner === u.owner && domainOf(unitDef(v.type)) === 'air') v.tile = t;
     u.moves = this.landing(u, u.tile, t) ? 0 : Math.max(0, u.moves - this.stepCost(u, u.tile, t));
     u.work = null; // (a worker walking off leaves its work where it stands)
+    u.job = null;
     this.onStep?.(u, u.tile, t);
     u.tile = t;
     for (const v of this.armyOf(u)) { this.onStep?.(v, v.tile, t); v.tile = t; }
@@ -1403,9 +1444,54 @@ export class Game {
     const k = this.improvementAt(t, u.owner);
     // (Water is worked from the shore: boats, an offshore well.)
     if (!k || (t !== u.tile && !this.isWater(t))) return 'Nothing to build here.';
-    if (this.builtAt(t) === k) return 'Already improved.';
+    // (Pillaged: it mends it, as often as it takes.)
+    if (this.builtAt(t) === k) return this.pillaged[t] ? null : 'Already improved.';
     const need = this.improvementTech(u.owner, k);
-    return need ? `Needs ${TECHS[need].name}.` : null;
+    if (need) return `Needs ${TECHS[need].name}.`;
+    return !started && u.charges <= 0 ? 'It has built all it could: it still lays roads and repairs.' : null;
+  }
+  // Why worker u can't lay a road where it stands (null: it can): on land
+  // of its own or no one's, short of the mountains.
+  roadBlock(u: Unit, started = false): string | null {
+    const t = u.tile;
+    if (!unitDef(u.type).improves) return 'Only workers lay roads.';
+    if (u.packedIn !== null || this.isWater(t) || this.relief[t] === 'mountains') return 'No road can run here.';
+    if (!started && u.moves <= 0) return 'No moves left.';
+    if (this.hasRoad(t)) return 'A road runs here already.';
+    const o = this.ownerOf(t);
+    return o >= 0 && o !== u.owner ? 'Not your land.' : null;
+  }
+  roadTurns(t: number): number { return this.roadLeft[t] || ROAD_TURNS + (this.moveCost(t) > 1 ? 1 : 0); }
+  // Sets worker u to laying a road on its tile.
+  buildRoad(u: Unit): boolean {
+    if (this.roadBlock(u) !== null) return false;
+    this.roadLeft[u.tile] = this.roadTurns(u.tile);
+    u.work = u.tile; u.job = 'road';
+    u.moves = 0; u.goal = null; u.fortified = false;
+    this.record('road', u.owner, { tile: u.tile });
+    return true;
+  }
+  // Whether a city is joined to its civ's capital by road (cities' streets
+  // count; so does a road through anyone's land).
+  private linked: { key: string; set: Set<number> } = { key: '', set: new Set() };
+  roadLinked(city: City): boolean {
+    const key = `${this.roadVersion}|${this.useVersion}|${this.cities.length}|${this.turn}`;
+    if (this.linked.key !== key) {
+      const set = new Set<number>();
+      for (const p of this.players) {
+        const cap = p.capital === null ? undefined : this.cityById.get(p.capital);
+        if (!cap || cap.owner !== p.id) continue;
+        const seen = new Set<number>([cap.tile]), open = [cap.tile];
+        while (open.length) {
+          const t = open.pop()!;
+          const c = this.cityByTile.get(t);
+          if (c && c.owner === p.id) set.add(c.id);
+          for (const n of this.tiles[t]!.neighbors) if (!seen.has(n) && this.hasRoad(n)) { seen.add(n); open.push(n); }
+        }
+      }
+      this.linked = { key, set };
+    }
+    return this.linked.set.has(city.id);
   }
   // The tech civ `owner` still needs to build improvement k (its first: techs.ts STAGE_TECHS), or null.
   improvementTech(owner: number, k: ImprovementKey): TechKey | null {
@@ -1431,6 +1517,7 @@ export class Game {
   improveTurns(t: number, owner: number = this.ownerOf(t)): number {
     const k = this.improvementAt(t, owner);
     if (!k) return 0;
+    if (this.builtAt(t) === k && this.pillaged[t]) return Math.min(this.pillaged[t]!, REPAIR_TURNS);
     return this.underway[t] === IMPROVEMENT_KEYS.indexOf(k) ? this.buildLeft[t]! : IMPROVE_TURNS[k];
   }
   // Sets worker u to improving tile t: it stays there until it is done
@@ -1438,7 +1525,9 @@ export class Game {
   improve(u: Unit, t: number = this.improveTarget(u) ?? -1): boolean {
     if (t < 0 || this.improveBlock(u, t) !== null) return false;
     const k = this.improvementAt(t, u.owner)!, i = IMPROVEMENT_KEYS.indexOf(k);
-    if (this.underway[t] !== i) { this.underway[t] = i; this.buildLeft[t] = IMPROVE_TURNS[k]; }
+    const repair = this.builtAt(t) === k;
+    if (!repair && this.underway[t] !== i) { this.underway[t] = i; this.buildLeft[t] = IMPROVE_TURNS[k]; }
+    u.job = repair ? 'repair' : 'improve';
     u.work = t;
     u.moves = 0;
     u.goal = null;
@@ -1451,12 +1540,33 @@ export class Game {
     for (const u of this.units) {
       const t = u.work;
       if (t === null || u.dead) continue;
+      const done = () => { for (const v of this.units) if (v.work === t && v.job === u.job) { v.work = null; v.job = null; } };
+      if (u.job === 'road') {
+        if (this.roadBlock(u, true) !== null) { u.work = null; u.job = null; continue; }
+        if (this.roadLeft[t]! > 1) { this.roadLeft[t]!--; continue; }
+        this.road[t] = 1;
+        this.roadLeft[t] = 0;
+        this.roadVersion++;
+        done();
+        continue;
+      }
       const k = this.improvementAt(t, u.owner);
-      if (this.improveBlock(u, t, true) !== null || !k || this.underway[t] !== IMPROVEMENT_KEYS.indexOf(k)) { u.work = null; continue; }
+      if (this.improveBlock(u, t, true) !== null || !k) { u.work = null; u.job = null; continue; }
+      if (u.job === 'repair') {
+        const left = Math.min(this.pillaged[t]!, REPAIR_TURNS) - 1;
+        this.pillaged[t] = Math.max(0, left);
+        if (left > 0) continue;
+        this.useVersion++;
+        done();
+        if (u.owner === HUMAN) this.log(`A worker repaired a ${IMPROVEMENTS[k].name.toLowerCase()}.`);
+        continue;
+      }
+      if (this.underway[t] !== IMPROVEMENT_KEYS.indexOf(k)) { u.work = null; u.job = null; continue; }
       if (this.buildLeft[t]! > 1) { this.buildLeft[t]!--; continue; }
       this.build(t, k);
-      for (const v of this.units) if (v.work === t) v.work = null;
-      if (u.owner === HUMAN) this.log(`A worker built a ${IMPROVEMENTS[k].name.toLowerCase()}.`);
+      u.charges--;
+      done();
+      if (u.owner === HUMAN) this.log(`A worker built a ${IMPROVEMENTS[k].name.toLowerCase()}${u.charges > 0 ? '' : ': it has built all it could, and still lays roads and repairs'}.`);
     }
   }
   // Tile t improved (a peat bog drained for good: it is its land from now
@@ -1510,6 +1620,7 @@ export class Game {
     // the percentages of its government and policies.
     const p = this.players[city.owner]!, fx = this.effectsOf(p);
     if (p.capital === city.id) sum = addOut(addOut(sum, out(PALACE)), flat(fx, 'capital'));
+    else if (this.roadLinked(city)) sum = addOut(sum, connectionBonus(city.pop));
     if (city.religion) sum = addOut(sum, flat(religionDef(city.religion).follower, 'follower'));
     sum = out(Object.fromEntries(OUTPUT_KEYS.map((y) => [y, Math.max(0, Math.floor(sum[y] * (100 + yieldBonus(fx, y)) / 100))])));
     return { ...sum, surplus: sum.food - FOOD_PER_CITIZEN * city.pop };
@@ -1623,7 +1734,7 @@ export class Game {
     if (isUnitKey(key)) {
       const need = unitDef(key).needs;
       if (domainOf(unitDef(key)) === 'sea' && !this.cityCoast(city)) return false;
-      return !need || anyResource || this.hasResource(p.id, need);
+      return !need || anyResource || this.resourceRoom(p.id, need) > 0;
     }
     if (isWonder(key)) return !this.wondersBuilt.has(key) && this.wonderRoom(city) && (this.wonderSpots(city, key).length > 0 || city.wonderTile !== null && city.building === key);
     if (key === 'walls' && this.wallsObsolete(city.owner)) return false;
@@ -1808,6 +1919,16 @@ export class Game {
     return out;
   }
   hasResource(owner: number, r: ResourceKey): boolean { return this.availableResources(owner).has(r); }
+  // A strategic resource's sources a civ has the use of: its own tiles of
+  // it (improved), less those it trades away, plus those it trades for.
+  resourceSources(owner: number, r: ResourceKey): number {
+    return (this.resourceCopies(owner).get(r) ?? 0) - this.exports(owner).filter((x) => x === r).length + this.imports(owner).filter((x) => x === r).length;
+  }
+  // The units that need it a civ keeps, and how many more it could: each
+  // source arms UNITS_PER_SOURCE of them (a second source, by settling,
+  // trade or conquest, is worth having). Units it already has stay if a source is lost.
+  resourceUsed(owner: number, r: ResourceKey): number { return this.units.reduce((n, u) => n + (u.owner === owner && unitDef(u.type).needs === r ? 1 : 0), 0); }
+  resourceRoom(owner: number, r: ResourceKey): number { return UNITS_PER_SOURCE * this.resourceSources(owner, r) - this.resourceUsed(owner, r); }
   luxuriesOf(owner: number): ResourceKey[] { return [...this.availableResources(owner)].filter((r) => resourceDef(r).kind === 'luxury'); }
   // The empire bonus of its luxuries (one copy of each kind counts), and its effects' per luxury.
   luxuryYield(p: Player): Output {
@@ -2117,7 +2238,8 @@ export class Game {
     let best: UnitKey | null = null;
     while (to) {
       const need = unitDef(to).needs;
-      if (can.has(to) && (!need || this.hasResource(p.id, need))) best = to;
+      // (One that needs the same resource as it does takes its place: no more is needed.)
+      if (can.has(to) && (!need || unitDef(u.type).needs === need || this.resourceRoom(p.id, need) > 0)) best = to;
       to = UPGRADES[to];
     }
     return best;
@@ -2271,8 +2393,8 @@ export class Game {
     for (const p of this.players) if (p.alive) this.settleAccounts(p);
     this.contestBorders();
     this.spreadReligions();
-    // Cities strike nearby enemies and mend their walls; pillaged tiles are
-    // repaired once no enemy stands on them.
+    // Cities strike nearby enemies and mend their walls; pillaged tiles wait
+    // for a worker to repair them (advanceWork).
     for (const city of this.cities) {
       this.cityStrike(city);
       city.hp = Math.min(this.cityMaxHp(city), city.hp + CITY_REGEN);
@@ -2281,8 +2403,8 @@ export class Game {
       if (!this.pillaged[t]) continue;
       const o = this.ownerOf(t);
       if (o < 0 || !this.builtAt(t)) { this.pillaged[t] = 0; this.useVersion++; continue; }
-      if (this.units.some((u) => u.tile === t && u.owner !== o)) continue;
-      if (--this.pillaged[t] === 0) this.useVersion++;
+      // (Fallout clears by itself, down to what a worker can mend: the rest is the workers'.)
+      if (this.pillaged[t]! > PILLAGE_REPAIR) this.pillaged[t]!--;
     }
     for (const u of this.units) {
       const mv = this.maxMoves(u.type, u.owner);

@@ -1767,7 +1767,7 @@ export class GlobeRenderer {
   private updateRoads(force: boolean): void {
     const g = this.game;
     // (And what each civ lays: lays below.)
-    const key = g.cities.map((c) => `${c.id}:${c.owner}`).join(',') + '|' + g.players.map((p) => `${p.techs.has('railroad') ? 'r' : ''}${p.techs.has('combustion') ? 'a' : ''}`).join(',');
+    const key = `${g.roadVersion}|` + g.cities.map((c) => `${c.id}:${c.owner}`).join(',') + '|' + g.players.map((p) => `${p.techs.has('railroad') ? 'r' : ''}${p.techs.has('combustion') ? 'a' : ''}`).join(',');
     if (key === this.roadsKey && !force) return;
     this.roadsKey = key;
     const halfW = ROAD_HALF_WIDTH * g.globe.avgEdgeAngle, lift = ROAD_LIFT * this.scale;

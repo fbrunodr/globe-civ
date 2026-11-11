@@ -1177,7 +1177,7 @@ export class CityProps {
 
   // Whether a model standing at dir would touch a road between cities.
   private roadLines(): THREE.Vector3[][] {
-    const g = this.game, key = `${g.useVersion}|${g.cities.length}`;
+    const g = this.game, key = `${g.useVersion}|${g.cities.length}|${g.roadVersion}`;
     if (this.roadsKey !== key) {
       this.roadsKey = key;
       const lines = roadLines(g, planRoads(g));

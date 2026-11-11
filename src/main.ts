@@ -6,6 +6,7 @@ import { icon, type IconKey } from './icons.ts';
 import { TECH_KEYS } from './techs.ts';
 import { POLITICS_KEYS } from './politics.ts';
 import { TRAIT_KEYS } from './identity.ts';
+import { LEVELS, DEFAULT_LEVEL } from './aiPolicy.ts';
 import { GlobeRenderer, RESOLUTIONS, type DebugView, type Selection, type TileMark } from './render.ts';
 import { UI, assertNever, attackInput, modeOf, wonderPicked, tip, type Action, type Placing, type NextStep } from './ui.ts';
 import { Sheets } from './sheets.ts';
@@ -31,19 +32,25 @@ function showStartScreen(): void {
     <div class="sizes">${sizes}</div>
     <span class="label">Lands</span>
     <div class="scripts">${scripts}</div>
+    <span class="label">Rivals <small>· how well they decide: no level is given, or spared, anything</small></span>
+    <div class="scripts">${LEVELS.map((l, i) => `<button data-level="${i}">${l.name}</button>`).join('')}</div>
     <span class="label">Seed <small>· the same seed makes the same world</small></span>
     <div class="seedrow"><input id="seed" type="text" inputmode="numeric" value="${params.get('seed') ?? Math.floor(Math.random() * 1e6)}"><button id="dice">Another</button></div>
     <button id="go" class="primary">Begin</button>
     <p class="tools">Workshop: <a href="/gallery.html">Gallery</a> · <a href="/buildings.html">Buildings</a> · <a href="/units.html">Units</a> · <a href="/wonders.html">Wonders</a> · <a href="/city_lab.html">City lab</a> · <a href="/city_lab.html?stress">Stress test</a> · <a href="/city_samples.html">City samples</a> · <a href="/world_view.html">World view</a> · <a href="/map_editor.html">Map editor</a></p>
   </div></div>`;
-  let size: MapSizeKey = 'small', script: MapScriptKey = 'continents';
+  let size: MapSizeKey = 'small', script: MapScriptKey = 'continents', level = DEFAULT_LEVEL;
+  const pLevel = Number(params.get('level') ?? NaN);
+  if (Number.isInteger(pLevel) && pLevel >= 0 && pLevel < LEVELS.length) level = pLevel;
   const pSize = params.get('size'), pMap = params.get('map');
   if (pSize && isMapSize(pSize)) size = pSize;
   if (pMap && isMapScript(pMap)) script = pMap;
   const mark = () => {
     menu.querySelectorAll<HTMLElement>('[data-size]').forEach((b) => b.classList.toggle('active', b.dataset['size'] === size));
     menu.querySelectorAll<HTMLElement>('[data-script]').forEach((b) => b.classList.toggle('active', b.dataset['script'] === script));
+    menu.querySelectorAll<HTMLElement>('[data-level]').forEach((b) => b.classList.toggle('active', Number(b.dataset['level']) === level));
   };
+  menu.querySelectorAll<HTMLElement>('[data-level]').forEach((b) => b.addEventListener('click', () => { level = Number(b.dataset['level']); mark(); }));
   mark();
   menu.querySelectorAll<HTMLElement>('[data-script]').forEach((b) => b.addEventListener('click', () => {
     const s = b.dataset['script'] ?? '';
@@ -59,12 +66,12 @@ function showStartScreen(): void {
     const seed = Number(seedBox.value) || 1;
     // (The world takes a moment to make: said so first, then made.)
     menu.innerHTML = '<div class="loading">Shaping the world…</div>';
-    setTimeout(() => { startGame(size, seed, script); menu.remove(); }, 40);
+    setTimeout(() => { startGame(size, seed, script, level); menu.remove(); }, 40);
   });
 }
 
-function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): void {
-  const game = new Game({ size: sizeKey, seed, script });
+function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey, level: number): void {
+  const game = new Game({ size: sizeKey, seed, script, level });
   const view = new GlobeRenderer(document.getElementById('c') as HTMLCanvasElement, game);
   const ui = new UI(game, act);
   // (Dev: the game to look at from the console: select a unit, redraw.)
@@ -146,7 +153,7 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
     ['Click', 'select (again: the next thing on the tile)'], ['Right-click', 'move or attack (<kbd>Shift</kbd>: the other way of attacking)'],
     ['<kbd>Enter</kbd>', 'what needs doing next, then end the turn'], ['<kbd>Shift</kbd><kbd>Enter</kbd>', 'end the turn now'],
     ['<kbd>N</kbd> <kbd>Tab</kbd>', 'next unit'], ['<kbd>C</kbd>', 'centre on the selection'],
-    ['<kbd>B</kbd>', 'found a city'], ['<kbd>I</kbd>', 'improve the land'],
+    ['<kbd>B</kbd>', 'found a city'], ['<kbd>I</kbd> <kbd>L</kbd>', 'a worker: improve the land · lay a road'],
     ['<kbd>F</kbd>', 'fortify'], ['<kbd>Space</kbd>', 'skip the unit\'s turn'],
     ['<kbd>P</kbd>', 'pillage'], ['<kbd>R</kbd> <kbd>U</kbd>', 'a commander: rally · deploy'],
     ['<kbd>H</kbd> <kbd>Y</kbd> <kbd>M</kbd>', 'hex grid · yields · strategic view'], ['<kbd>V</kbd>', 'walk on the ground'],
@@ -321,6 +328,9 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
       case 'improve':
         if (unit && game.improve(unit)) afterUnitAction(unit);
         break;
+      case 'road':
+        if (unit && game.buildRoad(unit)) afterUnitAction(unit);
+        break;
       case 'fortify':
         if (unit && !unitDef(unit.type).civilian) { unit.fortified = true; unit.goal = null; afterUnitAction(unit); }
         break;
@@ -455,7 +465,7 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey): voi
     if (e.target instanceof HTMLInputElement) return;
     const keyActions: Record<string, Action> = {
       ' ': { type: 'skip' }, f: { type: 'fortify' }, b: { type: 'found' }, i: { type: 'improve' }, p: { type: 'pillage' },
-      r: { type: 'rally' }, u: { type: 'deploy' },
+      r: { type: 'rally' }, u: { type: 'deploy' }, l: { type: 'road' },
     };
     if (e.key === 'Enter') { e.preventDefault(); if (!menuBox.classList.contains('hidden')) openMenu(false); else act({ type: e.shiftKey ? 'endTurn' : 'next' }); return; }
     if (!menuBox.classList.contains('hidden')) { if (e.key === 'Escape') openMenu(false); return; }

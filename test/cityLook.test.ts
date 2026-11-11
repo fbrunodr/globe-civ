@@ -27,7 +27,7 @@ describe('L1: building models', () => {
 // (Was: houses stamped by the hand-drawn tiles, by density. A city is
 // painted on its center now: 4 + 3 × size buildings, cityDress.ts.)
 describe('L2: houses grow with the city', () => {
-  const g = new Game({ size: 'small', seed: 5 });
+  const g = new Game({ size: 'small', seed: 5, autoRoads: true });
   const settler = g.units.find((u) => u.owner === 0 && u.type === 'settler')!;
   const city = g.foundCity(settler)!;
   // (Flat dry ground everywhere.)
@@ -43,7 +43,7 @@ describe('L2: houses grow with the city', () => {
 
 // A grown world, and a fake terrain: a third of the spots wet, some steep.
 function grownGame(): Game {
-  const g = new Game({ size: 'small', seed: 222 });
+  const g = new Game({ size: 'small', seed: 222, autoRoads: true });
   g.players[0]!.isHuman = false;
   for (let i = 0; i < 120; i++) { aiTurn(g, g.players[0]!); g.endTurn(); }
   return g;
@@ -106,7 +106,7 @@ describe('L4: City Lab presets build as described', () => {
     const { buildPresets, PRESETS } = await import('../src/sandbox.ts');
     const bad: string[] = [];
     for (const seed of [7, 8]) {
-      const g = new Game({ size: 'medium', seed });
+      const g = new Game({ size: 'medium', seed, autoRoads: true });
       g.units.length = 0;
       const built = buildPresets(g);
       if (built.length !== PRESETS.length) bad.push(`seed ${seed}: ${built.length}/${PRESETS.length} presets placed`);
