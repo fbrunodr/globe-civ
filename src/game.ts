@@ -105,7 +105,7 @@ export type Victory = 'conquest' | 'science' | 'religion' | 'time';
 export const VICTORIES: Record<Victory, { name: string; rule: string }> = {
   conquest: { name: 'Conquest', rule: 'Be the last civilization standing.' },
   science: { name: 'Science', rule: 'Be the first to discover Artificial Superintelligence, the last technology.' },
-  religion: { name: 'Religion', rule: 'Found a religion that more than two thirds of the world\'s cities follow.' },
+  religion: { name: 'Religion', rule: 'Found a religion that more than two thirds of the world\'s people follow (the citizens of the cities that follow it).' },
   time: { name: 'Time', rule: 'Have the best score when the last turn ends, if no one has won before.' },
 };
 export const FAITH_VICTORY = 2 / 3;
@@ -2559,9 +2559,16 @@ export class Game {
     return this.faithCache;
   }
   faithOf(id: number): ReligionKey | null { return this.faiths().of[id] ?? null; }
-  // The share of the world's cities following the religion a civ founded (0: it founded none).
+  // The share of the world's people following the religion a civ founded
+  // (its cities' citizens over all cities'; 0: it founded none). People,
+  // not cities: founding many small cities of the faith wins nothing.
   faithShare(id: number): number {
-    for (const [r, f] of this.religions) if (f.founder === id) return this.cities.filter((c) => c.religion === r).length / Math.max(1, this.cities.length);
+    for (const [r, f] of this.religions) {
+      if (f.founder !== id) continue;
+      let all = 0, faithful = 0;
+      for (const c of this.cities) { all += c.pop; if (c.religion === r) faithful += c.pop; }
+      return faithful / Math.max(1, all);
+    }
     return 0;
   }
   // The game is won (VICTORIES): by conquest, the last civ standing; by

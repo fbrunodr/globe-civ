@@ -461,7 +461,7 @@ export class Sheets {
     const rows = civs.map((o) => `<tr><td><span class="swatch" style="background:${o.color}"></span> ${esc(o.name)}</td><td class="num">${g.score(o.id)}</td>
       <td class="num">${o.techs.size} / ${TECH_KEYS.length}</td><td class="num">${Math.round(100 * g.faithShare(o.id))}%</td><td class="num">${g.cities.filter((c) => c.owner === o.id).length}</td></tr>`).join('');
     return `<h3>How the game is won</h3><p class="note">${(Object.keys(VICTORIES) as Victory[]).map((k) => `<b>${VICTORIES[k].name}:</b> ${VICTORIES[k].rule}`).join(' ')} The last turn is ${g.turnLimit}.</p>
-      <table class="grid"><tr><th>Civilization</th><th>Score</th><th>Technologies</th><th>World following its faith</th><th>Cities</th></tr>${rows}</table><h3>Relations</h3>`;
+      <table class="grid"><tr><th>Civilization</th><th>Score</th><th>Technologies</th><th>World's people of its faith</th><th>Cities</th></tr>${rows}</table><h3>Relations</h3>`;
   }
 
   // ---- trade ----

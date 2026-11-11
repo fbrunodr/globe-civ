@@ -209,7 +209,7 @@ export class UI {
       const told = !w ? 'Your civilization has fallen.'
         : w.how === 'conquest' ? (g.over === 'victory' ? 'You are the last civilization standing.' : `The ${esc(who)} are the last civilization standing.`)
         : w.how === 'science' ? (g.over === 'victory' ? 'Your people know all there is to know.' : `The ${esc(who)} were the first to know every technology.`)
-        : w.how === 'religion' ? (g.over === 'victory' ? 'Most of the world follows your faith.' : `Most of the world follows the faith of the ${esc(who)}.`)
+        : w.how === 'religion' ? (g.over === 'victory' ? 'Two thirds of the world\'s people follow your faith.' : `Two thirds of the world's people follow the faith of the ${esc(who)}.`)
         : g.over === 'victory' ? `Time is up, and yours is the greatest civilization: ${g.score(HUMAN)} points.` : `Time is up. The ${esc(who)} stand first with ${g.score(w.player)} points; you have ${g.score(HUMAN)}.`;
       this.set(this.el.overlay, `<div class="card"><h1>${g.over === 'victory' ? 'Victory' : 'Defeat'}</h1>
         <p>${w ? `<b>${VICTORIES[w.how].name}.</b> ` : ''}${told} (Turn ${g.turn})</p>
