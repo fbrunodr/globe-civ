@@ -22,9 +22,12 @@ export const GENES = {
   settlerRate: [0.1, 1, 0.6],      // how readily a city that could builds a settler
   settleReach: [4, 12, 7],         // how far a settler looks for a site (tiles)
   settleDist: [0, 4, 1.5],         // what each tile of the way takes off a site's worth
+  siteResource: [0, 6, 0],         // what each resource within two tiles adds to a site's worth (one it lacks: twice)
   workerPop: [1.5, 6, 3],          // citizens to a worker
+  workerResource: [0, 10, 4],      // what a resource adds to a tile's worth to a worker
   armyBase: [0, 6, 2],             // the army it wants: this many units...
   armyPerCity: [0.5, 5, 2],        // ...and this many more a city
+  armyWar: [1, 3, 1],              // times this while at war
   atkShare: [0.2, 0.9, 0.65],      // of its land units, the share built to attack (the rest to hold)
   siegeShare: [0, 0.3, 0.12],      // the share of engines,
   navyShare: [0, 0.25, 0.08],      // of ships,
@@ -44,6 +47,7 @@ export const GENES = {
   techWonders: [0, 3, 0.75],       // its wonders,
   techReveal: [0, 4, 0],           // a strategic resource it reveals,
   techEffects: [0, 3, 0],          // each of its other effects (better farms, mines...)
+  techCheap: [0.4, 1.6, 1],        // how much a tech's cost counts against it (1: worth per cost; less: the dear ones sooner)
   policyMilitary: [0, 4, 2],       // what a military policy card is worth,
   policyEconomic: [0, 4, 2.5],     // an economic one,
   policySocial: [0, 4, 1.5],       // a social one

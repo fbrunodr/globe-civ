@@ -54,7 +54,7 @@ export function aiTurn(g: Game, p: Player): void {
   const isMilitary = (u: Unit) => !unitDef(u.type).civilian;
   // (A garrison is a land unit: ships in port and aircraft don't hold a city.)
   const garrisoned = (c: City) => units.some((u) => u.tile === c.tile && isMilitary(u) && domainOf(unitDef(u.type)) === 'land');
-  const P = pol(g, p);
+  const P = pol(g, p), atWar = g.players.some((o) => o.alive && g.atWar(p.id, o.id));
   const spare = units.filter((u) => isMilitary(u) && canAttackType(u.type) && !g.cityByTile.has(u.tile)).length;
   const military = units.filter(isMilitary).length;
   p.offensive = spare >= P.offensiveSpare && g.players.some((o) => g.atWar(p.id, o.id));
@@ -69,7 +69,7 @@ export function aiTurn(g: Game, p: Player): void {
   for (const c of cities) {
     g.rework(c);
     if (!c.building && garrisoned(c) && workers < wantWorkers && c.pop >= 2) { c.building = 'worker'; workers++; }
-    if (!c.building) c.building = chooseBuild(g, c, P, cities.length + settlers, garrisoned(c), military >= P.armyBase + P.armyPerCity * cities.length);
+    if (!c.building) c.building = chooseBuild(g, c, P, cities.length + settlers, garrisoned(c), military >= (P.armyBase + P.armyPerCity * cities.length) * (atWar ? P.armyWar : 1));
     // A full treasury buys: what a city builds, when it costs under a third
     // of the gold (half, when the treasury overflows).
     const cost = g.buyCost(c, 'gold');
@@ -167,6 +167,15 @@ function bestBuilding(g: Game, city: City): BuildingKey | null {
   return top.length ? top[Math.floor(g.rng() * top.length)]!.k : null;
 }
 
+// The resources a city at t would hold close by (those its civ knows of; one it has no source of counts twice).
+function resourcesNear(g: Game, owner: number, t: number): number {
+  let n = 0;
+  for (const x of g.tilesWithin(t, 2)) {
+    const r = g.ownerOf(x) < 0 ? g.resourceFor(x, owner) : null;
+    if (r) n += g.hasResource(owner, r) ? 1 : 2;
+  }
+  return n;
+}
 function settlerTurn(g: Game, u: Unit, P: AiPolicy): void {
   if (g.turn <= 2 && g.canFoundCity(u.tile, u.owner)) { g.foundCity(u); return; }
 
@@ -174,7 +183,7 @@ function settlerTurn(g: Game, u: Unit, P: AiPolicy): void {
     const dist = g.tilesWithinMap(u.tile, Math.round(P.settleReach));
     const cand: { t: number; s: number }[] = [];
     for (const [t, d] of dist) {
-      if (g.canFoundCity(t, u.owner)) cand.push({ t, s: g.siteScore(t) - P.settleDist * d });
+      if (g.canFoundCity(t, u.owner)) cand.push({ t, s: g.siteScore(t) - P.settleDist * d + P.siteResource * resourcesNear(g, u.owner, t) });
     }
     cand.sort((a, b) => b.s - a.s);
     u.aiTarget = cand.slice(0, 6).find((c) => g.findPath(u, c.t))?.t ?? null;
@@ -210,7 +219,7 @@ function workerTurn(g: Game, u: Unit): void {
     for (const [t, d] of g.tilesWithinMap(u.tile, 8)) {
       if (!ok(t)) continue;
       const res = g.resourceFor(t, u.owner);
-      const s = (g.use[t] === USE.rural ? 6 : 0) + (res ? 4 : 0) + weigh('balanced', g.improvedYield(t, u.owner)) - weigh('balanced', g.workedYield(t, u.owner)) - 0.7 * d;
+      const s = (g.use[t] === USE.rural ? 6 : 0) + (res ? pol(g, g.players[u.owner]!).workerResource : 0) + weigh('balanced', g.improvedYield(t, u.owner)) - weigh('balanced', g.workedYield(t, u.owner)) - 0.7 * d;
       if (s > bestS) { best = t; bestS = s; }
     }
     u.aiTarget = best;
@@ -349,7 +358,7 @@ export function aiPickTech(g: Game, p: Player): TechKey | null {
   for (const k of TECH_KEYS) {
     const d = techDef(k);
     if (p.techs.has(k) || !d.needs.every((n) => p.techs.has(n))) continue;
-    const s = (1 + unlockValue(g, p, d, k)) / d.cost + 0.01 * g.rng();
+    const s = (1 + unlockValue(g, p, d, k)) / d.cost ** pol(g, p).techCheap + 0.01 * g.rng();
     if (s > bestS) { best = k; bestS = s; }
   }
   return best;
