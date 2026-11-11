@@ -46,6 +46,7 @@ const FRAGMENT = /* glsl */ `
   #include <fog_pars_fragment>
   void main() {
     gl_FragColor = texture2D(uMap, vUv);
+    if (gl_FragColor.a < 0.02) discard;
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
     #include <fog_fragment>
@@ -80,7 +81,8 @@ export class Billboards {
     this.texture.flipY = false;
     this.material = new THREE.ShaderMaterial({
       uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { uMap: { value: null }, uScale: { value: new THREE.Vector2() }, uWorld: { value: new THREE.Vector2(1e9, 1e9) }, uCellUv: { value: new THREE.Vector2() } }]),
-      vertexShader: VERTEX, fragmentShader: FRAGMENT, transparent: true, fog: true, depthTest,
+      // (Hidden by the land, but writing no depth of their own: a billboard's empty corners must not cut the one behind it.)
+      vertexShader: VERTEX, fragmentShader: FRAGMENT, transparent: true, fog: true, depthTest, depthWrite: false,
     });
     this.material.uniforms['uMap']!.value = this.texture;
     (this.material.uniforms['uScale']!.value as THREE.Vector2).set(scale[0], scale[1]);
