@@ -210,7 +210,7 @@ export class UI {
       this.el.overlay.classList.remove('hidden');
       const w = g.winner, who = w ? g.players[w.player]!.name : '';
       const told = !w ? 'Your civilization has fallen.'
-        : w.how === 'conquest' ? (g.over === 'victory' ? 'Every civilization\'s first capital is yours.' : `The ${esc(who)} hold every civilization's first capital.`)
+        : w.how === 'conquest' ? (g.over === 'victory' ? `${g.capitalsToWin} of the ${g.players.length} first capitals are yours.` : `The ${esc(who)} hold ${g.capitalsToWin} of the ${g.players.length} first capitals.`)
         : w.how === 'science' ? (g.over === 'victory' ? 'Your people know all there is to know.' : `The ${esc(who)} were the first to know every technology.`)
         : w.how === 'religion' ? (g.over === 'victory' ? 'Two thirds of the world\'s people follow your faith.' : `Two thirds of the world's people follow the faith of the ${esc(who)}.`)
         : g.over === 'victory' ? `Time is up, and yours is the greatest civilization: ${g.score(HUMAN)} points.` : `Time is up. The ${esc(who)} stand first with ${g.score(w.player)} points; you have ${g.score(HUMAN)}.`;

@@ -71,7 +71,7 @@ const share = (o: { same: number; rival: number; none: number }, k: 'same' | 'ri
 const lean = (k: 'same' | 'rival' | 'none') => (share(exposure, k) > 0 ? (share(warBy, k) / share(exposure, k)).toFixed(2) : '–');
 const rows: [string, string, string][] = [
   ['How games are won', [...won].map(([h, n]) => `${h} ${n}`).join(', ') + `; ${mean(length).toFixed(0)} turns on average`, 'every way of winning shows up'],
-  ['How near each victory comes', `the leader in each, at the game's end: ${pct(mean(capitals))} of the first capitals (conquest: all), ${pct(mean(faithTop))} of the world's people in its faith (religion: 67%), ${mean(techTop).toFixed(0)} of 95 techs (science: the last)`, 'each within reach in some games'],
+  ['How near each victory comes', `the leader in each, at the game's end: ${pct(mean(capitals))} of the first capitals (conquest: two thirds), ${pct(mean(faithTop))} of the world's people in its faith (religion: 67%), ${mean(techTop).toFixed(0)} of 95 techs (science: the last)`, 'each within reach in some games'],
   ['Compact and wide can both win', `winners hold ${Math.min(...winnerCities)}–${Math.max(...winnerCities)} cities (median ${median(winnerCities)}); all civs ${Math.min(...allCities)}–${Math.max(...allCities)} (median ${median(allCities)})`, 'winners spread over a wide range'],
   ['Expanding past what can be paid loses', `${pct(arrears / Math.max(1, civTurns))} of a civ's turns in arrears`, 'rare: the best play pays its way'],
   ['Wars are frequent, from the first eras', `${mean(wars).toFixed(1)} wars a game; the first at turn ${median(firstWar)} (median)`, 'several a game; the first before turn 60'],

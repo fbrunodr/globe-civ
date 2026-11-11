@@ -91,15 +91,20 @@ describe('V1: the game is won', () => {
     expect(g.winner).toEqual({ player: 1, how: 'science' });
     expect(g.over).toBe('defeat');
   });
-  it('by conquest: every civ\'s first capital in one hand', () => {
-    const { g, a, b } = two();
-    // (The others never founded: out of the game for this test.)
-    for (const p of g.players.slice(2)) { p.alive = false; for (const u of g.units.filter((x) => x.owner === p.id)) g.removeUnit(u); }
+  it('by conquest: two thirds of the civs\' first capitals in one hand', () => {
+    const { g, b } = two();
+    const need = g.capitalsToWin;
+    expect(need).toBe(Math.ceil((2 * g.players.length) / 3));
     expect(g.capitalsHeld(0)).toBe(1);
-    b.owner = 0;
+    // (The other civs' first capitals: cities handed to it one by one.)
+    const caps = [b];
+    for (const p of g.players.slice(2)) { const s = g.units.find((u) => u.owner === p.id && u.type === 'settler'); const c = s && g.foundCity(s); if (c) caps.push(c); }
+    for (let i = 0; i < need - 2; i++) caps[i]!.owner = 0;
+    g.endTurn();
+    expect(g.winner).toBeNull();
+    caps[need - 2]!.owner = 0;
     g.endTurn();
     expect(g.winner).toEqual({ player: 0, how: 'conquest' });
-    void a;
   });
   it('on time: the best score when the last turn ends', () => {
     const g = new Game({ size: 'small', seed: 5, turnLimit: 3 });

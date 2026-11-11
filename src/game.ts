@@ -104,7 +104,7 @@ export interface Relation { war: boolean; since: number }
 // How the game is won (game.ts checkVictory).
 export type Victory = 'conquest' | 'science' | 'religion' | 'time';
 export const VICTORIES: Record<Victory, { name: string; rule: string }> = {
-  conquest: { name: 'Conquest', rule: 'Hold the first capital of every civilization (your own among them).' },
+  conquest: { name: 'Conquest', rule: 'Hold the first capitals of two thirds of the civilizations (your own among them).' },
   science: { name: 'Science', rule: 'Be the first to discover Artificial Superintelligence, the last technology.' },
   religion: { name: 'Religion', rule: 'Found a religion that more than two thirds of the world\'s people follow (the citizens of the cities that follow it).' },
   time: { name: 'Time', rule: 'Have the best score when the last turn ends, if no one has won before.' },
@@ -2656,12 +2656,15 @@ export class Game {
     for (const p of this.players) { const c = p.firstCapital === null ? undefined : this.cityById.get(p.firstCapital); if (c && c.owner === id) n++; }
     return n;
   }
-  // The civ that holds every first capital still standing (once every civ
-  // has founded one, and there are two at least), or null.
+  // The first capitals a conquest takes: two thirds of the civs the game
+  // began with, rounded up (one's own among them).
+  get capitalsToWin(): number { return Math.ceil((2 * this.players.length) / 3); }
+  // The civ that holds that many (the one holding most, if several could), or null.
   private capitalsLord(): number | null {
-    if (this.players.some((p) => p.alive && p.firstCapital === null)) return null;
-    const caps = this.players.flatMap((p) => { const c = p.firstCapital === null ? undefined : this.cityById.get(p.firstCapital); return c ? [c] : []; });
-    return caps.length >= 2 && caps.every((c) => c.owner === caps[0]!.owner) ? caps[0]!.owner : null;
+    if (this.players.length < 2) return null;
+    let best: number | null = null, bestN = this.capitalsToWin - 1;
+    for (const p of this.players) { const n = p.alive ? this.capitalsHeld(p.id) : 0; if (n > bestN) { best = p.id; bestN = n; } }
+    return best;
   }
   // The share of the world's people following the religion a civ founded
   // (its cities' citizens over all cities'; 0: it founded none). People,
@@ -2675,7 +2678,7 @@ export class Game {
     }
     return 0;
   }
-  // The game is won (VICTORIES): by conquest, holding every civ's first capital (or the last civ standing); by
+  // The game is won (VICTORIES): by conquest, holding two thirds of the civs' first capitals (or the last civ standing); by
   // science, the first to know every tech; by religion, the founder of a
   // faith most of the world's cities follow; and, if no one has won by the
   // turn limit, on time by the best score. Checked as each turn ends.
