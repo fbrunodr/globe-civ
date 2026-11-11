@@ -43,10 +43,8 @@ export const GENES = {
   wWalls: [0, 1.5, 0.4],           // walls
   scoutRate: [0, 0.6, 0.2],        // a scout's pull, while it has none out and land near the city is unknown:
   scoutUnknown: [0.05, 0.8, 0.25], // more than this share of the land within ten tiles
-  aggression: [0, 1, 0.4],         // how little its own losses count against an attack, on top of its posture
-  caution: [0, 1, 0.25],           // how much what could strike a tile next turn counts against ending on it
-  dominance: [0.3, 1.2, 0.7],      // how much stronger a side must be at a front to count as dominant there (the posture it takes: aiTactics.ts)
-  simWidth: [1, 4, 2],             // how many lines of play it follows when it searches a front's turn
+  aggression: [0, 1, 0.4],         // how little its own losses count against an attack (1: not at all), as Wesnoth's AI has it
+  caution: [0, 1, 0.25],           // how much being left open to the enemy's other units counts against it
   retreatHp: [10, 60, 35],         // a unit hurt below this falls back
   musterShare: [0.4, 1, 0.7],      // the share of an army that must have gathered before it moves on
   offensiveSpare: [1, 10, 3],      // units out of garrison before it marches on a city

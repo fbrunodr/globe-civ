@@ -42,7 +42,7 @@ const log = `logs/train-${new Date().toISOString().replace(/[:.]/g, '-')}.jsonl`
 // zealot made of it by hand, and wide variations of the three: a
 // population of builders alone never finds its way to the other ways of
 // winning, five capitals or two thirds of the world away.)
-const WARLIKE = policy({ ...BASE, warAfter: 20, warChance: 0.3, warRatio: 0.9, armyBase: 5, armyPerCity: 3, capitalLust: 8, aggression: 0.8, dominance: 0.4, rangedShare: 0.3, siegeShare: 0.1, wArmy: 2, offensiveSpare: 4, peaceRatio: 0.3 });
+const WARLIKE = policy({ ...BASE, warAfter: 20, warChance: 0.3, warRatio: 0.9, armyBase: 5, armyPerCity: 3, capitalLust: 8, aggression: 0.8, rangedShare: 0.3, siegeShare: 0.1, wArmy: 2, offensiveSpare: 4, peaceRatio: 0.3 });
 const DEVOUT = policy({ ...BASE, faithConvert: 1, faithUnits: 0 });
 const SEEDS = [BASE, WARLIKE, DEVOUT];
 let pop: Member[] = [...SEEDS.map((p) => fresh(p, 0)), ...Array.from({ length: POP - SEEDS.length }, (_, i) => fresh(mutate(SEEDS[i % SEEDS.length]!, rng, 0.8, 0.25), 0))];
