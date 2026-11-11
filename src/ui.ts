@@ -295,7 +295,7 @@ export class UI {
         const mend = k !== null && g.builtAt(t) === k && g.pillaged[t]! > 0;
         orders.push(order('improve', 'hammer', k ? `${mend ? 'Repair the' : 'Build a'} ${IMPROVEMENTS[k].name.toLowerCase()}` : 'Improve the land',
           k ? `${plural(g.improveTurns(t, u.owner), 'turn')}${mend ? ' · free' : ` · one of the ${plural(u.charges, 'improvement')} it can still build`}` : '', 'I', why));
-        orders.push(order('road', 'moves', 'Lay a road', `${plural(g.roadTurns(u.tile), 'turn')} · free. Units move twice as far along roads; a city joined to the capital by road trades with it`, 'L', g.roadBlock(u)));
+        orders.push(order('road', 'road', 'Lay a road', `${plural(g.roadTurns(u.tile), 'turn')} · free. Units move twice as far along roads; a city joined to the capital by road trades with it`, 'L', g.roadBlock(u)));
       }
       if (u.type === 'commander') {
         const can = g.rallyable(u).length, army = g.armyOf(u).length;
@@ -500,7 +500,7 @@ export class UI {
       const def = g.defenseBonus(t);
       lines.push(`Move cost ${g.moveCost(t)}${def ? ` · Defence +${Math.round(def * 100)}%` : ''}`);
     }
-    if (g.road[t]) lines.push(`${icon('moves')} Road`);
+    if (g.road[t]) lines.push(`${icon('road')} Road`);
     if (owner >= 0) lines.push(`<span class="swatch" style="background:${g.players[owner].color}"></span>Territory of the ${esc(g.players[owner].name)}`);
     if (g.visible[t]) {
       const units = g.unitsAt(t);

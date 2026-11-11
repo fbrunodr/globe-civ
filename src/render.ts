@@ -1588,7 +1588,7 @@ export class GlobeRenderer {
       for (let i = 0; i < tile.corners.length; i++) {
         if (g.ownerOf(tile.neighbors[i]) === o) continue;
         const before = pos.length;
-        this.edgeRibbon(t, i, 0.97, 0.84, 0.0015, pos);
+        this.edgeRibbon(t, i, 0.985, 0.915, 0.0015, pos);
         for (let k = before; k < pos.length; k += 3) col.push(color.r, color.g, color.b);
       }
     }
@@ -1808,10 +1808,11 @@ export class GlobeRenderer {
       const head = first ? [...first].reverse().slice(0, -1) : [], tail = last ? last.slice(1) : [];
       const pts = [...head, ...road.points, ...tail];
       // Each point as laid by the owner of its ground (no one's: the city nearer it).
-      const ca = g.cityById.get(road.a)!, cb = g.cityById.get(road.b)!;
+      // (A stretch the workers laid has no cities of its own: on no one's ground, a plain track.)
+      const ca = g.cityById.get(road.a), cb = g.cityById.get(road.b);
       const how = pts.map((d) => {
         const o = g.ownerOf(at(d).t);
-        return lays(o >= 0 ? o : d.angleTo(g.tiles[ca.tile].center) < d.angleTo(g.tiles[cb.tile].center) ? ca.owner : cb.owner);
+        return lays(o >= 0 ? o : !ca || !cb ? -1 : d.angleTo(g.tiles[ca.tile].center) < d.angleTo(g.tiles[cb.tile].center) ? ca.owner : cb.owner);
       });
       const middle = (k: number) => (how[k]!.rail ? ROAD_KIND.rail : how[k]!.asphalt ? ROAD_KIND.asphalt : ROAD_KIND.dirt);
       // (In runs of one kind, each overlapping the next by a point.)

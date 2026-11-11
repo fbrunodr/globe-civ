@@ -19,7 +19,6 @@ import levels from './aiLevels.json';
 // Each gene: the least and the most it may be, and what it was before any breeding.
 export const GENES = {
   cityTarget: [2, 16, 6],          // cities (and settlers on their way) it wants before it stops settling
-  settlerRate: [0.1, 1, 0.6],      // how readily a city that could builds a settler
   settleReach: [4, 12, 7],         // how far a settler looks for a site (tiles)
   settleDist: [0, 4, 1.5],         // what each tile of the way takes off a site's worth
   siteResource: [0, 6, 0],         // what each resource within two tiles adds to a site's worth (one it lacks: twice)
@@ -28,15 +27,24 @@ export const GENES = {
   armyBase: [0, 6, 2],             // the army it wants: this many units...
   armyPerCity: [0.5, 5, 2],        // ...and this many more a city
   armyWar: [1, 3, 1],              // times this while at war
-  atkShare: [0.2, 0.9, 0.65],      // of its land units, the share built to attack (the rest to hold)
-  siegeShare: [0, 0.3, 0.12],      // the share of engines,
-  navyShare: [0, 0.25, 0.08],      // of ships,
-  airShare: [0, 0.25, 0.07],       // of aircraft
-  buildingRate: [0.1, 0.95, 0.5],  // how readily a city builds a building while the army is short
-  wonderRate: [0, 0.3, 0.04],      // how readily a grown city starts a wonder
-  wallsRate: [0, 0.5, 0.15],       // and walls
+  rangedShare: [0, 0.7, 0.35],     // of its land army, the share of shooters,
+  mountedShare: [0, 0.5, 0.15],    // of horse and armour,
+  siegeShare: [0, 0.3, 0.12],      // of engines (a third of it while no city is to be taken);
+  navyShare: [0, 0.25, 0.08],      // of what it builds for war, the share of ships,
+  airShare: [0, 0.25, 0.07],       // and of aircraft
+  // What a city builds: each kind's pull (times how much it is needed: ai.ts chooseBuild); the strongest wins.
+  wSettle: [0, 2, 1],              // settlers, while it wants more cities
+  wWorker: [0, 2, 1.2],            // workers, while land waits to be improved
+  wArmy: [0, 2, 1],                // units, while the army is short of what it wants
+  wBuild: [0, 2, 0.8],             // buildings
+  wWonder: [0, 1.5, 0.4],          // a wonder, in a grown city at peace
+  wWalls: [0, 1.5, 0.4],           // walls
   scoutRate: [0, 0.6, 0.2],        // scouts in the first turns
-  attackOdds: [0.35, 0.8, 0.55],   // the odds it wants before closing in
+  attackOdds: [0.4, 0.9, 0.6],     // the chance of winning a fight to the end it wants before closing in
+  assaultOdds: [-0.25, 0.15, -0.05], // added to it for an army assaulting its city
+  cityAssaultHp: [0.1, 0.9, 0.4],  // the share of a city's hit points below which the blades go at its walls
+  retreatHp: [10, 60, 35],         // a unit hurt below this falls back
+  musterShare: [0.4, 1, 0.7],      // the share of an army that must have gathered before it moves on
   offensiveSpare: [1, 10, 3],      // units out of garrison before it marches on a city
   warAfter: [10, 150, 45],         // no war before this turn
   warChance: [0, 0.3, 0.05],       // the chance a turn it declares one, with a target
@@ -47,6 +55,7 @@ export const GENES = {
   techWonders: [0, 3, 0.75],       // its wonders,
   techReveal: [0, 4, 0],           // a strategic resource it reveals,
   techEffects: [0, 3, 0],          // each of its other effects (better farms, mines...)
+  techImprove: [0, 4, 1.5],        // each resource it holds that the tech would let it improve
   techCheap: [0.4, 1.6, 1],        // how much a tech's cost counts against it (1: worth per cost; less: the dear ones sooner)
   policyMilitary: [0, 4, 2],       // what a military policy card is worth,
   policyEconomic: [0, 4, 2.5],     // an economic one,
