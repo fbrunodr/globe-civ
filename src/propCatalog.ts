@@ -553,23 +553,35 @@ const isLeafPart = (g: THREE.BufferGeometry) => {
   const col = g.getAttribute('color');
   return Math.abs(col.getX(0) - LEAF_PROBE.r) + Math.abs(col.getY(0) - LEAF_PROBE.g) + Math.abs(col.getZ(0) - LEAF_PROBE.b) <= 1e-4;
 };
-// A crown's leaf clump (a blob) as crossed leaf cards, as many triangles
-// as the blob had: quads at random turns through the clump's middle,
-// filling its box (so a flattened clump stays flat). cardUv: the card's
-// texture coordinates, and 1 (the material cuts the leaves out of it).
-const CARD_SPREAD = 0.45, CARD_HALF = 0.62;
+// A crown's leaf clump (a blob) as leaf cards, as many triangles as the
+// blob had: quads on the clump's outside, spread evenly round it from its
+// top down past its middle (CARD_BELOW), each a little inside its surface
+// (CARD_IN) and facing roughly out and up, turned a little its own way
+// (CARD_TURN). None passes through the clump's middle at a random turn, as
+// they did: those stood edge-on to the eye from wherever it looked, spiky
+// at the crown's outline and casting slivers of shadow across it. Within
+// the clump's box (a flattened clump, a savanna tree's, stays flat: its
+// cards lie flat). cardUv: the card's texture coordinates, and 1 (the
+// material cuts the leaves out of it).
+const CARD_HALF = 0.58, CARD_IN = [0.3, 0.55] as const, CARD_BELOW = -0.55, CARD_TURN = 0.7;
 function clumpCards(g: THREE.BufferGeometry, n: number, seed: number): THREE.BufferGeometry {
   g.computeBoundingBox();
   const box = g.boundingBox!, c = box.getCenter(new THREE.Vector3()), half = box.getSize(new THREE.Vector3()).multiplyScalar(0.5);
   let h = seed >>> 0;
   const rand = () => { h = (Math.imul(h ^ (h >>> 15), 0x2c1b3c6d) + 0x6d2b79f5) >>> 0; return (h >>> 8) / 16777216; };
   const pos: number[] = [], uv: number[] = [];
-  const q = new THREE.Quaternion(), a = new THREE.Vector3(), b = new THREE.Vector3(), m = new THREE.Vector3();
+  const d = new THREE.Vector3(), nrm = new THREE.Vector3(), a = new THREE.Vector3(), b = new THREE.Vector3(), m = new THREE.Vector3();
   for (let i = 0; i < n; i++) {
-    q.setFromEuler(new THREE.Euler(rand() * Math.PI, rand() * Math.PI, rand() * Math.PI));
-    a.set(CARD_HALF, 0, 0).applyQuaternion(q);
-    b.set(0, CARD_HALF, 0).applyQuaternion(q);
-    m.set(rand() - 0.5, rand() - 0.5, rand() - 0.5).multiplyScalar(2 * CARD_SPREAD);
+    // (Evenly over the sphere from its top down to CARD_BELOW: a golden-angle spiral, jittered.)
+    const y = 1 - (1 - CARD_BELOW) * ((i + 0.5) / n), r = Math.sqrt(Math.max(0, 1 - y * y)), t = i * 2.39996 + rand() * 0.6;
+    d.set(r * Math.cos(t), y, r * Math.sin(t));
+    nrm.set(d.x + (rand() - 0.5) * CARD_TURN, d.y + 0.35 + (rand() - 0.5) * CARD_TURN, d.z + (rand() - 0.5) * CARD_TURN).normalize();
+    b.copy(UP).addScaledVector(nrm, -nrm.y);
+    if (b.lengthSq() < 1e-3) { b.set(Math.cos(t), 0, Math.sin(t)); b.addScaledVector(nrm, -b.dot(nrm)); }
+    b.normalize().applyAxisAngle(nrm, rand() * Math.PI * 2);
+    a.crossVectors(b, nrm).multiplyScalar(CARD_HALF);
+    b.multiplyScalar(CARD_HALF);
+    m.copy(d).multiplyScalar(CARD_IN[0] + (CARD_IN[1] - CARD_IN[0]) * rand());
     const corner = (sa: number, sb: number) => { pos.push(...[0, 1, 2].map((k) => c.getComponent(k) + half.getComponent(k) * (m.getComponent(k) + sa * a.getComponent(k) + sb * b.getComponent(k)))); uv.push((sa + 1) / 2, (sb + 1) / 2, 1); };
     for (const [sa, sb] of [[-1, -1], [1, -1], [1, 1], [-1, -1], [1, 1], [-1, 1]] as const) corner(sa, sb);
   }
@@ -639,7 +651,21 @@ function limbs(parts: readonly THREE.BufferGeometry[]): THREE.BufferGeometry[] {
   const r = Math.max(1e-5, ...ring.map((p) => p.distanceTo(foot)));
   const color = new THREE.Color(col.getX(at), col.getY(at), col.getZ(at)).getHex();
   const head = new THREE.Vector3(mid.x, mid.y, mid.z);
-  const out = [seg(foot, head, r, r * 0.4, 3, color)];
+  // (The trunk's own top ring drawn on up to the head, narrowing: the same sides, turned the same way, so
+  // the trunk runs on unbroken. A limb of its own sides and turn met it at a step: the trunk looked cut.)
+  const rim = ring.filter((p, i) => ring.findIndex((q) => q.distanceToSquared(p) < 1e-14) === i)
+    .sort((p, q) => Math.atan2(p.z - foot.z, p.x - foot.x) - Math.atan2(q.z - foot.z, q.x - foot.x));
+  const up = rim.map((p) => head.clone().addScaledVector(p.clone().sub(foot), 0.4));
+  const tri: number[] = [];
+  rim.forEach((p, i) => {
+    const j = (i + 1) % rim.length, q = rim[j]!, pu = up[i]!, qu = up[j]!;
+    // (Wound to face out from the stem.)
+    const outward = new THREE.Vector3().subVectors(q, p).cross(new THREE.Vector3().subVectors(pu, p)).dot(new THREE.Vector3().addVectors(p, q).multiplyScalar(0.5).sub(foot)) > 0;
+    for (const t of outward ? [p, q, qu, p, qu, pu] : [p, qu, q, p, pu, qu]) tri.push(t.x, t.y, t.z);
+  });
+  const stem = new THREE.BufferGeometry();
+  stem.setAttribute('position', new THREE.Float32BufferAttribute(tri, 3));
+  const out = [part(stem, color)];
   // (Boughs only on a plain trunk: a tree with much wood already, the mangrove on its stilts, has its triangles spent.)
   if (solid > LIMB_PLAIN) return out;
   for (let k = 0; k < 2; k++) {

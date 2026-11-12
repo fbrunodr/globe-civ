@@ -554,7 +554,8 @@ export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Ve
           vec4 lt = cardTexel(vCard);
           vec3 fn = normalize(cross(dFdx(vViewPosition), dFdy(vViewPosition)));
           float facing = abs(dot(fn, normalize(vViewPosition)));
-          if (lt.a < mix(0.97, 0.5, smoothstep(0.12, 0.4, facing))) discard;
+          // (Nearly edge-on, a crown's card is a sliver: gone.)
+          if ((vCard.z < 1.5 && facing < 0.16) || lt.a < mix(0.97, 0.5, smoothstep(0.12, 0.4, facing))) discard;
           diffuseColor.rgb *= lt.r;
           // (A spray's heart lies inside the crown, in its shade; its tips in the light.)
           if (vCard.z < 1.5) diffuseColor.rgb *= mix(0.62, 1.14, smoothstep(0.1, 0.95, length(vCard.xy - 0.5) * 2.0));
