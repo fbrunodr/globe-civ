@@ -63,7 +63,7 @@ export const HOLY_STRIFE = [0, 0.25, 0.4, 0.5] as const;
 export const MISSIONARY_FAITH = 30, CONVERT_PER_POP = 15;
 export const DEVOUT_TURNS = 15;
 // A religion presses on the cities near those that follow it (spreadReligions); missionaries carry it further.
-export const PRESSURE_REACH = 4;        // tiles
+export const PRESSURE_REACH = 7;        // tiles
 export const HOLY_PRESSURE = 6;         // from the holy city
 export const CITY_PRESSURE = 2;         // from every other city following it
 export const BUILDING_PRESSURE = 1;     // more from a city with a Shrine, and a Temple
