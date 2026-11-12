@@ -37,6 +37,8 @@ for (let k = 0; k < GAMES; k++) {
       for (const u of g.units) if (u.owner === p.id && !unitDef(u.type).civilian) { army++; if (unitDef(u.type).needs) needRes++; }
       for (const o of g.players) {
         if (o.id <= p.id || !o.alive || !g.met[p.id]![o.id] || g.atWar(p.id, o.id)) continue;
+        // (Neighbours only: civs fight those in reach, and a faith spreads to those near, so the chance to compare with is that of a pair within reach.)
+        if (!g.cities.some((a) => a.owner === p.id && g.cities.some((b) => b.owner === o.id && g.approxDist(a.tile, b.tile) <= 14))) continue;
         const a = g.faithOf(p.id), b = g.faithOf(o.id);
         exposure[!a || !b ? 'none' : a === b ? 'same' : 'rival']++;
       }
