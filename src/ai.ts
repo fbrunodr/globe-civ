@@ -558,7 +558,8 @@ function aiDiplomacy(g: Game, p: Player): void {
   const wars = g.players.filter((o) => o.alive && g.atWar(p.id, o.id));
   for (const o of wars) {
     const long = g.turn - g.relations[p.id]![o.id]!.since;
-    if (g.canMakePeace(p.id, o.id) && (1 / RANK_WORTH[standing(g, p.id, o.id).army] < P.peaceRatio || (long > 30 && g.rng() < 0.15))) g.offerPeace(p.id, o.id);
+    // (Weaker than it will bear; or the war grown long and going nowhere for it: one it is winning it keeps up.)
+    if (g.canMakePeace(p.id, o.id) && (1 / RANK_WORTH[standing(g, p.id, o.id).army] < P.peaceRatio || (long > 30 && gains(g, p.id, o.id) <= 0 && g.rng() < 0.15))) g.offerPeace(p.id, o.id);
   }
   if (wars.length || g.turn < P.warAfter || g.rng() > P.warChance) return;
   if (planning(g, p)) return;
@@ -660,7 +661,20 @@ export function aiAcceptsPeace(g: Game, p: Player, from: number): boolean {
   const op = operationOf(g, p.id), target = op ? g.cityById.get(op.target) : undefined;
   const them = standing(g, p.id, from).army;
   if (target && target.owner === from && long < 40 && them <= 2) return false;
-  return them >= 2 || long > 25;
+  // (An equal or a stronger enemy: yes. A weaker one: only once the war has stopped paying.)
+  return them >= 2 || (long > 25 && gains(g, p.id, from) <= 0);
+}
+// How a war is going for a civ of late: the cities it took from the other in the last WAR_MEMORY turns, less those it lost to it.
+const WAR_MEMORY = 15;
+function gains(g: Game, a: number, b: number): number {
+  let n = 0;
+  for (let i = g.events.length - 1; i >= 0; i--) {
+    const e = g.events[i]!;
+    if (e.turn < g.turn - WAR_MEMORY) break;
+    if (e.kind !== 'cityCaptured') continue;
+    if (e.player === a && e.data['from'] === b) n++; else if (e.player === b && e.data['from'] === a) n--;
+  }
+  return n;
 }
 
 // ---- trade ----
