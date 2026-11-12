@@ -70,6 +70,7 @@ export interface Painting {
   readonly reach: number;                       // the farthest a building reaches from the middle (tile steps)
   // The grid: its middle and axes in the tile (for tests and tools).
   readonly origin: Pt; readonly u: Pt; readonly v: Pt;
+  readonly unit: number;                        // a grid unit (tile steps): UNIT, less for a town drawn smaller
 }
 export interface PaintInput {
   readonly wonders: number;
@@ -82,6 +83,9 @@ export interface PaintInput {
   // How far out (share of the inradius) anything may stand: a walled city
   // keeps inside its walls.
   readonly limit?: number;
+  // The town drawn this much smaller (1: full size), its buildings and
+  // streets alike: more of them fit on the same land.
+  readonly scale?: number;
 }
 
 // What goes up, one at a time: a wonder, a skyscraper or a building of a
@@ -96,19 +100,20 @@ const kindOf = (k: Pick): Kind => (typeof k === 'number' ? 'building' : k);
 // Gaps in a town this narrow or less (units, each side) are paved over.
 const CLOSE = 2;
 // Dry ground kept round every building (units).
-const MARGIN = Math.ceil(0.013 / UNIT);
+const MARGIN_ROOM = 0.013;
 // How much a building lined up with its neighbours is passed over.
 const STAGGER = 0.01;
-// The grid spans the tile: units from -H to H on each axis.
-const H = Math.ceil(0.62 / UNIT);
-const N = 2 * H;
+// The grid spans the tile: units from -H to H on each axis, this far out (tile steps).
+const SPAN = 0.62;
 
 export function paintCity(inp: PaintInput): Painting {
   const rand = mulberry32(inp.seed);
   const turn = rand() * (Math.PI / 2);
   const u = { x: Math.cos(turn), y: Math.sin(turn) }, v = { x: -u.y, y: u.x };
   const origin = { x: (rand() - 0.5) * UNIT, y: (rand() - 0.5) * UNIT };
-  const toTile = (x: number, y: number): Pt => ({ x: origin.x + (x * u.x + y * v.x) * UNIT, y: origin.y + (x * u.y + y * v.y) * UNIT });
+  // (The grid's unit here: a town drawn smaller, `scale`, on a finer grid over the same tile.)
+  const U = UNIT * (inp.scale ?? 1), MARGIN = Math.ceil(MARGIN_ROOM / U), H = Math.ceil(SPAN / U), N = 2 * H;
+  const toTile = (x: number, y: number): Pt => ({ x: origin.x + (x * u.x + y * v.x) * U, y: origin.y + (x * u.y + y * v.y) * U });
   const limit = inp.limit ?? 1;
 
   // Which grid squares each kind may cover: its middle in reach, and free
@@ -347,7 +352,7 @@ export function paintCity(inp: PaintInput): Painting {
     return typeof p.pick === 'number' ? { ...box, kind: 'building', height: p.pick } : { ...box, kind: p.pick };
   });
   const reach = placed.reduce((a, p) => Math.max(a, ...[[p.x0, p.y0], [p.x0 + p.w, p.y0], [p.x0, p.y0 + p.h], [p.x0 + p.w, p.y0 + p.h]].map(([x, y]) => Math.hypot(toTile(x!, y!).x, toTile(x!, y!).y))), 0);
-  return { buildings, roads, reach, origin, u, v };
+  return { buildings, roads, reach, origin, u, v, unit: U };
 }
 
 // Whether two rectangles are joined: facing sides exactly 1 unit apart,

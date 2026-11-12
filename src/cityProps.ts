@@ -38,7 +38,7 @@ import { len as len2, sub as sub2, type Pt as Pt2 } from './town/geometry.ts';
 import { mulberry32, type Rng } from './rng.ts';
 import { dressCity, type DressEra } from './cityDress.ts';
 import { wearSalt, wornNear } from './rural/wear.ts';
-import { paintCity, CITY_CELL, UNIT } from './cityPainter.ts';
+import { paintCity, CITY_CELL } from './cityPainter.ts';
 
 // The ground at a spot of a tile (render.ts samples the terrain).
 export interface CitySpot {
@@ -127,12 +127,16 @@ const HOUSE_SCALE = 1.5;
 const GATE_PASSAGE = 0.005, GATE_HALF = 0.0059, WALL_TOWER_R = 0.0022;
 // The most a gate is scaled up over the walls (the rest of its passage's room: widened).
 const GATE_GROW = 1.15;
-// Machu Picchu: the least houses its summit holds (render.ts cuts it deeper
-// until they fit), and how level ground must be to count as the cut's top.
-export const SUMMIT_HOUSES = 6;
 // Machu Picchu's houses: each on a lot this many town cells square (a
 // town's smallest lots are two), its widest foot (the hall's, rural/models.ts) filling it.
 const MP_LOT = 1.5, INCA_FOOT = 0.0248;
+// The town: every lot within this of its middle (tile steps: two dozen
+// houses at most), on a summit render.ts cuts for it (levelSummit), flat
+// at most out to SUMMIT_FLAT: past the farthest lot's corners.
+const MP_TOWN = 2.7 * MP_LOT * CITY_CELL;
+// The least houses the town has: render.ts cuts the summit no lower than they need.
+export const SUMMIT_HOUSES = 10;
+export const SUMMIT_FLAT = MP_TOWN + MP_LOT * CITY_CELL;
 // (How much a lot may fall across it, and how far below the summit the town goes.)
 const MP_STEP = 0.0015, MP_DROP = 0.0025, MP_GRANITE = 0x8d877c;
 // Foundations: under a building whose footprint's corners differ by more
@@ -157,6 +161,8 @@ const INSET = 0.05, MASK_STEP = 0.02, MASK_HALF = 32;
 // (BEACH inner radii from the shore).
 const FIELD_PAD = 0.595; // (its border band then 1.5 lanes wide, rural/plots.ts FARM_LANE)
 export const BEACH = 0.35;
+// (A town short of land builds on its beach down to this far from the shore.)
+const TOWN_STRAND = 0.1;
 // The land of tile t (`ok` at each square's middle) worn back INSET, as a test of a point (tile steps).
 function innerMask(toDir: (p: Pt2) => THREE.Vector3, sample: (d: THREE.Vector3) => CitySpot, ok: (s: CitySpot) => boolean): (p: Pt2) => boolean {
   const S = 2 * MASK_HALF, good = new Uint8Array(S * S), inner = new Uint8Array(S * S), R = Math.ceil(INSET / MASK_STEP);
@@ -499,6 +505,8 @@ export class CityProps {
       // and so all round it for INSET: breathing room from a river, the sea
       // and the next tile's land.)
       free: innerMask(toDir, (d) => this.sampleDir(d), (s) => !wet(s) && (s.coast ?? 9) >= BEACH && (s.owner === undefined || s.owner === city.tile)),
+      // (A town too large for that builds down its beach as well, a strand left at the water: TOWN_STRAND.)
+      spare: (() => { let m: ((p: Pt2) => boolean) | null = null; return (p: Pt2) => (m ??= innerMask(toDir, (d) => this.sampleDir(d), (s) => !wet(s) && (s.coast ?? 9) >= TOWN_STRAND && (s.owner === undefined || s.owner === city.tile)))(p); })(),
     });
     // (The painter keeps them apart and off the water: each stands where painted.)
     dressed.buildings.forEach((b, n) => {
@@ -516,7 +524,7 @@ export class CityProps {
     // fitted a hair inside and square where its lot may not be, leaves no
     // grass showing round it.)
     {
-      const pt = dressed.painting, at = (x: number, y: number) => toDir({ x: pt.origin.x + (x * pt.u.x + y * pt.v.x) * UNIT, y: pt.origin.y + (x * pt.u.y + y * pt.v.y) * UNIT });
+      const pt = dressed.painting, at = (x: number, y: number) => toDir({ x: pt.origin.x + (x * pt.u.x + y * pt.v.x) * pt.unit, y: pt.origin.y + (x * pt.u.y + y * pt.v.y) * pt.unit });
       for (const b of pt.buildings) if (b.kind === 'wonder') pavings.push({ points: [at(b.x0, b.y0), at(b.x1, b.y0), at(b.x1, b.y1), at(b.x0, b.y1)], paved: era > 0, rgb: dressed.roadRgb, exact: true });
     }
 
@@ -525,10 +533,10 @@ export class CityProps {
     // the buildings (or, with none, up to the buildings toward the middle).
     const frame = tileFrame(g, city.tile), P = dressed.painting;
     const toPt = (d: THREE.Vector3): Pt2 => { const s = d.dot(frame.c) * frame.k; return { x: d.dot(frame.e1) / s, y: d.dot(frame.e2) / s }; };
-    const gridOf = (p: Pt2): Pt2 => { const x = p.x - P.origin.x, y = p.y - P.origin.y; return { x: (x * P.u.x + y * P.u.y) / UNIT, y: (x * P.v.x + y * P.v.y) / UNIT }; };
-    const tileOf = (x: number, y: number): Pt2 => ({ x: P.origin.x + (x * P.u.x + y * P.v.x) * UNIT, y: P.origin.y + (x * P.u.y + y * P.v.y) * UNIT });
+    const gridOf = (p: Pt2): Pt2 => { const x = p.x - P.origin.x, y = p.y - P.origin.y; return { x: (x * P.u.x + y * P.u.y) / P.unit, y: (x * P.v.x + y * P.v.y) / P.unit }; };
+    const tileOf = (x: number, y: number): Pt2 => ({ x: P.origin.x + (x * P.u.x + y * P.v.x) * P.unit, y: P.origin.y + (x * P.u.y + y * P.v.y) * P.unit });
     const inBuilding = (p: Pt2) => { const q = gridOf(p); return P.buildings.some((b) => q.x > b.x0 - 0.5 && q.x < b.x1 + 0.5 && q.y > b.y0 - 0.5 && q.y < b.y1 + 0.5); };
-    const STEP = 0.25 * UNIT;
+    const STEP = 0.25 * P.unit;
     const clearWay = (a: Pt2, b: Pt2) => { const n = Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / STEP); for (let i = 0; i <= n; i++) if (inBuilding({ x: a.x + ((b.x - a.x) * i) / n, y: a.y + ((b.y - a.y) * i) / n })) return false; return true; };
     const cells: Pt2[] = P.roads.flatMap((r) => {
       const a = gridOf(r[0]!), b = gridOf(r[2]!), out: Pt2[] = [];
@@ -944,12 +952,45 @@ export class CityProps {
   }
 
   // Machu Picchu: houses and halls of dressed stone, a city cell each, on
-  // the summit cut flat for them (render.ts levelSummit), filling every cell
-  // of the flat top on a grid round its highest point.
+  // the shelf levelled for them (render.ts levelSummit), filling every lot
+  // of it on a grid round its middle.
+  private readonly summits = new Map<number, { readonly dir: THREE.Vector3; readonly ground: number }>();
+  // The shelf levelled for Machu Picchu on tile t (render.ts levelSummit): its middle, its ground (radius - 1).
+  setSummit(t: number, dir: THREE.Vector3, ground: number): void { this.summits.set(t, { dir: dir.clone(), ground }); }
+  // The lots Machu Picchu's houses take round P on tile t (cells from P,
+  // each lot's lowest and highest ground), the summit's ground `top`, over
+  // the ground `groundAt` (radius - 1): the real one, or render.ts
+  // levelSummit's trial of a cut. Terraced down the peak as the town is:
+  // every lot of the town (MP_TOWN) takes a house unless it falls too
+  // steeply across or lies too far below the summit, the house on the
+  // lot's highest corner and a terrace of granite under it down to its
+  // lowest. (The grid nudged so its lots fall round the top, not across
+  // it: the nudge that holds the most.)
+  summitLots(t: number, P: THREE.Vector3, top: number, groundAt: (d: THREE.Vector3) => number): { x: number; y: number; lo: number; hi: number }[] {
+    const { e1, k } = tileFrame(this.game, t), cell = CITY_CELL * k, L = MP_LOT, h = L * 0.5;
+    const u = e1.clone().addScaledVector(P, -e1.dot(P)).normalize(), w = P.clone().cross(u);
+    const at = (x: number, y: number) => P.clone().addScaledVector(u, x * cell).addScaledVector(w, y * cell).normalize();
+    let best: { x: number; y: number; lo: number; hi: number }[] = [];
+    for (const [ox, oy] of [[0, 0], [0.5, 0], [0, 0.5], [0.5, 0.5]] as const) {
+      const here: typeof best = [];
+      for (let a = -4; a <= 4; a++) for (let b = -4; b <= 4; b++) {
+        const x = (a + ox) * L, y = (b + oy) * L;
+        if (Math.hypot(x, y) * CITY_CELL > MP_TOWN) continue;
+        const gs = [[x, y], [x - h, y - h], [x + h, y - h], [x + h, y + h], [x - h, y + h]].map(([p, q]) => groundAt(at(p!, q!)));
+        const lo = Math.min(...gs), hi = Math.max(...gs);
+        if (hi - lo > MP_STEP * this.scale || top - lo > MP_DROP * this.scale) continue;
+        here.push({ x, y, lo, hi });
+      }
+      if (here.length > best.length) best = here;
+    }
+    return best;
+  }
+
   private machuPicchu(t: number): PlacedBuilding[] {
     const rand = mulberry32((t + 3) * 2654435761);
-    let top: CitySpot | null = null;
-    for (const sp of this.tileSpots(t, 8, rand)) {
+    // (Round the middle of its shelf; without one, the tile's highest ground.)
+    let top: { readonly dir: THREE.Vector3; readonly ground: number } | null = this.summits.get(t) ?? null;
+    if (!top) for (const sp of this.tileSpots(t, 8, rand)) {
       const s = this.sample(t, sp.i, sp.wa, sp.wb);
       if (!top || s.ground > top.ground) top = s;
     }
@@ -957,33 +998,20 @@ export class CityProps {
     const P = top.dir, { e1, k } = tileFrame(this.game, t), cell = CITY_CELL * k;
     const u = e1.clone().addScaledVector(P, -e1.dot(P)).normalize(), w = P.clone().cross(u);
     const at = (x: number, y: number) => P.clone().addScaledVector(u, x * cell).addScaledVector(w, y * cell).normalize();
-    const out: PlacedBuilding[] = [];
     // (Each house on a lot of MP_LOT × MP_LOT town cells, side by side with
     // no gap between: drawn up so its foot fills its lot, a hair inside.)
     const L = MP_LOT, size = (k * L * CITY_CELL * 0.97) / INCA_FOOT;
-    // (Nudged so the grid's lots fall round the top, not across it.)
-    for (const [ox, oy] of [[0, 0], [0.5, 0], [0, 0.5], [0.5, 0.5]] as const) {
-      const here: PlacedBuilding[] = [];
-      for (let a = -4; a <= 4; a++) for (let b = -4; b <= 4; b++) {
-        // (Terraced down the peak as the town is: every lot within reach of
-        // the top takes a house, whatever the slope, the house on the lot's
-        // highest corner and a terrace of granite under it down to its
-        // lowest; none too far below the summit.)
-        const x = (a + ox) * L, y = (b + oy) * L, h = L * 0.5;
-        const gs = [[x, y], [x - h, y - h], [x + h, y - h], [x + h, y + h], [x - h, y + h]].map(([p, q]) => this.sampleDir(at(p!, q!)).ground);
-        const lo = Math.min(...gs), hi = Math.max(...gs);
-        if (hi - lo > MP_STEP * this.scale || top.ground - lo > MP_DROP * this.scale) continue;
-        const d = at(x, y), quarter = Math.floor(rand() * 4);
-        const qn = new THREE.Quaternion().setFromUnitVectors(UP, d).multiply(new THREE.Quaternion().setFromAxisAngle(UP, facing(d, at(x + 1, y)) + Math.PI / 2 + quarter * Math.PI / 2));
-        const pos = d.clone().multiplyScalar(1 + hi - 0.00002 * this.scale);
-        if (hi - lo > 0.00003 * this.scale) {
-          const fu = this.scale * PROP_SCALE * FOUNDATION_UNIT, fs = 0.0002 * this.scale, side = (L * cell) / fu;
-          const qf = new THREE.Quaternion().setFromUnitVectors(UP, d).multiply(new THREE.Quaternion().setFromAxisAngle(UP, facing(d, at(x + 1, y)) + Math.PI / 2));
-          here.push({ kind: 'foundation', matrix: new THREE.Matrix4().compose(d.clone().multiplyScalar(1 + lo - fs), qf, new THREE.Vector3(side, (hi - lo + fs) / fu, side)), color: new THREE.Color(1, 1, 1).multiplyScalar(0.9 + 0.1 * rand()), leaf: new THREE.Color(MP_GRANITE) });
-        }
-        here.push({ kind: ruralModelKind(rand() < 0.3 ? 'incaHall' : 'incaHouse'), matrix: new THREE.Matrix4().compose(pos, qn, new THREE.Vector3(size, size, size)), color: new THREE.Color(1, 1, 1).multiplyScalar(0.92 + 0.12 * rand()), leaf: new THREE.Color(1, 1, 1) });
+    const out: PlacedBuilding[] = [];
+    for (const { x, y, lo, hi } of this.summitLots(t, P, top.ground, (d) => this.sampleDir(d).ground)) {
+      const d = at(x, y), quarter = Math.floor(rand() * 4);
+      const qn = new THREE.Quaternion().setFromUnitVectors(UP, d).multiply(new THREE.Quaternion().setFromAxisAngle(UP, facing(d, at(x + 1, y)) + Math.PI / 2 + quarter * Math.PI / 2));
+      const pos = d.clone().multiplyScalar(1 + hi - 0.00002 * this.scale);
+      if (hi - lo > 0.00003 * this.scale) {
+        const fu = this.scale * PROP_SCALE * FOUNDATION_UNIT, fs = 0.0002 * this.scale, side = (L * cell) / fu;
+        const qf = new THREE.Quaternion().setFromUnitVectors(UP, d).multiply(new THREE.Quaternion().setFromAxisAngle(UP, facing(d, at(x + 1, y)) + Math.PI / 2));
+        out.push({ kind: 'foundation', matrix: new THREE.Matrix4().compose(d.clone().multiplyScalar(1 + lo - fs), qf, new THREE.Vector3(side, (hi - lo + fs) / fu, side)), color: new THREE.Color(1, 1, 1).multiplyScalar(0.9 + 0.1 * rand()), leaf: new THREE.Color(MP_GRANITE) });
       }
-      if (here.length > out.length) out.splice(0, out.length, ...here);
+      out.push({ kind: ruralModelKind(rand() < 0.3 ? 'incaHall' : 'incaHouse'), matrix: new THREE.Matrix4().compose(pos, qn, new THREE.Vector3(size, size, size)), color: new THREE.Color(1, 1, 1).multiplyScalar(0.92 + 0.12 * rand()), leaf: new THREE.Color(1, 1, 1) });
     }
     return out;
   }

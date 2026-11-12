@@ -419,11 +419,6 @@ const crown = (c: V3, r: V3, paint: Paint, lump = 0.22) => fleece(c, r, paint, l
 // (Points written as plain arrays.)
 const v = (a: readonly number[]): V3 => [a[0]!, a[1]!, a[2]!];
 // ---- the resources in the wild ----
-function wildRice(): G[] {
-  const out: G[] = [];
-  for (let i = 0; i < 16; i++) { const a = i * 2.39, r = 0.1 + (i % 5) * 0.07, x = Math.cos(a) * r, z = Math.sin(a) * r; out.push(tube([[x, 0, z], [x * 1.4, 0.7, z * 1.4], [x * 2.0, 1.15, z * 2.0]], [0.014, 0.012, 0.006], 0x7aa040, 4, 2), tube([[x * 2.0, 1.15, z * 2.0], [x * 2.3, 1.05, z * 2.3], [x * 2.4, 0.9, z * 2.4]], [0.012, 0.016, 0.006], 0xc8b060, 4, 2)); }
-  return out;
-}
 // Rock breaking out of the ground, a vein of its ore (leaf) through it;
 // faceted, as the land's rocks are. (`whole`: the rock is all ore, coal
 // and iron: the leaf colour throughout, a little lighter on top.)
@@ -585,7 +580,7 @@ export const KIT = {
   // water and oil
   canoe, sailboat, trawler, derrick, pumpjack, oilTank,
   // the wild
-  wildRice, outcrop: () => outcrop(), oreRock: () => outcrop(true), boulders, oysters, resinPine,
+  outcrop: () => outcrop(), oreRock: () => outcrop(true), boulders, oysters, resinPine,
   // the sea
   salmonShoal, tunaShoal, troutShoal, whale, crabRock, coralBed, oilSlick, oilRig,
   // worked touches
@@ -605,7 +600,7 @@ export const SPECIES_OF: Partial<Record<KitModel, Species>> = { horse: 'horse', 
 // (People less: at FIGURE_BOOST they stood as tall as the homestead's walls.)
 export const FIGURE_BOOST = 6.5, PERSON_BOOST = 3.2, SMALL_BOOST = 4, PLANT_BOOST = 3, KIT_BOOST = 3.2, WILD_BOOST = 5;
 const SMALL: ReadonlySet<KitModel> = new Set<KitModel>(['plough', 'tractor', 'combine', 'trough', 'brokenCart', 'stooks', 'rick', 'bales', 'hideRack', 'oreHeap', 'oreCart', 'winePress', 'cocoonTrays', 'tuskPile', 'cottonBales', 'teaBaskets', 'saltHeaps', 'canoe']);
-const PLANTS: ReadonlySet<KitModel> = new Set<KitModel>(['wildRice', 'resinPine']);
+const PLANTS: ReadonlySet<KitModel> = new Set<KitModel>(['resinPine']);
 // (The wild's rock, shells and fish: drawn as large as the resources' props were.)
 const WILD: ReadonlySet<KitModel> = new Set<KitModel>(['outcrop', 'oreRock', 'boulders', 'oysters', 'salmonShoal', 'tunaShoal', 'troutShoal', 'whale', 'crabRock', 'coralBed', 'oilSlick', 'resinPine', 'campfire']);
 export const kitBoost = (k: KitModel): number => (PEOPLE.has(k) ? PERSON_BOOST : FIGURES.has(k) ? FIGURE_BOOST : WILD.has(k) ? WILD_BOOST : SMALL.has(k) ? SMALL_BOOST : PLANTS.has(k) ? PLANT_BOOST : KIT_BOOST);

@@ -26,7 +26,8 @@ export function placeResource(g: Game, t: number, r: ResourceKey, look: Resource
   const mid = look.water || look.corner ? tile.center.clone().lerp(g.globe.triCenters[tile.corners[2 % tile.corners.length]!]!, 0.4).normalize() : tile.center.clone();
   const u = e1.clone().addScaledVector(mid, -e1.dot(mid)).normalize(), w = mid.clone().cross(u);
   const at = (x: number, y: number) => mid.clone().addScaledVector(u, x * k).addScaledVector(w, y * k).normalize();
-  const fits = (s: CitySpot) => s.owner === t && (look.water ? s.water - s.ground > 0.0003 : s.water - s.ground <= DRY && (s.coast ?? 9) >= BEACH);
+  // (A wader, wild rice, in its tile's shallows too, but not the sea's: off the beach as the rest.)
+  const fits = (s: CitySpot) => s.owner === t && (look.water ? s.water - s.ground > 0.0003 : s.water - s.ground <= (look.wade ? look.wade * k : DRY) && (s.coast ?? 9) >= BEACH);
   const inside = (x: number, y: number, m: { model: string; s: number }) => {
     if (!fits(sampleDir(at(x, y)))) return false;
     // (A walker's loop lies within twice its walk of where it stands, tile steps: rural/models.ts roamOf.)

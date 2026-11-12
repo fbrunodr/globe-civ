@@ -63,7 +63,8 @@ export const RESOURCE_MODELS: Record<ResourceModel, () => THREE.BufferGeometry[]
 type Shown = RuralModel;
 // (`spread`: how far out from the tile's middle its models stand (tile steps): a land resource's over the
 // whole tile (LAND_SPREAD), a sea one's in a patch under its badge.)
-export interface ResourceLook { readonly parts: readonly { readonly model: Shown; readonly n: number; readonly colors?: readonly number[] }[]; readonly water?: true; readonly spread?: number; readonly corner?: true }
+// (`wade`: it grows in the shallows too, its foot on their bed: in water up to this deep, tile steps.)
+export interface ResourceLook { readonly parts: readonly { readonly model: Shown; readonly n: number; readonly colors?: readonly number[] }[]; readonly water?: true; readonly spread?: number; readonly corner?: true; readonly wade?: number }
 const L = (...parts: ResourceLook['parts']): ResourceLook => ({ parts });
 const W = (...parts: ResourceLook['parts']): ResourceLook => ({ parts, water: true });
 // A patch's radius (tile steps): a sea resource's, a worked one's touches.
@@ -71,9 +72,12 @@ export const RESOURCE_PATCH = 0.17;
 // (A worked resource's own touches: in a patch toward a corner, clear of its improvement's homestead.)
 const LW = (...parts: ResourceLook['parts']): ResourceLook => ({ parts, spread: RESOURCE_PATCH, corner: true });
 const ORE = { copper: [0x3a9a7a, 0x4aa88a], iron: [0x9a4a2a, 0x8a3f24], gold: [0xe8c040, 0xd8b030], gems: [0x9a5ad0, 0x3ab0b0, 0xd04a7a], coal: [0x0e0d0c, 0x161412] } as const;
+// How deep wild rice wades (tile steps): well under its stand's height (PATCH_SIZE of a ricePatch's 0.5).
+const RICE_WADE = 0.016;
 export const RESOURCE_WILD: Record<ResourceKey, ResourceLook> = {
   wheat: L({ model: 'grainPatch', n: 12, colors: [0xc8a446, 0xbf9c40, 0xd0ac52] }),
-  rice: L({ model: 'wildRice', n: 7 }),
+  // (Rice: stands of it in the marsh's shallows and on their banks, the fresh green of a paddy's: as many as the wheat's, so it reads from the board.)
+  rice: { parts: [{ model: 'ricePatch', n: 14, colors: [0x86c24a, 0x93cc52, 0x7ab844, 0xa6c850] }], wade: RICE_WADE },
   maize: L({ model: 'tallPatch', n: 10, colors: [0x6f9238, 0x7a9a40, 0x668a34] }),
   // (Bananas: no model of their own; a third of the tile's trees are banana plants, render.ts.)
   bananas: L(),
@@ -154,7 +158,7 @@ export function resourceLayout(r: ResourceKey, rand: () => number, look: Resourc
     // (The kit's models are true to size: drawn a little larger than life,
     // kitBoost; a stand of grain a unit across, PATCH_SIZE; a shrub as a
     // plantation's plants were.)
-    const s0 = m.model in KIT ? kitBoost(m.model as KitModel) : m.model === 'grainPatch' || m.model === 'tallPatch' ? PATCH_SIZE : SHRUB_BOOST[m.model as ShrubModel] ?? RESOURCE_SCALE;
+    const s0 = m.model in KIT ? kitBoost(m.model as KitModel) : m.model === 'grainPatch' || m.model === 'tallPatch' || m.model === 'ricePatch' ? PATCH_SIZE : SHRUB_BOOST[m.model as ShrubModel] ?? RESOURCE_SCALE;
     const s = s0 * (0.9 + 0.2 * rand());
     let best: [number, number] = [0, 0], bestD = -1;
     for (let c = 0, tries = 0; c < 10 && tries < 40; tries++) {

@@ -19,7 +19,7 @@ import { kitModel, KIT_MODELS, FIGURES, SPECIES_OF, CRAB, type KitModel } from '
 // (The leaf-card plants: a resource's in the wild.)
 export const SHRUBS = ['teaShrub', 'spiceShrub', 'cottonBush', 'indigoBush', 'wildVine', 'mulberryBush', 'incenseTree'] as const;
 export type ShrubModel = (typeof SHRUBS)[number];
-export const FLORA_RURAL = ['crop', 'plant', 'grainPatch', 'tallPatch', ...SHRUBS, ...FENCE_BANDS] as const;
+export const FLORA_RURAL = ['crop', 'plant', 'grainPatch', 'tallPatch', 'ricePatch', ...SHRUBS, ...FENCE_BANDS] as const;
 export const RURAL_MODELS = [...FLORA_RURAL, 'heap', 'block', 'logs', 'stump', 'haystack', 'rack', 'incaHouse', 'incaHall', ...RESOURCE_MODEL_KEYS, ...KIT_MODELS] as const;
 export type RuralModel = (typeof RURAL_MODELS)[number];
 export type RuralModelKind = `rural|${RuralModel}`;
@@ -208,13 +208,15 @@ const FLORA_MODELS: Record<FloraRural, () => THREE.BufferGeometry> = {
   crop: () => { const t = tuft(0.35); return cards(t.pos, t.uv); },
   plant: () => { const t = tuft(0.1); return cards(t.pos, t.uv); },
   grainPatch: () => patch(18, 0x9a1, 0.4), tallPatch: () => patch(12, 0x7a3, 0.62),
+  // (Wild rice: a thick stand, tall enough to rise out of the shallows it grows in.)
+  ricePatch: () => patch(22, 0x51c, 0.5),
   ...SHRUB_MODELS,
   wattle: () => fenceCard('wattle'), rails: () => fenceCard('rails'), wire: () => fenceCard('wire'),
 };
 const FLORA_SET: ReadonlySet<string> = new Set(FLORA_RURAL);
 export const isFloraRural = (k: RuralModelKind): boolean => FLORA_SET.has(k.slice('rural|'.length));
 // (Of those, the stalks: crops, plantations' plants, wild grain. They shrink away from afar.)
-export const isCropRural = (k: RuralModelKind): boolean => k === 'rural|crop' || k === 'rural|plant' || k === 'rural|grainPatch' || k === 'rural|tallPatch';
+export const isCropRural = (k: RuralModelKind): boolean => k === 'rural|crop' || k === 'rural|plant' || k === 'rural|grainPatch' || k === 'rural|tallPatch' || k === 'rural|ricePatch';
 // The kit's models are round (people, animals, plants): smooth-shaded.
 const KIT_SET: ReadonlySet<string> = new Set(KIT_MODELS);
 export const isSmoothRural = (k: RuralModelKind): boolean => KIT_SET.has(k.slice('rural|'.length));

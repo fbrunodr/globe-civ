@@ -418,6 +418,14 @@ export const CATALOG = {
     Array.from({ length: 5 }, (_, i) => blade(Math.cos(ring(5, i)) * 0.0004, Math.sin(ring(5, i)) * 0.0004, ring(5, i, 0.4), 0.0006, 0.0022 + 0.0004 * (i % 2), 0.0006, p.leaf)) },
   tallGrass: { name: 'Tall grass', layer: 'Ground', leaf: 0xc8b060, build: (p) =>
     Array.from({ length: 7 }, (_, i) => blade(Math.cos(ring(7, i)) * 0.0006, Math.sin(ring(7, i)) * 0.0006, ring(7, i, 0.2), 0.0007, 0.0042 + 0.0008 * (i % 3), 0.0012, p.leaf)) },
+  // Pampas grass: a green tussock, its cream plumes standing over it on their stalks.
+  pampasGrass: { name: 'Pampas grass', layer: 'Ground', leaf: 0x86a84e, accent: 0xe8e0c8, build: (p) => [
+    ...Array.from({ length: 7 }, (_, i) => blade(Math.cos(ring(7, i)) * 0.0006, Math.sin(ring(7, i)) * 0.0006, ring(7, i, 0.2), 0.0007, 0.0034 + 0.0007 * (i % 3), 0.0014, p.leaf)),
+    ...[[0.0003, 0.0002, 0.0062], [-0.0005, 0.0003, 0.0054], [0.0001, -0.0006, 0.0058]].flatMap(([x, z, h]) => [
+      cone(0.00012, h! * 0.75, 3, 0xa8a868, { x, z }),
+      tet(0.00042, p.accent, { x, y: h! * 0.86, z, sx: 0.8, sz: 0.8, sy: 3.2 }),
+    ]),
+  ] },
   flowers: { name: 'Flowers', layer: 'Ground', leaf: 0x7fa850, accent: 0xe05a8a, build: (p) => {
     const dots = [p.accent, 0xf2d24a, 0xf4f0ea, p.accent];
     return [

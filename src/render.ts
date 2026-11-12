@@ -22,7 +22,7 @@ import { useOf } from './houseKit.ts';
 import { WORKS_VARIANT, houseFarGeometry, houseGeometry, houseSmoke, isHouseKind, parseHouseKind, type HouseKind } from './houses.ts';
 import { isWonderModelKind, wonderGeometry, type WonderModelKind } from './wonderModels.ts';
 import { isFloraRural, isCropRural, isSmoothRural, roamOf, isRuralModelKind, ruralGeometry, ruralModelKind, type RuralModelKind } from './rural/models.ts';
-import { CityProps, tileFrame, SUMMIT_HOUSES, type CitySpot, type SinkSheet } from './cityProps.ts';
+import { CityProps, tileFrame, SUMMIT_FLAT, SUMMIT_HOUSES, type CitySpot, type SinkSheet } from './cityProps.ts';
 import { CITY_CELL } from './cityPainter.ts';
 import { CELL, wallHeight } from './town/geometry.ts';
 import { resourceLook } from './rural/resourceModels.ts';
@@ -217,8 +217,10 @@ const BRIDGE_TIMBER = 0x7a5f45;
 const BRIDGE_STONE = 0xa49c8c;
 // The ground under a direction: its tile, the ground and water as drawn,
 // and the land before rivers cut into it (radii).
-// Machu Picchu's summit cut (levelSummit): first try.
-const LEVEL_AT = 0.78, LEVEL_R = 0.42;
+// Machu Picchu's summit cut (levelSummit), tile steps: how far from the
+// tile's middle its middle may lie, how far past its flat it eases into
+// the slopes.
+const SUMMIT_CENTRE = 0.18, SUMMIT_EASE = 0.165;
 type Ground = (d: THREE.Vector3) => { t: number; ground: number; water: number; land: number };
 interface Bridges { pos: number[]; col: number[] }
 // (roadUv: across the road (-1..1), along it (tile steps), and its kind: 0 dirt, 1 paved, 2 a town's paving.)
@@ -1327,7 +1329,7 @@ export class GlobeRenderer {
     for (const m of placeResource(g, t, r, look, rand, sampleDir)) {
       const q = new THREE.Quaternion().setFromUnitVectors(UP, m.dir).multiply(new THREE.Quaternion().setFromAxisAngle(UP, m.yaw));
       const sc = m.k * m.s, shade = 0.92 + 0.12 * rand();
-      items.push({ kind: ruralModelKind(m.model), matrix: new THREE.Matrix4().compose(m.dir.clone().multiplyScalar(1 + Math.max(m.spot.ground, m.spot.water) - 0.00004 * this.scale), q, new THREE.Vector3(sc, sc, sc)),
+      items.push({ kind: ruralModelKind(m.model), matrix: new THREE.Matrix4().compose(m.dir.clone().multiplyScalar(1 + (look.wade ? m.spot.ground : Math.max(m.spot.ground, m.spot.water)) - 0.00004 * this.scale), q, new THREE.Vector3(sc, sc, sc)),
         color: new THREE.Color(shade, shade, shade), leaf: new THREE.Color(m.color ?? 0xffffff), wander: m.wander / m.s });
     }
     this.resourceCache.set(t, { key, items });
@@ -1721,56 +1723,63 @@ export class GlobeRenderer {
     return [...tiles];
   }
 
-  // Levels the top of a mountain tile for a wonder (Machu Picchu): the
-  // ground near the peak is cut flat, easing back into the slopes beyond.
-  // The cut starts high (LEVEL_AT of the way up, within LEVEL_R of the
-  // peak) and goes deeper and wider until its flat top holds at least
-  // SUMMIT_HOUSES one-cell houses (cityProps.ts summit builds them).
+  // Cuts the top of a mountain tile for a wonder (Machu Picchu): round the
+  // highest ground near the tile's middle (so the town stands on its own
+  // tile, a higher peak at the tile's edge left towering over it), what
+  // stands above a level is cut down to it, easing back into the slopes
+  // beyond (nothing is built up: the mountain keeps its shape). The level:
+  // the highest that leaves the town at least SUMMIT_HOUSES houses
+  // (cityProps.ts summitLots: the lots it would build on that ground),
+  // found by bisection between the peak and the lowest ground under the
+  // town (cut to which, all of it is flat).
   private levelSummit(t: number): void {
     this.levelled.add(t);
     const g = this.game, topo = this.terrain.topo, H = this.terrain.fields.height;
     const near = new Set([t, ...g.tiles[t].neighbors]);
-    let peak = -1;
-    for (let v = 0; v < topo.V; v++) if (topo.tile[v] === t && (peak < 0 || H[v]! > H[peak]!)) peak = v;
+    const { c, k } = tileFrame(g, t);
+    const angTo = (p: THREE.Vector3, v: number) => Math.acos(Math.min(1, p.x * topo.dir[v * 3]! + p.y * topo.dir[v * 3 + 1]! + p.z * topo.dir[v * 3 + 2]!));
+    let peak = -1, any = -1;
+    for (let v = 0; v < topo.V; v++) {
+      if (topo.tile[v] !== t) continue;
+      if (any < 0 || H[v]! > H[any]!) any = v;
+      if (angTo(c, v) <= SUMMIT_CENTRE * k && (peak < 0 || H[v]! > H[peak]!)) peak = v;
+    }
+    if (peak < 0) peak = any;
     if (peak < 0) return;
-    const r0 = this.paint.params.r0, base = this.relief.base[t]!;
-    const px = topo.dir[peak * 3]!, py = topo.dir[peak * 3 + 1]!, pz = topo.dir[peak * 3 + 2]!;
-    const P = new THREE.Vector3(px, py, pz);
-    const angOf = (v: number) => Math.acos(Math.min(1, px * topo.dir[v * 3]! + py * topo.dir[v * 3 + 1]! + pz * topo.dir[v * 3 + 2]!));
-    // The houses' grid: a city cell apart, round the peak.
-    const { e1, k } = tileFrame(g, t), cell = CITY_CELL * k;
-    const u = e1.clone().addScaledVector(P, -e1.dot(P)).normalize(), w = P.clone().cross(u);
+    const P = new THREE.Vector3(topo.dir[peak * 3]!, topo.dir[peak * 3 + 1]!, topo.dir[peak * 3 + 2]!);
+    const R = SUMMIT_FLAT * k, OUT = R + SUMMIT_EASE * k;
+    const ring = new Map<number, number>();
+    let low = Infinity, high = -Infinity;
+    for (let v = 0; v < topo.V; v++) {
+      if (!near.has(topo.tile[v]!)) continue;
+      const ang = angTo(P, v);
+      if (ang >= OUT) continue;
+      ring.set(v, smoothstep(OUT, R, ang));
+      if (ang <= R) { low = Math.min(low, H[v]!); high = Math.max(high, H[v]!); }
+    }
+    if (low === Infinity) return;
+    // (A vertex's height once cut to `cut`.)
+    const cutTo = (v: number, cut: number) => { const s = ring.get(v); return s === undefined || H[v]! <= cut ? H[v]! : H[v]! - s * (H[v]! - cut); };
     const smp = newSample();
     let hint = t;
-    // Whether the ground at d would lie on the cut: every vertex under it above the cut, within R.
-    const onCut = (d: THREE.Vector3, cut: number, R: number) => {
+    const houses = (cut: number) => this.cityProps.summitLots(t, P, cut, (d) => {
       const l = locate(g.globe, d, hint);
       hint = l.t;
       topo.sample(l.t, l.i, l.wa, l.wb, smp);
-      for (let c = 0; c < 3; c++) { const v = smp.v[c]!; if (H[v]! <= cut || angOf(v) > R) return false; }
-      return true;
-    };
-    const fits = (cut: number, R: number) => {
-      let n = 0;
-      const steps = Math.ceil(R / cell) + 1;
-      for (let a = -steps; a <= steps; a++) for (let b = -steps; b <= steps; b++) {
-        const at = (x: number, y: number) => P.clone().addScaledVector(u, x * cell).addScaledVector(w, y * cell).normalize();
-        if ([[a, b], [a - 0.45, b - 0.45], [a + 0.45, b - 0.45], [a + 0.45, b + 0.45], [a - 0.45, b + 0.45]].every(([x, y]) => onCut(at(x!, y!), cut, R))) n++;
-      }
-      return n;
-    };
-    let f = LEVEL_AT, R = LEVEL_R * r0;
-    while (f > 0.3 && fits(base + f * (H[peak]! - base), R) < SUMMIT_HOUSES) { f -= 0.06; R += 0.06 * r0; }
-    const cut = base + f * (H[peak]! - base), OUT = R + 0.33 * r0;
-    const changes = new Map<number, { height: number; up: number }>();
-    for (let v = 0; v < topo.V; v++) {
-      if (!near.has(topo.tile[v]!) || H[v]! <= cut) continue;
-      const ang = angOf(v);
-      if (ang >= OUT) continue;
-      const s = smoothstep(OUT, R, ang);
-      changes.set(v, { height: H[v]! - s * (H[v]! - cut), up: s });
+      let h = 0;
+      for (let j = 0; j < 3; j++) h += smp.w[j]! * cutTo(smp.v[j]!, cut);
+      return h;
+    }).length;
+    let cut = high;
+    if (houses(high) < SUMMIT_HOUSES) {
+      let lo = low, hi = high;
+      for (let n = 0; n < 12; n++) { const mid = (lo + hi) / 2; if (houses(mid) >= SUMMIT_HOUSES) lo = mid; else hi = mid; }
+      cut = lo;
     }
+    const changes = new Map<number, { height: number; up: number }>();
+    for (const [v, s] of ring) if (H[v]! > cut) changes.set(v, { height: cutTo(v, cut), up: s });
     this.terrain.reshape(changes);
+    this.cityProps.setSummit(t, P, cut);
   }
 
   // City ground in the tile table (row 5, see terrainMaterial.ts): urban

@@ -44,7 +44,7 @@ const LAUREL = 0x3f6a35;
 const AUTUMN = [0xd2602a, 0xe0a030, 0xb8382a, 0xc8b040] as const;
 const DRY = [0x9a9a40, 0xb08a3a, 0x8a9a45] as const;
 const FUEGIAN = [0xa8452f, 0xc0603a, 0x8a6a3a] as const;
-const GOLDEN = 0xd0b060, GREEN_GRASS = 0x8ab04a, SPINIFEX = 0xc8a050, PLUME = 0xe8e0c8, TUSSOCK = 0xa8a060;
+const GOLDEN = 0xd0b060, GREEN_GRASS = 0x8ab04a, SPINIFEX = 0xc8a050, TUSSOCK = 0xa8a060;
 const FEATHER = 0xb8c088, LICHEN = 0xc0c8a0, DWARF_WILLOW = 0x7a9a5a, CUSHION = 0x8a9a5a, TWISTED = 0x7a8a40;
 const STUNTED = 0.6;
 
@@ -90,7 +90,7 @@ export const BIOME_FLORA: Record<BiomeKey, FloraSet> = {
     v('Tallgrass', 'any', 105, [['oak', 3], ['shrub', 7], ['tallGrass', 65, GREEN_GRASS], ['flowers', 22], ['boulder', 3]], { wet: 0.3 }),
     v('Meadow', N, 120, [['beechMaple', 3], ['shrub', 10], ['grassTuft', 50], ['flowers', 33], ['boulder', 4]], { warm: -0.4 }),
     v('Oak parkland', N, 105, [['oak', 15], ['shrub', 12], ['grassTuft', 50], ['flowers', 18], ['boulder', 5]], { wet: 0.6 }),
-    v('Pampas', A, 105, [['shrub', 5], ['tallGrass', 30, PLUME], ['grassTuft', 55], ['flowers', 7], ['boulder', 3]]),
+    v('Pampas', A, 105, [['shrub', 5], ['pampasGrass', 30], ['grassTuft', 55], ['flowers', 7], ['boulder', 3]]),
   ] },
   temperateForest: { variants: [
     v('Oak-beech', N, 140, [['oak', 30], ['beechMaple', 28], ['birch', 5], ['shrub', 10], ['berryBush', 2], ['fernClump', 12], ['flowers', 5], ['fallenLog', 5], ['boulder', 3]], { warm: 0.4 }),

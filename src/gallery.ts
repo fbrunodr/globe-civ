@@ -283,7 +283,8 @@ type Pools = ((p: Pt) => boolean) | null;
 // patch's middle (a worked resource's corner).
 function resourceItems(r: ResourceKey, seed: number, look: ResourceLook = RESOURCE_WILD[r], pools: Pools = null, at: Pt = { x: 0, y: 0 }): Placed[] {
   const rand = mulberry32(seed);
-  const fits = (p: Pt) => rhoOf(6, p) <= 1 && (look.water || !pools || !pools(p));
+  // (A wader, wild rice, stands in the pools too.)
+  const fits = (p: Pt) => rhoOf(6, p) <= 1 && (look.water || look.wade !== undefined || !pools || !pools(p));
   const inside = (x: number, y: number, m: { model: string; s: number }) => {
     const p = { x: x + at.x, y: y + at.y }, reach = 2 * roamOf(m.model) * m.s;
     if (!fits(p)) return false;

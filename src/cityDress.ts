@@ -27,6 +27,8 @@ export interface CityLook {
   readonly walled: boolean;
   readonly seed: number;
   readonly free: (p: Pt) => boolean;      // dry land in the tile
+  // More land, taken only if the town does not fit on `free` (cityProps.ts: its beach).
+  readonly spare?: (p: Pt) => boolean;
 }
 export interface DressedBuilding {
   readonly model: LotModelKind;
@@ -49,7 +51,7 @@ export interface DressedCity {
 // every other joint: cityProps.ts). Closed: the first point repeated.
 const WALL_ROOM = 0.035, WALL_PIECE = 0.13;
 function wallRound(p: Painting): Pt[] | null {
-  const at = (x: number, y: number): Pt => ({ x: p.origin.x + (x * p.u.x + y * p.v.x) * UNIT, y: p.origin.y + (x * p.u.y + y * p.v.y) * UNIT });
+  const at = (x: number, y: number): Pt => ({ x: p.origin.x + (x * p.u.x + y * p.v.x) * p.unit, y: p.origin.y + (x * p.u.y + y * p.v.y) * p.unit });
   const pts = p.buildings.flatMap((b) => [at(b.x0, b.y0), at(b.x1, b.y0), at(b.x1, b.y1), at(b.x0, b.y1)]);
   if (pts.length < 3) return null;
   // (The outline: the convex hull, by Andrew's monotone chain.)
@@ -125,6 +127,9 @@ export function heightsOf(era: DressEra, pop: number, n: number): Record<Height,
   return out;
 }
 
+// How much smaller a town short of land may be drawn, tried in turn: never
+// under four fifths (smaller, its houses stop reading beside the units).
+const TOWN_SCALES = [1, 0.95, 0.9, 0.85, 0.8] as const;
 // The most buildings and skyscrapers a city shows (its wonders besides).
 const MAX_BUILDINGS = 50;
 
@@ -134,7 +139,19 @@ export function dressCity(c: CityLook): DressedCity {
   const skyscrapers = c.era >= 4 && c.pop >= SKYSCRAPER_FROM ? Math.min(total, Math.floor(c.pop / SKYSCRAPER_PER)) : 0;
   // The town on its land (`free`: its tile's painted land, padded), its
   // buildings' heights decided up front (heightsOf), then its walls round it.
-  const painting = paintCity({ wonders: wonders.length, skyscrapers, buildings: heightsOf(c.era, c.pop, total - skyscrapers), seed: c.seed, free: c.free });
+  // Where the land is too small for all of it (a spit, a strip between
+  // sea and mountain), the town first takes its spare land, then is drawn
+  // smaller, step by step, as far as TOWN_SCALES goes: the first way that
+  // holds everything, or else the one that holds the most.
+  const asked = wonders.length + total;
+  let painting: Painting | null = null;
+  for (const free of c.spare ? [c.free, c.spare] : [c.free]) for (const scale of free === c.free && c.spare ? [1] : TOWN_SCALES) {
+    if (painting && painting.buildings.length >= asked) break;
+    const p = paintCity({ wonders: wonders.length, skyscrapers, buildings: heightsOf(c.era, c.pop, total - skyscrapers), seed: c.seed, free, scale });
+    if (!painting || p.buildings.length > painting.buildings.length) painting = p;
+  }
+  if (!painting) throw new Error('no painting');
+  const shrink = painting.unit / UNIT;
   const floorsOf = (b: Painted): Floors => (b.kind === 'building' ? b.height : 12);
   let w = 0;
   const buildings = painting.buildings.map((b, n): DressedBuilding => {
@@ -143,13 +160,13 @@ export function dressCity(c: CityLook): DressedCity {
       const model = wonderModelKind(wonders[w++]!);
       const [hw, hd] = halfExtents(model);
       // (Fitted to its rectangle, a hair inside, never stretched.)
-      const scale = 0.95 * Math.min((b.front * UNIT) / (2 * hw), (b.depth * UNIT) / (2 * hd));
+      const scale = 0.95 * Math.min((b.front * painting.unit) / (2 * hw), (b.depth * painting.unit) / (2 * hd));
       return { model, at: b.at, yaw: b.yaw, hw, hd, scale, sx: 1, sz: 1, variant: rand() };
     }
     const { fp, sx, sz } = fitHouse(b.front, b.depth), floors = floorsOf(b);
     const model = houseKind(styleOf(c.civ, floors), fp, floors, Math.floor(rand() * HOUSE_VARIANTS));
     const [hw, hd] = LOT_SIZE[fp];
-    return { model, at: b.at, yaw: b.yaw, hw: hw * sx, hd: hd * sz, scale: CITY_CELL / CELL, sx, sz, variant: rand() };
+    return { model, at: b.at, yaw: b.yaw, hw: hw * sx, hd: hd * sz, scale: (CITY_CELL / CELL) * shrink, sx, sz, variant: rand() };
   });
   return { painting, buildings, roadRgb: ROAD_RGB[c.era], wall: c.walled ? wallRound(painting) : null };
 }
