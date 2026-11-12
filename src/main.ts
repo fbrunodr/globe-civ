@@ -171,6 +171,7 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey, leve
         <label class="opt">Tone mapping <input type="checkbox" data-set="tone" ${settings.toneMapping ? 'checked' : ''}></label>
         <label class="opt">Resolution <select data-set="res">${RESOLUTIONS.map((r) => `<option value="${r}" ${r === settings.resolution ? 'selected' : ''}>${RESOLUTION_NAME[r]}</option>`).join('')}</select></label>
         <label class="opt">Clouds <input type="checkbox" data-set="clouds" ${view.clouds ? 'checked' : ''}></label>
+        <label class="opt">Blue sky <input type="checkbox" data-set="blueSky" ${view.blueSky ? 'checked' : ''}></label>
       </div>
       <span class="label">Interface</span>
       <div class="opts">
@@ -194,6 +195,7 @@ function startGame(sizeKey: MapSizeKey, seed: number, script: MapScriptKey, leve
       case 'tone': settings.toneMapping = on; view.setToneMapping(on); break;
       case 'res': { const r = Number(t.value); if (isResolution(r)) { settings.resolution = r; view.setResolution(r); } break; }
       case 'clouds': view.setClouds(on); break;
+      case 'blueSky': view.setBlueSky(on); break;
       case 'fps': fpsBox.classList.toggle('hidden', !on); setPref('civ.fps', on); break;
       case 'view': setView(t.value as DebugView); break;
     }

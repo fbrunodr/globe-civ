@@ -40,6 +40,7 @@ export function mountSettings(view: GlobeRenderer): void {
       <h4>Graphics</h4>
       <label><input type="checkbox" id="setShadows"> Shadows</label>
       <label><input type="checkbox" id="setTone"> Tone mapping</label>
+      <label title="The day's blue sky, in place of the evening's"><input type="checkbox" id="setBlueSky"> Blue sky</label>
       <label title="Fewer pixels: smoother on a modest graphics card">Resolution <select id="setRes">${RESOLUTIONS.map((r) => `<option value="${r}">${RESOLUTION_NAME[r]}</option>`).join('')}</select></label>
     </div>`;
   // The dock in the bottom-right corner: the View bar (if the page has one), then the gear.
@@ -60,6 +61,10 @@ export function mountSettings(view: GlobeRenderer): void {
   // (A click anywhere else, or Escape, closes it.)
   document.addEventListener('click', (e) => { if (!wrap.contains(e.target as Node)) open(false); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') open(false); });
+  // (The sky is the renderer's own to remember.)
+  const blue = wrap.querySelector<HTMLInputElement>('#setBlueSky')!;
+  blue.checked = view.blueSky;
+  blue.addEventListener('change', () => view.setBlueSky(blue.checked));
   shadows.addEventListener('change', () => { s.shadows = shadows.checked; view.setShadows(s.shadows); saveSettings(s); });
   tone.addEventListener('change', () => { s.toneMapping = tone.checked; view.setToneMapping(s.toneMapping); saveSettings(s); });
   res.addEventListener('change', () => {

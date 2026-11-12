@@ -98,9 +98,6 @@ function bladeTexture(): THREE.DataTexture {
   return bladeTex;
 }
 
-// The leaves on a leaf card (propCatalog.ts, clumpCards): a cloud of small
-// leaves, denser toward the middle, in shades of white (the instance's leaf
-// color shows through), transparent between them. Made once, in code.
 // A fence's card (rural/models.ts fenceCard): three kinds in bands up the
 // texture (v: a third each, from the foot): woven wattle hurdles on stakes,
 // posts and two rails, posts and three strands of wire. A unit of u is a
@@ -133,37 +130,30 @@ function fenceTexture(): THREE.DataTexture {
   return fenceTex;
 }
 
-const LEAF_TEX = 128, LEAVES = 420;
-let leafTex: THREE.DataTexture | null = null;
-function leafTexture(): THREE.DataTexture {
-  if (leafTex) return leafTex;
-  // (Between the leaves: transparent, but leaf-colored, so the blurred
-  // mipmaps seen from afar don't darken toward black.)
-  const N = LEAF_TEX, data = new Uint8Array(N * N * 4).fill(232);
-  for (let o = 3; o < data.length; o += 4) data[o] = 0;
-  let h = 0x51ea7;
-  const rand = () => { h = (Math.imul(h ^ (h >>> 15), 0x2c1b3c6d) + 0x6d2b79f5) >>> 0; return (h >>> 8) / 16777216; };
-  for (let n = 0; n < LEAVES; n++) {
-    const r = 0.46 * N * Math.sqrt(rand()) ** 1.3, t = rand() * Math.PI * 2;
-    const cx = N / 2 + r * Math.cos(t), cy = N / 2 + r * Math.sin(t);
-    const a = rand() * Math.PI, ca = Math.cos(a), sa = Math.sin(a);
-    const len = 5 + 3 * rand(), wid = 2.6 + 1.4 * rand(), shade = Math.round(255 * (0.88 + 0.12 * rand()));
-    for (let y = Math.floor(cy - len); y <= cy + len; y++) for (let x = Math.floor(cx - len); x <= cx + len; x++) {
-      if (x < 0 || y < 0 || x >= N || y >= N) continue;
-      const u = ((x - cx) * ca + (y - cy) * sa) / len, v = (-(x - cx) * sa + (y - cy) * ca) / wid;
-      if (u * u + v * v > 1) continue;
-      const o = (y * N + x) * 4;
-      data[o] = data[o + 1] = data[o + 2] = shade;
-      data[o + 3] = 255;
+const LEAF_TEX = 128;
+// A crown's leaf card (propCatalog.ts, clumpCards) as a spray of branches:
+// twigs out from the card's middle, leaves in pairs along them, each its
+// own shade from deep to light (lighter toward the tips, where the light
+// reaches; the instance's leaf colour shows through), sky showing between
+// the twigs. A crown of them reads as boughs with depth, not as one soft
+// ball. Made once, in code.
+let sprayTex: THREE.DataTexture | null = null;
+const sprayTexture = (): THREE.DataTexture => (sprayTex ??= drawnTexture(LEAF_TEX, LEAF_TEX, 0x5b7a9, (rand, stroke) => {
+  const N = LEAF_TEX, c = N / 2, TWIGS = 9;
+  const leaf = (x: number, y: number, a: number, len: number, shade: number) => stroke(x, y, x + Math.cos(a) * len, y + Math.sin(a) * len, 3.4 + 1.6 * rand(), shade);
+  for (let k = 0; k < TWIGS; k++) {
+    let a = (k / TWIGS) * Math.PI * 2 + (rand() - 0.5) * 0.5, x = c, y = c;
+    const reach = (0.36 + 0.12 * rand()) * N, steps = 9;
+    for (let i = 0; i < steps; i++) {
+      const t = (i + 1) / steps, nx = x + Math.cos(a) * reach / steps, ny = y + Math.sin(a) * reach / steps;
+      stroke(x, y, nx, ny, 1.6, 0.34);
+      // (Leaves either side, slanting out toward the tip, and one at the end.)
+      if (i > 0) for (const side of [-1, 1]) leaf(nx, ny, a + side * (0.7 + 0.5 * rand()), 5 + 4 * rand(), 0.42 + 0.3 * t + 0.28 * rand());
+      if (i === steps - 1) leaf(nx, ny, a, 6, 0.8 + 0.2 * rand());
+      x = nx; y = ny; a += (rand() - 0.5) * 0.45;
     }
   }
-  leafTex = new THREE.DataTexture(data, N, N, THREE.RGBAFormat);
-  leafTex.generateMipmaps = true;
-  leafTex.minFilter = THREE.LinearMipmapLinearFilter;
-  leafTex.magFilter = THREE.LinearFilter;
-  leafTex.needsUpdate = true;
-  return leafTex;
-}
+}));
 
 // Prop material: per-vertex colors, with the leaf parts (leafMask) taking
 // each instance's leaf color (leafTint), times the instance's color.
@@ -203,7 +193,7 @@ const FLORA_VERTEX = `
   #endif`;
 // The card textures (uLeaves, uBlades, uFronds, uNeedles), for CARD_TEXEL.
 export const cardTextures = (): Record<string, THREE.IUniform> => ({
-  uLeaves: { value: leafTexture() }, uBlades: { value: bladeTexture() }, uFronds: { value: frondTexture() }, uNeedles: { value: needleTexture() }, uFences: { value: fenceTexture() },
+  uLeaves: { value: sprayTexture() }, uBlades: { value: bladeTexture() }, uFronds: { value: frondTexture() }, uNeedles: { value: needleTexture() }, uFences: { value: fenceTexture() },
 });
 const floraUniforms = (f: FloraUniforms): Record<string, THREE.IUniform> => ({
   uTime: f.time, uCropFar: f.cropFar ?? { value: 1e9 }, uEye: f.eye ?? { value: new THREE.Vector3() }, ...cardTextures(),
@@ -511,6 +501,8 @@ export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Ve
       .replace('#include <opaque_fragment>', `
         #if NUM_DIR_LIGHTS > 0
           outgoingLight += diffuseColor.rgb * ${bounce.toFixed(3)} * vDay * smoothstep(-0.1, 0.4, dot(normal, directionalLights[0].direction));
+          ${flora ? `// (Leaves seen against the sun glow with its light through them.)
+          if (vCard.z > 0.5 && vCard.z < 1.5) outgoingLight += diffuseColor.rgb * vec3(1.0, 0.85, 0.45) * 0.7 * vDay * pow(max(dot(-normalize(vViewPosition), directionalLights[0].direction), 0.0), 2.0);` : ''}
         #else
           outgoingLight += diffuseColor.rgb * ${bounce.toFixed(3)} * vDay;
         #endif
@@ -531,6 +523,8 @@ export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Ve
           float facing = abs(dot(fn, normalize(vViewPosition)));
           if (lt.a < mix(0.97, 0.5, smoothstep(0.12, 0.4, facing))) discard;
           diffuseColor.rgb *= lt.r;
+          // (A spray's heart lies inside the crown, in its shade; its tips in the light.)
+          if (vCard.z < 1.5) diffuseColor.rgb *= mix(0.62, 1.14, smoothstep(0.1, 0.95, length(vCard.xy - 0.5) * 2.0));
         }`);
     shader.fragmentShader = frag;
   };

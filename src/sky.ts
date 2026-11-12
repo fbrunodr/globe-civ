@@ -17,7 +17,12 @@ import * as THREE from 'three';
 // everything (first among the opaque objects, without depth), on a sphere
 // that follows the camera; it blends toward space itself, so it needs no
 // transparency.
-export function makeSky(): { mesh: THREE.Mesh; update(camera: THREE.Camera, sunDir: THREE.Vector3, alt: number): void } {
+// The evening sky (`setGolden`: 0 the day's blue, 1 all of it; render.ts
+// sets it by how near the ground the view is, or to none: setBlueSky):
+// the sky by its angle to the sun, gold and peach low toward it, a softer
+// peach away from it (the evening's glow there), a dusty blue overhead; and
+// a wide soft glow round a larger sun. No clouds: the colour alone.
+export function makeSky(): { mesh: THREE.Mesh; update(camera: THREE.Camera, sunDir: THREE.Vector3, alt: number): void; setGolden(amount: number): void } {
   const uniforms = {
     uUp: { value: new THREE.Vector3(0, 1, 0) },
     uSun: { value: new THREE.Vector3(0, 1, 0) },
@@ -25,6 +30,7 @@ export function makeSky(): { mesh: THREE.Mesh; update(camera: THREE.Camera, sunD
     uThick: { value: 10 }, // how far up from the horizon the sky reaches (sine of elevation)
     uAmount: { value: 0 },
     uSpace: { value: new THREE.Color(0x04050a) },
+    uGolden: { value: 0 },
   };
   const mesh = new THREE.Mesh(
     new THREE.SphereGeometry(40, 32, 16),
@@ -43,6 +49,7 @@ export function makeSky(): { mesh: THREE.Mesh; update(camera: THREE.Camera, sunD
         uniform float uThick;
         uniform float uAmount;
         uniform vec3 uSpace;
+        uniform float uGolden;
         varying vec3 vDir;
         void main() {
           vec3 d = normalize(vDir);
@@ -53,7 +60,19 @@ export function makeSky(): { mesh: THREE.Mesh; update(camera: THREE.Camera, sunD
           vec3 horizon = vec3(0.732, 0.818, 0.912), zenith = vec3(0.284, 0.492, 0.832);
           vec3 col = mix(horizon, zenith, smoothstep(0.0, 0.55, e / max(1.0, uThick * 0.1)));
           float s = max(dot(d, uSun), 0.0);
-          col += vec3(1.0, 0.92, 0.75) * (pow(s, 600.0) * 2.0 + pow(s, 12.0) * 0.18);
+          vec3 sunGlow = vec3(1.0, 0.92, 0.75) * (pow(s, 600.0) * 2.0 + pow(s, 12.0) * 0.18);
+          if (uGolden > 0.0) {
+            float t = e / max(1.0, uThick * 0.1);
+            // (How far round toward the sun this way lies: 1 toward it, 0 away.)
+            vec3 level = d - uUp * dot(d, uUp), sunFlat = uSun - uUp * dot(uSun, uUp);
+            float toSun = smoothstep(-0.35, 1.0, dot(normalize(level + 1e-5), normalize(sunFlat + 1e-5)));
+            vec3 low = mix(vec3(0.96, 0.79, 0.66), vec3(1.0, 0.77, 0.47), toSun);
+            vec3 mid = mix(vec3(0.78, 0.67, 0.72), vec3(0.96, 0.63, 0.52), toSun * 0.8);
+            vec3 g = mix(mix(low, mid, smoothstep(0.0, 0.24, t)), vec3(0.42, 0.52, 0.74), smoothstep(0.2, 0.8, t));
+            vec3 glow = vec3(1.0, 0.8, 0.52) * (pow(s, 350.0) * 2.2 + pow(s, 24.0) * 0.5 + pow(s, 4.0) * 0.22);
+            g += glow;
+            col = mix(col + sunGlow, g, uGolden);
+          } else col += sunGlow;
           float band = exp(-e / uThick) * uAmount;
           gl_FragColor = vec4(mix(uSpace, col, band), 1.0);
         }`,
@@ -65,6 +84,7 @@ export function makeSky(): { mesh: THREE.Mesh; update(camera: THREE.Camera, sunD
     mesh,
     // alt: the camera's height above sea level. On the ground the whole sky is
     // blue; higher up, a band over the horizon that thins out into space.
+    setGolden(amount) { uniforms.uGolden.value = amount; },
     update(camera, sunDir, alt) {
       const r = camera.position.length();
       mesh.position.copy(camera.position);
@@ -112,13 +132,17 @@ float airDepth(vec3 a, vec3 b) {
 // DISTANCE_HAZE.color, up to DISTANCE_HAZE.most at the horizon of a tilted
 // view. It fades out as the camera rises past DISTANCE_HAZE.fade (camera
 // heights above sea level, world units), where the atmosphere takes over.
-const DISTANCE_HAZE = {
+// (Its colour is the fog's own, fogColor: render.ts sets it by the camera's
+// height, this one over the board, HAZE from high up, and by the look:
+// the golden hour's haze is the colour of its sky's horizon, HAZE_GOLDEN.)
+export const HAZE_GOLDEN = new THREE.Color(0.93, 0.74, 0.62);
+export const DISTANCE_HAZE = {
   color: new THREE.Color(0.7, 0.77, 0.84),
   start: 1.75, scale: 3, most: 0.15, grey: 0.5,
   fade: [0.15, 0.4] as const, minHeight: 0.002,
 };
 function distanceHazeGLSL(): string {
-  const H = DISTANCE_HAZE, f = (x: number) => x.toFixed(4), c = H.color;
+  const H = DISTANCE_HAZE, f = (x: number) => x.toFixed(4);
   return /* glsl */ `{
     float camH = max(length(cameraPosition) - 1.0, ${f(H.minHeight)});
     float past = max(distance(cameraPosition, vFogWorld) - ${f(H.start)} * camH, 0.0);
@@ -126,7 +150,7 @@ function distanceHazeGLSL(): string {
     // (Greyer first, then paler: distant colours lose their saturation.)
     float lum = dot(gl_FragColor.rgb, vec3(0.3, 0.59, 0.11));
     gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(lum), haze * ${f(H.grey)});
-    gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(${f(c.r)}, ${f(c.g)}, ${f(c.b)}), haze);
+    gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor, haze);
   }`;
 }
 

@@ -11,9 +11,9 @@ import { buildPaintData, fanCoords, fanFrames, paintAt, paintDelta, softAt, warp
 import { buildRelief, CONE_RADIUS, CRATER, CRATER_DEPTH, type Relief } from './relief.ts';
 import { buildSurface, meshLevels, type SurfaceLayers } from './surface.ts';
 import { cityGround } from './terraform.ts';
-import { makeWaterMaterial, makeWaterOccluder, WATER_OCCLUDER_SUNK, type WaterMaterial } from './water.ts';
+import { makeWaterMaterial, makeWaterOccluder, WATER_OCCLUDER_SUNK, SKY_COLOR, type WaterMaterial } from './water.ts';
 import { WalkCamera } from './walk.ts';
-import { makeSky, makeHalo, installHaze, HAZE, HAZE_DENSITY, AIR } from './sky.ts';
+import { makeSky, makeHalo, installHaze, HAZE, HAZE_DENSITY, HAZE_GOLDEN, DISTANCE_HAZE, AIR } from './sky.ts';
 import { makeWeather, type Weather } from './weather.ts';
 import { buildPropGeometry, catalogEntry, CATALOG, CATALOG_KINDS, type CatalogKind, type Layer } from './propCatalog.ts';
 import { FLORA_KEEP } from './floraData.ts';
@@ -198,10 +198,20 @@ const SHADOW_DEPTH = 1;
 const SHADOW_PAD = 1.6, SHADOW_SLACK = 0.3, SHADOW_TURN = 1.5;
 // The largest the shadow map's half width gets (world units: a hemisphere).
 const SHADOW_MAX_HALF = 1.15;
-// Warm sun, cool shade: the sun a little golden and the sky fill a little
-// blue, so lit ground glows and shadows lean blue-grey (both chosen by eye:
-// the brightness as in the earlier neutral colours, sun 1.75 and fill 1).
-const LIGHT = { sunColor: 0xffedd3, sun: 1.85, sunHeight: 40, fill: 1.05, fillSky: 0xd9e9fc, fillGround: 0x6a5a40 };
+// Late afternoon, all game long: the sun a warm gold and low near the
+// ground (`sunHeight` degrees, up to the camera distance `sunLow`: long
+// shadows, what stands up catching the light), climbing to `sunHigh`
+// degrees by the distance `sunFar` (from afar the whole side in view stays
+// lit); plenty of the sky's blue fill, so shade is soft and leans
+// blue-grey, never black (all chosen by eye).
+const LIGHT = { sunColor: 0xffe9cc, sun: 1.85, sunHeight: 30, sunHigh: 40, sunLow: 0.35, sunFar: 1.3, fill: 1.25, fillSky: 0xd9e9fc, fillGround: 0x6a5a40 };
+// The evening sky (sky.ts) is the view from near the ground: all of it up
+// to the camera distance SKY_NEAR, easing to the day's blue by SKY_FAR
+// (from orbit the planet's rim, its haze and its seas' reflections stay
+// blue). With it the water reflects EVENING_WATER. A player may have the
+// blue sky everywhere instead (setBlueSky; remembered in this browser).
+const SKY_NEAR = 0.5, SKY_FAR = 1.5, EVENING_WATER = new THREE.Color(0.95, 0.72, 0.6);
+const BLUE_SKY_KEY = 'civ.blueSky';
 // Bridges (heights × the world scale; spans in tile steps): the deck stands
 // at least BRIDGE_CLEAR over the water and arches up to BRIDGE_ARCH more on
 // a long span; parapets rise BRIDGE_PARAPET over the deck, the slab is
@@ -303,6 +313,9 @@ export class GlobeRenderer {
   private readonly propMat = makePropMaterial(0, 0.85, this.sunDir, this.floraUniforms);
   private readonly floraDepth = makeFloraDepthMaterial(this.floraUniforms);
   private shadowsDirty = true;
+  private skyNear = 0;
+  private blueSkyOn = false;
+  private readonly waterSky = SKY_COLOR.clone();
   // Where the shadow map was last drawn: round what, for which sun, how far (setShadows, updateSun).
   private shadowAt: { center: THREE.Vector3; dir: THREE.Vector3; half: number } | null = null;
   // (Built surfaces textured at a storey's size: a single floor's walls, as
@@ -451,6 +464,9 @@ export class GlobeRenderer {
     this.sun.shadow.radius = 3;
     this.scene.add(this.sun, this.sun.target);
     this.scene.add(this.fill);
+    // (The look last chosen in this browser.)
+    // (The sky last chosen in this browser.)
+    try { this.blueSkyOn = localStorage.getItem(BLUE_SKY_KEY) === '1'; } catch { /* (no storage: the evening sky) */ }
 
     // Terrain radius at a direction (the tile under it), or the highest tile
     // center around it (for the camera's clearance).
@@ -901,6 +917,12 @@ export class GlobeRenderer {
     }
   }
 
+  // The day's blue sky everywhere, in place of the evening's near the ground (remembered in this browser).
+  get blueSky(): boolean { return this.blueSkyOn; }
+  setBlueSky(on: boolean): void {
+    this.blueSkyOn = on;
+    try { localStorage.setItem(BLUE_SKY_KEY, on ? '1' : '0'); } catch { /* (not remembered) */ }
+  }
   setClouds(on: boolean): void {
     this.clouds = on;
     this.weather.group.visible = on && this.view === 'normal';
@@ -2570,7 +2592,8 @@ export class GlobeRenderer {
 
   // Places the sun and the sky fill above where we look, and keeps the
   // shadow map current. The sun belongs to the place, not the camera
-  // (sunAt): turning, tilting or zooming leaves the shadows as they are.
+  // (sunAt): turning or tilting leaves the shadows as they are (zooming
+  // out, it climbs: LIGHT).
   // The shadow map covers a padded square round the view and is redrawn only
   // when the view leaves it or outgrows it, shrinks well inside it (a
   // tighter one is crisper), the sun has turned more than SHADOW_TURN since
@@ -2579,7 +2602,7 @@ export class GlobeRenderer {
     const cam = this.camera;
     this.floraUniforms.eye.value.copy(cam.position);
     const focus = (this.walk.active ? this.walk.position : this.cam.target).clone().normalize();
-    const dir = sunAt(focus, LIGHT.sunHeight);
+    const dir = sunAt(focus, LIGHT.sunHeight + (LIGHT.sunHigh - LIGHT.sunHeight) * (this.walk.active ? 0 : smoothstep(LIGHT.sunLow, LIGHT.sunFar, this.cam.distance)));
     this.sunDir.copy(dir);
     // The sky fill's up is the ground's up where we look (a hemisphere light
     // has one up: left at the world's +y it lit the far side of the globe
@@ -2629,6 +2652,11 @@ export class GlobeRenderer {
   private updateAir(): void {
     const alt = this.viewAltitude();
     this.sky.update(this.camera, this.sunDir, alt);
+    // (The haze's colour: the board's distance haze low down, the look's own; the planet's air from high up.)
+// (The evening sky by how near the ground the view is: its colours, the water's reflection of it, the board's haze.)
+    const near = !this.blueSkyOn ? (this.walk.active ? 1 : 1 - smoothstep(SKY_NEAR, SKY_FAR, this.cam.distance)) : 0;
+    if (near !== this.skyNear) { this.skyNear = near; this.sky.setGolden(near); SKY_COLOR.copy(this.waterSky).lerp(EVENING_WATER, near); }
+    (this.scene.fog as THREE.FogExp2).color.copy(DISTANCE_HAZE.color).lerp(HAZE_GOLDEN, near).lerp(HAZE, this.walk.active ? 0 : smoothstep(0.2, 0.4, this.camera.position.length() - 1));
     this.halo.update(this.sunDir, smoothstep(0.1, 0.6, alt / AIR.height));
     this.stars.opacity = smoothstep(0.02, 0.3, alt / AIR.height);
     // The haze only from high up (the planet's atmosphere seen from orbit):
