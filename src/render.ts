@@ -309,7 +309,9 @@ export class GlobeRenderer {
 
   private readonly floraTime = { value: 0 };
   private readonly cropFar = { value: 1 };
-  private readonly floraUniforms = { time: this.floraTime, cropFar: this.cropFar, eye: { value: new THREE.Vector3() } };
+  // (`barkScale`: what the flora's models are drawn at, against their catalog's size: the bark keeps its grain.)
+  private readonly barkScale = { value: 1 };
+  private readonly floraUniforms = { time: this.floraTime, cropFar: this.cropFar, eye: { value: new THREE.Vector3() }, barkScale: this.barkScale };
   private readonly propMat = makePropMaterial(0, 0.85, this.sunDir, this.floraUniforms);
   private readonly floraDepth = makeFloraDepthMaterial(this.floraUniforms);
   private shadowsDirty = true;
@@ -646,6 +648,7 @@ export class GlobeRenderer {
     const s = this.scale;
     // Props are drawn per chunk of the globe, one instanced mesh per kind, so
     // chunks behind the horizon or off screen cost nothing.
+    this.barkScale.value = s * 1.5 * PROP_SIZE;
     for (const kind of CATALOG_KINDS) this.propGeo.set(kind, buildPropGeometry(kind, s * 1.5 * PROP_SIZE));
     // (A broadleaf's height, for when trees turn to their far models.)
     this.treeHeight = this.propHeight('beechMaple');

@@ -613,6 +613,44 @@ function fluff(g: THREE.BufferGeometry, layer: Layer): void {
   }
 }
 
+// A tree's limbs: its trunk carried on up into its crown (a crown of leaf
+// cards is open at its heart and its foot: a trunk that stops under it
+// leaves it floating), tapering to the crown's middle, and boughs forking
+// from it out into the leaves; in the trunk's own colour. None where the
+// wood already reaches the crown's middle (a tree drawn with its limbs).
+const LIMB_PLAIN = 16; // (solid triangles)
+function limbs(parts: readonly THREE.BufferGeometry[]): THREE.BufferGeometry[] {
+  const crown = new THREE.Box3(), top = new THREE.Vector3(0, -Infinity, 0), v = new THREE.Vector3();
+  let wood: THREE.BufferGeometry | null = null, at = 0, solid = 0;
+  for (const g of parts) {
+    const pos = g.getAttribute('position');
+    if (typeof g.userData['cards'] === 'number' || (isLeafPart(g) && g.getAttribute('cardUv') && g.userData['flat'] !== true)) { g.computeBoundingBox(); crown.union(g.boundingBox!); continue; }
+    if (isLeafPart(g) || g.userData['burst'] === true) continue;
+    solid += pos.count / 3;
+    for (let i = 0; i < pos.count; i++) if (pos.getY(i) > top.y) { top.fromBufferAttribute(pos, i); wood = g; at = i; }
+  }
+  if (!wood || crown.isEmpty()) return [];
+  const mid = crown.getCenter(new THREE.Vector3()), half = crown.getSize(new THREE.Vector3()).multiplyScalar(0.5);
+  if (top.y >= mid.y) return [];
+  // (The trunk's top: the middle of its highest ring, and that ring's radius.)
+  const pos = wood.getAttribute('position'), col = wood.getAttribute('color'), ring: THREE.Vector3[] = [];
+  for (let i = 0; i < pos.count; i++) if (Math.abs(pos.getY(i) - top.y) < 1e-7) ring.push(v.fromBufferAttribute(pos, i).clone());
+  const foot = ring.reduce((a, p) => a.add(p), new THREE.Vector3()).multiplyScalar(1 / ring.length);
+  const r = Math.max(1e-5, ...ring.map((p) => p.distanceTo(foot)));
+  const color = new THREE.Color(col.getX(at), col.getY(at), col.getZ(at)).getHex();
+  const head = new THREE.Vector3(mid.x, mid.y, mid.z);
+  const out = [seg(foot, head, r, r * 0.4, 3, color)];
+  // (Boughs only on a plain trunk: a tree with much wood already, the mangrove on its stilts, has its triangles spent.)
+  if (solid > LIMB_PLAIN) return out;
+  for (let k = 0; k < 2; k++) {
+    const a = 0.7 + k * Math.PI, from = foot.clone().lerp(head, 0.3 + 0.3 * k);
+    // (Short of the crown's outside, and low in it: the leaves close over them.)
+    const to = new THREE.Vector3(mid.x + Math.cos(a) * 0.42 * half.x, mid.y + (0.15 * k - 0.1) * half.y, mid.z + Math.sin(a) * 0.42 * half.z);
+    out.push(seg(from, to, r * 0.5, r * 0.18, 3, color));
+  }
+  return out;
+}
+
 // Builds a model whose leaf parts are marked (leafMask) for per-instance tints;
 // a flora model's (one with a layer) are made fluffy.
 export function buildModel(e: Pick<CatalogEntry, 'leaf' | 'accent' | 'build'> & { layer?: Layer }, name: string, palette?: Partial<Palette>): THREE.BufferGeometry {
@@ -626,6 +664,7 @@ export function buildModel(e: Pick<CatalogEntry, 'leaf' | 'accent' | 'build'> & 
       c.userData['burst'] = burstOf(g);
       return c;
     });
+  if (leafy) parts.push(...limbs(parts));
   if (e.layer) for (const g of parts) if (isLeafPart(g) || burstOf(g)) fluff(g, e.layer);
   // (Which vertices are a crown's, in shade underneath: leaf clumps, not flat leaves.)
   const crown = parts.flatMap((g) => Array<boolean>(g.getAttribute('position').count).fill(isLeafPart(g) && g.userData['flat'] !== true));

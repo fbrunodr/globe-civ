@@ -131,27 +131,35 @@ function fenceTexture(): THREE.DataTexture {
 }
 
 const LEAF_TEX = 128;
-// A crown's leaf card (propCatalog.ts, clumpCards) as a spray of branches:
-// twigs out from the card's middle, leaves in pairs along them, each its
-// own shade from deep to light (lighter toward the tips, where the light
-// reaches; the instance's leaf colour shows through), sky showing between
-// the twigs. A crown of them reads as boughs with depth, not as one soft
-// ball. Made once, in code.
+// A crown's leaf card (propCatalog.ts, clumpCards) as a bough: twigs out
+// from the card's middle, forking, and on them clumps of small round
+// leaves (several to a clump, overlapping: a mass of foliage, not single
+// leaves on a stem, which read as a fern's frond, spiky), the largest at
+// the twigs' ends, so the bough's outline is lobed and round; each leaf
+// its own shade from deep to light (lighter in the outer clumps, where the
+// light reaches; the instance's leaf colour shows through), sky showing
+// between the clumps. A crown of them reads as boughs with depth, not as
+// one soft ball. Made once, in code.
 let sprayTex: THREE.DataTexture | null = null;
 const sprayTexture = (): THREE.DataTexture => (sprayTex ??= drawnTexture(LEAF_TEX, LEAF_TEX, 0x5b7a9, (rand, stroke) => {
-  const N = LEAF_TEX, c = N / 2, TWIGS = 9;
-  const leaf = (x: number, y: number, a: number, len: number, shade: number) => stroke(x, y, x + Math.cos(a) * len, y + Math.sin(a) * len, 3.4 + 1.6 * rand(), shade);
-  for (let k = 0; k < TWIGS; k++) {
-    let a = (k / TWIGS) * Math.PI * 2 + (rand() - 0.5) * 0.5, x = c, y = c;
-    const reach = (0.36 + 0.12 * rand()) * N, steps = 9;
+  const N = LEAF_TEX, c = N / 2, TWIGS = 7;
+  // (The twigs first, then the clumps over them, the inner ones first.)
+  const clumps: [number, number, number, number][] = [];
+  const twig = (x: number, y: number, a: number, len: number, w: number, forks: number) => {
+    const steps = 4;
     for (let i = 0; i < steps; i++) {
-      const t = (i + 1) / steps, nx = x + Math.cos(a) * reach / steps, ny = y + Math.sin(a) * reach / steps;
-      stroke(x, y, nx, ny, 1.6, 0.34);
-      // (Leaves either side, slanting out toward the tip, and one at the end.)
-      if (i > 0) for (const side of [-1, 1]) leaf(nx, ny, a + side * (0.7 + 0.5 * rand()), 5 + 4 * rand(), 0.42 + 0.3 * t + 0.28 * rand());
-      if (i === steps - 1) leaf(nx, ny, a, 6, 0.8 + 0.2 * rand());
-      x = nx; y = ny; a += (rand() - 0.5) * 0.45;
+      const nx = x + Math.cos(a) * len / steps, ny = y + Math.sin(a) * len / steps;
+      stroke(x, y, nx, ny, w, 0.32);
+      x = nx; y = ny; a += (rand() - 0.5) * 0.4;
+      if (forks > 0 && i >= 1 && i < steps - 1) twig(x, y, a + (rand() < 0.5 ? -1 : 1) * (0.6 + 0.4 * rand()), len * 0.5, w * 0.7, forks - 1);
+      if (i >= 1) clumps.push([x, y, (i === steps - 1 ? 0.085 : 0.06) * N * (0.85 + 0.3 * rand()), Math.hypot(x - c, y - c) / (N / 2)]);
     }
+  };
+  for (let k = 0; k < TWIGS; k++) twig(c, c, (k / TWIGS) * Math.PI * 2 + (rand() - 0.5) * 0.5, (0.3 + 0.08 * rand()) * N, 1.8, 1);
+  clumps.sort((p, q) => p[3] - q[3]);
+  for (const [x, y, r, out] of clumps) for (let n = 0; n < 9; n++) {
+    const a = rand() * Math.PI * 2, d = r * Math.sqrt(rand()), lx = x + Math.cos(a) * d, ly = y + Math.sin(a) * d;
+    stroke(lx, ly, lx + (rand() - 0.5) * 1.5, ly + (rand() - 0.5) * 1.5, 4.6 + 2 * rand(), Math.min(1, 0.42 + 0.34 * out + 0.26 * rand()));
   }
 }));
 
@@ -170,12 +178,15 @@ export interface FloraUniforms {
   time: { value: number };
   cropFar?: { value: number };
   eye?: { value: THREE.Vector3 };
+  barkScale?: { value: number }; // the models' scale against their catalog's size (the bark's grain is in the catalog's)
 }
 const FLORA_VERTEX_DECL = `
   attribute float leafMask;
   attribute vec3 cardUv;
+  varying vec4 vBark;
   uniform float uTime; uniform float uCropFar; uniform vec3 uEye;`;
 const FLORA_VERTEX = `
+  vBark = vec4(position, leafMask);
   #ifdef USE_INSTANCING
     // Wind: leaves sway with their height in the model, each prop in its own phase.
     {
@@ -191,12 +202,32 @@ const FLORA_VERTEX = `
       }
     }
   #endif`;
+// Bark, on a flora model's wood (what is neither leaf nor card: trunks,
+// limbs, logs, stumps), worked out per pixel in the model's own space (no
+// texture to draw): a quiet mottle, its patches longer up the stem than
+// across it, a finer grain over it; a few parts in a hundred lighter or
+// darker, never stripes. Faded out where finer than the pixels.
+const BARK_GLSL = /* glsl */ `
+  varying vec4 vBark;
+  uniform float uBarkScale;
+  float bHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+  float bNoise(vec2 p) {
+    vec2 i = floor(p), f = fract(p), u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(bHash(i), bHash(i + vec2(1.0, 0.0)), u.x), mix(bHash(i + vec2(0.0, 1.0)), bHash(i + vec2(1.0, 1.0)), u.x), u.y);
+  }
+  float barkShade(vec3 p) {
+    vec3 q = p / uBarkScale * vec3(1300.0, 420.0, 1300.0);
+    float show = 1.0 - smoothstep(0.3, 1.0, max(fwidth(q.x) + fwidth(q.z), fwidth(q.y)));
+    float n = 0.5 * (bNoise(q.xy + q.z * 1.7) + bNoise(q.zy * 1.1 + q.x * 0.6 + 11.3));
+    float grain = bNoise(q.xy * 3.1 + q.z * 4.3 + 5.7);
+    return 1.0 + show * (0.34 * (n - 0.5) + 0.12 * (grain - 0.5));
+  }`;
 // The card textures (uLeaves, uBlades, uFronds, uNeedles), for CARD_TEXEL.
 export const cardTextures = (): Record<string, THREE.IUniform> => ({
   uLeaves: { value: sprayTexture() }, uBlades: { value: bladeTexture() }, uFronds: { value: frondTexture() }, uNeedles: { value: needleTexture() }, uFences: { value: fenceTexture() },
 });
 const floraUniforms = (f: FloraUniforms): Record<string, THREE.IUniform> => ({
-  uTime: f.time, uCropFar: f.cropFar ?? { value: 1e9 }, uEye: f.eye ?? { value: new THREE.Vector3() }, ...cardTextures(),
+  uTime: f.time, uCropFar: f.cropFar ?? { value: 1e9 }, uEye: f.eye ?? { value: new THREE.Vector3() }, uBarkScale: f.barkScale ?? { value: 1 }, ...cardTextures(),
 });
 // A card's texel: a fence (z 5, rural/models.ts), a conifer's needles (z
 // 4), a palm's frond (z 3), a crop's stalks (z 2, rural/models.ts) or a
@@ -493,7 +524,7 @@ export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Ve
         varying float vDay;
         varying vec3 vCard;
         ${surfaces ? `varying vec3 vSurfP; varying vec3 vSurfN; uniform float uStorey; ${SURFACE_FRAGMENT}` : ''}
-        ${flora ? CARD_TEXEL : ''}
+        ${flora ? `${CARD_TEXEL} ${BARK_GLSL}` : ''}
         ${GRADE_GLSL}`)
       .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
         reflectedLight.directDiffuse *= vDay;
@@ -515,6 +546,8 @@ export function makePropMaterial(bounce = 0, saturation = 0.6, sunDir?: THREE.Ve
     if (flora) frag = frag.replace('#include <normal_fragment_begin>', `#include <normal_fragment_begin>
         if (abs(vCard.z) > 0.5) normal *= faceDirection;`);
     if (flora) frag = frag.replace('#include <color_fragment>', `#include <color_fragment>
+        // (Wood, a trunk, a limb, a log: bark.)
+        if (vBark.w < 0.5 && abs(vCard.z) < 0.5) diffuseColor.rgb *= barkShade(vBark.xyz);
         // A leaf card: its leaves cut out of it; seen edge-on it thins out
         // and goes (no hard edges).
         if (vCard.z > 0.5) {
