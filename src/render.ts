@@ -11,7 +11,7 @@ import { buildPaintData, fanCoords, fanFrames, paintAt, paintDelta, softAt, warp
 import { buildRelief, CONE_RADIUS, CRATER, CRATER_DEPTH, type Relief } from './relief.ts';
 import { buildSurface, meshLevels, type SurfaceLayers } from './surface.ts';
 import { cityGround } from './terraform.ts';
-import { makeWaterMaterial, type WaterMaterial } from './water.ts';
+import { makeWaterMaterial, makeWaterOccluder, WATER_OCCLUDER_SUNK, type WaterMaterial } from './water.ts';
 import { WalkCamera } from './walk.ts';
 import { makeSky, makeHalo, installHaze, HAZE, HAZE_DENSITY, AIR } from './sky.ts';
 import { makeWeather, type Weather } from './weather.ts';
@@ -217,6 +217,8 @@ const BRIDGE_TIMBER = 0x7a5f45;
 const BRIDGE_STONE = 0xa49c8c;
 // The ground under a direction: its tile, the ground and water as drawn,
 // and the land before rivers cut into it (radii).
+// The water's depth twin is drawn while the camera is nearer than this (camera.ts: no tilt past its LOCK).
+const WATER_OCCLUDER_WITHIN = 1.0;
 // Machu Picchu's summit cut (levelSummit), tile steps: how far from the
 // tile's middle its middle may lie, how far past its flat it eases into
 // the slopes.
@@ -274,6 +276,7 @@ export class GlobeRenderer {
   private readonly terrain: TerrainMesh;
   private readonly terrainMat: TerrainMaterial;
   private readonly waterMat: WaterMaterial;
+  private readonly waterOccluder: THREE.ShaderMaterial;
   private readonly waterMesh: THREE.Group;
   private readonly looks: TileLook[];
   private readonly globeMesh: THREE.Group;
@@ -596,9 +599,16 @@ export class GlobeRenderer {
     this.terrain.water.setAttribute('unexplored', new THREE.BufferAttribute(new Float32Array(W).fill(1), 1));
     this.terrain.water.setAttribute('dim', new THREE.BufferAttribute(new Float32Array(W), 1));
     this.waterMat = makeWaterMaterial();
+    const waterOccluder = this.waterOccluder = makeWaterOccluder();
     this.waterMesh = this.chunkedSurface(this.terrain.water, this.terrain.waterTriToTile, this.waterMat.material, (m) => {
       m.renderOrder = 1;
       m.receiveShadow = true;
+      // (Its depth, written after everything opaque: water.ts makeWaterOccluder. Shown and culled with it.)
+      const occluder = new THREE.Mesh(m.geometry, waterOccluder);
+      occluder.renderOrder = 1000;
+      occluder.frustumCulled = false;
+      occluder.scale.setScalar(1 - WATER_OCCLUDER_SUNK);
+      m.add(occluder);
     });
     this.waterMesh.userData['stat'] = 'water';
     this.scene.add(this.waterMesh);
@@ -2682,6 +2692,8 @@ export class GlobeRenderer {
     this.updateSun();
     this.updateAir();
     this.cullChunks();
+    // (The water's depth twin: only while the view can tilt toward a horizon, water.ts.)
+    this.waterOccluder.visible = this.walk.active || this.cam.distance < WATER_OCCLUDER_WITHIN;
     this.unitView.update(now / 1000, this.camera, this.renderer.domElement.height / (2 * Math.tan((this.camera.fov * Math.PI) / 360)));
     this.terrainMat.setTime(now / 1000);
     this.floraTime.value = now / 1000;

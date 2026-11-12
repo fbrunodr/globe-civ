@@ -102,7 +102,8 @@ export function makeWaterMaterial(): WaterMaterial {
           vec3 shallow = mix(deep, vec3(0.1, 0.45, 0.48), 0.65 * clamp(1.3 / murk, 0.0, 1.0));
           float k = d * murk;
           vec3 col = mix(shallow, deep, 1.0 - exp(-k / 0.0012));
-          float alpha = mix(0.72, 0.97, 1.0 - exp(-k / 0.0015));
+          // (Deep water is opaque: nothing shows through the open sea.)
+          float alpha = mix(0.72, 1.0, 1.0 - exp(-k / 0.0015));
 
           // Rivers: ripples drifting downstream (two phases, so the pattern
           // never stretches).
@@ -163,4 +164,32 @@ export function makeWaterMaterial(): WaterMaterial {
         #include <opaque_fragment>`);
   };
   return { material: mat, setTime: (s) => { uTime.value = s; }, setGrid: (on) => { uGrid.value = on ? 1 : 0; }, setView: (m) => { uView.value = m; } };
+}
+
+// The water's depth alone, no colour: the surface is drawn see-through
+// and so writes no depth itself, and what is drawn after it (borders,
+// labels' lines, smoke) showed through the sea from beyond the horizon,
+// hidden only by the sea bed. A twin of each water mesh with this material,
+// drawn last of the opaque things (so nothing under the water is lost),
+// hides them as the surface would: past the shallows only, WATER_OCCLUDER_SUNK
+// under the surface (its twin drawn that much smaller: the water and the
+// borders lying on it stand clear above it, the bed of water that deep
+// below), and not under the fog of war (no water is drawn there). Only
+// while the view is near enough to tilt toward a horizon (render.ts):
+// from afar there is none to see past, and so thin a gap would flicker.
+export const WATER_OCCLUDER_FROM = 0.0008, WATER_OCCLUDER_SUNK = 0.0004;
+export function makeWaterOccluder(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    colorWrite: false,
+    vertexShader: /* glsl */ `
+      attribute float depth;
+      attribute float unexplored;
+      varying float vDepth;
+      varying float vFog;
+      void main() { vDepth = depth; vFog = unexplored; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    fragmentShader: /* glsl */ `
+      varying float vDepth;
+      varying float vFog;
+      void main() { if (vDepth < ${WATER_OCCLUDER_FROM} || vFog > 0.25) discard; gl_FragColor = vec4(0.0); }`,
+  });
 }
