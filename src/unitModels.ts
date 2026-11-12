@@ -837,6 +837,7 @@ export const UNIT_LOOK: Record<UnitKey, UnitLook> = {
   knight: { party: 'formation', count: HORSE_COUNT, cols: 3, spacing: [0.62, 1.1] },
   settler:  { party: 'group', count: 4, spacing: [0.55, 0.55] },
   worker:   { party: 'group', count: 2, spacing: [0.55, 0.5] },
+  missionary: { party: 'group', count: 2, spacing: [0.55, 0.5] },
   musketman: { party: 'formation', count: FULL_FORMATION, spacing: [0.52, 0.58] },
   rifleman:  { party: 'formation', count: FULL_FORMATION, spacing: [0.52, 0.58] },
   infantry:  { party: 'formation', count: FULL_FORMATION, spacing: [0.6, 0.62] },
@@ -967,6 +968,8 @@ export function unitModel(type: UnitKey, civ: ArchCiv, variant = 0, female = fal
       case 'scout': return figure(gear, 'staff', false, { helmet: false, pack: true, female, civilian: true });
       case 'settler': return figure(gear, variant % 2 ? 'staff' : 'none', false, { pack: variant % 2 === 0, female, civilian: true });
       case 'worker': return figure(gear, 'hoe', false, { female, civilian: true });
+      // (A first, plain figure: a walker with a staff, bare-headed, a pack on its back. To be drawn properly: a robe, a book.)
+      case 'missionary': return figure(gear, 'staff', false, { helmet: false, pack: variant % 2 === 0, female, civilian: true });
       // (Its two figures: the commander mounted, and the standard-bearer.)
       case 'swordsman': return figure(gear, 'sword', true, { armor: 'mail', helmet: true, female });
       case 'pikeman': return figure(gear, 'pike', false, { armor: 'plate', helmet: true, female });

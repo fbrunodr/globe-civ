@@ -6,7 +6,7 @@ import type { Selection } from './render.ts';
 import { canAssault, canShoot, type AttackMode } from './unitClasses.ts';
 import { techDef } from './techs.ts';
 import { politicsDef } from './politics.ts';
-import { RELIGIONS, FAITH_SAME, FAITH_RIVAL, DEVOUT_TURNS } from './religion.ts';
+import { RELIGIONS, DEVOUT_TURNS, CONVERT_PER_POP, MISSIONARY_FAITH } from './religion.ts';
 import { resourceDef, empireBonus } from './resources.ts';
 import { BORDER_AT, BORDER_MAX, OUTPUT_KEYS } from './cities.ts';
 import { icon, unitIcon, resourceIcon, YIELD_ICON, type IconKey } from './icons.ts';
@@ -24,6 +24,7 @@ export type Action =
   | { type: 'improve' }
   | { type: 'road' }
   | { type: 'fort' }
+  | { type: 'preach' }
   | { type: 'fortify' }
   | { type: 'wake' }
   | { type: 'skip' }
@@ -40,7 +41,7 @@ export type Action =
   | { type: 'governorPlace' }
   | { type: 'focus'; focus: FocusKey }
   | { type: 'buyMode' }
-  | { type: 'convert' }
+  | { type: 'missionary' }
   | { type: 'buy'; currency: 'gold' | 'faith' }
   | { type: 'endTurn' }
   | { type: 'next' };
@@ -61,7 +62,7 @@ const isBuildKey = (s: string): s is BuildKey => (BUILDABLE as string[]).include
 function parseAction(el: HTMLElement): Action | null {
   const type = el.dataset['act'];
   switch (type) {
-    case 'found': case 'improve': case 'road': case 'fort': case 'fortify': case 'wake': case 'skip': case 'disband': case 'endTurn': case 'next': case 'governorPlace': case 'pillage': case 'raze': case 'buyMode': case 'convert': case 'rally': case 'deploy': case 'upgrade':
+    case 'found': case 'improve': case 'road': case 'fort': case 'fortify': case 'wake': case 'skip': case 'disband': case 'endTurn': case 'next': case 'governorPlace': case 'pillage': case 'raze': case 'buyMode': case 'missionary': case 'preach': case 'rally': case 'deploy': case 'upgrade':
       return { type };
     case 'buy': {
       const c = el.dataset['currency'];
@@ -305,6 +306,11 @@ export class UI {
       `<button class="abtn ${cls} ${why ? 'off' : ''}" data-act="${act}" ${tip(title, why ?? sub)} ${why ? 'aria-disabled="true"' : ''}>${icon(ic)}${key ? `<kbd>${key}</kbd>` : ''}</button>`;
     const orders: string[] = [];
     if (mine) {
+      if (T.preaches) {
+        const c = g.preachTarget(u), why = c ? g.preachBlock(u, c) : 'It must stand in a city or beside one.';
+        const mine = g.foundedBy(u.owner);
+        orders.push(order('preach', 'faith', c ? `Preach in ${c.name}` : 'Preach', c && mine ? `${c.name} takes up ${RELIGIONS[mine.religion].name} for ${g.preachCost(c)} faith (${CONVERT_PER_POP} a citizen), and keeps to it for ${DEVOUT_TURNS} turns. The missionary is spent` : 'Converts the city it stands in or beside to your religion', 'V', why));
+      }
       if (u.type === 'settler') {
         // (Its bill, before it exists: what a city here would cost a turn now.)
         const me = g.players[u.owner]!, cap = me.capital === null ? undefined : g.cityById.get(me.capital), mine = g.cities.filter((c) => c.owner === u.owner).length;
@@ -348,7 +354,6 @@ export class UI {
       T.civilian ? '' : stat('sword', String(T.melee), 'Melee strength', 'Closing in, and defending against it'),
       T.rangedAtk ? stat('arrow', `${T.rangedAtk}${(T.reach ?? 1) > 1 ? ` <small>reach ${T.reach}</small>` : ''}`, 'Ranged strength', 'Firing from a distance, unanswered') : '',
       T.civilian ? '' : stat('shield', String(T.rangedDef), 'Defence under fire', 'Against arrows, shot and shell'),
-      u.faith && !T.civilian ? stat('faith', RELIGIONS[u.faith].name, 'Its faith', `Its city's when it was raised. Attacking a unit of the same faith it is ${Math.round(100 * FAITH_SAME)}% weaker; one of another faith, ${Math.round(100 * FAITH_RIVAL)}% stronger`) : '',
     ].join('');
     return `<div class="unitcard" style="--civ:${owner.color};--on:${inkOn(owner.color)}">
       <div class="portrait ${T.civilian ? 'civilian' : ''}">${icon(unitIcon(u.type))}</div>
@@ -407,11 +412,11 @@ export class UI {
       <span>Borders</span><b>${c.ring} tiles out${c.ring < BORDER_MAX ? ` · next at ${BORDER_AT[c.ring + 1]} culture (${Math.floor(c.culture)})` : ''}</b></div>`;
     const more: string[] = [];
     if (mine && placing !== 'buy' && g.buyableTiles(c).length) more.push(`<button data-act="buyMode" ${tip('Buy tiles', 'A city grows into the ring beyond its first by buying it')}>${icon('grid')} Buy tiles <small>${g.tilePrice(c)} gold</small></button>`);
-    // (Faith converts a city, anyone's, in reach of your holy city.)
-    const mineFaith = [...g.religions].find(([, f]) => f.founder === HUMAN);
-    if (mineFaith && c.religion !== mineFaith[0]) {
-      const why = g.convertBlock(HUMAN, c);
-      more.push(`<button data-act="convert" class="${why ? 'off' : ''}" ${tip(`Convert ${esc(c.name)} to ${RELIGIONS[mineFaith[0]].name}`, why ?? `It keeps to it for ${DEVOUT_TURNS} turns whatever presses on it; the units it raises carry it`)}>${icon('faith')} Convert <small>${g.convertCost(c)} faith</small></button>`);
+    // (The founder of a religion raises missionaries with faith, in its cities that follow it.)
+    const mineFaith = g.foundedBy(HUMAN);
+    if (mineFaith && mine && c.religion === mineFaith.religion) {
+      const why = g.missionaryBlock(HUMAN, c);
+      more.push(`<button data-act="missionary" class="${why ? 'off' : ''}" ${tip('Send a missionary', why ?? `It goes where you send it and preaches ${RELIGIONS[mineFaith.religion].name} in a city, anyone's, for ${CONVERT_PER_POP} faith a citizen there`)}>${icon('faith')} Missionary <small>${MISSIONARY_FAITH} faith</small></button>`);
     }
     if (mine && g.canRaze(c)) more.push(`<button data-act="raze" class="danger" ${tip(`Raze ${esc(c.name)}`, 'Burn the city down, a citizen a turn; ruins remain')}>${icon('fire')} Raze</button>`);
     const left = `<div class="cityhead" style="--civ:${p.color};--on:${inkOn(p.color)}"><div class="pop" ${tip('Citizens')}>${c.pop}</div>

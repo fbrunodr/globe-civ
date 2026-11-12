@@ -175,7 +175,7 @@ const CLASS_ICON: Record<UnitClass, IconKey> = {
   submarine: 'submarine', carrier: 'carrier',
   fighter: 'plane', bomber: 'plane', helicopter: 'helicopter', antiAir: 'cannon',
 };
-const UNIT_ICON: Partial<Record<UnitKey, IconKey>> = { worker: 'hammer', atomicBomb: 'bomb', nuclearMissile: 'bomb', guidedMissile: 'bomb' };
+const UNIT_ICON: Partial<Record<UnitKey, IconKey>> = { worker: 'hammer', missionary: 'faith', atomicBomb: 'bomb', nuclearMissile: 'bomb', guidedMissile: 'bomb' };
 export const unitIcon = (k: UnitKey): IconKey => UNIT_ICON[k] ?? CLASS_ICON[UNIT_CLASS[k]];
 
 const RESOURCE_ICON: Partial<Record<ResourceKey, IconKey>> = { gold: 'goldOre', horses: 'horse' };

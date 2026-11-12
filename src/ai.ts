@@ -13,6 +13,7 @@ import { BEST, type AiPolicy } from './aiPolicy.ts';
 import { militaryPhase, planWar, planning, onCampaign, operationOf } from './aiMilitary.ts';
 import { isShooter, canAssault } from './unitClasses.ts';
 import { canAttackType } from './unitClasses.ts';
+import { HOLY_STRIFE, MISSIONARY_FAITH } from './religion.ts';
 import { MIN_WAR, FAITH_VICTORY, type Game, type Player, type Unit, type City, type DealSide } from './game.ts';
 
 // Deliberately simple AI: expand with settlers, improve the land with
@@ -119,11 +120,23 @@ export function aiTurn(g: Game, p: Player): void {
     else if (domainOf(unitDef(u.type)) === 'air') airTurn(g, u);
     else if (domainOf(unitDef(u.type)) === 'sea') seaTurn(g, u);
   }
-  // Faith converts: a city in reach of its holy city, its own first, then the largest it has found.
-  if (g.rng() < P.faithConvert) {
-    const pick = g.cities.filter((c) => g.known[p.id]![c.tile] && g.convertBlock(p.id, c) === null)
-      .sort((a, b) => Number(b.owner === p.id) - Number(a.owner === p.id) || b.pop - a.pop)[0];
-    if (pick) g.convert(p.id, pick);
+  // Faith sends missionaries: the founder of a religion raises one when it
+  // can pay for it and for the city it would go to (two out at most), in
+  // its city nearest that one; each then goes and preaches.
+  const founded = g.foundedBy(p.id);
+  if (founded) {
+    const out = g.units.filter((u) => u.owner === p.id && u.type === 'missionary' && !u.dead);
+    for (const u of out) missionaryTurn(g, u);
+    if (out.length < 2 && g.rng() < P.faithConvert) {
+      const homes = cities.filter((c) => c.religion === founded.religion);
+      const from = founded.holy?.owner === p.id ? founded.holy : homes[0];
+      const target = from ? missionTarget(g, p.id, from.tile, p.faith - MISSIONARY_FAITH) : null;
+      if (target && homes.length) {
+        const home = homes.reduce((a, b) => (g.approxDist(b.tile, target.tile) < g.approxDist(a.tile, target.tile) ? b : a));
+        const m = g.trainMissionary(p.id, home);
+        if (m) missionaryTurn(g, m);
+      }
+    }
   }
   // The army (aiMilitary.ts): operations, tactics, garrisons and posts.
   militaryPhase(g, p, P, cities);
@@ -333,6 +346,40 @@ function fortSpot(g: Game, owner: number): number | null {
   if (g.tiles[c.tile]!.neighbors.some((t) => g.fort[t])) return null;
   const free = g.tiles[c.tile]!.neighbors.filter((t) => !g.isWater(t) && g.relief[t] !== 'mountains' && g.ownerOf(t) === owner && g.use[t] === USE.wild && g.builtAt(t) === null && !g.wondersAt(t).length);
   return free.length ? free.reduce((a, b) => (g.approxDist(b, r.tile) < g.approxDist(a, r.tile) ? b : a)) : null;
+}
+
+// The city a missionary of a civ would go to from a tile: one it knows,
+// not of its religion, not a holy city nor lately converted, of no civ it
+// is at war with, that its faith can pay for; the more people and the
+// nearer the better (its own a little before others').
+function missionTarget(g: Game, id: number, from: number, faith: number): City | null {
+  const mine = g.foundedBy(id);
+  if (!mine) return null;
+  const holy = new Set([...g.religions.values()].map((f) => f.holyCity));
+  let best: City | null = null, bestS = 0;
+  for (const c of g.cities) {
+    if (c.religion === mine.religion || holy.has(c.id) || c.devout > g.turn || !g.known[id]![c.tile] || (c.owner !== id && g.atWar(id, c.owner)) || g.preachCost(c) > faith) continue;
+    const s = (c.pop * (c.owner === id ? 1.3 : 1)) / (1 + g.approxDist(from, c.tile) / 8);
+    if (s > bestS) { best = c; bestS = s; }
+  }
+  return best;
+}
+// A missionary's turn: it preaches if it can where it stands; else it goes toward the city it would convert, to stand beside it.
+function missionaryTurn(g: Game, u: Unit): void {
+  const here = g.preachTarget(u);
+  if (here && g.preach(u, here)) return;
+  const target = missionTarget(g, u.owner, u.tile, g.players[u.owner]!.faith);
+  if (!target || u.moves <= 0) return;
+  const spots = [target.tile, ...g.tiles[target.tile]!.neighbors].filter((t) => g.canStand(u, t) && !g.isForeignBlocked(t, u.owner) && !g.isEnemyOccupied(t, u.owner))
+    .sort((a, b) => g.approxDist(a, u.tile) - g.approxDist(b, u.tile));
+  for (const t of spots) {
+    if (!g.findPath(u, t)) continue;
+    g.goTo(u, t);
+    break;
+  }
+  if (u.dead) return;
+  const now = g.preachTarget(u);
+  if (now) g.preach(u, now);
 }
 
 // The tiles each civ's roads should run on (roads.ts routeRoads between
@@ -564,9 +611,10 @@ function appetite(g: Game, p: Player, o: Player, react = true): { want: number; 
   // (What faith would make of the fighting: its units' religions against
   // theirs, as its cities and theirs now follow them: the game's own figure, game.ts faithEdge.)
   const mineC = g.cities.filter((c) => c.owner === p.id), theirs = g.cities.filter((c) => c.owner === o.id && g.known[p.id]![c.tile]);
-  let faith = 0;
-  for (const a of mineC) for (const b of theirs) faith += g.faithEdge({ faith: a.religion }, { faith: b.religion });
-  faith = mineC.length && theirs.length ? faith / (mineC.length * theirs.length) : 1;
+  void mineC; void theirs;
+  // (And what such a war would cost its people's cohesion, if they are of its own religion: as much as its policy minds it.)
+  const mine = g.faithOf(p.id), same = mine !== null && mine === g.faithOf(o.id);
+  const faith = g.faithEdge(p.id, o.id) * (same ? Math.max(0, 1 - P.holyPeace * HOLY_STRIFE[Math.min(HOLY_STRIFE.length - 1, g.holyWars(p.id) + 1)]!) : 1);
   const truce = 1 - P.truceRespect * Math.min(1, g.truceLeft(p.id, o.id) / 10);
   const lead = (1 / RANK_WORTH[st.tech]) ** P.warTech * (1 / RANK_WORTH[st.prod]) ** P.warProd;
   const ratio = 1 / RANK_WORTH[st.army];

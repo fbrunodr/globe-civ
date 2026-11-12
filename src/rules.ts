@@ -27,6 +27,7 @@ export interface UnitDef {
   cost: number;
   civilian?: boolean;
   improves?: boolean; // a worker: builds its civ's improvements (game.ts improve)
+  preaches?: boolean; // a missionary: converts a city to its civ's religion (game.ts preach); raised with faith, never built
   sight?: number;
   desc?: string;
   needs?: StrategicKey; // a strategic resource the civ must own (resources.ts)
@@ -68,6 +69,7 @@ export const domainOf = (d: UnitDef): Domain => d.domain ?? 'land';
 export const UNITS = {
   settler:  { name: 'Settler',  icon: 'S', melee: 1, rangedDef: 1, mv: 1, cost: 30, civilian: true, desc: 'Founds a city. Costs 1 population.' },
   worker:   { name: 'Worker',   icon: 'B', melee: 1, rangedDef: 1, mv: 2, cost: 20, civilian: true, improves: true, desc: 'Improves the land: farms, mines, pastures, camps and the rest, a few turns on the tile.' },
+  missionary: { name: 'Missionary', icon: 'M', melee: 1, rangedDef: 1, mv: 2, cost: 30, civilian: true, preaches: true, desc: 'Preaches its civ\'s religion in a city it stands in or beside, anyone\'s, and is spent. Raised with faith by the founder of a religion.' },
   scout:    { name: 'Scout',    icon: 'R', melee: 1, rangedDef: 1, mv: 2, cost: 30, sight: 3, desc: 'Fast explorer. Cannot attack.' },
   // ---- Ancient ----
   warrior:  { name: 'Warrior',  icon: 'W', melee: 1, rangedDef: 1, mv: 1, cost: 30 },

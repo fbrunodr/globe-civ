@@ -27,7 +27,7 @@ import { IMPROVEMENTS, IMPROVEMENT_KEYS, IMPROVE_TURNS, drained, out, OUTPUT_KEY
 import { techDef, techPath, improvementStage, STAGE_TECHS, TECHS, type TechKey, FINAL_TECH } from './techs.ts';
 import { politicsDef, politicsPath, GOVERNMENTS, governmentDef, policyDef, fits, SLOT_KINDS, type PoliticsKey, type GovernmentKey, type PolicyKey, type PolicySlot } from './politics.ts';
 import { traitDef, traitBlock, traitCost, type TraitKey } from './identity.ts';
-import { FAITH_SAME, FAITH_RIVAL, CONVERT_REACH, CONVERT_BASE, CONVERT_PER_POP, DEVOUT_TURNS, religionDef, PRESSURE_REACH, HOLY_PRESSURE, CITY_PRESSURE, BUILDING_PRESSURE, CONVERT_AT, TITHE, type ReligionKey } from './religion.ts';
+import { FAITH_SAME, FAITH_RIVAL, HOLY_STRIFE, MISSIONARY_FAITH, CONVERT_PER_POP, DEVOUT_TURNS, religionDef, PRESSURE_REACH, HOLY_PRESSURE, CITY_PRESSURE, BUILDING_PRESSURE, CONVERT_AT, TITHE, type ReligionKey } from './religion.ts';
 import { placeResources, resourceDef, empireBonus, RESOURCE_IMPROVEMENT, type ResourceKey } from './resources.ts';
 import { total, yieldBonus, prodBonus, flat, tileBonus, specialistBonus, movesBonus, type Effect, type ProdTarget } from './effects.ts';
 import { cityUpkeep, unitUpkeep, buildingUpkeep, inflation, arrearsOf, WEALTH_RATE } from './economy.ts';
@@ -251,7 +251,6 @@ export interface Unit {
   work: number | null;                  // a worker's: the tile it is working on (it stays there, or by it for boats)
   job: WorkerJob | null;                // and what it does there
   charges: number;                      // a worker's: the improvements it can still build (roads and repairs cost none)
-  faith: ReligionKey | null;            // the religion its city followed when it was raised (it keeps it: religion.ts)
 }
 // What a worker does on a tile: builds its improvement (a charge, of
 // WORKER_CHARGES), repairs it when pillaged, or lays a road (both free, as
@@ -289,7 +288,7 @@ export interface City {
   razing: boolean;                     // burning down, a citizen a turn
   religion: ReligionKey | null;        // the religion it follows
   devout: number;                      // the turn until which no pressure changes it (it was converted by faith: convert)
-  blessed: boolean;                    // what it is building was bought with faith (a unit so raised carries its civ's faith)
+  blessed: boolean;                    // what it is building was bought with faith
   culture: number;                     // culture it made so far (its borders grow with it)
   ring: number;                        // how far its borders reach (cities.ts borderRing)
 }
@@ -724,13 +723,11 @@ export class Game {
 
   // A new unit on `tile`, or (one unit per tile) the nearest free tile.
   createUnit(type: UnitKey, owner: number, tile: number): Unit {
-    // (Its faith: its city's as it is raised, wherever it then finds room to stand.)
-    const faith = this.cityByTile.get(tile)?.religion ?? null;
     tile = this.freeTileNear(type, owner, tile) ?? tile;
     this.record('unitCreated', owner, { unit: type, tile });
     const u: Unit = { id: this.nextId++, type, owner, tile, packedIn: null, moves: this.maxMoves(type, owner), hp: 100,
       fortified: false, skipped: false, goal: null, goalMode: null, dead: false, aiTarget: null, work: null, job: null,
-      charges: unitDef(type).improves ? WORKER_CHARGES : 0, faith };
+      charges: unitDef(type).improves ? WORKER_CHARGES : 0 };
     this.units.push(u);
     return u;
   }
@@ -997,7 +994,7 @@ export class Game {
   combatPreview(u: Unit, tile: number, mode: AttackMode = this.attackModeFor(u, tile)): CombatPreview | null {
     const d = this.bestDefender(tile, u.owner, mode);
     if (!d) return null;
-    return { atk: this.unitStrength(u, mode, 'atk', tile) * matchup(u.type, d.type, 'atk') * this.siegeEdge(u, tile) * this.faithEdge(u, this.faithAt(d, tile)), def: this.unitStrength(d, mode, 'def', tile) * matchup(d.type, u.type, 'def'), defender: d, mode };
+    return { atk: this.unitStrength(u, mode, 'atk', tile) * matchup(u.type, d.type, 'atk') * this.siegeEdge(u, tile) * this.faithEdge(u.owner, d.owner), def: this.unitStrength(d, mode, 'def', tile) * matchup(d.type, u.type, 'def'), defender: d, mode };
   }
 
   // (`mode`: by fire, or closing in: unless told, attackModeFor.)
@@ -1017,7 +1014,7 @@ export class Game {
     if (!d) this.onBattle?.(u, tile, style);
     if (d) {
       // (The counters: pikes against horse, a charge against archers...)
-      const A = this.unitStrength(u, mode, 'atk', tile) * matchup(u.type, d.type, 'atk') * this.siegeEdge(u, tile) * this.faithEdge(u, this.faithAt(d, tile));
+      const A = this.unitStrength(u, mode, 'atk', tile) * matchup(u.type, d.type, 'atk') * this.siegeEdge(u, tile) * this.faithEdge(u.owner, d.owner);
       const D = this.unitStrength(d, mode, 'def', tile) * matchup(d.type, u.type, 'def');
       const before = { a: u.hp, d: d.hp };
       const after = fightRounds(u.hp, d.hp, A, D, mode, this.rng);
@@ -1070,19 +1067,21 @@ export class Game {
     const d = this.bestDefender(c.tile, -1, 'melee');
     return d ? this.unitStrength(d, 'melee', 'def', c.tile) : 0;
   }
-  // What faith makes of an attack (religion.ts): by the religion the
-  // attacker carries (its city's when it was raised) against the
-  // defender's: the same, it fights with a bad conscience (FAITH_SAME);
-  // another, with zeal (FAITH_RIVAL). Either with none: nothing.
-  faithEdge(u: { faith: ReligionKey | null }, d: { faith: ReligionKey | null }): number {
-    return !u.faith || !d.faith ? 1 : u.faith === d.faith ? 1 - FAITH_SAME : 1 + FAITH_RIVAL;
+  // What faith makes of an attack (religion.ts), by the two civs'
+  // religions: the same, the attacker fights with a bad conscience
+  // (FAITH_SAME); another, with zeal (FAITH_RIVAL). Either with none: nothing.
+  faithEdge(attacker: number, defender: number): number {
+    const a = this.faithOf(attacker), d = this.faithOf(defender);
+    return !a || !d ? 1 : a === d ? 1 - FAITH_SAME : 1 + FAITH_RIVAL;
   }
-  // Whose faith an attack on a tile is weighed against: in a city, the
-  // city's (its people's: no garrison of a convenient creed changes what
-  // the attackers think of taking it); in the field, the defender's own.
-  private faithAt(d: Unit, tile: number): { faith: ReligionKey | null } {
-    const c = this.cityByTile.get(tile);
-    return c ? { faith: c.religion } : d;
+  // The civs of its own religion a civ is at war with (they trouble its people: HOLY_STRIFE).
+  private holyCache: { key: string; of: number[] } = { key: '', of: [] };
+  holyWars(id: number): number {
+    const key = `${this.faiths().key}|${this.diploVersion}`;
+    if (this.holyCache.key !== key) {
+      this.holyCache = { key, of: this.players.map((p) => { const f = this.faithOf(p.id); return f ? this.players.filter((o) => o.id !== p.id && o.alive && this.atWar(p.id, o.id) && this.faithOf(o.id) === f).length : 0; }) };
+    }
+    return this.holyCache.of[id] ?? 0;
   }
   // An engine against a garrison: built for it (SIEGE_VS_CITY over what
   // engines lose against units, so twice as strong as its attack says).
@@ -1726,6 +1725,8 @@ export class Game {
     if (city.religion) sum = addOut(sum, flat(religionDef(city.religion).follower, 'follower'));
     let strife = 0;
     if (p.dishonor > 0) strife += TRUCE_BREAK;
+    // (At war with civs of its own religion: the cities that follow it are troubled.)
+    if (city.religion && city.religion === this.faithOf(p.id)) strife += HOLY_STRIFE[Math.min(HOLY_STRIFE.length - 1, this.holyWars(p.id))]!;
     if (strife) sum = { ...sum, cohesion: sum.cohesion * (1 - Math.min(0.9, strife)) };
     // (In arrears: what it could not pay of its upkeep, its cities make less by, in production, science and culture.)
     const paid = (y: keyof Output) => (y === 'prod' || y === 'science' || y === 'culture' ? 1 - p.arrears : 1);
@@ -1856,6 +1857,7 @@ export class Game {
     const p = this.players[city.owner]!;
     if (!this.unlocked(p).has(key)) return false;
     if (isUnitKey(key)) {
+      if (unitDef(key).preaches) return false; // (raised with faith: trainMissionary)
       const need = unitDef(key).needs;
       if (domainOf(unitDef(key)) === 'sea' && !this.cityCoast(city)) return false;
       return !need || anyResource || this.resourceRoom(p.id, need) > 0;
@@ -1907,9 +1909,7 @@ export class Game {
         } else {
           city.prod -= item.cost;
           if (isUnitKey(key)) {
-            const raised = this.createUnit(key, city.owner, city.tile);
-            // (Bought with faith: it carries its civ's faith, whatever its city follows.)
-            if (city.blessed) raised.faith = this.faithOf(city.owner) ?? raised.faith;
+            this.createUnit(key, city.owner, city.tile);
             city.blessed = false;
             this.record('built', city.owner, { city: city.name, item: key });
             if (key === 'settler') this.removeCitizen(city);
@@ -2292,39 +2292,69 @@ export class Game {
     const holy = p.capital;
     this.religions.set(r, { founder: p.id, holyCity: holy, turn: this.turn });
     if (holy !== null) this.cityById.get(holy)!.religion = r;
+    this.faithVersion++;
     this.record('religionFounded', p.id, { religion: r, holyCity: holy });
     this.log(`${p.name} founded ${religionDef(r).name}.`);
   }
 
-  // Each city takes up the religion pressed on it hardest, once that beats
-  // what it follows (holy cities keep theirs).
-  // Faith spent to convert a city: the founder of a religion may turn any
-  // city within CONVERT_REACH of its holy city to it (its own or
-  // another's, not another religion's holy city), for faith by the city's
-  // size; the city then keeps to it for DEVOUT_TURNS whatever presses on it.
-  convertCost(city: City): number { return CONVERT_BASE + CONVERT_PER_POP * city.pop; }
-  convertBlock(id: number, city: City): string | null {
-    const mine = [...this.religions].find(([, f]) => f.founder === id);
-    if (!mine) return 'Only the founder of a religion converts cities.';
-    const [r, f] = mine, holy = f.holyCity === null ? undefined : this.cityById.get(f.holyCity);
-    if (!holy) return 'Its holy city is no more.';
-    if (city.religion === r) return 'It follows your religion already.';
-    if ([...this.religions.values()].some((x) => x.holyCity === city.id)) return 'A holy city keeps its faith.';
-    if (this.approxDist(city.tile, holy.tile) > CONVERT_REACH) return `Beyond ${CONVERT_REACH} tiles of your holy city, ${holy.name}.`;
-    return this.players[id]!.faith < this.convertCost(city) ? `Needs ${this.convertCost(city)} faith.` : null;
+  // The religion a civ founded, and its holy city (null: it founded none).
+  foundedBy(id: number): { religion: ReligionKey; holy: City | undefined } | null {
+    for (const [r, f] of this.religions) if (f.founder === id) return { religion: r, holy: f.holyCity === null ? undefined : this.cityById.get(f.holyCity) };
+    return null;
   }
-  convert(id: number, city: City): boolean {
-    if (this.convertBlock(id, city) !== null) return false;
-    const r = [...this.religions].find(([, f]) => f.founder === id)![0];
-    this.players[id]!.faith -= this.convertCost(city);
+  // A missionary (religion.ts): the founder of a religion raises one with
+  // faith in a city of its own that follows it.
+  missionaryBlock(id: number, city: City): string | null {
+    const mine = this.foundedBy(id);
+    if (!mine) return 'Only the founder of a religion sends missionaries.';
+    if (city.owner !== id) return 'Not your city.';
+    if (city.religion !== mine.religion) return `${city.name} does not follow ${religionDef(mine.religion).name}.`;
+    return this.players[id]!.faith < MISSIONARY_FAITH ? `Needs ${MISSIONARY_FAITH} faith.` : null;
+  }
+  trainMissionary(id: number, city: City): Unit | null {
+    if (this.missionaryBlock(id, city) !== null) return null;
+    this.players[id]!.faith -= MISSIONARY_FAITH;
+    this.record('bought', id, { city: city.name, item: 'missionary', currency: 'faith', cost: MISSIONARY_FAITH });
+    return this.createUnit('missionary', id, city.tile);
+  }
+  // It preaches in a city it stands in or beside, anyone's: the city
+  // takes up its civ's religion for faith by its size, and keeps to it
+  // for DEVOUT_TURNS whatever presses on it or is preached to it; the
+  // missionary is spent. (Not another religion's holy city.)
+  preachCost(city: City): number { return CONVERT_PER_POP * city.pop; }
+  preachTarget(u: Unit): City | null {
+    const here = this.cityByTile.get(u.tile);
+    if (here && this.preachBlock(u, here) === null) return here;
+    let best: City | null = null;
+    for (const t of this.tiles[u.tile]!.neighbors) { const c = this.cityByTile.get(t); if (c && this.preachBlock(u, c) === null && (!best || c.pop > best.pop)) best = c; }
+    return best ?? here ?? this.tiles[u.tile]!.neighbors.map((t) => this.cityByTile.get(t)).find((c) => c !== undefined) ?? null;
+  }
+  preachBlock(u: Unit, city: City): string | null {
+    if (!unitDef(u.type).preaches) return 'Only missionaries preach.';
+    const mine = this.foundedBy(u.owner);
+    if (!mine) return 'Its religion has no founder.';
+    if (u.tile !== city.tile && !this.tiles[u.tile]!.neighbors.includes(city.tile)) return 'It must stand in the city or beside it.';
+    if (city.religion === mine.religion) return 'It follows your religion already.';
+    if ([...this.religions.values()].some((x) => x.holyCity === city.id)) return 'A holy city keeps its faith.';
+    if (city.devout > this.turn) return `It was converted lately: it keeps to its faith for ${city.devout - this.turn} more turns.`;
+    return this.players[u.owner]!.faith < this.preachCost(city) ? `Needs ${this.preachCost(city)} faith.` : null;
+  }
+  preach(u: Unit, city: City): boolean {
+    if (this.preachBlock(u, city) !== null) return false;
+    const r = this.foundedBy(u.owner)!.religion;
+    this.players[u.owner]!.faith -= this.preachCost(city);
     city.religion = r;
     city.devout = this.turn + DEVOUT_TURNS;
     this.useVersion++;
-    this.record('converted', city.owner, { city: city.name, religion: r, by: id });
-    if (city.owner === HUMAN || id === HUMAN) this.log(`${city.name} was converted to ${religionDef(r).name}.`);
+    this.faithVersion++;
+    this.record('converted', city.owner, { city: city.name, religion: r, by: u.owner });
+    if (city.owner === HUMAN || u.owner === HUMAN) this.log(`${city.name} was converted to ${religionDef(r).name}.`);
+    this.removeUnit(u);
     return true;
   }
 
+  // Each city takes up the religion pressed on it hardest, once that beats
+  // what it follows (holy cities keep theirs).
   private spreadReligions(): void {
     if (!this.religions.size) return;
     const holy = new Set([...this.religions.values()].map((f) => f.holyCity).filter((c): c is number => c !== null));
@@ -2348,6 +2378,7 @@ export class Game {
     }
     for (const [c, r] of changes) {
       c.religion = r;
+      this.faithVersion++;
       this.record('converted', c.owner, { city: c.name, religion: r });
       if (c.owner === HUMAN) this.log(`${c.name} now follows ${religionDef(r).name}.`);
     }
@@ -2635,17 +2666,19 @@ export class Game {
     for (const t of this.wondersBuilt.values()) if (t >= 0 && this.ownerOf(t) === id) wonders++;
     return pop + 2 * cities + 4 * p.techs.size + 2 * p.politics.size + p.identity.size + 5 * wonders;
   }
-  // Each civ's faith: the religion it founded, or else the one more than
-  // half of its cities follow (none: it has no faith).
+  // Each civ's religion: the one it founded, or else the one more than
+  // half of its people follow (none: it has none).
   private faithCache: { key: string; of: (ReligionKey | null)[] } = { key: '', of: [] };
-  faiths(): { of: (ReligionKey | null)[] } {
-    const key = `${this.turn}|${this.cities.length}|${this.useVersion}|${this.religions.size}`;
+  faithVersion = 0; // (bumped whenever a city's religion changes)
+  faiths(): { key: string; of: (ReligionKey | null)[] } {
+    const key = `${this.turn}|${this.cities.length}|${this.useVersion}|${this.religions.size}|${this.faithVersion}`;
     if (this.faithCache.key === key) return this.faithCache;
     const of = this.players.map((p): ReligionKey | null => {
       for (const [r, f] of this.religions) if (f.founder === p.id) return r;
-      const mine = this.cities.filter((c) => c.owner === p.id), count = new Map<ReligionKey, number>();
-      for (const c of mine) if (c.religion) count.set(c.religion, (count.get(c.religion) ?? 0) + 1);
-      for (const [r, n] of count) if (n * 2 > mine.length) return r;
+      const count = new Map<ReligionKey, number>();
+      let people = 0;
+      for (const c of this.cities) { if (c.owner !== p.id) continue; people += c.pop; if (c.religion) count.set(c.religion, (count.get(c.religion) ?? 0) + c.pop); }
+      for (const [r, n] of count) if (n * 2 > people) return r;
       return null;
     });
     this.faithCache = { key, of };

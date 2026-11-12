@@ -8,7 +8,7 @@ import {
   PATHS, FAITH_KEYS, PAIR_SLOTS, MAX_TRAITS, openSlots, traitDef, pathTraits, traitBlock, pathLevels, epithet, traitOfReligion, BLOCK_TEXT, isTraitKey,
   type PathKey, type TraitKey,
 } from './identity.ts';
-import { RELIGION_KEYS, religionDef, FAITH_SAME, FAITH_RIVAL, CONVERT_REACH, DEVOUT_TURNS } from './religion.ts';
+import { RELIGION_KEYS, religionDef, FAITH_SAME, FAITH_RIVAL, HOLY_STRIFE, MISSIONARY_FAITH, CONVERT_PER_POP, DEVOUT_TURNS } from './religion.ts';
 import { RESOURCE_KEYS, resourceDef, empireBonus, type ResourceKey } from './resources.ts';
 import { describe as describeEffect, describeAll, flat } from './effects.ts';
 import { ERAS, BUILDINGS, WONDERS, type EraIndex } from './cities.ts';
@@ -173,7 +173,6 @@ export class Sheets {
         break;
       }
       case 'dealAnswer': g.answerDeal(Number(d['i']), d['yes'] === '1'); break;
-      case 'convert': { const c = g.cityById.get(Number(d['city'])); if (c && !g.convert(HUMAN, c)) this.notice = g.convertBlock(HUMAN, c) ?? ''; break; }
       case 'download': this.downloadLog(); return;
       default: return;
     }
@@ -426,24 +425,18 @@ export class Sheets {
     const mine = g.cities.filter((c) => c.owner === p.id);
     const cities = mine.length ? mine.map((c) => `<tr><td>${esc(c.name)}</td><td>${c.religion ? religionDef(c.religion).name : '<small>none</small>'}</td></tr>`).join('') : '';
     return `<p class="note">A religion is founded by the first civilization to adopt its faith, a trait of the Devotion path of identity (Meditation founds Hinduism); a civilization adopts one faith at most. It spreads from its holy city to the cities around it, whoever owns them; Shrines and Temples press it harder. Each city following a religion gets its bonus; the founder takes 1 gold a turn from every city following it.</p>
-      <p class="note"><b>Faith in war.</b> A unit carries the religion its city followed when it was raised, for good. Attacking a unit of the same religion it is ${Math.round(100 * FAITH_SAME)}% weaker; attacking one of another religion, ${Math.round(100 * FAITH_RIVAL)}% stronger; a unit with no religion is outside all this. Attacking a unit inside a city, it is the city's religion that counts, not the garrison's. A faith spread to your neighbours shields you from the armies they raise.</p>
+      <p class="note"><b>A civilization's religion</b> is the one it founded, or else the one more than half of its people follow. <b>In war</b> a civilization attacking one of its own religion fights ${Math.round(100 * FAITH_SAME)}% weaker; attacking one of another religion, ${Math.round(100 * FAITH_RIVAL)}% stronger; with no religion on either side, nothing. And such a war troubles its people: its cities that follow the religion make ${HOLY_STRIFE.slice(1).map((x) => Math.round(100 * x) + '%').join(', ')} less cohesion while it is at war with one, two, three or more civilizations of its own religion.</p>
       <table class="grid"><tr><th>Religion</th><th>Faith (identity)</th><th>Founder</th><th>Holy city</th><th>Cities</th><th>Bonus per city</th></tr>${rows}</table>
       ${this.convertHtml()}
       ${cities ? `<h3>Your cities</h3><table class="grid"><tr><th>City</th><th>Follows</th></tr>${cities}</table>` : ''}`;
   }
 
-  // What your faith can convert: the cities you know within reach of your holy city that do not follow your religion.
+  // What the founder of a religion does with its faith: missionaries.
   private convertHtml(): string {
-    const g = this.game, mine = [...g.religions].find(([, f]) => f.founder === HUMAN);
+    const g = this.game, mine = g.foundedBy(HUMAN);
     if (!mine) return '';
-    const [r, f] = mine, holy = f.holyCity === null ? undefined : g.cityById.get(f.holyCity);
-    if (!holy) return '';
-    const near = g.cities.filter((c) => g.explored[c.tile] && c.religion !== r && g.approxDist(c.tile, holy.tile) <= CONVERT_REACH).sort((a, b) => b.pop - a.pop);
-    const rows = near.map((c) => { const why = g.convertBlock(HUMAN, c);
-      return `<tr><td><span class="swatch" style="background:${g.players[c.owner]!.color}"></span> ${esc(c.name)} <small>${esc(g.players[c.owner]!.name)} · size ${c.pop}</small></td><td>${c.religion ? religionDef(c.religion).name : '<small>none</small>'}</td>
-        <td><button data-do="convert" data-city="${c.id}" ${why ? 'disabled' : ''} ${why ? tip('Cannot convert', esc(why)) : ''}>Convert <small>${g.convertCost(c)} faith</small></button></td></tr>`; }).join('');
-    return `<h3>Convert with faith</h3>${this.notice ? `<p class="notice">${esc(this.notice)}</p>` : ''}<p class="note">As the founder of ${religionDef(r).name} you may turn to it any city within ${CONVERT_REACH} tiles of ${esc(holy.name)}, your holy city, yours or another's, for faith by its size (you have ${this.me.faith}). It keeps to it for ${DEVOUT_TURNS} turns whatever presses on it, and the units it raises carry it. Faith also buys, in a city of yours, a Shrine, a Temple, or the unit it is building: a unit so raised carries your faith.</p>
-      ${rows ? `<table class="grid"><tr><th>City</th><th>Follows</th><th></th></tr>${rows}</table>` : '<p class="note">No city in reach to convert.</p>'}`;
+    const out = g.units.filter((u) => u.owner === HUMAN && u.type === 'missionary').length;
+    return `<h3>Missionaries</h3><p class="note">As the founder of ${religionDef(mine.religion).name} you raise missionaries with faith (${MISSIONARY_FAITH}; you have ${this.me.faith}) in your cities that follow it: the button is in the city's panel. A missionary goes where you send it, over land and sea, and preaches in a city it stands in or beside, anyone's, for ${CONVERT_PER_POP} faith a citizen there; the city keeps to your religion for ${DEVOUT_TURNS} turns whatever presses on it, and the missionary is spent. Not in another religion's holy city.${out ? ` You have ${out} on the map.` : ''}</p>`;
   }
 
   private diplomacyHtml(): string {

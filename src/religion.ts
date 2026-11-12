@@ -6,7 +6,7 @@ import type { Effect } from './effects.ts';
 // founds Hinduism, and so on; a civ adopts one faith at most, so the rest
 // stay open to others. The founder's
 // capital becomes its holy city; from there it spreads to nearby cities,
-// whoever owns them (game.ts spreadReligions), by pressure: every city
+// whoever owns them (game.ts spreadReligions), by pressure (and further by missionaries: below): every city
 // that follows a religion presses it on the cities within PRESSURE_REACH
 // tiles (the holy city, and Shrines and Temples, harder), and a city takes
 // up the religion pressed on it hardest once that is strong enough.
@@ -35,34 +35,35 @@ export type ReligionKey = keyof typeof RELIGIONS;
 export const RELIGION_KEYS = Object.keys(RELIGIONS) as ReligionKey[];
 export const religionDef = (k: ReligionKey): ReligionDef => RELIGIONS[k];
 
-// Faith in war (game.ts faithEdge). A unit carries a religion: the one
-// its city followed when it was raised (none, if the city followed none),
-// and keeps it for good. When it attacks another unit:
-//   the defender carries the same religion   FAITH_SAME weaker (a bad conscience)
-//   the defender carries another             FAITH_RIVAL stronger (zeal)
-//   either carries none                      nothing
-// Attacking a unit in a city, it is the city's religion that counts, not
-// the garrison's: the attackers' conscience is about the people they
-// would take, and no garrison of a convenient creed shields a city.
-// So a faith spread to one's neighbours is a shield against the armies
-// they raise, an army of another creed fights the harder, and the
-// faithless are left out of it: one figure in the fight's odds, shown
-// before the attack is made.
-export const FAITH_SAME = 0.3;
+// A civ's religion (game.ts faithOf): the one it founded; else the one
+// more than half of its people follow; else none. Anyone who has met it
+// knows it (the Diplomacy sheet).
+//
+// Faith in war (game.ts faithEdge), by the two civs' religions:
+//   the same       the attacker FAITH_SAME weaker (a bad conscience)
+//   another        FAITH_RIVAL stronger (zeal)
+//   either none    nothing
+// And a war on a civ of its own religion troubles its people: its cities
+// that follow it make less cohesion while it lasts, the more such wars it
+// is in at once (HOLY_STRIFE: one, two, three and over). A price, not a
+// ban. So a faith spread to one's neighbours is a shield, an army of
+// another creed fights the harder, and the faithless are left out of it.
+export const FAITH_SAME = 0.25;
 export const FAITH_RIVAL = 0.2;
+export const HOLY_STRIFE = [0, 0.25, 0.4, 0.5] as const;
 
-// What faith buys (game.ts): a Shrine or a Temple; for a civ with a faith,
-// a fighting unit, which then carries that faith whatever its city
-// follows; and, for the founder of a religion, a city's conversion
-// (convert): any city within CONVERT_REACH tiles of its holy city, for
-// CONVERT_BASE faith and CONVERT_PER_POP more a citizen, which then keeps
-// to it for DEVOUT_TURNS whatever presses on it.
-export const CONVERT_REACH = 10;
-export const CONVERT_BASE = 30, CONVERT_PER_POP = 15;
+// What faith buys (game.ts): a Shrine or a Temple; for a civ with a
+// religion, a fighting unit; and, for the founder of a religion, a
+// missionary (MISSIONARY_FAITH, raised in a city of its own that follows
+// it). A missionary goes where it is sent, over land and sea, and
+// preaches in a city it stands in or beside: the city takes up the
+// religion (CONVERT_PER_POP faith a citizen), and keeps to it for
+// DEVOUT_TURNS whatever presses on it or is preached to it; the
+// missionary is spent. Not in another religion's holy city.
+export const MISSIONARY_FAITH = 30, CONVERT_PER_POP = 15;
 export const DEVOUT_TURNS = 15;
-
-// Spreading.
-export const PRESSURE_REACH = 6;        // tiles
+// A religion presses on the cities near those that follow it (spreadReligions); missionaries carry it further.
+export const PRESSURE_REACH = 4;        // tiles
 export const HOLY_PRESSURE = 6;         // from the holy city
 export const CITY_PRESSURE = 2;         // from every other city following it
 export const BUILDING_PRESSURE = 1;     // more from a city with a Shrine, and a Temple
