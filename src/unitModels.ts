@@ -185,16 +185,25 @@ export const thrusts = (type: UnitKey): boolean => THRUSTERS.has(type);
 // Whether a type's figures carry a musket or a rifle, fighting at close quarters with its bayonet.
 const BAYONETS: ReadonlySet<UnitKey> = new Set<UnitKey>(['musketman', 'rifleman', 'greatWarInfantry', 'infantry', 'marine', 'paratrooper']);
 export const bayonets = (type: UnitKey): boolean => BAYONETS.has(type);
+// Whether a type's figures carry their weapon in both hands, across the body (a long gun, a machine gun, a crossbow: the
+// gun rig, people.ts GUN_R, GUN_L): they turn their shoulders to aim it, and at close quarters lunge with it.
+const LONG_ARMS: ReadonlySet<UnitKey> = new Set<UnitKey>([...BAYONETS, 'crossbowman', 'machineGun', 'specialForces']);
+export const longArms = (type: UnitKey): boolean => LONG_ARMS.has(type);
 export const bowman = (type: UnitKey): boolean => type === 'archer' || type === 'compositeBowman' || type === 'horseArcher';
 // Whether a type's figures draw a bow on foot, the string to the cheek (unitAnim.ts: a horse archer's bow is drawn as it rides).
 export const draws = (type: UnitKey): boolean => type === 'archer' || type === 'compositeBowman';
 
-type Hold = 'spear' | 'pike' | 'club' | 'sword' | 'longsword' | 'bow' | 'recurve' | 'sling' | 'crossbow' | 'musket' | 'rifle' | 'mg' | 'staff' | 'hoe' | 'banner' | 'none';
+// The firearms, each its unit's own: a flintlock musket; a percussion rifle with a sword bayonet; a bolt-action rifle; a
+// self-loading rifle; a submachine gun with a drum; an assault rifle; a silenced carbine with a sight; a light machine gun.
+type Gun = 'musket' | 'rifle' | 'boltRifle' | 'selfLoader' | 'smg' | 'assaultRifle' | 'carbine' | 'mg';
+const GUN_KINDS: ReadonlySet<string> = new Set<Gun>(['musket', 'rifle', 'boltRifle', 'selfLoader', 'smg', 'assaultRifle', 'carbine', 'mg']);
+const isGun = (h: Hold): h is Gun => GUN_KINDS.has(h);
+type Hold = 'spear' | 'pike' | 'club' | 'sword' | 'longsword' | 'bow' | 'recurve' | 'sling' | 'crossbow' | Gun | 'staff' | 'hoe' | 'banner' | 'none';
 
 // How far forward of upright each weapon is made to point (radians): a
-// spear upright, a sword a little forward, a crossbow or a machine gun level.
+// spear upright, a sword a little forward (what is held in both hands lies through them: figure).
 const REST_PITCH: Record<Hold, number> = {
-  spear: 0, pike: 0, club: 0.23, sword: 0.25, longsword: 0.31, bow: 0, recurve: 0, sling: Math.PI, crossbow: 1.4, musket: 0.4, rifle: 0.4, mg: 1.35, staff: 0, hoe: 0, banner: 0, none: 0,
+  spear: 0, pike: 0, club: 0.23, sword: 0.25, longsword: 0.31, bow: 0, recurve: 0, sling: Math.PI, crossbow: 0.4, musket: 0.4, rifle: 0.4, boltRifle: 0.4, selfLoader: 0.4, smg: 0.4, assaultRifle: 0.4, carbine: 0.4, mg: 0.4, staff: 0, hoe: 0, banner: 0, none: 0,
 };
 // A body (people.ts) tagged for the units' shader.
 // (A skirt follows the legs (RIG.skirt; the shader: unitView.ts): each
@@ -226,15 +235,6 @@ const v3 = (p: THREE.Vector3) => V(p.x, p.y, p.z);
 // (The figure faces +z: its right hand is at -x.)
 // `still`: standing (in a chariot), its legs never swinging; `helmetAs`,
 // `shieldAs`: the unit's own headgear or shield whatever its civ's.
-// A point `k` along a gun (or crossbow) held in both hands (model units:
-// back of the grip negative): one straight line through the right hand's
-// grip, a little towards the left hand, pointing as it is carried
-// (REST_PITCH). Straight in the plane the grip turns in (y, z), so it
-// points true however it is aimed.
-const gunAt = (hold: Hold, hR: { x: number; y: number; z: number }, hL: { x: number }) => {
-  const d = V(0, Math.cos(REST_PITCH[hold]), Math.sin(REST_PITCH[hold])), g = V(hR.x * 0.65 + hL.x * 0.35, hR.y, hR.z);
-  return (k: number) => g.clone().addScaledVector(d, k);
-};
 function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { armor?: Armor; helmet?: boolean; pack?: boolean; quiver?: boolean; female?: boolean; civilian?: boolean; modern?: boolean; still?: boolean; helmetAs?: Helmet; shieldAs?: Shield } = {}): THREE.BufferGeometry[] {
   const gear1: Gear = opts.modern ? { ...gear0, legs: 0x4a4e44, helmet: 'kettle' } : gear0;
   const gear: Gear = { ...gear1, helmet: opts.helmetAs ?? gear1.helmet, shield: opts.shieldAs ?? gear1.shield };
@@ -246,18 +246,17 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { armor?: Armor;
     painted: FINE, civ: CIV, ...(opts.modern ? {} : { undyed: LINEN }), ...(opts.armor ? { armor: opts.armor } : {}),
   };
   // The arms: the right one carries the weapon, the left the shield (or the bow).
-  const bow = hold === 'bow' || hold === 'recurve', twoHands = hold === 'crossbow' || hold === 'musket' || hold === 'rifle' || hold === 'mg' || hold === 'longsword';
+  const bow = hold === 'bow' || hold === 'recurve', longGun = isGun(hold) || hold === 'crossbow', twoHands = longGun || hold === 'longsword';
   // (A sling hangs from the lowered hand until it is whirled; a two-handed sword's grip in both hands.)
-  const longGun = hold === 'musket' || hold === 'rifle';
   const armR: ArmPose = hold === 'none' || bow || hold === 'sling' ? HANG : hold === 'longsword' ? GRIP2 : longGun ? GUN_R : HOLD;
   const armL: ArmPose = shield ? SHIELD : bow ? RAISE : hold === 'longsword' ? GRIP2 : longGun ? GUN_L : twoHands ? HOLD : HANG;
   const strike = hold === 'sling' ? HIT(SHOULDER, 1.4) : hold === 'spear' || hold === 'pike' || hold === 'club' || hold === 'sword' || hold === 'longsword' ? HIT(SHOULDER, REACH)
-    : hold === 'mg' ? HIT(SHOULDER, 0.4) : twoHands ? HIT(SHOULDER, GUN_REACH) : null;
+    : twoHands ? HIT(SHOULDER, GUN_REACH) : null;
   const bowUp = HIT(SHOULDER, BOW_REACH); // (an archer raises his bow to loose: from where he holds it forward)
   const freeL = !shield && !bow && !twoHands;
   const swing = {
     legs: (side: number) => (opts.still ? [0, HIP, 0] as const : LEG(side)),
-    arms: (side: number) => (side === -1 ? (hold === 'none' ? ARM(-1) : bow ? DRAW_ARM : strike ?? STILL_ARM) : shield ? GUARD_ARM : freeL ? ARM(1) : bow ? bowUp : hold === 'longsword' || hold === 'mg' ? strike ?? STILL_ARM : longGun ? SUPPORT_ARM : STILL_ARM),
+    arms: (side: number) => (side === -1 ? (hold === 'none' ? ARM(-1) : bow ? DRAW_ARM : strike ?? STILL_ARM) : shield ? GUARD_ARM : freeL ? ARM(1) : bow ? bowUp : hold === 'longsword' ? strike ?? STILL_ARM : longGun ? SUPPORT_ARM : STILL_ARM),
   };
   const out = tagged(person(dress, armL, armR, swing));
   const hR = handAt(-1, armR, f), hL = handAt(1, armL, f), eR = elbowAt(-1, armR, f), eL = elbowAt(1, armL, f);
@@ -282,32 +281,19 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { armor?: Armor;
     const d = V(0, 0.57, 0.19);
     out.push(...hilt(g.clone().add(V(0, 0.01, 0)), d, 0.07, METAL, w), blade(g.clone().add(V(0, 0.05, 0.015)), g.clone().add(V(0, 0.64, 0.21)), 0.026, METAL, w));
   }
-  // (A machine gun at the hip: its body, barrel and drum.)
-  // (Like every gun, straight in the plane its grip turns in: gunAt.)
-  if (hold === 'mg') {
-    const at = gunAt(hold, hR, hL), mid = at(0.05);
-    out.push(rod(at(-0.1), at(0.18), 0.032, 0.03, 4, GUNMETAL, w), rod(at(0.18), at(0.48), 0.012, 0.012, 3, GUNMETAL, w),
-      box(0.05, 0.08, 0.08, GUNMETAL, { x: mid.x, y: mid.y - 0.06, z: mid.z }, w));
-  }
   // (A sling hanging from the hand: its cords and the stone's pouch.)
   if (hold === 'sling') out.push(rod(v3(hR), v3(hR).add(V(0.01, -0.21, 0.02)), 0.004, 0.004, 3, 0xb8a888, w), ball(0.025, 0x8a7a62, { x: hR.x + 0.01, y: hR.y - 0.23, z: hR.z + 0.02 }, w));
   if (hold === 'staff') out.push(rod(up(-0.42), up(0.6), 0.013, 0.011, 5, WOOD, { limb: STILL_ARM }));
   // (A worker's hoe: its shaft upright in the hand, the iron blade at its top, bent forward.)
   if (hold === 'hoe') out.push(rod(up(-0.42), up(0.62), 0.013, 0.011, 5, WOOD, { limb: STILL_ARM }), box(0.07, 0.016, 0.1, IRON, { x: hR.x, y: hR.y + 0.6, z: hR.z + 0.05 }, { limb: STILL_ARM }));
-  // (A long gun, one straight piece, carried muzzle up and a little
-  // forward (REST_PITCH) in front of the body, between the hands: the
-  // stock gripped by the right hand, the barrel on up; a rifle's with a
-  // bayonet. Straight in the plane it turns in, so it points true however
-  // it is aimed.)
-  if (longGun) {
-    // (Through both hands: the right on the stock, the left up the barrel.)
-    const d = v3(hL).sub(v3(hR)).normalize(), at = (k: number) => v3(hR).addScaledVector(d, k);
-    out.push(rod(at(-0.2), at(0.1), 0.022, 0.017, 5, WOOD, w), rod(at(0.1), at(0.52), 0.011, 0.011, 5, METAL, w));
-    if (hold === 'rifle') out.push(rod(at(0.52), at(0.66), 0.006, 0.0015, 4, METAL, w));
-  }
-  if (hold === 'crossbow') {
-    const at = gunAt(hold, hR, hL), tip = at(0.24);
-    out.push(rod(at(-0.08), tip, 0.02, 0.016, 5, WOOD, w), rod(tip.clone().add(V(-0.17, 0, 0)), tip.clone().add(V(0.17, 0, 0)), 0.01, 0.01, 4, WOOD, w));
+  // (A gun or a crossbow, carried muzzle up and across the body, through both hands: the right at its grip, the left
+  // further up it. Straight, so it points true however it is aimed. Far off (the plain figure), a stock and a barrel.)
+  if (isGun(hold) || hold === 'crossbow') {
+    if (FINE) out.push(...(hold === 'crossbow' ? crossbow(v3(hR), v3(hL), w) : firearm(hold, v3(hR), v3(hL), w)));
+    else {
+      const d = v3(hL).sub(v3(hR)).normalize(), at = (k: number) => v3(hR).addScaledVector(d, k), long = hold === 'musket' || hold === 'rifle' || hold === 'boltRifle' || hold === 'selfLoader';
+      out.push(rod(at(-0.2), at(0.1), 0.022, 0.017, 5, hold === 'carbine' || hold === 'mg' ? GUNMETAL : WOOD, w), rod(at(0.1), at(long ? 0.55 : 0.36), 0.011, 0.011, 5, long ? METAL : GUNMETAL, w));
+    }
   }
   if (hold === 'banner') {
     // A tall pole with the owner's banner hanging from a crossbar, a finial on top.
@@ -334,6 +320,170 @@ function figure(gear0: Gear, hold: Hold, shield: boolean, opts: { armor?: Armor;
   if (shield) out.push(...shieldOf(gear.shield, hL, { limb: GUARD_ARM, joint: [eL.y, eL.z] }, HEROIC.shield));
   if (opts.helmet) out.push(...helmetOf(gear.helmet));
   return out;
+}
+
+// ---- guns and crossbows ----
+// What is held in both hands is made about the line through them: `k` along it from the right hand (the muzzle
+// ahead), `v` up from it as the gun is levelled (its sights up, its trigger down), `s` out to the figure's left.
+// (Its section, v and s, heroic as every weapon: WK.)
+const WALNUT = 0x5a3e28, BIRCH = 0x8a6238, BRASS = 0xb8923a, BLUED = 0x3c4048, POLYMER = 0x232527, STRAP = 0x4a3826, CANVAS = 0x7c7a58, BRIGHT = 0xb4b6ba;
+type Station = readonly [k: number, lo: number, hi: number, half: number];
+function smith(hR: THREE.Vector3, hL: THREE.Vector3, t: Tag) {
+  const u = hL.clone().sub(hR).normalize(), side = V(1, 0, 0).addScaledVector(u, -u.x).normalize(), top = u.clone().cross(side), K = WK;
+  const at = (k: number, v = 0, s = 0) => hR.clone().addScaledVector(u, k).addScaledVector(top, v * K).addScaledVector(side, s * K);
+  // (A solid through four-cornered rings, its ends closed, each face flat and turned outward.)
+  const solid = (rings: readonly (readonly THREE.Vector3[])[], color: number) => {
+    const pos: number[] = [], mid = (ps: readonly THREE.Vector3[]) => ps.reduce((a, p) => a.add(p), V(0, 0, 0)).multiplyScalar(1 / ps.length);
+    const quad = (q: readonly THREE.Vector3[], inside: THREE.Vector3) => {
+      const [a, b, c, d] = q as [THREE.Vector3, THREE.Vector3, THREE.Vector3, THREE.Vector3];
+      const out = b.clone().sub(a).cross(d.clone().sub(a)).dot(mid(q).sub(inside)) >= 0;
+      for (const p of out ? [a, b, c, a, c, d] : [a, c, b, a, d, c]) pos.push(p.x, p.y, p.z);
+    };
+    for (let i = 0; i + 1 < rings.length; i++) {
+      const a = rings[i]!, b = rings[i + 1]!, inside = mid([...a, ...b]);
+      for (let j = 0; j < 4; j++) quad([a[j]!, a[(j + 1) % 4]!, b[(j + 1) % 4]!, b[j]!], inside);
+      if (i === 0) quad(a, inside);
+      if (i + 2 === rings.length) quad(b, inside);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    return tag(part(g, color), t);
+  };
+  // (A beam along the gun: its section at each station, from `lo` to `hi`, `half` wide each way about `s`.)
+  const beam = (st: readonly Station[], color: number, s = 0) => solid(st.map(([k, lo, hi, half]) => [at(k, lo, s - half), at(k, hi, s - half), at(k, hi, s + half), at(k, lo, s + half)]), color);
+  // (A post from one point of the gun's upright plane to another (k, v), `th` thick each way in it: a grip, a magazine.)
+  const post = (pts: readonly (readonly [number, number])[], th: number, half: number, color: number, s = 0) => solid(pts.map(([k, v], i) => {
+    const a = pts[Math.max(0, i - 1)]!, b = pts[Math.min(pts.length - 1, i + 1)]!, d = at(b[0], b[1]).sub(at(a[0], a[1])).normalize(), n = d.cross(side).normalize().multiplyScalar(th * K);
+    const c = at(k, v, s), l = side.clone().multiplyScalar(half * K);
+    return [c.clone().sub(n).sub(l), c.clone().add(n).sub(l), c.clone().add(n).add(l), c.clone().sub(n).add(l)];
+  }), color);
+  const tube = (a: THREE.Vector3, b: THREE.Vector3, r0: number, r1: number, n: number, color: number) => tag(seg(a, b, r0 * K, r1 * K, n, color), t);
+  // (A drum: a closed cylinder about `axis`.)
+  const drum = (c: THREE.Vector3, axis: THREE.Vector3, r: number, h: number, n: number, color: number) =>
+    tag(part(new THREE.CylinderGeometry(r * K, r * K, h * K, n), color, new THREE.Matrix4().compose(c, new THREE.Quaternion().setFromUnitVectors(V(0, 1, 0), axis), V(1, 1, 1))), t);
+  // (A bayonet's blade: flat, its edges up and down.)
+  const knife = (k0: number, k1: number, v: number, w: number, s = 0) => {
+    const a = at(k0, v, s), b = at(k1, v, s), e = top.clone().multiplyScalar(w * K), l = side.clone().multiplyScalar(0.0035 * K), m = a.clone().lerp(b, 0.78);
+    return solid([[a.clone().sub(e).sub(l), a.clone().add(e).sub(l), a.clone().add(e).add(l), a.clone().sub(e).add(l)], [m.clone().sub(e).sub(l), m.clone().add(e).sub(l), m.clone().add(e).add(l), m.clone().sub(e).add(l)],
+      [b.clone().sub(l.clone().multiplyScalar(0.2)), b.clone().add(e.clone().multiplyScalar(0.15)), b.clone().add(l.clone().multiplyScalar(0.2)), b.clone().sub(e.clone().multiplyScalar(0.15))]], BRIGHT);
+  };
+  return { at, beam, post, tube, drum, knife, side, top };
+}
+function firearm(kind: Gun, hR: THREE.Vector3, hL: THREE.Vector3, t: Tag): THREE.BufferGeometry[] {
+  const { at, beam, post, tube, drum, knife, side, top } = smith(hR, hL, t);
+  const band = (k: number, lo: number, hi: number, half: number, color: number, len = 0.014) => beam([[k, lo, hi, half], [k + len, lo, hi, half]], color);
+  const sling = (k0: number, v0: number, k1: number, v1: number, color: number) => beam([[k0, v0 - 0.006, v0, 0.005], [(k0 + k1) / 2, (v0 + v1) / 2 - 0.016, (v0 + v1) / 2 - 0.01, 0.005], [k1, v1 - 0.006, v1, 0.005]], color);
+  switch (kind) {
+    // (A flintlock: a fish-tailed butt, the lock and its cock on the right, brass furniture, the ramrod under the
+    // barrel, a socket bayonet off to the side of the muzzle.)
+    case 'musket': return [
+      beam([[-0.25, -0.064, 0.004, 0.011], [-0.09, -0.016, 0.011, 0.011], [0.04, -0.014, 0.011, 0.011], [0.44, -0.01, 0.006, 0.009]], WOOD),
+      tube(at(-0.06, 0.017), at(0.6, 0.014), 0.0078, 0.0066, 4, METAL),
+      beam([[-0.045, -0.004, 0.016, 0.003], [0.035, -0.002, 0.013, 0.003]], IRON, -0.0125),
+      beam([[-0.042, 0.016, 0.036, 0.003], [-0.02, 0.022, 0.05, 0.003]], IRON, -0.011),
+      beam([[-0.055, -0.031, -0.025, 0.004], [0.02, -0.03, -0.024, 0.004]], BRASS),
+      band(0.19, -0.013, 0.025, 0.012, BRASS), band(0.37, -0.011, 0.023, 0.011, BRASS),
+      tube(at(0.05, -0.018), at(0.48, -0.013), 0.003, 0.003, 3, BRIGHT),
+      tube(at(0.575, 0.014, 0), at(0.575, 0.014, -0.016), 0.004, 0.004, 3, BRIGHT), tube(at(0.57, 0.014, -0.016), at(0.8, 0.014, -0.016), 0.0052, 0.0008, 3, BRIGHT),
+    ];
+    // (A percussion rifle: a slimmer, darker stock, iron bands, a hammer, a leaf sight, a sling, a long sword bayonet.)
+    case 'rifle': return [
+      beam([[-0.23, -0.05, 0.006, 0.01], [-0.08, -0.015, 0.011, 0.01], [0.04, -0.013, 0.011, 0.01], [0.41, -0.009, 0.007, 0.008]], WALNUT),
+      tube(at(-0.05, 0.016), at(0.55, 0.013), 0.0072, 0.006, 4, BLUED),
+      beam([[-0.04, 0.01, 0.03, 0.003], [-0.018, 0.016, 0.044, 0.003]], IRON, -0.01),
+      beam([[-0.05, -0.029, -0.024, 0.0035], [0.015, -0.028, -0.023, 0.0035]], IRON),
+      band(0.16, -0.012, 0.023, 0.011, IRON), band(0.3, -0.011, 0.022, 0.0105, IRON), band(0.4, -0.01, 0.021, 0.01, IRON),
+      beam([[0.07, 0.022, 0.034, 0.003], [0.082, 0.022, 0.03, 0.003]], IRON),
+      sling(-0.17, -0.046, 0.3, -0.012, STRAP),
+      beam([[0.5, -0.016, 0.004, 0.006], [0.515, -0.016, 0.004, 0.006]], BRASS), knife(0.515, 0.8, -0.006, 0.0085),
+    ];
+    // (A bolt-action rifle: a pistol-gripped stock, wood over the barrel almost to the muzzle, the bolt's handle
+    // out to the right, a box magazine, a knife bayonet.)
+    case 'boltRifle': return [
+      beam([[-0.22, -0.05, 0.004, 0.011], [-0.1, -0.022, 0.008, 0.011], [-0.05, -0.027, 0.01, 0.011], [0, -0.014, 0.014, 0.011], [0.42, -0.011, 0.021, 0.0095]], BIRCH),
+      beam([[-0.065, 0.01, 0.026, 0.0065], [0.045, 0.014, 0.027, 0.0065]], BLUED),
+      tube(at(-0.03, 0.019, -0.005), at(-0.04, 0.002, -0.03), 0.0035, 0.0035, 3, BRIGHT), drum(at(-0.042, -0.002, -0.032), side, 0.007, 0.012, 4, BRIGHT),
+      beam([[0.008, -0.031, -0.014, 0.007], [0.052, -0.028, -0.014, 0.007]], BLUED),
+      band(0.25, -0.013, 0.022, 0.011, BLUED), band(0.405, -0.012, 0.023, 0.0105, BLUED, 0.02),
+      tube(at(0.42, 0.012), at(0.5, 0.012), 0.0066, 0.006, 4, BLUED),
+      sling(-0.16, -0.045, 0.25, -0.013, CANVAS),
+      knife(0.44, 0.67, -0.008, 0.008),
+    ];
+    // (A self-loading rifle: a half stock, the receiver bare on top, the barrel and its gas cylinder out ahead
+    // of the wood, a hooded foresight, a short bayonet.)
+    case 'selfLoader': return [
+      beam([[-0.2, -0.048, 0.004, 0.011], [-0.09, -0.02, 0.01, 0.011], [-0.04, -0.027, 0.012, 0.011], [0.02, -0.016, 0.013, 0.012], [0.27, -0.012, 0.012, 0.01]], WOOD),
+      beam([[-0.075, 0.012, 0.028, 0.0072], [0.1, 0.013, 0.027, 0.0072]], BLUED),
+      beam([[0.1, 0.012, 0.025, 0.008], [0.3, 0.012, 0.023, 0.007]], WOOD),
+      tube(at(0.27, 0.017), at(0.5, 0.017), 0.006, 0.0056, 4, BLUED), tube(at(0.27, 0.003), at(0.465, 0.005), 0.0052, 0.0052, 3, BLUED),
+      band(0.452, -0.004, 0.025, 0.007, BLUED), beam([[0.474, 0.022, 0.038, 0.0045], [0.49, 0.022, 0.038, 0.0045]], BLUED),
+      sling(-0.15, -0.044, 0.24, -0.012, CANVAS),
+      knife(0.47, 0.6, -0.004, 0.0075),
+    ];
+    // (A submachine gun: a short wooden butt and fore-end, a pistol grip, a drum under the receiver, a stubby
+    // barrel in its cooling jacket.)
+    case 'smg': return [
+      beam([[-0.2, -0.05, 0, 0.01], [-0.07, -0.012, 0.016, 0.01]], WALNUT),
+      beam([[-0.085, 0, 0.03, 0.009], [0.15, 0.004, 0.03, 0.009]], BLUED),
+      post([[0.002, 0.004], [-0.018, -0.046]], 0.011, 0.008, WALNUT),
+      beam([[0.08, -0.016, 0.006, 0.0105], [0.21, -0.012, 0.008, 0.0095]], WALNUT),
+      drum(at(0.045, -0.03), side, 0.034, 0.022, 7, BLUED),
+      tube(at(0.15, 0.018), at(0.3, 0.018), 0.0062, 0.0062, 4, BLUED), tube(at(0.2, 0.018), at(0.34, 0.018), 0.0098, 0.0098, 5, IRON),
+      beam([[0.12, 0.03, 0.04, 0.003], [0.132, 0.03, 0.04, 0.003]], BLUED),
+    ];
+    // (An assault rifle: wooden butt, grip and handguard about a stamped receiver, a long curved magazine, the
+    // gas tube over the barrel, a foresight post, a short bayonet.)
+    case 'assaultRifle': return [
+      beam([[-0.21, -0.046, 0.006, 0.009], [-0.065, -0.004, 0.02, 0.009]], BIRCH),
+      beam([[-0.075, 0, 0.029, 0.008], [0.1, 0.002, 0.029, 0.008]], BLUED),
+      post([[0.002, 0.004], [-0.02, -0.046]], 0.01, 0.007, BIRCH),
+      post([[0.05, 0.002], [0.06, -0.045], [0.082, -0.085]], 0.012, 0.0055, IRON),
+      beam([[0.1, -0.01, 0.025, 0.0092], [0.24, -0.008, 0.023, 0.0085]], BIRCH),
+      tube(at(0.24, 0.011), at(0.43, 0.011), 0.006, 0.006, 4, BLUED), tube(at(0.24, 0.025), at(0.345, 0.025), 0.0042, 0.0042, 3, BLUED),
+      beam([[0.335, 0.011, 0.04, 0.003], [0.35, 0.011, 0.04, 0.003]], BLUED),
+      knife(0.4, 0.53, -0.002, 0.007),
+    ];
+    // (A silenced carbine: black throughout, a sliding butt on its tube, a straight magazine, a railed handguard
+    // with a grip under it, a sight on top, the fat silencer ahead.)
+    case 'carbine': return [
+      tube(at(-0.17, 0.016), at(-0.055, 0.016), 0.006, 0.006, 4, IRON), beam([[-0.195, -0.032, 0.03, 0.007], [-0.16, -0.02, 0.03, 0.007]], POLYMER),
+      beam([[-0.06, 0, 0.031, 0.0082], [0.08, 0, 0.031, 0.0082]], POLYMER),
+      post([[0.002, 0.004], [-0.016, -0.045]], 0.01, 0.007, POLYMER),
+      post([[0.045, 0.002], [0.056, -0.062]], 0.011, 0.0055, IRON),
+      beam([[0.08, 0.001, 0.031, 0.0088], [0.24, 0.003, 0.029, 0.0088]], IRON),
+      post([[0.155, 0.002], [0.152, -0.04]], 0.008, 0.007, POLYMER),
+      beam([[-0.012, 0.031, 0.054, 0.0062], [0.05, 0.031, 0.054, 0.0062]], 0x34383a),
+      tube(at(0.24, 0.016), at(0.29, 0.016), 0.0052, 0.0052, 4, BLUED), tube(at(0.285, 0.016), at(0.42, 0.016), 0.0105, 0.0105, 6, POLYMER),
+    ];
+    // (A light machine gun: a wooden butt, a deep receiver with the pan of cartridges flat on top, the barrel in
+    // a fat cooling jacket, a bipod's legs folded back under it.)
+    case 'mg': return [
+      beam([[-0.23, -0.052, 0.01, 0.01], [-0.085, -0.008, 0.022, 0.01]], WALNUT),
+      beam([[-0.09, -0.005, 0.031, 0.0105], [0.1, -0.004, 0.031, 0.0105]], GUNMETAL),
+      post([[0.002, 0.002], [-0.018, -0.046]], 0.011, 0.008, WALNUT),
+      drum(at(0.03, 0.04), top, 0.042, 0.016, 8, IRON),
+      tube(at(0.1, 0.014), at(0.43, 0.014), 0.0145, 0.0145, 6, IRON), tube(at(0.42, 0.014), at(0.48, 0.014), 0.007, 0.0085, 4, GUNMETAL),
+      band(0.36, -0.002, 0.03, 0.016, GUNMETAL, 0.012),
+      tube(at(0.366, -0.004, -0.012), at(0.2, -0.01, -0.016), 0.0038, 0.0038, 3, GUNMETAL), tube(at(0.366, -0.004, 0.012), at(0.2, -0.01, 0.016), 0.0038, 0.0038, 3, GUNMETAL),
+    ];
+  }
+}
+// A crossbow, spanned and loaded: the tiller, its long trigger lever underneath, the steel bow across its
+// front (bent back to the string), the string drawn to the nut, the bolt on top, a stirrup at the nose.
+function crossbow(hR: THREE.Vector3, hL: THREE.Vector3, t: Tag): THREE.BufferGeometry[] {
+  const { at, beam, tube } = smith(hR, hL, t);
+  // (The bow just ahead of the left hand, at the chest as it is carried.)
+  const N = 0.215, bow: readonly (readonly [number, number])[] = [[N, 0], [N - 0.008, 0.06], [N - 0.03, 0.112], [N - 0.063, 0.152]], tip = bow[bow.length - 1]!, NUT = 0.03, STRING = 0xd8d0c0;
+  return [
+    beam([[-0.27, -0.034, 0.006, 0.01], [-0.1, -0.015, 0.012, 0.01], [N + 0.015, -0.01, 0.012, 0.009]], WOOD),
+    beam([[-0.2, -0.038, -0.033, 0.003], [-0.03, -0.022, -0.017, 0.003]], IRON),
+    ...[1, -1].flatMap((sd) => [
+      ...bow.slice(1).map((p, i) => tube(at(bow[i]![0], 0.002, sd * bow[i]![1]), at(p[0], 0.002, sd * p[1]), 0.0068 - i * 0.001, 0.0058 - i * 0.001, 3, METAL)),
+      tube(at(tip[0], 0.004, sd * tip[1]), at(NUT, 0.015, 0), 0.002, 0.002, 3, STRING),
+    ]),
+    tube(at(NUT, 0.017), at(N + 0.025, 0.017), 0.003, 0.003, 3, BIRCH), tube(at(N + 0.02, 0.017), at(N + 0.06, 0.017), 0.0062, 0.0006, 3, METAL),
+    tube(at(N + 0.015, 0, -0.018), at(N + 0.06, 0, -0.016), 0.003, 0.003, 3, IRON), tube(at(N + 0.015, 0, 0.018), at(N + 0.06, 0, 0.016), 0.003, 0.003, 3, IRON), tube(at(N + 0.06, 0, -0.019), at(N + 0.06, 0, 0.019), 0.003, 0.003, 3, IRON),
+  ];
 }
 
 // The shield on the left forearm, its face painted (team), standing
@@ -955,11 +1105,11 @@ export function unitModel(type: UnitKey, civ: ArchCiv, variant = 0, female = fal
       case 'manAtArms': return figure(gear, 'sword', true, { armor: 'mail', helmet: true, helmetAs: HEAVY_HELMET(gear.helmet), shieldAs: 'kite', female });
       case 'explorer': return figure(gear, 'staff', false, { helmet: true, helmetAs: 'hat', pack: true, female, civilian: true });
       case 'fieldCannon': return fieldCannon();
-      case 'greatWarInfantry': return figure(gear, 'rifle', false, { helmet: true, female, modern: true });
-      case 'marine': return figure(gear, 'rifle', false, { helmet: true, helmetAs: 'cap', female, modern: true, pack: true });
+      case 'greatWarInfantry': return figure(gear, 'boltRifle', false, { helmet: true, female, modern: true });
+      case 'marine': return figure(gear, 'smg', false, { helmet: true, helmetAs: 'cap', female, modern: true, pack: true });
       case 'mechanizedInfantry': return apc();
-      case 'specialForces': return figure(gear, 'mg', false, { helmet: true, helmetAs: 'beret', female, modern: true });
-      case 'paratrooper': return figure(gear, 'rifle', false, { helmet: true, helmetAs: 'kettle', female, modern: true, pack: true, quiver: false });
+      case 'specialForces': return figure(gear, 'carbine', false, { helmet: true, helmetAs: 'beret', female, modern: true });
+      case 'paratrooper': return figure(gear, 'assaultRifle', false, { helmet: true, helmetAs: 'kettle', female, modern: true, pack: true, quiver: false });
       case 'modernArmor': return modernArmor();
       case 'rocketArtillery': return rocketArtillery();
       case 'mobileSAM': return mobileSAM();
@@ -977,7 +1127,7 @@ export function unitModel(type: UnitKey, civ: ArchCiv, variant = 0, female = fal
       case 'knight': return rider(gear, HORSE[variant % HORSE.length]!, female, 'knight');
       case 'musketman': return figure(gear, 'musket', false, { helmet: true, female });
       case 'rifleman': return figure(gear, 'rifle', false, { helmet: true, female });
-      case 'infantry': return figure(gear, 'rifle', false, { helmet: true, female, modern: true, pack: true });
+      case 'infantry': return figure(gear, 'selfLoader', false, { helmet: true, female, modern: true, pack: true });
       case 'cavalry': return rider(gear, HORSE[variant % HORSE.length]!, female, 'cavalry');
       case 'cannon': return cannon(false);
       case 'artillery': return cannon(true);

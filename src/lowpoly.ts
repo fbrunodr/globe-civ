@@ -13,6 +13,8 @@ import type { Paint } from './creatures.ts';
 export const LOWPOLY_BUDGET = 200;
 // A unit's figure (people.ts finePerson: seen close up in battle) about three times that.
 export const FIGURE_BUDGET = 600;
+// And what it holds in both hands (a gun, a crossbow: unitModels.ts firearm), modelled in its own right, about a hundred more.
+export const ARMS_BUDGET = 130;
 
 export type V3 = readonly [number, number, number];
 export type LpPaint = Paint | ((p: THREE.Vector3) => Paint);

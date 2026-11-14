@@ -24,7 +24,7 @@ import { CIVS, UNITS, domainOf, type UnitKey } from './rules.ts';
 import { TECHS, TECH_KEYS } from './techs.ts';
 import { POLITICS } from './politics.ts';
 import { FORTIFY_BONUS, combatStrength, fightRounds, matchup, statOf } from './game.ts';
-import { HAIR_STYLES, UNIT_LOOK, colsOf, formationSlots, hairModel, headOffset, isMachine, rides, unitModel, variantOf, whirls, bowman, cuts, thrusts, draws, bayonets, womenShare } from './unitModels.ts';
+import { HAIR_STYLES, UNIT_LOOK, colsOf, formationSlots, hairModel, headOffset, isMachine, rides, unitModel, variantOf, whirls, bowman, cuts, thrusts, draws, longArms, womenShare } from './unitModels.ts';
 import { FIGHT, PLAYS, UnitView, Volleys, durOf, defendPlay, falls, figureLooks, makeUnitMaterial, playAt, playOf, prepareUnitGeometry, shareCorners, type Play, type ShownUnit } from './unitView.ts';
 import type { P2 } from './duel.ts';
 import { AFTER, armOf, dropOf, flingOf, legsOf, poseOf, poseTurn, rearShift, type Cue } from './unitAnim.ts';
@@ -324,7 +324,7 @@ function pose(now: number): void {
     // (An engine's throwing arm flung as it looses its shot (unitAnim.ts flingOf); cocked until then.)
     let legs = moving, arm = flingOf(play?.shots[0] ? sec - play.shots[0].t * dur : -1), bends: readonly [number, number, number, number, number, number, number, number, number] = [0, 0, 0, 0, 0, 0, 0, 0, 0];
     if (falls(c.type)) {
-      const cue: Cue | null = fight && c.play && c.attack ? { sec, dur, play: c.play, attack: c.attack, side: c.side, engaged: c.attack.close === true, delay: 0, fall: Infinity, won: false, cut: cuts(c.type), thrust: thrusts(c.type), bow: draws(c.type), bayonet: bayonets(c.type) } : null;
+      const cue: Cue | null = fight && c.play && c.attack ? { sec, dur, play: c.play, attack: c.attack, side: c.side, engaged: c.attack.close === true, delay: 0, fall: Infinity, won: false, cut: cuts(c.type), thrust: thrusts(c.type), bow: draws(c.type), bayonet: longArms(c.type) } : null;
       const pz = poseOf(cue, now, p.phase, s.beat, moving, s.rides, whirls(c.type), false, bowman(c.type));
       // (Crouched, lower: the legs fold under it.)
       const [ry, rz] = rearShift(pz);
@@ -539,7 +539,7 @@ addEventListener('resize', resize);
 resize();
 frame(build());
 showBattle();
-if (import.meta.env.DEV) Object.assign(window, { __units: { setRate: (r: number) => { pageNow(); rate = r; }, volleys, battle, setMode, startFight, camera, controls, view: () => battleView } });
+if (import.meta.env.DEV) Object.assign(window, { __units: { at: (type: UnitKey) => COL_X[TYPES.indexOf(type)], setRate: (r: number) => { pageNow(); rate = r; }, volleys, battle, setMode, startFight, camera, controls, view: () => battleView } });
 renderer.setAnimationLoop(() => {
   const now = pageNow();
   time.value = now;

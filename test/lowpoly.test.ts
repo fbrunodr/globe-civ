@@ -3,8 +3,8 @@ import * as THREE from 'three';
 import { creature, horseParts, type Species } from '../src/creatures.ts';
 import { workerModel, type Worker } from '../src/rural/kit.ts';
 import { hairShapes } from '../src/people.ts';
-import { unitModel, rides, isMachine, unitVariants, wearsHelmet, HAIR_BY } from '../src/unitModels.ts';
-import { LOWPOLY_BUDGET, FIGURE_BUDGET, triangles } from '../src/lowpoly.ts';
+import { unitModel, rides, isMachine, unitVariants, wearsHelmet, HAIR_BY, longArms } from '../src/unitModels.ts';
+import { LOWPOLY_BUDGET, FIGURE_BUDGET, ARMS_BUDGET, triangles } from '../src/lowpoly.ts';
 import { UNITS, type UnitKey } from '../src/rules.ts';
 const UNIT_TYPES = Object.keys(UNITS) as UnitKey[];
 
@@ -43,7 +43,8 @@ describe('L1: people and animals within the low-poly budget', () => {
         const n = tris(unitModel(type, 'Romans', v)) + hairOf(wearsHelmet(type, 'Romans')) - (rides(type, v) ? horse : 0);
         console.log(`${type}/${v}: ${n}${rides(type, v) ? ` + horse ${horse}` : ''}`);
         // (The most heavily equipped (a shield, a helmet, a sword), or a chariot archer's car, a little over.)
-        expect(n, type).toBeLessThanOrEqual(FIGURE_BUDGET + 3 * GEAR);
+        // (A gun or a crossbow, held in both hands: its own allowance.)
+        expect(n, type).toBeLessThanOrEqual(FIGURE_BUDGET + 3 * GEAR + (longArms(type) ? ARMS_BUDGET : 0));
       }
     }
   });
