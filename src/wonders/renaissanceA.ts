@@ -5,7 +5,7 @@
 
 import * as THREE from 'three';
 import { chamfered, frustum, gable, ring } from '../houseKit.ts';
-import { H, P, V, ball, box, cone, cyl, drumC, flat, pane, rod, shade, type G } from './kit.ts';
+import { H, P, V, ball, box, cone, cyl, drumC, flat, pane, rod, shade, type G, PAD_Y } from './kit.ts';
 
 // ---------- shared pieces ----------
 
@@ -159,7 +159,7 @@ export function tajMahal(): G[] {
     const m = new THREE.Matrix4().makeTranslation(x, y, z).multiply(new THREE.Matrix4().makeRotationAxis(V(sz, 0, -sx).normalize(), 0.035)).multiply(new THREE.Matrix4().makeTranslation(-x, -y, -z));
     out.push(...minaret(x, z, y).map((g) => g.applyMatrix4(m)));
   }
-  return [flat(2 * H, 2 * H, 0xd8d0c0, 0, 0, 0.0003), ...stretch(out, 2.18, 2.4)];
+  return [flat(2 * H, 2 * H, 0xd8d0c0, 0, 0, PAD_Y), ...stretch(out, 2.18, 2.4)];
 }
 // A pointed arch's outline (as pointed()), w wide, its sides h high, its
 // bottom middle at (x, y), traced into p.
@@ -374,7 +374,7 @@ export function stBasils(): G[] {
   out.push(drumC(0.0022, 0.0022, 0.004, 8, BRICK, { y: y - 0.002, z: cz }));
   out.push(...striped(0.0042, 0.008, [GOLD, shade(GOLD, 0.85)], 10, 0.6, false, 0, y + 0.002, cz));
   out.push(...cross(0, y + 0.01, cz, 0.006, GOLD));
-  return [flat(2 * H, 2 * H, 0xa8a296, 0, 0, 0.0003), ...stretch(out, 1.38, 1.79)];
+  return [flat(2 * H, 2 * H, 0xa8a296, 0, 0, PAD_Y), ...stretch(out, 1.38, 1.79)];
 }
 // (A spot nudged out from a face, for what lies on what lies on it.)
 const shift = (x: number, z: number, ry: number, d: number): [number, number] => [x + Math.sin(ry) * d, z + Math.cos(ry) * d];
@@ -512,7 +512,7 @@ export function himejiCastle(): G[] {
   out.push(...keep(0.016, -0.028, top, [[0.018, 0.016, 0.0072], [0.014, 0.012, 0.0064], [0.011, 0.01, 0.0062]], [{ front: 'big', side: 'none' }, { front: 'one', side: 'none' }], false));
   out.push(...corridor(-0.026, 0.003, -0.026, -0.013, top), ...corridor(-0.017, -0.024, 0.007, -0.027, top));
   out.push(...corridor(0.016, -0.019, 0.016, -0.006, top), ...corridor(-0.016, 0.012, -0.003, 0.012, top));
-  return [flat(2 * H, 2 * H, 0xcfc8b8, 0, 0, 0.0003), ...stretch(out, 1.44, 2.1)];
+  return [flat(2 * H, 2 * H, 0xcfc8b8, 0, 0, PAD_Y), ...stretch(out, 1.44, 2.1)];
 }
 // A base of stone w × d at its top, h high, its faces' curved batter
 // (musha-gaeshi: flaring out at the foot, upright at the top) B wide; in n
@@ -815,7 +815,7 @@ export function forbiddenCity(): G[] {
   out.push(...hall(0, tz + 0.0068, ty + 0.0006, 0.035, 0.0115, 0.0105, { upper: 'hip', beasts: 5, rows: 0.0013 }));
   out.push(...pavilion(0, tz - 0.004, ty, 0.0095));
   out.push(...hall(0, tz - 0.0125, ty, 0.029, 0.0078, 0.0072, { upper: 'gable', beasts: 3, rows: 0.0013 }));
-  return [flat(2 * H, 2 * H, 0xb8b0a2, 0, 0, 0.0003), ...stretch(out, 2.4, 3.9)];
+  return [flat(2 * H, 2 * H, 0xb8b0a2, 0, 0, PAD_Y), ...stretch(out, 2.4, 3.9)];
 }
 // A tier of white marble w × d at y, h high: its body, its moulded lip, the
 // balustrade round its edge (a rail on posts), a dragon-head spout at each

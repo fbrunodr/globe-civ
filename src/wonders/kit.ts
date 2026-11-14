@@ -47,6 +47,10 @@ export const drumC = (r0: number, r1: number, h: number, n: number, c: number, o
 export const ball = (r: number, c: number, o: { x?: number; y?: number; z?: number; sx?: number; sy?: number; sz?: number; ry?: number } = {}, detail = 0) =>
   P(new THREE.IcosahedronGeometry(r, detail), c, o);
 // A flat patch at height y (several ground patches must keep apart in y).
+// A wonder's pad lies this high (site units): clear above the town's paving under it (the
+// streets' own, laid right up to the wonder: cityProps.ts), which lay over a pad nearly in the
+// ground and hid it from most sides. (A wonder is sunk only a hair for it: cityProps.ts standLot.)
+export const PAD_Y = 0.0025;
 export const flat = (w: number, d: number, c: number, x: number, z: number, y: number, ry = 0) =>
   P(new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2), c, { x, y, z, ry });
 export const disc = (r: number, c: number, x: number, z: number, y: number, n = 16) =>

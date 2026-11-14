@@ -8,6 +8,7 @@ import { frustum, ring } from '../houseKit.ts';
 import {
   P, archPane, ball, box, bush, cone, cyl, drumC, figure, flat, pane,
   peristyle, rnd, rod, shade, steppedPyramid, steps, templeRoof, H, islet, type G, type Models,
+  PAD_Y,
 } from './kit.ts';
 import type { GroundTree, WonderGrounds } from '../wonderModels.ts';
 
@@ -349,7 +350,7 @@ export function hangingGardensGrounds(): WonderGrounds {
 export function hangingGardens(H: number): G[] {
   const r = rnd(5), out: G[] = [];
   const BRICK = 0xc49c66, DARK = 0x3d3026, SOIL = 0x6f8a3c, GLAZE = 0x2f5e9e, GOLD = 0xe2b84a;
-  out.push(flat(2 * H, 2 * H, 0xc8b48c, 0, 0, 0.0003));
+  out.push(flat(2 * H, 2 * H, 0xc8b48c, 0, 0, PAD_Y));
   const tiers = TIERS, th = TIER, dz = GARDEN_DZ;
   const flowers = [0xd77aa0, 0xe8c84a, 0xf0ece0, 0x9a6ac0, 0xe0703a];
   tiers.forEach((w, i) => {

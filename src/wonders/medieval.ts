@@ -7,6 +7,7 @@ import { frustum, gable } from '../houseKit.ts';
 import {
   H, P, V, archPane, ball, box, cone, cyl, drumC, flat, pane, rod, shade,
   type G, type Models,
+  PAD_Y,
 } from './kit.ts';
 
 // In a city a wonder is fitted to its rectangle by its widest extent: each
@@ -23,7 +24,7 @@ function onPad(parts: G[], cells: number): G[] {
   // most 1.3 times: wide low wonders keep storeys near the town's.)
   const ky = k * Math.min(1.3, (cells * CELL_SITE) / (k * b.max.y));
   const m = new THREE.Matrix4().makeScale(k, ky, k).multiply(new THREE.Matrix4().makeTranslation(-cx, 0, -cz));
-  return [flat(2 * H, 2 * H, PAD, 0, 0, 0.0003), ...parts.map((g) => g.applyMatrix4(m))];
+  return [flat(2 * H, 2 * H, PAD, 0, 0, PAD_Y), ...parts.map((g) => g.applyMatrix4(m))];
 }
 
 // ---------- local pieces ----------

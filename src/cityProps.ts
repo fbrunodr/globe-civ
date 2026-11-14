@@ -1402,7 +1402,8 @@ export class CityProps {
     // what lies flat on its ground (a garden's lawns and gravel) shows.)
     const bare = isWonderModelKind(kind) && ON_BARE_GROUND.has(kind.slice('wonder|'.length));
     let base = bare ? (low + high) / 2 : high;
-    const sink = (bare ? 0.00002 : 0.00012) * this.scale, shade = 0.92 + 0.12 * rand();
+    // (A wonder on a pad barely sunk either: its pad stays over the town's paving, wonders/kit.ts PAD_Y.)
+    const sink = (bare || isWonderModelKind(kind) ? 0.00002 : 0.00012) * this.scale, shade = 0.92 + 0.12 * rand();
     // (One with something held up over the ground, as FAST's dish: raised
     // until the ground keeps under it everywhere, a sixteenth of a town cell
     // to spare. Its underside sampled over the model every few thousandths.)

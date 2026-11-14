@@ -18,7 +18,7 @@ import * as THREE from 'three';
 import { tf, type Tf } from '../propCatalog.ts';
 import { finish, tube, ellipsoid, horn, fleece, loft, smooth, S, creature, COAT, coat, CREATURE_SCALE, type Paint, type Species } from '../creatures.ts';
 import { hull, limb, R } from '../lowpoly.ts';
-import { person, hatShapes, hairShapes, handAt, HANG, HOLD, WORK, RAISE, SKIN_PAINT, CLOTH_PAINT, type ArmPose, type Dress, type Part } from '../people.ts';
+import { person, riderBody, HIP, hatShapes, hairShapes, handAt, HANG, HOLD, WORK, RAISE, SKIN_PAINT, CLOTH_PAINT, type ArmPose, type Dress, type Part } from '../people.ts';
 
 type G = THREE.BufferGeometry;
 type V3 = readonly [number, number, number];
@@ -42,8 +42,9 @@ const SKINS = [0xd8a982, 0xc48c64, 0xe8bf9f, 0x9c6a46, 0xb07a52] as const;
 // ---- people ----
 // A worker: its body (people.ts) at 1.72 m, its cloth the instance's colour
 // (leaf), its skin one of a few tones (by variant), trousers and hat.
-function worker(dress: Dress, armL: ArmPose, armR: ArmPose, skin: number, extra: (hL: THREE.Vector3, hR: THREE.Vector3) => G[], hat?: 'straw' | 'felt' | 'hood', hair: 'short' | 'long' | 'bun' | 'beard' = 'short'): G[] {
-  const parts: Part[] = person(dress, armL, armR);
+function worker(dress: Dress, armL: ArmPose, armR: ArmPose, skin: number, extra: (hL: THREE.Vector3, hR: THREE.Vector3) => G[], hat?: 'straw' | 'felt' | 'hood', hair: 'short' | 'long' | 'bun' | 'beard' = 'short', seat?: number): G[] {
+  // (`seat`: seated, its hips that high (a figure is 1 tall): thighs forward, shins down; all above the hips as standing, lowered.)
+  const parts: Part[] = seat === undefined ? person(dress, armL, armR) : riderBody(dress, seat, armL, armR), lift = seat === undefined ? 0 : seat - HIP;
   const sk = new THREE.Color(skin), w = new THREE.Color(SKIN_PAINT), cl = new THREE.Color(CLOTH_PAINT);
   const out = parts.map((p) => {
     const col = p.geo.getAttribute('color') as THREE.BufferAttribute, mask = p.geo.getAttribute('leafMask') as THREE.BufferAttribute;
@@ -55,9 +56,10 @@ function worker(dress: Dress, armL: ArmPose, armR: ArmPose, skin: number, extra:
     return p.geo;
   });
   // (Under a hat only what shows below it: the beard, the bun.)
-  out.push(...hairShapes(hair, 5).slice(hat ? 1 : 0).map((g) => recolor(g, 0x3a2a1e)));
-  if (hat) out.push(...hatShapes(hat, hat === 'straw' ? 0xd8bc78 : hat === 'felt' ? 0x4a3a2a : 0x6a5a48));
-  out.push(...extra(handAt(1, armL, dress.female), handAt(-1, armR, dress.female)));
+  const up = (g: G) => g.translate(0, lift, 0);
+  out.push(...hairShapes(hair, 5).slice(hat ? 1 : 0).map((g) => up(recolor(g, 0x3a2a1e))));
+  if (hat) out.push(...hatShapes(hat, hat === 'straw' ? 0xd8bc78 : hat === 'felt' ? 0x4a3a2a : 0x6a5a48).map(up));
+  out.push(...extra(handAt(1, armL, dress.female), handAt(-1, armR, dress.female)).map(up));
   // (People face +z; the kit faces +x. 1 tall: 1.72 m.)
   const m = new THREE.Matrix4().makeRotationY(Math.PI / 2).premultiply(new THREE.Matrix4().makeScale(1.72, 1.72, 1.72));
   return out.map((g) => g.applyMatrix4(m));
@@ -294,12 +296,16 @@ function openHull(st: readonly Station[], outside: Paint, inside: Paint, rail: P
   return out;
 }
 // A dugout: one log hollowed, long and narrow, its ends drawn up to points; the fisher
-// standing in it on its floor, pole in hand; a paddle laid across, a basket for the catch.
+// seated in it, paddling; a basket for the catch.
 function canoe(): G[] {
-  const st: Station[] = [[-2.6, 0.03, 0.62, 0.42], [-2.1, 0.2, 0.46, 0.08], [-1.0, 0.36, 0.38, -0.08], [0.6, 0.38, 0.38, -0.1], [1.9, 0.24, 0.44, 0.04], [2.7, 0.03, 0.66, 0.44]];
+  const st: Station[] = [[-2.6, 0.03, 0.62, 0.42], [-2.1, 0.26, 0.46, 0.06], [-1.0, 0.48, 0.38, -0.16], [0.6, 0.5, 0.38, -0.18], [1.9, 0.3, 0.44, 0.02], [2.7, 0.03, 0.66, 0.44]];
   return [...openHull(st, DARK_WOOD, 0x6e563c, 0x4a382a, 0.035),
-    ...workerModel('herder', 2).map((g) => g.applyMatrix4(new THREE.Matrix4().makeTranslation(-0.5, 0.08, 0))),
-    beam([0.5, 0.42, -0.5], [1.5, 0.44, 0.45], 0.028, TIMBER, 4), box(0.34, 0.03, 0.16, TIMBER, { x: 1.62, y: 0.42, z: 0.52, ry: -0.75 }),
+    // (Seated on a thwart at the gunwale, paddling: the paddle through both hands, its blade down in the water beside the boat.)
+    ...worker({ skirt: 'knee', legs: 'bare', sleeves: 'long', belt: 0x4a3424, shoes: 0x3a2a1e }, WORK, WORK, SKINS[2], (hL, hR) => {
+      const top = hL.clone().add(new THREE.Vector3(0.03, 0.14, -0.04)), dir = hR.clone().sub(top).normalize(), tip = hR.clone().addScaledVector(dir, 0.3).add(new THREE.Vector3(-0.06, 0, 0));
+      return [rodLp(vv(top), vv(tip), 0.011, TIMBER), boxLp(0.07, 0.16, 0.012, TIMBER, { x: tip.x, y: tip.y - 0.14, z: tip.z })];
+    }, 'straw', 'short', 0.2).map((g) => g.applyMatrix4(new THREE.Matrix4().makeTranslation(-0.5, 0.106, 0))),
+    box(0.12, 0.04, 0.92, 0x4a382a, { x: -0.55, y: 0.4 }),
     cyl(0.16, 0.2, 0.22, 7, 0xb89a62, { x: 1.2, y: 0.08 }), box(0.06, 0.03, 0.72, 0x4a382a, { x: -1.4, y: 0.33 })];
 }
 // A fishing boat under sail: a planked hull with a high stem and stern, a lighter rail,

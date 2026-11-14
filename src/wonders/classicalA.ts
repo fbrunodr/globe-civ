@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { prism, ring, frustum } from '../houseKit.ts';
 import {
   P, V, H, assemble, ball, sinkOf, box, cone, cyl, drumC, figure, flat, pane, peristyle, rnd, rod, shade, steps, type G,
+  PAD_Y,
 } from './kit.ts';
 import type { WonderGrounds, WonderPiece } from '../wonderModels.ts';
 
@@ -107,7 +108,7 @@ function roof(cx: number, cz: number, w: number, d: number, y: number, c: number
 // ramp climbing the rock's face to the gate. (On a plain pad filling the
 // site: the town's scale.)
 export function parthenon(): G[] {
-  const out: G[] = [flat(2 * H, 2 * H, PAVE, 0, 0, 0.0003)];
+  const out: G[] = [flat(2 * H, 2 * H, PAVE, 0, 0, PAD_Y)];
   const outline: [number, number][] = [[-0.072, 0.02], [-0.062, 0.05], [-0.02, 0.056], [0.03, 0.052], [0.068, 0.034], [0.074, -0.01], [0.07, -0.06], [0.03, -0.072], [-0.035, -0.072], [-0.072, -0.055]];
   out.push(...prism(outline, 0.04, ROCK, {}, shade(ROCK, 1.05)));
   const k = 0.95, top: [number, number][] = outline.map(([x, z]) => [x * k, z * k - 0.001]);
@@ -221,7 +222,7 @@ function scaled(parts: G[], s: number, x: number, y: number, z: number): G[] {
 export function apadana(): G[] {
   const out: G[] = [];
   const STONE = 0xb8ac96, TOP = 0xcabea8, WALL = 0xd6c6a2, CEDAR = 0x7a5a3a, GLAZE = 0x3a8a9a, COL = 0xc7bba6;
-  out.push(flat(2 * H, 2 * H, PAVE, 0, 0, 0.0003));
+  out.push(flat(2 * H, 2 * H, PAVE, 0, 0, PAD_Y));
   // The terrace, its courses of masonry.
   const T = 0.02, tw = 0.146, td = 0.136, tz = -0.004;
   out.push(...box(tw, T, td, STONE, { z: tz }, TOP));
@@ -367,7 +368,7 @@ export function colosseum(): G[] {
   const TRAV = 0xd8ccb0, DEEP = 0x4e463a, GALL = 0xc2b494;
   const a = 0.072, b = 0.06, q = b / a; // its ellipse
   const ell = (rad: number, h: number, y: number, c: number, n = 40) => P(new THREE.CylinderGeometry(rad, rad, h, n, 1, true).translate(0, y + h / 2, 0).scale(1, 1, q), c);
-  out.push(flat(2 * H, 2 * H, PAVE, 0, 0, 0.0003));
+  out.push(flat(2 * H, 2 * H, PAVE, 0, 0, PAD_Y));
   const storeys = [[0.002, 0.028], [0.03, 0.027], [0.057, 0.027]] as const, attic = [0.084, 0.024] as const, top = attic[0] + attic[1];
   const N = 40;
   out.push(ell(a * 1.008, 0.002, 0, shade(TRAV, 0.9)));
@@ -445,7 +446,7 @@ const SCROLL_G = (() => {
 export function greatLibrary(): G[] {
   const out: G[] = [];
   const C = 0xe8e0cc, PAV = 0xd8ccb2, SHELF = 0x5a4430, SCROLL = 0xe8dcb8;
-  out.push(flat(2 * H, 2 * H, PAVE, 0, 0, 0.0003));
+  out.push(flat(2 * H, 2 * H, PAVE, 0, 0, PAD_Y));
   out.push(...box(0.144, 0.004, 0.144, shade(C, 0.88), {}, PAV));
   const Y = 0.004;
   out.push(flat(0.1, 0.1, shade(PAV, 0.95), 0, 0, Y + 0.0003));

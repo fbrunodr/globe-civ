@@ -9,6 +9,7 @@ import { frustum, gable, hip, prism, ring, spire } from '../houseKit.ts';
 import {
   P, V, H, archPane, ball, box, column, cone, cyl, disc, drumC, flat, islet, pane, rnd, rod, shade, statue, steps,
   type G, type Models,
+  PAD_Y,
 } from './kit.ts';
 import { LIBERTY } from './statues.ts';
 
@@ -18,7 +19,7 @@ const GRASS = 0x7f9a52, PAVE = 0xc9c0ae, GOLD = 0xd9b04a;
 
 // The plain pad a wonder in a city stands on, the whole site (so the city
 // fits every wonder at one scale: a city cell about 0.039 site units).
-const pad = (c = PAVE) => flat(2 * H, 2 * H, c, 0, 0, 0.0003);
+const pad = (c = PAVE) => flat(2 * H, 2 * H, c, 0, 0, PAD_Y);
 
 // A face's frame: facing ry, its outward normal and its tangent (left to right seen from outside).
 const frame = (ry: number) => ({ nx: Math.sin(ry), nz: Math.cos(ry), tx: Math.cos(ry), tz: -Math.sin(ry) });

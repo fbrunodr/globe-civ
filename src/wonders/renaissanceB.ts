@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { gable } from '../houseKit.ts';
 import {
   P, V, archPane, ball, box, cone, cyl, drumC, flat, H, pane, rod, shade, type G,
+  PAD_Y,
 } from './kit.ts';
 
 const DARK = 0x3a332d, GOLD = 0xd9b24a;
@@ -437,7 +438,7 @@ export function florenceCathedral(): G[] {
   raise([...out.slice(0, iDrum), ...out.slice(iNave, iTower)], [[1, FA]]);
   raise(out.slice(iDrum, iNave), [[nave, FA], [ym, FD], [1, FA]]);
   raise(out.slice(iTower), [[1, 1.22]]);
-  return [flat(2 * H, 2 * H, PAVE, 0, 0, 0.0003), ...fitTo(out, 0.0177, 1.68, 1, 1, 1)];
+  return [flat(2 * H, 2 * H, PAVE, 0, 0, PAD_Y), ...fitTo(out, 0.0177, 1.68, 1, 1, 1)];
 }
 
 // ---------- St Peter's ----------
@@ -618,7 +619,7 @@ export function stPeters(): G[] {
   cupola(0, Zc, Y0, 0.0295, 16, 0.036, 0.037, true);
   // The two small domes over the side chapels, at the crossing's front corners.
   for (const s of [-1, 1]) cupola(s * 0.03 * S, (zc + 0.013 + DZ) * S, Y0, 0.0085, 8, 0.009, 0.0102, false);
-  return [flat(2 * H, 2 * H, PAVE, 0, 0, 0.0003), ...out];
+  return [flat(2 * H, 2 * H, PAVE, 0, 0, PAD_Y), ...out];
 }
 
 // ---------- Tenochtitlan ----------
@@ -821,5 +822,5 @@ export function temploMayor(): G[] {
     } else out.push(drumT(0.0009, 0.0006, 0.0018, 4, 0x6a6058, { x, y: yt + 0.0012, z: zf + 0.0034, ry: Math.PI / 4 }));
   }
   // (On its pad, filling it: about 4 cells tall.)
-  return [flat(2 * H, 2 * H, PLAZA, 0, 0, 0.0003), ...fitTo(out, 0.0215, 1.67, 0, 1.37, 1.37)];
+  return [flat(2 * H, 2 * H, PLAZA, 0, 0, PAD_Y), ...fitTo(out, 0.0215, 1.67, 0, 1.37, 1.37)];
 }
