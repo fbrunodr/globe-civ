@@ -43,8 +43,8 @@ const SKINS = [0xd8a982, 0xc48c64, 0xe8bf9f, 0x9c6a46, 0xb07a52] as const;
 // A worker: its body (people.ts) at 1.72 m, its cloth the instance's colour
 // (leaf), its skin one of a few tones (by variant), trousers and hat.
 function worker(dress: Dress, armL: ArmPose, armR: ArmPose, skin: number, extra: (hL: THREE.Vector3, hR: THREE.Vector3) => G[], hat?: 'straw' | 'felt' | 'hood', hair: 'short' | 'long' | 'bun' | 'beard' = 'short', seat?: number): G[] {
-  // (`seat`: seated, its hips that high (a figure is 1 tall): thighs forward, shins down; all above the hips as standing, lowered.)
-  const parts: Part[] = seat === undefined ? person(dress, armL, armR) : riderBody(dress, seat, armL, armR), lift = seat === undefined ? 0 : seat - HIP;
+  // (`seat`: seated low, as in a boat, its hips that high (a figure is 1 tall): legs out in front, feet on the floor; all above the hips as standing, lowered.)
+  const parts: Part[] = seat === undefined ? person(dress, armL, armR) : riderBody(dress, seat, armL, armR, undefined, undefined, true), lift = seat === undefined ? 0 : seat - HIP;
   const sk = new THREE.Color(skin), w = new THREE.Color(SKIN_PAINT), cl = new THREE.Color(CLOTH_PAINT);
   const out = parts.map((p) => {
     const col = p.geo.getAttribute('color') as THREE.BufferAttribute, mask = p.geo.getAttribute('leafMask') as THREE.BufferAttribute;

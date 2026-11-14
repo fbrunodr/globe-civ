@@ -390,13 +390,19 @@ function shoe(x: number, z0: number, color: number): THREE.BufferGeometry {
 // forward and apart, shins down along the flanks; the torso, head and arms
 // as a standing figure's, raised (unitModels.ts).
 // (`strikeR`, `strikeL`: how each arm moves (unitModels.ts), with what it holds.)
-export function riderBody(d: Dress, seat: number, armL: ArmPose, armR: ArmPose, strikeR?: readonly [number, number, number], strikeL?: readonly [number, number, number]): Part[] {
+// (`forward`: not astride: seated low, as in a boat, the legs out in front, knees a little up, feet down on the floor ahead.)
+export function riderBody(d: Dress, seat: number, armL: ArmPose, armR: ArmPose, strikeR?: readonly [number, number, number], strikeL?: readonly [number, number, number], forward = false): Part[] {
   const lift = seat - HIP;
   const top = person({ ...d, skirt: 'none' }, armL, armR, { legs: () => [0, HIP, 0] as const, arms: (side) => (side === -1 ? strikeR : strikeL) }).filter((p) => !isLeg(p));
   const out: Part[] = top.map((p) => ({ ...p, geo: p.geo.translate(0, lift, 0), ...(p.joint ? { joint: [p.joint[0] + lift, p.joint[1]] as const } : {}) }));
   const bare = d.legs === undefined || d.legs === 'bare';
   const legPaint: Paint = bare ? SKIN_PAINT : (d.legs as number), legTag: PartTag = bare ? 'skin' : 'plain';
   for (const side of [1, -1] as const) {
+    if (forward) {
+      out.push({ geo: limb([[side * 0.07, seat + 0.02, 0], [side * 0.085, seat + 0.06, 0.25], [side * 0.085, seat - 0.13, 0.46]], [0.05, 0.036, 0.025], legPaint, 4, { caps: [false, false] }), tag: legTag });
+      out.push({ geo: shoe(side * 0.085, 0.47, d.shoes ?? SHOE).translate(0, seat - 0.165, 0), tag: 'plain' });
+      continue;
+    }
     out.push({ geo: limb([[side * 0.07, seat + 0.02, 0], [side * 0.15, seat - 0.02, 0.1], [side * 0.165, seat - 0.31, 0.05]], [0.05, 0.036, 0.025], legPaint, 4, { caps: [false, false] }), tag: legTag });
     out.push({ geo: shoe(side * 0.165, 0.05, d.shoes ?? SHOE).translate(0, seat - 0.345, 0), tag: 'plain' });
   }
