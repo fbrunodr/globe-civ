@@ -6,12 +6,12 @@
 import * as THREE from 'three';
 import { frustum, ring } from '../houseKit.ts';
 import {
-  P, annulus, archPane, ball, box, bush, cone, cyl, disc, drumC, figure, flat, pane,
+  P, archPane, ball, box, bush, cone, cyl, drumC, figure, flat, pane,
   peristyle, rnd, rod, shade, steppedPyramid, steps, templeRoof, H, islet, type G, type Models,
 } from './kit.ts';
 import type { GroundTree, WonderGrounds } from '../wonderModels.ts';
 
-const WATER = 0x5f8fa3, GRASS = 0x86a058, LEAF = 0x557a36;
+const WATER = 0x5f8fa3, LEAF = 0x557a36;
 const MARBLE = 0xe6e0d2, BRONZE = 0x9a7a4a;
 
 // ---------- Giza ----------
@@ -260,20 +260,13 @@ export function greatLighthouse(islet: () => G[]): G[] {
 
 // The circle whole as built: thirty sarsens under a ring of lintels, the
 // horseshoe of five trilithons rising to the tallest at the back, the
-// bluestone circle and horseshoe, the altar stone; the bank and its chalk
-// ditch round it, open to the avenue and the Heel Stone; the station
-// stones. (On the bare ground, no
-// platform: wonderModels.ts ON_BARE_GROUND.)
+// bluestone circle and horseshoe, the altar stone; the Heel Stone and the
+// station stones. The stones alone, on the bare ground: no platform
+// (wonderModels.ts ON_BARE_GROUND), no lawn, ditch or bank under them.
 export function stonehenge(): G[] {
   const r = rnd(11), out: G[] = [];
-  const SARSEN = 0xa09a8c, BLUE = 0x7f8a94, CHALK = 0xe6e2d6;
+  const SARSEN = 0xa09a8c, BLUE = 0x7f8a94;
   const stone = (c: number) => shade(c, 0.88 + r() * 0.2);
-  out.push(disc(0.06, shade(GRASS, 1.06), 0, 0, 0.0003, 28));
-  out.push(annulus(0.064, 0.0685, CHALK, 0, 0, 0.0004, 40));
-  // The bank, open toward the avenue (+z).
-  const gap = 0.5;
-  out.push(P(new THREE.TorusGeometry(0.0715, 0.003, 4, 40, Math.PI * 2 - gap).rotateX(Math.PI / 2).rotateY(1.5 * Math.PI - gap / 2), shade(GRASS, 0.92), { y: 0.0003, sy: 0.5 }));
-  for (const s of [-1, 1]) out.push(...box(0.0025, 0.0012, 0.012, shade(GRASS, 0.92), { x: s * 0.011, z: 0.072 }));
   // The sarsen circle and its lintels (three lintels fallen, one upright down).
   const R = 0.046, n = 30;
   const fallen = new Set([7, 8, 19, 20]);
