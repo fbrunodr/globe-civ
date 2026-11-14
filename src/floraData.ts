@@ -77,7 +77,7 @@ export const BIOME_FLORA: Record<BiomeKey, FloraSet> = {
   ] },
   coldDesert: { variants: [
     v('Sagebrush basin', 'any', 45, [['juniper', 8], ['sagebrush', 55], ['grassTuft', 22, FEATHER], ['boulder', 15]], { wet: 0.3 }),
-    v('Gobi', N, 25, [['saxaul', 25], ['dryBush', 20], ['grassTuft', 20, FEATHER], ['boulder', 30], ['rockSpire', 5]], { wet: -0.6 }),
+    v('Gobi', N, 25, [['saxaul', 25], ['dryBush', 20], ['grassTuft', 20, FEATHER], ['boulder', 35]], { wet: -0.6 }),
     v('Joshua', W, 35, [['joshuaTree', 20], ['sagebrush', 25], ['dryBush', 20], ['grassTuft', 15, FEATHER], ['boulder', 20]]),
     v('Patagonian', A, 45, [['dryBush', 30, CUSHION], ['grassTuft', 55, TUSSOCK], ['boulder', 15]]),
   ] },
@@ -115,8 +115,8 @@ export const BIOME_FLORA: Record<BiomeKey, FloraSet> = {
   ] },
   hotDesert: { variants: [
     v('Erg', 'any', 7, [['dryBush', 80], ['grassTuft', 20, SPINIFEX]], { wet: -0.6 }),
-    v('Hamada', 'any', 19, [['dryBush', 30], ['boulder', 45], ['rockSpire', 15], ['tor', 10]], { wet: 0.2 }),
-    v('Sonoran', W, 30, [['saguaro', 25], ['pricklyPear', 25], ['dryBush', 30], ['boulder', 15], ['rockSpire', 5]], { wet: 0.5 }),
+    v('Hamada', 'any', 19, [['dryBush', 30], ['boulder', 50], ['tor', 20]], { wet: 0.2 }),
+    v('Sonoran', W, 30, [['saguaro', 25], ['pricklyPear', 25], ['dryBush', 30], ['boulder', 20]], { wet: 0.5 }),
     v('Succulent', O, 25, [['dragonTree', 8], ['euphorbia', 20], ['dryBush', 42], ['boulder', 20], ['tor', 10]], { wet: 0.5 }),
   ] },
   savanna: { variants: [
@@ -167,7 +167,7 @@ export const FEATURE_FLORA: Record<FeatureKey, FloraSet> = {
   ] },
   // Mountain features: the mix of the slopes between the tree line and the
   // bare upper part (vegetation.ts).
-  volcano: { variants: [v('Volcano', 'any', 14, [['boulder', 35], ['rockSpire', 40], ['snag', 25]])] },
+  volcano: { variants: [v('Volcano', 'any', 14, [['boulder', 55], ['tor', 20], ['snag', 25]])] },
   glacier: { variants: [v('Glacier', 'any', 12, [['iceSerac', 60], ['scree', 40]])] },
   reef: { variants: [v('Coral reef', 'any', 70, [['coralHeads', 55], ['branchingCoral', 45]])] },
   kelp: { variants: [v('Kelp forest', 'any', 95, [['kelp', 100]])] },

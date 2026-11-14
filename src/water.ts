@@ -106,8 +106,15 @@ export function makeWaterMaterial(): WaterMaterial {
             float fine = mix(wNoise(a * 3600.0 + 5.0), wNoise(b * 3600.0 + 31.0), w);
             h += river * (0.00024 * (big - 0.5) * tFade(1500.0) + 0.00008 * (fine - 0.5) * tFade(3600.0));
           }
-          if (river < 1.0) h += (1.0 - river) * (0.0003 * (wNoise(P * 700.0 + vec3(uTime * 0.05, uTime * 0.03, -uTime * 0.04)) - 0.5) * tFade(700.0)
-               + 0.00009 * (wNoise(P * 2300.0 - vec3(uTime * 0.11, -uTime * 0.06, uTime * 0.08)) - 0.5) * tFade(2300.0));
+          // Still and open water: a swell and a finer chop, each two layers of noise sliding
+          // across each other in opposite ways (so the surface is always changing, the light on
+          // it shifting and glinting, and nothing travels: no current, no direction).
+          if (river < 1.0) {
+            vec3 d1 = vec3(0.34, 0.21, -0.27) * uTime, d2 = vec3(-0.5, 0.36, 0.42) * uTime;
+            float swell = 0.5 * (tNoise(P * 700.0 + d1) + tNoise(P * 760.0 + 19.0 - d1));
+            float chop = 0.5 * (tNoise(P * 2300.0 + d2) + tNoise(P * 2500.0 + 41.0 - d2));
+            h += (1.0 - river) * (0.00042 * (swell - 0.5) * tFade(700.0) + 0.00013 * (chop - 0.5) * tFade(2300.0));
+          }
           return h;
         }`)
       .replace('#include <color_fragment>', `#include <color_fragment>

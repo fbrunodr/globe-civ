@@ -36,7 +36,7 @@ const wheel = (r: number, w: number, c: Paint, o: Tf = {}, spokes = 0, hub = 0x3
 // (A tyre: an eight-sided drum, its rim a hexagon proud of it.)
 const tyre = (r: number, w: number, o: Tf, rim: Paint) => [P(new THREE.CylinderGeometry(r, r, w, 8).rotateX(Math.PI / 2), 0x1e1c1a, o), P(new THREE.CylinderGeometry(r * 0.55, r * 0.55, w * 1.04, 6, 1, true).rotateX(Math.PI / 2), rim, o)];
 
-const TIMBER = 0x7a5f45, DARK_WOOD = 0x5a4632, IRON = 0x4a4a4e, STEEL = 0x8a8e92, STRAW = 0xd2b46a, HAY = 0xc8a85a, STONE = 0xa8a090, CANVAS = 0xd8ccb0;
+const TIMBER = 0x7a5f45, DARK_WOOD = 0x5a4632, IRON = 0x4a4a4e, STEEL = 0x8a8e92, STRAW = 0xd2b46a, HAY = 0xc8a85a, STONE = 0xa8a090;
 const SKINS = [0xd8a982, 0xc48c64, 0xe8bf9f, 0x9c6a46, 0xb07a52] as const;
 
 // ---- people ----
@@ -279,16 +279,52 @@ function steamCrane(): G[] {
 // ---- the water, by stage ----
 // A dugout canoe with its fisher; a small boat with a net; a sailing boat;
 // a steam trawler. (On the water's surface, y = 0.)
-function canoe(): G[] {
-  return [loft(smooth([S(-2.4, 0.15, 0.05, 0.05), S(-2.0, 0.2, 0.22, 0.28), S(0, 0.22, 0.28, 0.4), S(2.0, 0.2, 0.22, 0.28), S(2.4, 0.18, 0.05, 0.05)], 3), 10, DARK_WOOD), box(4.0, 0.02, 0.6, 0x3a2a1e, { y: 0.45 }),
-    ...workerModel('herder', 2).slice(0, 14).map((g) => g.applyMatrix4(new THREE.Matrix4().makeTranslation(-0.6, -0.3, 0))), beam([0.2, 0.9, 0.2], [1.4, -0.1, 0.9], 0.03, TIMBER, 4)];
+// (A boat's open hull, bow toward +x: at each station along it (x, its half beam, its sheer:
+// the gunwale's height, its keel's depth), the planking outside, the boat's inside a little
+// within it (darker toward the bilge), a rail along each gunwale.)
+type Station = readonly [x: number, beam: number, sheer: number, keel: number];
+function openHull(st: readonly Station[], outside: Paint, inside: Paint, rail: Paint, railR: number): G[] {
+  const K = 4;
+  const skin = (shrink: number, lift: number) => st.map(([x, b, sh, k]) => Array.from({ length: 2 * K + 1 }, (_, j): V3 => {
+    const t = (j - K) / K, a = Math.abs(t);
+    return [x, k + lift + (sh - k - lift) * a ** 1.7, Math.sign(t) * b * shrink * a ** 0.55];
+  }));
+  const out = [grid(skin(1, 0), outside), grid(skin(0.86, 0.14), Array.from({ length: 2 * K + 1 }, (_, j) => (Math.abs(j - K) <= 1 ? 0x2e241a : inside)))];
+  for (const side of [-1, 1]) out.push(tube(st.map(([x, b, sh]): V3 => [x, sh, side * b]), st.map(() => railR), rail, 4, 1));
+  return out;
 }
+// A dugout: one log hollowed, long and narrow, its ends drawn up to points; the fisher
+// standing in it on its floor, pole in hand; a paddle laid across, a basket for the catch.
+function canoe(): G[] {
+  const st: Station[] = [[-2.6, 0.03, 0.62, 0.42], [-2.1, 0.2, 0.46, 0.08], [-1.0, 0.36, 0.38, -0.08], [0.6, 0.38, 0.38, -0.1], [1.9, 0.24, 0.44, 0.04], [2.7, 0.03, 0.66, 0.44]];
+  return [...openHull(st, DARK_WOOD, 0x6e563c, 0x4a382a, 0.035),
+    ...workerModel('herder', 2).map((g) => g.applyMatrix4(new THREE.Matrix4().makeTranslation(-0.5, 0.08, 0))),
+    beam([0.5, 0.42, -0.5], [1.5, 0.44, 0.45], 0.028, TIMBER, 4), box(0.34, 0.03, 0.16, TIMBER, { x: 1.62, y: 0.42, z: 0.52, ry: -0.75 }),
+    cyl(0.16, 0.2, 0.22, 7, 0xb89a62, { x: 1.2, y: 0.08 }), box(0.06, 0.03, 0.72, 0x4a382a, { x: -1.4, y: 0.33 })];
+}
+// A fishing boat under sail: a planked hull with a high stem and stern, a lighter rail,
+// thwarts across; a mast stayed fore and aft, a lateen sail of pale canvas on its slanting
+// yard, filled by the wind (bellied to leeward, not a flat triangle); a steering oar on the
+// quarter; a heap of net and a basket amidships.
 function sailboat(): G[] {
-  const hull = loft(smooth([S(-3.5, 0.5, 0.2, 0.2), S(-3, 0.45, 0.55, 0.8), S(0, 0.4, 0.75, 1.2), S(3, 0.5, 0.6, 0.8), S(4.0, 0.8, 0.1, 0.1)], 3), 12, DARK_WOOD);
-  return [hull, box(6.2, 0.1, 1.8, TIMBER, { y: 1.0 }), cyl(0.1, 0.08, 7.5, 6, TIMBER, { x: 0.4, y: 1.0 }), beam([0.4, 2.0, 0], [-3.0, 2.2, 0], 0.07, TIMBER),
-    P(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute([0.4, 8.2, 0, 0.4, 2.1, 0, -3.0, 2.3, 0], 3)), CANVAS),
-    P(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute([0.4, 7.6, 0, 3.9, 1.2, 0, 0.4, 2.1, 0], 3)), 0xc8bca0),
-    fleece([-2, 1.25, 0.6], [0.8, 0.25, 0.4], 0x8a7a5a, 0.3, 1)];
+  const st: Station[] = [[-3.7, 0.04, 1.5, 1.05], [-3.2, 0.5, 1.12, 0.3], [-1.8, 0.98, 0.9, -0.22], [0.4, 1.18, 0.84, -0.32], [2.3, 0.9, 0.95, -0.2], [3.5, 0.42, 1.25, 0.25], [4.1, 0.04, 1.75, 1.15]];
+  const SAIL = 0xe6dcc2, ROPE = 0x4a4034;
+  const out = openHull(st, DARK_WOOD, TIMBER, 0x8e7250, 0.06);
+  for (const [x, w] of [[-2.2, 0.8], [-0.4, 1.06], [1.9, 0.9]] as const) out.push(box(0.26, 0.05, 2 * w, 0x8e7250, { x, y: 0.62 }));
+  // (The mast, its stays, the yard.)
+  const top: V3 = [0.7, 7.0, 0], tack: V3 = [3.2, 1.9, 0.1], peak: V3 = [-1.9, 7.6, -0.1], clew: V3 = [-2.9, 1.5, 0.95];
+  out.push(cyl(0.11, 0.07, 6.9, 6, TIMBER, { x: 0.7, y: 0.1 }), beam(top, [4.0, 1.75, 0], 0.02, ROPE, 3), beam(top, [-3.6, 1.5, 0], 0.02, ROPE, 3),
+    tube([tack, [0.7, 5.0, 0], peak], [0.05, 0.08, 0.04], TIMBER, 5, 2), beam(clew, [-3.2, 1.15, 0.5], 0.018, ROPE, 3));
+  // (The sail: from the yard down to its clew, bellied.)
+  const N = 6;
+  out.push(grid(Array.from({ length: N + 1 }, (_, i) => Array.from({ length: N + 1 }, (_, j): V3 => {
+    const u = i / N, v = j / N, yx = tack[0] + (peak[0] - tack[0]) * u, yy = tack[1] + (peak[1] - tack[1]) * u, belly = 0.75 * Math.sin(Math.PI * Math.min(1, u * 1.15)) * Math.sin(Math.PI * v) ** 0.8;
+    return [yx + (clew[0] - yx) * v, yy + (clew[1] - yy) * v - 0.25 * Math.sin(Math.PI * v) * u, (clew[2] * v) + belly];
+  })), Array.from({ length: N + 1 }, (_, j) => (j % 2 ? SAIL : 0xdcd0b4))));
+  // (The steering oar, the net, the basket.)
+  out.push(beam([-2.6, 1.5, -0.75], [-3.9, -0.5, -1.0], 0.04, TIMBER, 4), box(0.5, 0.04, 0.2, TIMBER, { x: -3.95, y: -0.55, z: -1.0, rz: 1.0 }),
+    fleece([0.9, 0.5, 0.35], [0.7, 0.24, 0.45], 0x5a6a4a, 0.3, 1), cyl(0.2, 0.26, 0.3, 7, 0xb89a62, { x: -1.1, y: 0.3, z: -0.3 }));
+  return out;
 }
 // (A skin through rows of points, each row joined to the next point by
 // point: indexed, so smooth-shaded; `paint` one, or one per column.)

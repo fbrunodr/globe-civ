@@ -481,10 +481,6 @@ export const CATALOG = {
     part(new THREE.BoxGeometry(0.0038, 0.002, 0.0032), p.leaf, tf({ x: 0.0004, y: 0.0028, ry: 0.7, rz: 0.06 })),
     part(new THREE.BoxGeometry(0.0024, 0.0016, 0.0022), p.leaf, tf({ x: -0.0002, y: 0.0045, ry: 1.3 })),
   ] },
-  rockSpire: { name: 'Rock spire', layer: 'Accent', leaf: 0xb07850, build: (p) => [
-    cone(0.0018, 0.012, 5, p.leaf),
-    cone(0.0011, 0.006, 4, p.leaf, { x: 0.0019, z: 0.0006, ry: 0.4 }),
-  ] },
   scree: { name: 'Scree', layer: 'Ground', leaf: 0x8d8b84, build: (p) => [
     tet(0.0008, p.leaf, { y: 0.0003, ry: 0.2 }),
     tet(0.0006, p.leaf, { x: 0.0014, y: 0.0002, z: 0.0005, rx: 0.8 }),
@@ -502,10 +498,23 @@ export const CATALOG = {
     seg(V(0, 0.005, 0), V(0.0017, 0.0066, 0), 0.0002, 0.0001, 3, p.leaf),
     seg(V(0, 0.0068, 0), V(-0.0013, 0.0081, 0.0006), 0.0002, 0.0001, 3, p.leaf),
   ] },
-  termiteMound: { name: 'Termite mound', layer: 'Accent', leaf: 0xb07a4a, build: (p) => [
-    cone(0.0014, 0.0062, 6, p.leaf),
-    cone(0.0009, 0.0035, 5, p.leaf, { x: 0.0011, z: 0.0003 }),
-  ] },
+  // A cathedral mound: a tall lumpy spire on a spreading foot, lesser spires and buttresses
+  // crowding round it, each its own height and lean; baked clay, paler where the sun has dried it.
+  termiteMound: { name: 'Termite mound', layer: 'Accent', leaf: 0xb07a4a, build: (p) => {
+    // (Its own clays, fixed: the foot damp and dark, some spires dried pale.)
+    const DRY = 0xc89c6c, DAMP = 0x8a5e3c;
+    const spire = (r: number, h: number, n: number, c: number, seed: number, o: Tf = {}) =>
+      part(lumpy(new THREE.ConeGeometry(r, h, n, 1, true).translate(0, h / 2, 0).toNonIndexed(), 0.16, seed), c, tf(o));
+    return [
+      spire(0.0027, 0.0017, 7, DAMP, 3),
+      spire(0.0017, 0.0064, 6, p.leaf, 5, { rz: 0.05 }),
+      spire(0.0011, 0.0045, 5, DRY, 7, { x: 0.001, z: 0.0004, rz: -0.12 }),
+      spire(0.001, 0.0036, 5, p.leaf, 11, { x: -0.0009, z: 0.0007, rz: 0.16 }),
+      spire(0.0009, 0.0028, 4, DRY, 13, { x: -0.0003, z: -0.0011, rx: -0.14 }),
+      spire(0.0008, 0.002, 4, p.leaf, 17, { x: 0.0013, z: -0.0008, rz: -0.2 }),
+      spire(0.0007, 0.0015, 4, DAMP, 19, { x: -0.0015, z: -0.0002, rz: 0.22 }),
+    ];
+  } },
   iceSerac: { name: 'Ice serac', layer: 'Ground', leaf: 0xdff0fa, build: (p) => [
     shard(0.0022, p.leaf, 5, { y: 0.0012, sy: 1.2 }),
     shard(0.0015, p.leaf, 9, { x: 0.0022, y: 0.0007, z: 0.0008, sy: 1.4 }),
