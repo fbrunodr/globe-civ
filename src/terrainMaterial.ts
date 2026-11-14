@@ -903,6 +903,7 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
           // under the water; land that dips under the water turns to silt;
           // ground just above the water is darker and glossy (wet).
           wetGround = 0.0;
+          float beach = 0.0;
           if (above < 0.0015) {
             // Beaches on sea and lake shores; river banks above the water stay
             // green (faded, so a river mouth has no edge; under water the bed
@@ -911,14 +912,35 @@ export function makeTerrainMaterial(paint: PaintUniforms): TerrainMaterial {
               float top = 0.0009 + 0.0005 * tNoise(P * 120.0 + 9.0);
               float noBank = mix(1.0 - smoothstep(0.02, 0.4, vBank), 1.0, under);
               float sand = (1.0 - smoothstep(top * 0.6, top, above)) * smoothstep(0.15, 0.45, vShore + 0.4 * (tFbm(P * 160.0 + 2.7, 2) - 0.5)) * noBank;
-              // (A fine grain on the sand, where it can show.)
-              float grain = sand > 0.001 && tLod * 380.0 < 0.9 ? (tFbm(P * 380.0, 2) - 0.5) * tFade(380.0) : 0.0;
-              diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.86, 0.73, 0.45) * (0.95 + 0.1 * grain) * vShade, sand * (1.0 - rock));
+              // (The sand itself: the ground's sand material, its grain and its relief, and
+              // a slow mottle over it, paler where it lies dry and high.)
+              if (sand > 0.001) {
+                vec3 sn;
+                vec4 st = gSample(${GROUND_LAYER.sand}.0, sn, 1.0);
+                float mottle = tFbm(P * 380.0, 2) - 0.5;
+                vec3 sandCol = gTone(vec3(0.86, 0.73, 0.45), st.r) * (0.96 + 0.16 * mottle) * mix(0.94, 1.05, smoothstep(0.0, top, above));
+                diffuseColor.rgb = mix(diffuseColor.rgb, sandCol * vShade, sand * (1.0 - rock));
+                gN = mix(gN, sn, sand * (1.0 - rock));
+              }
+              beach = sand * (1.0 - rock);
             }
             float landBed = 1.0 - smoothstep(0.3, 0.8, vWet);
             diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 0.55 + vec3(0.05, 0.045, 0.03), under * landBed * 0.75);
-            wetGround = (1.0 - smoothstep(0.0, 0.00022, above)) * dry;
-            diffuseColor.rgb *= 1.0 - 0.28 * wetGround;
+            // Gravel: where a river or a lake has no beach, its bank at the
+            // water and its shallow bed are stones, washed clean: pebbles
+            // of their own greys and browns, dark between them.
+            float strand = (1.0 - smoothstep(0.00005, 0.0002, above)) * (1.0 - smoothstep(0.0004, 0.0016, vDepth)) * (1.0 - beach) * (1.0 - rock) * landBed;
+            if (strand > 0.001) {
+              float show = tFade(6500.0);
+              float stone = smoothstep(0.42, 0.56, tNoise(P * 6500.0 + 4.0));
+              float tint = tNoise(P * 1500.0 + 11.0);
+              vec3 pebble = mix(vec3(0.3, 0.27, 0.23), mix(vec3(0.52, 0.5, 0.47), vec3(0.62, 0.55, 0.45), tint) * (0.8 + 0.5 * tNoise(P * 3900.0 + 7.0)), stone);
+              pebble = mix(vec3(0.44, 0.41, 0.37), pebble, show);
+              diffuseColor.rgb = mix(diffuseColor.rgb, pebble * vShade * mix(1.0, 0.6, under), strand * 0.85);
+            }
+            // The wet strand: dark, where the water has just been.
+            wetGround = (1.0 - smoothstep(0.00004, 0.00026, above)) * dry;
+            diffuseColor.rgb *= 1.0 - 0.36 * wetGround;
           }
           // Caustics: light focused by the waves, dancing on shallow beds.
           if (vDepth > 0.0 && vDepth < 0.003) {

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GRADE_GLSL, NOISE_GLSL, noiseTexture } from './terrainMaterial.ts';
+import { NOISE_SIZE } from './fineNoise.ts';
 
 // The water surface: a translucent sheet at the water level over the carved
 // ground (the trick of old console games: a see-through, gently moving
@@ -32,7 +33,7 @@ export const SKY_COLOR = new THREE.Color(0.62, 0.76, 0.92);
 
 export function makeWaterMaterial(): WaterMaterial {
   // A dim specular: a small sun glint, not a blinding disc.
-  const mat = new THREE.MeshPhysicalMaterial({ roughness: 0.1, metalness: 0, specularIntensity: 0.2, transparent: true, depthWrite: false });
+  const mat = new THREE.MeshPhysicalMaterial({ roughness: 0.1, metalness: 0, specularIntensity: 0.7, transparent: true, depthWrite: false });
   const uTime = { value: 0 };
   const uGrid = { value: 0 };
   const uView = { value: 0 };
@@ -86,7 +87,29 @@ export function makeWaterMaterial(): WaterMaterial {
         float tLod;
         float foam;
         ${NOISE_GLSL}
-        ${GRADE_GLSL}`)
+        ${GRADE_GLSL}
+        // The waves' height at P (world units), for the surface's normal: on
+        // a river, ripples carried downstream (two phases, so the pattern
+        // never stretches), short and steep, the current's chop; on still
+        // and open water, a longer swell and a fine chop drifting across it.
+        // (The noise, eased between its texels: read plainly its slope is constant across each, and
+        // waves shaded by their slope show the texels as blocks.)
+        float wNoise(vec3 x) { vec3 q = x - 0.5, f = fract(q); return texture(uNoise, (floor(q) + f * f * (3.0 - 2.0 * f) + 0.5) * ${(1 / NOISE_SIZE).toFixed(8)}).r; }
+        float waveHeight(vec3 P) {
+          // (How much a river's: eased in with its current, so where it runs out into a lake or
+          // the sea its ripples pass into the swell with no line between them.)
+          float river = smoothstep(0.2, 0.75, length(vFlow)), h = 0.0;
+          if (river > 0.0) {
+            float ph = uTime * 0.3, t0 = fract(ph), t1 = fract(ph + 0.5), w = abs(2.0 * t0 - 1.0);
+            vec3 a = P - vFlow * t0 * 0.0016, b = P - vFlow * t1 * 0.0016;
+            float big = mix(wNoise(a * 1500.0), wNoise(b * 1500.0 + 17.0), w);
+            float fine = mix(wNoise(a * 3600.0 + 5.0), wNoise(b * 3600.0 + 31.0), w);
+            h += river * (0.00024 * (big - 0.5) * tFade(1500.0) + 0.00008 * (fine - 0.5) * tFade(3600.0));
+          }
+          if (river < 1.0) h += (1.0 - river) * (0.0003 * (wNoise(P * 700.0 + vec3(uTime * 0.05, uTime * 0.03, -uTime * 0.04)) - 0.5) * tFade(700.0)
+               + 0.00009 * (wNoise(P * 2300.0 - vec3(uTime * 0.11, -uTime * 0.06, uTime * 0.08)) - 0.5) * tFade(2300.0));
+          return h;
+        }`)
       .replace('#include <color_fragment>', `#include <color_fragment>
         {
           // Under the ground (past the waterline): the ground hides it anyway.
@@ -101,21 +124,25 @@ export function makeWaterMaterial(): WaterMaterial {
           float open = clamp(1.6 / murk - 0.3, 0.0, 1.0);
           vec3 shallow = mix(deep, vec3(0.1, 0.45, 0.48), 0.65 * clamp(1.3 / murk, 0.0, 1.0));
           float k = d * murk;
-          vec3 col = mix(shallow, deep, 1.0 - exp(-k / 0.0012));
+          // (The deep a shade deeper than its tint: the waves' light stands out on it.)
+          vec3 col = mix(shallow, deep * vec3(0.5, 0.64, 0.86), 1.0 - exp(-k / 0.0008));
           // (Deep water is opaque: nothing shows through the open sea.)
-          float alpha = mix(0.72, 1.0, 1.0 - exp(-k / 0.0015));
+          // (Clear in the shallows: the bed, its stones and the light playing on it show through.)
+          float alpha = mix(0.4, 1.0, 1.0 - exp(-k / 0.0009));
 
-          // Rivers: ripples drifting downstream (two phases, so the pattern
-          // never stretches).
+          // Rivers: white water where the current breaks, in flecks carried
+          // downstream (two phases, so the pattern never stretches), gathered
+          // in patches (the rapids), more of it the faster the river runs.
           float streak = 0.0;
           float speed = length(vFlow);
-          if (speed > 0.02) {
-            float ph = uTime * 0.22;
+          if (speed > 0.0) {
+            float ph = uTime * 0.3;
             float t0 = fract(ph), t1 = fract(ph + 0.5);
-            float n0 = tNoise((P - vFlow * t0 * 0.0022) * 1500.0);
-            float n1 = tNoise((P - vFlow * t1 * 0.0022) * 1500.0 + 17.0);
+            float n0 = tNoise((P - vFlow * t0 * 0.0016) * 2900.0 + 3.0);
+            float n1 = tNoise((P - vFlow * t1 * 0.0016) * 2900.0 + 23.0);
             float n = mix(n0, n1, abs(2.0 * t0 - 1.0));
-            streak = smoothstep(0.6, 0.82, n) * min(1.0, speed) * tFade(1500.0);
+            float rapids = smoothstep(0.42, 0.7, tNoise(P * 420.0 + 9.0));
+            streak = smoothstep(0.62, 0.8, n) * rapids * smoothstep(0.15, 0.7, speed) * tFade(2900.0); // (dying away with the current: none carried out into still water)
           }
 
           // Foam: a line at the waterline and bands rolling in toward it.
@@ -125,7 +152,7 @@ export function makeWaterMaterial(): WaterMaterial {
           float waves = sin(d / shoreW * 9.0 - uTime * 1.3 + tNoise(P * 300.0) * 6.0);
           float broken = 0.45 + 0.55 * tNoise(P * 900.0 + vec3(uTime * 0.08, 0.0, -uTime * 0.06));
           foam = max(line * mix(0.35, 0.85, open), zone * smoothstep(0.55, 0.95, waves) * broken * 0.65 * open * tFade(300.0));
-          foam = max(foam, streak * 0.3);
+          foam = max(foam, streak * 0.55);
           col = mix(col, vec3(0.93, 0.97, 1.0), foam);
           alpha = max(alpha, foam);
 
@@ -146,20 +173,25 @@ export function makeWaterMaterial(): WaterMaterial {
           }
         }`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
-        roughnessFactor = mix(0.14, 0.6, foam);`)
+        roughnessFactor = mix(0.24, 0.7, foam);`)
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
         {
-          // Ripples: two layers of drifting noise.
-          vec3 P = vObjPos;
-          float h = 0.00002 * (tNoise(P * 650.0 + vec3(uTime * 0.05, uTime * 0.03, -uTime * 0.04)) - 0.5) * tFade(650.0)
-                  + 0.00001 * (tNoise(P * 1600.0 - vec3(uTime * 0.09, -uTime * 0.05, uTime * 0.07)) - 0.5) * tFade(1600.0);
-          normal = tPerturb(-vViewPosition, normal, h);
+          // The waves: the surface's normal from their height.
+          normal = tPerturb(-vViewPosition, normal, waveHeight(vObjPos));
         }`)
       .replace('#include <opaque_fragment>', `{
-          // The sky's reflection, strong at grazing angles.
-          float fres = pow(1.0 - clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0), 5.0) * (1.0 - foam);
-          outgoingLight = grade(mix(outgoingLight, uSky * 0.8, fres * 0.25), 0.85);
-          diffuseColor.a = max(diffuseColor.a, fres * 0.6) * (1.0 - smoothstep(0.0, 0.5, vFog));
+          // The sky's reflection, by where each wave's face throws the eye's
+          // ray: pale and bright toward the horizon, deeper overhead; strong
+          // where the face is seen at a grazing angle (Fresnel). On rippled
+          // water every wave has faces turned to the horizon and faces
+          // turned up: the light breaks into streaks and flecks.
+          vec3 V = normalize(vViewPosition), up = normalize(mat3(viewMatrix) * normalize(vObjPos));
+          float fres = (0.03 + 0.97 * pow(1.0 - clamp(dot(normal, V), 0.0, 1.0), 5.0)) * (1.0 - foam);
+          float elev = dot(reflect(-V, normal), up);
+          vec3 sky = mix(uSky * 0.85, uSky * vec3(0.2, 0.32, 0.55), smoothstep(0.0, 0.6, elev));
+          // (Never all sky: far off, seen flat, the water keeps its own colour under the sheen.)
+          outgoingLight = grade(mix(outgoingLight, sky, min(0.45, fres * 1.4)), 0.95);
+          diffuseColor.a = max(diffuseColor.a, min(1.0, fres * 2.2)) * (1.0 - smoothstep(0.0, 0.5, vFog));
         }
         #include <opaque_fragment>`);
   };
